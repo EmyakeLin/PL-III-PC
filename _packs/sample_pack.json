@@ -4,7 +4,8 @@
     {
       "id": "char_iron_vanguard",
       "name": "铁壁先锋",
-      "rank": "elite",
+      "rank": "ELITE",
+      "max_hp": 15,
       "passive_skills": [
         
       ],
@@ -141,12 +142,13 @@
     {
       "id": "char_crimson_duelist",
       "name": "绯红决斗者",
-      "rank": "精英",
+      "rank": "ELITE",
+      "max_hp": 12,
       "passive_skills": [
       ],
       "skills": [
         {
-          "id": "char_iron_vanguard_01",
+          "id": "char_crimson_duelist_01",
           "name": "伺机闪避",
           "cost": 0,
           "entries": [],
@@ -163,7 +165,7 @@
           ]
         },
         {
-          "id": "char_iron_vanguard_02",
+          "id": "char_crimson_duelist_02",
           "name": "弧影穿刺",
           "cost": 1,
           "entries": [],
@@ -190,7 +192,7 @@
           ]
         },
         {
-          "id": "char_iron_vanguard_03",
+          "id": "char_crimson_duelist_03",
           "name": "疾风连刺",
           "cost": 2,
           "entries": [],
@@ -218,7 +220,7 @@
           ]
         },
         {
-          "id": "char_iron_vanguard_04",
+          "id": "char_crimson_duelist_04",
           "name": "回旋掠斩",
           "cost": 1,
           "entries": [],
@@ -245,10 +247,29 @@
           ]
         },
         {
-          "id": "char_iron_vanguard_05",
+          "id": "char_crimson_duelist_05",
           "name": "决意贯穿",
           "cost": 2,
           "entries": [],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "base_value": 3,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        },
+        {
+          "id": "char_crimson_duelist_06",
+          "name": "尖刺必杀",
+          "cost": 2,
+          "entries": [],
+          "out_of_combat": true,
           "dice": [
             {
               "type": "pierce",

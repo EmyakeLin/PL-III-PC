@@ -19,9 +19,15 @@ from player.player import Player
 
 from game import Game
 
+from loader import load_characters_from_packs
+
 if __name__ == "__main__":
 
+    all_characters = load_characters_from_packs()
+
     game = Game([Player(1, "p1"), Player(2, "p2")])
+
+    
 
 
 

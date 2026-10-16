@@ -47,14 +47,14 @@ class DelayedDiscard(CardList):
 
     def push_to_draw(self):
         for i in range(len(self.content)):
-            self.move_card_to(self.content[i],self.player.cardarea.draw)
+            self.move_card_to(self.content[i],self.player.cardspace.draw)
 
 class OutOfCombat(CardList):
     def __init__(self, player: Player, all_cards = []):
         self.conteng = all_cards
         self.player = player
 
-class CardArea():
+class CardSpace():
     def __init__(self, player: Player):
         """Default: only Hand, Draw, DelayedDiscard, and OutOfCombat"""
         self.hand = Hand(player)

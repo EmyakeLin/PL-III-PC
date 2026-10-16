@@ -15,7 +15,7 @@ from pipeline.pipeline_errors import (
 
 from models.opcode import OpCode, DISPATCH_TABLE
 
-from models.entry import TriggerType, Entry
+from entry.entry import TriggerType, Entry
 
 class Context():
     def __init__(self, parent = None, game = None):

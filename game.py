@@ -27,6 +27,40 @@ class Game:
         # 交锋槽位
         self.duelspace = DuelSpace(self)
 
+    def select_character(self, characters):
+        import copy
+        remaining_characters = copy.deepcopy(characters)
+        for p in self.players:
+            while True:
+                if len(p.characters) >= 3:
+                    print(f"[{p.name}] Has chosen maximum 3 characters.")
+                    break
+                for i in range(len(remaining_characters)):
+                    print(f"[{i+1}] {remaining_characters[i]['name']}")
+                choice = input("Select a character: type the index. End selection: don't type anything. \n - Choice: ")
+                if choice == "":
+                    if len(p.characters) == 0:      
+                        print("You must choose at least 1 character!")
+                    else:
+                        break
+                else:
+                    try:
+                        index = int(choice) - 1
+                        selected_char = remaining_characters[index]
+                        print(f"[{choice}] {selected_char['name']} => CHOOSE?")
+                        confirm = input("If you don't want to choose this character, type anything to cancel. Enter to confirm: ")
+                        if confirm == "":
+                            char = remaining_characters.pop(index)
+                            p.characters.append(char)
+                        else:
+                            print("Canceled.")
+                    except Exception as e:
+                        print("Invalid input!", e)   
+            print(f"[{p.name}] confirmed: ")
+            for c in p.characters:
+                print(f"- {c['name']} ({c['rank']})")
+            
+
     def next_step(self):
         """推进一小步管线"""
         return self.pipeline.next_step()

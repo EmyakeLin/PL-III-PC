@@ -1,0 +1,28 @@
+import os
+import json
+
+def load_characters_from_packs(packs_dir="_packs"):
+    """
+    从指定文件夹（默认 packs/）加载所有 pack JSON 文件。
+    提取所有角色并将所属 faction 注入到每个角色字典中。
+    返回按 faction 排序的扁平 character JSON list。
+    """
+    if not os.path.exists(packs_dir):
+        return []
+
+    characters = []
+
+    for filename in sorted(os.listdir(packs_dir)):
+        if filename.endswith(".json"):
+            filepath = os.path.join(packs_dir, filename)
+            with open(filepath, "r", encoding="utf-8") as f:
+                pack_data = json.load(f)
+
+            faction = pack_data.get("faction", "")
+            for char in pack_data.get("characters", []):
+                char["faction"] = faction
+                characters.append(char)
+
+    # 按照 faction 进行稳定排序
+    characters.sort(key=lambda c: c.get("faction", ""))
+    return characters

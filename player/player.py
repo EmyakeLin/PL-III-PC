@@ -7,9 +7,12 @@ class Player():
         self.side = side
         self.name = name
 
+        self.characters = []
+
         # deck
-        from .card_space import CardArea
-        self.cardarea = CardArea(self)
+        from .card_space import CardSpace
+        self.cardspace = CardSpace(self)
+
     
 
     def calculate_speed(self):
