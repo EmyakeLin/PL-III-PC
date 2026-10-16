@@ -4,6 +4,7 @@ from pipeline.pipeline_steps import step_list
 
 from types import SimpleNamespace
 
+from context.context import Context
 from models.duel import DuelSpace, DuelSlot
 
 class Game:
@@ -14,6 +15,9 @@ class Game:
         self.turn_count = 0
         self.is_over = False
         
+        # 初始化游戏根上下文
+        self.context = Context(game=self)
+
         # 将自身实例 (game=self) 注入到管线中
         self.pipeline = Pipeline(self, step_list)
 

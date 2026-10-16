@@ -32,12 +32,13 @@ class PipelineNode():
 
 pipeline_trigger_logic = """
 print(self.id)
+if hasattr(self, "game") and self.game and getattr(self.game, "context", None):
+    self.game.context.dispatch_pipeline(self.id)
 """
 
 class PipelineTriggerNode(PipelineNode):
     def __init__(self, trigger_id):
         """trigger_id will be the Node id"""
-
         super().__init__(trigger_id, pipeline_trigger_logic)
 
 
@@ -49,10 +50,10 @@ class PipelineSection():
         self.nodes = nodes
 
     def execute(self):
-        can_loop = eval(self.repeat_logic)
+        can_loop = exec(self.repeat_logic)
         if can_loop:
             for node in self.nodes:
-                can_loop = eval(self.repeat_logic)
+                can_loop = exec(self.repeat_logic)
                 if not can_loop:
                     break
                 node.execute()

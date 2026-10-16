@@ -7,6 +7,11 @@ class Player():
         self.side = side
         self.name = name
 
+        # deck
+        from .card_space import CardArea
+        self.cardarea = CardArea(self)
+    
+
     def calculate_speed(self):
         """ONLY FOR TEMPORARY USE! NOT REAL GAME LOGIC!!!"""
         self.speed = random.randint(1,4)
