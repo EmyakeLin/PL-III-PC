@@ -1,0 +1,2 @@
+players = []
+pipeline = None
