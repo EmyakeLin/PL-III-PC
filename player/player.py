@@ -15,7 +15,7 @@ class Player():
 
         self.characters = []
 
-        self.max_cost = self.game.gamerule.MAX_BASIC_COST
+        self.max_cost = None
         self.used_cost = 0
 
         # deck
@@ -24,6 +24,7 @@ class Player():
 
     def reset_on_turn_start(self):
         """Reset some state at logic_turn_start"""
+        self.max_cost = self.game.gamerule.MAX_BASIC_COST
         for char in self.characters:
             char.used_duels = 0
             char.used_independent_cost = 0

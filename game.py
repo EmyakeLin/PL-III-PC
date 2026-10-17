@@ -14,13 +14,14 @@ from gamerule import GameRule
 class Game:
     def __init__(self, players):
         self.players = players
+        self.gamerule = GameRule()
         for p in self.players:
             p.game = self
+            p.max_cost = self.gamerule.MAX_BASIC_COST
         self.first_player = None
         self.ended_player = []
         self.turn_count = 0
         self.is_over = False
-        self.gamerule = GameRule()
         
         # 初始化游戏根上下文
         self.context = Context(game=self)
@@ -90,7 +91,7 @@ class Game:
 
     def place_in_duel(self, side, content, duel_idx):
         from entry.builtin_operations import parse_builtin_operation
-        op = parse_builtin_operation(f"Place-Card: {side}, {duel_idx}", content)
+        op = parse_builtin_operation(f"Place-Card: {side}, {duel_idx}, {id(content)}", self)
         self.context.eval_block(op)
 
 

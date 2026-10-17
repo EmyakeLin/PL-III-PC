@@ -35,7 +35,8 @@ def handle_place(ctx):
     if idx < len(ctx.game.duelspace.space):
         ds = ctx.game.duelspace.space[idx]
         ds.add_content(side, card)
-        card.character.used_duels += 1
+        if card.character:
+            card.character.used_duels += 1
     else:
         missing_duels = idx+1 - len(ctx.game.duelspace.space)
 
@@ -44,7 +45,8 @@ def handle_place(ctx):
             ctx.game.duelspace.append_new_duel(eds)
         ds = ctx.game.duelspace.space[idx]
         ds.add_content(side, card)
-        card.character.used_duels += 1
+        if card.character:
+            card.character.used_duels += 1
 
 DISPATCH_TABLE = {
     OpCode.ADD: handle_add,

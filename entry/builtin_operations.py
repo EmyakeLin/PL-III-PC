@@ -186,8 +186,10 @@ def stack_draw_card(count, target):
     return [target, count, OpCode.DRAW]
 
 @expect(
-    args=["side", "idx"],
-    rules=lambda side, idx, card, owner: isinstance(side, int) and isinstance(idx, int) and card == owner
+    args=["side", "idx", "card_id"],
+    rules=lambda side, idx, card_id, card: (
+        isinstance(side, int) and isinstance(idx, int) and id(card) == card_id
+    )
 )
-def stack_place_card(side, idx, card):
+def stack_place_card(side, idx, card_id, card):
     return [side, idx, card, OpCode.PLACE]

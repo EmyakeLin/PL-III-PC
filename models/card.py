@@ -1,5 +1,13 @@
 
 
+from enum import Enum, auto
+class CardState(Enum):
+    DEFAULT = auto()            # 常规状态
+    PLACED_FACE_UP = auto()     # 明置（于交锋）
+    PLACED_FACE_DOWN = auto()   # 扣置（于交锋）
+    NEGATED = auto()            # 被无效化
+
+
 """
 arg = {
 
@@ -45,6 +53,8 @@ class Card():
 
         self.entries = data.get("entries")  # 可能无词条
         self.dice = data.get("dice")        # 可能无骰子
+
+        self.state = CardState.DEFAULT
 
     def __str__(self):
         return f"{self.name}, cost: {self.cost} of {self.character}, side {self.player.side}"
