@@ -46,7 +46,7 @@ class Player():
             print(f"[{self.cardspace.draw.content.index(c) + 1}] {c.name}, cost: {c.cost}")
 
         while True:
-            ask = input("Please select which card to discard. Type the index.").split()
+            ask = input("Please select which card to discard. Type the index.").replace(",", " ").split()
             if len(ask) != total_draw - draw_count:
                 print(f"Invalid discard amount! Expected: {total_draw - draw_count} inputs!")
             else:
