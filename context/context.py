@@ -15,7 +15,8 @@ from pipeline.pipeline_errors import (
     CostExceededError,
 )
 
-from models.opcode import OpCode, DISPATCH_TABLE
+from models.opcode import OpCode
+from models.opcodes import DISPATCH_TABLE
 
 from entry.entry import TriggerType, Entry
 
@@ -85,7 +86,10 @@ class Context():
 
     def load(self, name):
         """从寄存器取值并压入栈顶，不清空寄存器"""
-        self.push(self.register.get(name))
+        if name in self.register:
+            self.push(self.register.get(name))
+        else:
+            raise ValueError(f"Register does not contain {name}!")
 
     def eval_block(self, block):
         if not isinstance(block, list):

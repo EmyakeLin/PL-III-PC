@@ -3,8 +3,8 @@ from .player import Player
 from models.card import Card
 
 class CardList():
-    def __init__(self, all_cards = []):
-        self.content = all_cards
+    def __init__(self, all_cards = None):
+        self.content = list(all_cards) if all_cards is not None else []
 
     def add_card(self, card, position = -1):
         """Do not pass `position` to let card append in the end of the list (latest)"""
@@ -16,13 +16,17 @@ class CardList():
             self.content.insert(position, card)
 
     def get_card(self, index):
-        if index > len(self.content):
+        if index >= len(self.content) or index < 0:
             return None
         return self.content[index]
 
+    def get_character(self, index):
+        if index >= len(self.content) or index < 0:
+            raise ValueError("Card does not exist!")
+        return self.content[index].character
 
     def remove_card(self, index):
-        if index > len(self.content):
+        if index >= len(self.content) or index < 0:
             raise ValueError("Card does not exist!")
         return self.content.pop(index)
 
@@ -33,7 +37,7 @@ class CardList():
                 raise ValueError("Card does not exist!")
             idx = self.content.index(index)
         elif isinstance(index, int):
-            if index > len(self.content):
+            if index >= len(self.content):
                 raise ValueError("Card does not exist!")
             idx = index
         else:
@@ -45,27 +49,27 @@ class CardList():
         random.shuffle(self.content)
         
 class Hand(CardList):
-    def __init__(self, player: Player, all_cards = []):
-        self.content = all_cards
+    def __init__(self, player: Player, all_cards = None):
+        super().__init__(all_cards)
         self.player = player
 
 class Draw(CardList):
-    def __init__(self, player: Player, all_cards = []):
-        self.content = all_cards
+    def __init__(self, player: Player, all_cards = None):
+        super().__init__(all_cards)
         self.player = player
 
 class DelayedDiscard(CardList):
-    def __init__(self, player: Player, all_cards = []):
-        self.content = all_cards
+    def __init__(self, player: Player, all_cards = None):
+        super().__init__(all_cards)
         self.player = player
 
     def push_to_draw(self):
-        for i in range(len(self.content)):
-            self.move_card_to(self.content[i],self.player.cardspace.draw)
-
+      while len(self.content) > 0:
+          self.move_card_to(0, self.player.cardspace.draw)
+          
 class OutOfCombat(CardList):
-    def __init__(self, player: Player, all_cards = []):
-        self.conteng = all_cards
+    def __init__(self, player: Player, all_cards = None):
+        super().__init__(all_cards)
         self.player = player
 
 class CardSpace():

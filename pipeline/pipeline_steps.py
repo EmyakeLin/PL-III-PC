@@ -2,26 +2,17 @@ from .pipeline_base import PipelineNode, PipelineTriggerNode, PipelineSection
 
 # All Logic Node
 
-logic_turn_start_code = """
-print("LogicTurnStart!")
-while True:
-    for p in self.game.players:
-        p.calculate_speed()
-    print(f"Speed roll! {self.game.players[0].name}: {self.game.players[0].speed} vs {self.game.players[1].name}: {self.game.players[1].speed}")
-    if self.game.players[0].speed != self.game.players[1].speed:
-        fast_player = self.game.players[0] if self.game.players[0].speed > self.game.players[1].speed else self.game.players[1]
-        break
-print(f"Speed determined. {self.game.players[0].name}: {self.game.players[0].speed} vs {self.game.players[1].name}: {self.game.players[1].speed}\\n - {fast_player.name} first!")
-"""
 
 turn_start_draw_code = """
 
 for p in self.game.players:
     char_count = len(p.characters)
-    draw_count = gamerule.DRAW_COUNT
+    draw_count = self.game.gamerule.DRAW_COUNT
     if char_count == 1:
         total_draw = draw_count
         selection = False
+    elif char_count <= 0:
+        raise ValueError("Invailid character count!")
     else:
         total_draw = draw_count - 1 + char_count
         selection = True
@@ -32,6 +23,19 @@ for p in self.game.players:
             
 
 """
+
+
+logic_turn_start_code = """
+print("LogicTurnStart!")
+while True:
+    for p in self.game.players:
+        p.calculate_speed()
+    print(f"Speed roll! {self.game.players[0].name}: {self.game.players[0].speed} vs {self.game.players[1].name}: {self.game.players[1].speed}")
+    if self.game.players[0].speed != self.game.players[1].speed:
+        fast_player = self.game.players[0] if self.game.players[0].speed > self.game.players[1].speed else self.game.players[1]
+        break
+print(f"Speed determined. {self.game.players[0].name}: {self.game.players[0].speed} vs {self.game.players[1].name}: {self.game.players[1].speed}\\n - {fast_player.name} first!")
+""" + turn_start_draw_code
 
 logic_turn_end_code = """
 print("LogicTurnEnd!")
@@ -48,7 +52,8 @@ after_turn_start = PipelineTriggerNode("after_turn_start")
 # Placement
 
 logic_start_placement_code = """
-
+for p in self.game.players:
+    p.reset_on_turn_start()
 # decide who is the first player first, as speed may be modified between logic_turn_start and logic_start_placement
 self.game.first_player = self.game.players[0] if self.game.players[0].speed > self.game.players[1].speed else self.game.players[1]
 self.game.placing = self.game.first_player

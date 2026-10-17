@@ -176,6 +176,7 @@ def parse_builtin_operation(text: str, owner=None):
 # ALL BUILTIN OPERATIONS
 from player.player import Player
 from models.opcode import OpCode
+from models.card import Card
 
 @expect(
     args=["count"],
@@ -183,3 +184,10 @@ from models.opcode import OpCode
 )
 def stack_draw_card(count, target):
     return [target, count, OpCode.DRAW]
+
+@expect(
+    args=["side", "idx"],
+    rules=lambda side, idx, card, owner: isinstance(side, int) and isinstance(idx, int) and card == owner
+)
+def stack_place_card(side, idx, card):
+    return [side, idx, card, OpCode.PLACE]

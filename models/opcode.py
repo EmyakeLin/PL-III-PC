@@ -24,33 +24,4 @@ class OpCode(Enum):
     HEAL = auto()
     DRAW = auto()
     DESTROY = auto()
-
-def handle_add(ctx):
-    # 此时如果栈元素不足 2 个，ctx.pop() 会自动触发 StackUnderflowError
-    b = ctx.pop()
-    a = ctx.pop()
-    ctx.push(a + b)
-
-def handle_dup(ctx):
-    ctx.dup()
-
-def handle_pop(ctx):
-    ctx.pop()
-
-def handle_draw(ctx):
-    """Required: [subject, draw_count, OpCode.DRAW]"""
-    draw_count = ctx.pop()
-    subject = ctx.pop()
-    for _ in range(draw_count):
-        if len(subject.cardspace.draw.content) > 0:
-            subject.cardspace.draw.move_card_to(0, subject.cardspace.hand)
-        else:
-            break
-
-
-DISPATCH_TABLE = {
-    OpCode.ADD: handle_add,
-    OpCode.DUP: handle_dup,
-    OpCode.POP: handle_pop,
-    OpCode.DRAW: handle_draw,
-}
+    PLACE = auto()

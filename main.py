@@ -28,8 +28,7 @@ if __name__ == "__main__":
 
     game = Game([Player(1, "p1"), Player(2, "p2")])
 
-    gamerule = GameRule(game)
-    
+    game.select_character(all_characters)
 
 
 

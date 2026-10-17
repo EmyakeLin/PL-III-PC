@@ -18,6 +18,7 @@ RANK_DUEL_MAP = {
 class Character():
     def __init__(self, data: dict, player):
         self.player = player
+        self.game = self.player.game
 
         self.data = data
         self.faction = data["faction"]
@@ -25,6 +26,7 @@ class Character():
         self.name = data["name"]
         self.rank = CharacterRank[data["rank"]]
         self.max_duels = RANK_DUEL_MAP[self.rank]
+        
         self.max_hp = data["max_hp"]
         self.passive_skill_data= data["passive_skills"]
         self.passive_skills = []
@@ -33,9 +35,13 @@ class Character():
 
         self.hp = self.max_hp
         self.is_alive = True
+        self.used_duels = 0
+        
 
-        self.independent_cost = 1
+        self.independent_cost = self.game.gamerule.CHAR_INDEPENDENT_COST
+        self.used_independent_cost = 0
 
+        
     def init_cards(self):
         for s in self.skill_data:
             self.skills.append(Card(self.player, s, self))

@@ -19,6 +19,7 @@ class PipelineNode():
         self.id = id
         self.period_args = period_args if period_args is not None else {}
         self.is_period = is_period
+        self.game = None
         
         self.operation = compile(operation_code, f"<pipeline_node_{id}>", "exec")
 
@@ -46,15 +47,17 @@ class PipelineTriggerNode(PipelineNode):
 class PipelineSection():
     def __init__(self, id, repeat_logic, nodes):
         self.id = id
-        self.repeat_logic = compile(repeat_logic, f"<pipeline_section_{id}>", "exec")
+        self.repeat_logic = compile(repeat_logic, f"<pipeline_section_{id}>", "eval")
         self.nodes = nodes
+        self.game = None
 
     def execute(self):
-        can_loop = exec(self.repeat_logic)
-        if can_loop:
+        can_loop = eval(self.repeat_logic)
+        while can_loop:
             for node in self.nodes:
-                can_loop = exec(self.repeat_logic)
+                can_loop = eval(self.repeat_logic)
                 if not can_loop:
                     break
+                node.game = self.game
                 node.execute()
 

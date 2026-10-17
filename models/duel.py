@@ -28,7 +28,7 @@ class DuelSpace():
         else:
             return False
 
-    def locate_nearest_nonempty_duel(self, target_side):
+    def locate_nearest_empty_duel(self, target_side):
         for i in range(len(self.space)):
             if self.is_empty_duel(target_side, i):
                 return i

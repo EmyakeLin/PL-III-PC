@@ -1,6 +1,4 @@
 
-from player.player import Player
-
 
 """
 arg = {
@@ -35,7 +33,7 @@ arg = {
 # 骰子是以对象形式存储的，其触发时再实例化
 
 class Card():
-    def __init__(self, player: Player, data, character = None):
+    def __init__(self, player, data, character = None):
         self.player = player
         self.character = character
         self.data = data
@@ -47,4 +45,6 @@ class Card():
 
         self.entries = data.get("entries")  # 可能无词条
         self.dice = data.get("dice")        # 可能无骰子
-    
+
+    def __str__(self):
+        return f"{self.name}, cost: {self.cost} of {self.character}, side {self.player.side}"

@@ -9,6 +9,8 @@ from models.duel import DuelSpace, DuelSlot
 
 from models.character import Character
 
+from gamerule import GameRule
+
 class Game:
     def __init__(self, players):
         self.players = players
@@ -18,6 +20,7 @@ class Game:
         self.ended_player = []
         self.turn_count = 0
         self.is_over = False
+        self.gamerule = GameRule()
         
         # 初始化游戏根上下文
         self.context = Context(game=self)
@@ -40,9 +43,10 @@ class Game:
         chosen_data = {p: [] for p in self.players}
 
         # === 阶段一：纯数据挑选阶段 ===
+        max_char_count = self.gamerule.MAX_CHAR_COUNT
         for p in self.players:
-            while len(chosen_data[p]) < 3:
-                print(f"\n--- [{p.name}] 请选择角色 (已选 {len(chosen_data[p])}/3) ---")
+            while len(chosen_data[p]) < max_char_count:
+                print(f"\n--- [{p.name}] 请选择角色 (已选 {len(chosen_data[p])}/{max_char_count}) ---")
                 for idx, c in enumerate(pool, start=1):
                     print(f"  [{idx}] {c['name']} ({c['rank']})")
                 
@@ -79,32 +83,15 @@ class Game:
         """推进一小步管线"""
         return self.pipeline.next_step()
 
-    def auto_place_in_duel(self, side, content, force_create = False):
+    def auto_place_in_duel(self, side, content):
         """Place in the nearest empty duel"""
-        # firstly check if duelspace has some empty duel for this side
-        if not force_create:
-            for i in range(len(self.duelspace.space)):
-                if self.duelspace.is_empty_duel(side, i):
-                    ds = self.duelspace.space[i]
-                    ds.add_content(side, content)
-                    return
-        ds = DuelSlot()
-        ds.add_content(side, content)
-        self.duelspace.append_new_duel(ds)
+        idx = self.duelspace.locate_nearest_empty_duel(side)
+        self.place_in_duel(side, content, idx)
 
     def place_in_duel(self, side, content, duel_idx):
-        if duel_idx < len(self.duelspace.space):
-            ds = self.duelspace.space[duel_idx]
-            ds.add_content(side, content)
-        else:
-            missing_duels = duel_idx+1 - len(self.duelspace.space)
-
-            for i in range(missing_duels):
-                eds = DuelSlot()
-                eds.add_content(side, [])
-                self.duelspace.append_new_duel(eds)
-            ds = self.duelspace.space[duel_idx]
-            ds.add_content(side, content)
+        from entry.builtin_operations import parse_builtin_operation
+        op = parse_builtin_operation(f"Place-Card: {side}, {duel_idx}", content)
+        self.context.eval_block(op)
 
 
     def switch_place_right(self):
