@@ -2,8 +2,9 @@ import random
 
 from models.duel import DuelSlot, DuelSpace
 from models.opcode import OpCode
-from game import Game
-from entry.builtin_operations import parse_builtin_operation
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from game import Game
 
 class Player():
     def __init__(self, side, name):
@@ -26,6 +27,7 @@ class Player():
 
 
     def draw_card(self, draw_count):
+        from entry.builtin_operations import parse_builtin_operation
         op = parse_builtin_operation(f"Draw-Card: {draw_count}", self)
         self.game.context.eval_block(op)
 
