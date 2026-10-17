@@ -14,6 +14,25 @@ while True:
 print(f"Speed determined. {self.game.players[0].name}: {self.game.players[0].speed} vs {self.game.players[1].name}: {self.game.players[1].speed}\\n - {fast_player.name} first!")
 """
 
+turn_start_draw_code = """
+
+for p in self.game.players:
+    char_count = len(p.characters)
+    draw_count = gamerule.DRAW_COUNT
+    if char_count == 1:
+        total_draw = draw_count
+        selection = False
+    else:
+        total_draw = draw_count - 1 + char_count
+        selection = True
+    if selection:
+        p.select_card(total_draw, draw_count)
+    else:
+        p.draw_card(total_draw)
+            
+
+"""
+
 logic_turn_end_code = """
 print("LogicTurnEnd!")
 """

@@ -1,9 +1,14 @@
 import random
 
 from models.duel import DuelSlot, DuelSpace
+from models.opcode import OpCode
+from game import Game
+from entry.builtin_operations import parse_builtin_operation
 
 class Player():
     def __init__(self, side, name):
+        self.game: Game
+        
         self.side = side
         self.name = name
 
@@ -19,6 +24,32 @@ class Player():
         """ONLY FOR TEMPORARY USE! NOT REAL GAME LOGIC!!!"""
         self.speed = random.randint(1,4)
 
+
+    def draw_card(self, draw_count):
+        op = parse_builtin_operation(f"Draw-Card: {draw_count}", self)
+        self.game.context.eval_block(op)
+
+    def select_card(self, total_draw, draw_count):
+        """抽X弃Y"""
+        for c in self.cardspace.draw.content[:total_draw]:
+            # we use print in mock phase
+            print(f"[{self.cardspace.draw.content.index(c) + 1}] {c.name}, cost: {c.cost}")
+
+        while True:
+            ask = list(input("Please select which card to discard. Type the index."))
+            if len(ask) != total_draw - draw_count:
+                print(f"Invalid discard amount! Expected: {total_draw - draw_count} inputs!")
+            else:
+                break
+        discard = []
+        for a in ask:
+            a = int(a)
+            a -= 1
+            discard.append(self.cardspace.draw.content[a])
+        for c in self.cardspace.draw.content[:total_draw]:
+            if c in discard:
+                self.cardspace.draw.move_card_to(c, self.cardspace.draw)
+        self.draw_card(draw_count)
 
     def place_card(self, game):
         input_text = input(f"[{self.name}] Place card in this duel? Type anything to place. If you typed \"end\", you will announce [End Placement] after you place your card; if you don't type anything, you will announce [End Placement] immediately. \n - Choice: ")

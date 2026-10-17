@@ -1,3 +1,5 @@
+from collections import deque
+
 from pipeline.pipeline_errors import (
     PipelineError,
     PipelineSystemError,
@@ -32,6 +34,25 @@ class Context():
         self.interceptions = []
         self.meta = {}
 
+        # 动态指令流与操作码调用栈 (Code Stream & Op Stack)
+        self.code_stream = None
+        self.op_stack = []
+
+    @property
+    def current_op(self):
+        """当前处于审查/执行状态的操作码"""
+        return self.op_stack[-1] if self.op_stack else None
+
+    @current_op.setter
+    def current_op(self, value):
+        if self.op_stack:
+            self.op_stack[-1] = value
+
+    def cancel_op(self):
+        """直接抹杀当前待执行的操作码（等同于纯栈操作 Pop OpCode）"""
+        if self.op_stack:
+            self.op_stack[-1] = None
+
     def push(self, value):
         self.stack.append(value)
 
@@ -53,6 +74,10 @@ class Context():
 
     def swap(self):
         """交换栈顶两个元素"""
+        b = self.pop()
+        a = self.pop()
+        self.push(b)
+        self.push(a)
 
     def store(self, name):
         """将栈顶存入寄存器"""
@@ -64,21 +89,44 @@ class Context():
 
     def eval_block(self, block):
         if not isinstance(block, list):
-            raise TypeError
-        for item in block:
-            if isinstance(item, list):
-                self.push(item)
-            elif callable(item):
-                item(self)
-            elif isinstance(item, OpCode):
-                self.dispatch_opcode(item, "BEFORE")
-                handler = DISPATCH_TABLE.get(item)
-                if not handler:
-                    raise PipelineSystemError(f"未实现的操作码: {item}")
-                handler(self)
-                self.dispatch_opcode(item, "AFTER")
-            else:
-                self.push(item)
+            raise TypeError("eval_block 必须接收列表形式的指令块")
+
+        # 支持指令流嵌套与重入：保存上一层指令流水线
+        previous_stream = self.code_stream
+        self.code_stream = deque(block)
+
+        try:
+            while self.code_stream:
+                item = self.code_stream.popleft()
+
+                if isinstance(item, list):
+                    # 嵌套列表作为 Quote / 数据入栈
+                    self.push(item)
+                elif callable(item):
+                    # 算子直接调用
+                    item(self)
+                elif isinstance(item, OpCode):
+                    self.op_stack.append(item)
+                    # 步骤 1: 触发 BEFORE 审查 (词条可在此操作 current_op 或 code_stream)
+                    self.dispatch_opcode(item, "BEFORE")
+
+                    # 步骤 2: 若当前指令未被抹除，执行对应的 handler
+                    if self.current_op is not None:
+                        executed_op = self.current_op
+                        handler = DISPATCH_TABLE.get(executed_op)
+                        if not handler:
+                            raise PipelineSystemError(f"未实现的操作码: {executed_op}")
+                        handler(self)
+                        # 步骤 3: 触发 AFTER 反应
+                        self.dispatch_opcode(executed_op, "AFTER")
+
+                    self.op_stack.pop()
+                else:
+                    # 普通操作数压入数据栈
+                    self.push(item)
+        finally:
+            # 恢复上一层嵌套的指令流
+            self.code_stream = previous_stream
 
     def dispatch_opcode(self, opcode, timing):
         for e in list(self.entries):

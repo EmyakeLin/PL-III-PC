@@ -18,6 +18,7 @@ from pipeline.pipeline_errors import (
 from player.player import Player
 
 from game import Game
+from gamerule import GameRule
 
 from loader import load_characters_from_packs
 
@@ -27,6 +28,7 @@ if __name__ == "__main__":
 
     game = Game([Player(1, "p1"), Player(2, "p2")])
 
+    gamerule = GameRule(game)
     
 
 

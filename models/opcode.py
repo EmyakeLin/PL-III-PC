@@ -37,9 +37,20 @@ def handle_dup(ctx):
 def handle_pop(ctx):
     ctx.pop()
 
+def handle_draw(ctx):
+    """Required: [subject, draw_count, OpCode.DRAW]"""
+    draw_count = ctx.pop()
+    subject = ctx.pop()
+    for _ in range(draw_count):
+        if len(subject.cardspace.draw.content) > 0:
+            subject.cardspace.draw.move_card_to(0, subject.cardspace.hand)
+        else:
+            break
+
 
 DISPATCH_TABLE = {
     OpCode.ADD: handle_add,
     OpCode.DUP: handle_dup,
     OpCode.POP: handle_pop,
+    OpCode.DRAW: handle_draw,
 }

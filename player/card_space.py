@@ -1,5 +1,6 @@
 
 from .player import Player
+from models.card import Card
 
 class CardList():
     def __init__(self, all_cards = []):
@@ -19,6 +20,7 @@ class CardList():
             return None
         return self.content[index]
 
+
     def remove_card(self, index):
         if index > len(self.content):
             raise ValueError("Card does not exist!")
@@ -26,9 +28,21 @@ class CardList():
 
 
     def move_card_to(self, index, target_deck: CardList):
-        if index > len(self.content):
-            raise ValueError("Card does not exist!")
-        target_deck.add_card(self.remove_card(index))
+        if isinstance(index, Card):
+            if not index in self.content:
+                raise ValueError("Card does not exist!")
+            idx = self.content.index(index)
+        elif isinstance(index, int):
+            if index > len(self.content):
+                raise ValueError("Card does not exist!")
+            idx = index
+        else:
+            raise TypeError("Wrong type: index must be int or Card!")
+        target_deck.add_card(self.remove_card(idx))
+
+    def shuffle(self):
+        import random
+        random.shuffle(self.content)
         
 class Hand(CardList):
     def __init__(self, player: Player, all_cards = []):
