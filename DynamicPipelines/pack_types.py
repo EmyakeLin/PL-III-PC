@@ -1,13 +1,2 @@
-from enum import IntEnum
-
-class PackType(IntEnum):
-    """
-    Pack 层级位阶（数值越大位阶越高，低位阶等待高位阶，谁都不用等 NONE）:
-    DUEL (5) > SKILL (4) > DICE (3) > CLASH (2) > HIT (1) > NONE (0)
-    """
-    NONE = 0
-    HIT = 1
-    CLASH = 2
-    DICE = 3
-    SKILL = 4
-    DUEL = 5
+# 功能已无效化转正至 pipeline.pack_types
+raise RuntimeError("DynamicPipelines 已废弃转正，请使用 pipeline 模块")

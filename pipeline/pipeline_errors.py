@@ -1,11 +1,13 @@
 # 由Gemini编写，且上下文未知。需要谨慎考量，后期需要AI Agent辅助审阅。
 
+from typing import Optional
+
 class PipelineError(Exception):
     """
     管线异常基类：所有管线内抛出的错误都继承自此类。
     自动携带发生错误的节点 ID、当前步数以及发生时的上下文快照。
     """
-    def __init__(self, message: str, node_id: str = None, step_index: int = None, payload: dict = None):
+    def __init__(self, message: str, node_id: Optional[str] = None, step_index: Optional[int] = None, payload: Optional[dict] = None):
         self.node_id = node_id
         self.step_index = step_index
         self.payload = payload or {}
