@@ -58,3 +58,22 @@ class Card():
 
     def __str__(self):
         return f"{self.name}, cost: {self.cost} of {self.character}, side {self.player.side}"
+
+    def get_meta(self, side = False, cost = False):
+        side_add = ""
+        cost_add = ""
+        if side:
+            side_add = f"Side {self.player.side} | "
+        if cost:
+            cost_add = f"| Cost: {self.cost}"
+        return side_add + f"From {self.character}, [{self.name}]" + cost_add
+
+    def print(self, owner = None):
+        """Pass owner to show its detail if it's in FACE-DOWN state if identity matchs"""
+        if self.state == CardState.PLACED_FACE_DOWN:
+            if owner != self.player:
+                print(f"From {self.character} | Face-down")
+                return
+            
+        print(f"From {self.character}: [{self.name}] | cost [{self.cost}]")
+        return

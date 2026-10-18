@@ -52,12 +52,9 @@ class PipelineSection():
         self.game = None
 
     def execute(self):
-        can_loop = eval(self.repeat_logic)
-        while can_loop:
+        while eval(self.repeat_logic, globals(), {"self": self, "game": self.game}):
             for node in self.nodes:
-                can_loop = eval(self.repeat_logic)
-                if not can_loop:
+                if not eval(self.repeat_logic, globals(), {"self": self, "game": self.game}):
                     break
                 node.game = self.game
                 node.execute()
-

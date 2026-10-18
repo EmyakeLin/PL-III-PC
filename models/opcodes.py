@@ -29,12 +29,16 @@ def handle_draw(ctx):
 
 def handle_place(ctx):
     """Required: [side, duel_index, card = Card(), OpCode.PLACE]"""
+    from models.card import CardState
     card = ctx.pop()
     idx = ctx.pop()
     side = ctx.pop()
     if idx < len(ctx.game.duelspace.space):
         ds = ctx.game.duelspace.space[idx]
         ds.add_content(side, card)
+        clist = ds.get_content(side)
+        for c in clist:
+            c.state = CardState.PLACED_FACE_DOWN
         if card.character:
             card.character.used_duels += 1
     else:
@@ -45,6 +49,9 @@ def handle_place(ctx):
             ctx.game.duelspace.append_new_duel(eds)
         ds = ctx.game.duelspace.space[idx]
         ds.add_content(side, card)
+        clist = ds.get_content(side)
+        for c in clist:
+            c.state = CardState.PLACED_FACE_DOWN
         if card.character:
             card.character.used_duels += 1
 

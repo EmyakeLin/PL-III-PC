@@ -185,6 +185,10 @@ from models.card import Card
 def stack_draw_card(count, target):
     return [target, count, OpCode.DRAW]
 
+# 置卡指令契约:
+# 1. side, idx, card_id 三项由文本解析提供（如 "Place-Card: 1, 0, 2066804535040"）；
+# 2. card 未在 args 中列出，作为待求解依赖：
+#    求解器以 owner（Game）为起点扫描战局对象图谱，通过 id(card) == card_id 精准捕获对应的 Card 实体并注入。
 @expect(
     args=["side", "idx", "card_id"],
     rules=lambda side, idx, card_id, card: (

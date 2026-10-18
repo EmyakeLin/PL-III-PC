@@ -91,6 +91,7 @@ class Player():
                             continue
 
                         print(f"{self.name} Place {self.cardspace.hand.content[ask].name} in Duel {self.game.duelspace.locate_nearest_empty_duel(self.side) +1}?")
+                        confirm = ""
                         confirm = input("Confirm? Type anyghing to confirm. Type \"end\" to announce [End Placement] after this place action.\n >")
                         if confirm != "":
                             print(f"{self.name} Placed {self.cardspace.hand.content[ask].name} in Duel {self.game.duelspace.locate_nearest_empty_duel(self.side) +1}.")

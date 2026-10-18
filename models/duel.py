@@ -4,7 +4,8 @@ class DuelSpace():
     def __init__(self, game):
         self.game = game
         self.space = []
-        self.total_duel_count = 0
+        self.current_duel_index = 0
+        
 
     def __str__(self):
         response = f"[DuelSpace] Total elements: {len(self.space)}"
@@ -34,6 +35,26 @@ class DuelSpace():
                 return i
         return len(self.space) # 如果所有已加载交锋都被占满了，那么第一个未被加载的交锋一定是空的，而且是最近空交锋（定义上来说）
 
+    def has_next_duel(self):
+        """检查是否还有未处理的有效交锋（自动剔除尾部空交锋槽位）"""
+        total_duel_count = len(self.space)
+        i = -1
+        while total_duel_count > 0:
+            verified = False
+            for side in self.space[i].content:
+                cards = self.space[i].content[side]
+                if cards and any(c != "" for c in cards):
+                    verified = True
+                    break
+            if verified:
+                break
+            else:
+                total_duel_count -= 1
+                i -= 1
+
+        return self.current_duel_index < total_duel_count
+
+
 
 class DuelSlot():
     def __init__(self):
@@ -46,8 +67,22 @@ class DuelSlot():
         else:
             self.content[side].append(content)
 
+    def get_content(self, side):
+        return self.content[side]
+
+    def has_next_card(self, side):
+        pass
+    
+
     def __str__(self):
-        return f"[DuelSlot] Content: {self.content}"
+        card_meta = []
+        for side, cards in sorted(self.content.items(), key=lambda item: item[0]):
+            for c in cards:
+                if hasattr(c, "get_meta"):
+                    card_meta.append(c.get_meta(side=True))
+                elif c != "":
+                    card_meta.append(f"Side {side} | {c}")
+        return f"[DuelSlot] Content: {card_meta}"
 
 
     

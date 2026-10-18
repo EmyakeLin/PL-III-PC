@@ -1,0 +1,151 @@
+SidePipeline采用动态展开的加载方式。
+拆词：
+动态展开 = “动态”+ “展开”。动态意味着随时都可以执行，展开意味着往里面推入新的东西。
+
+SidePipeline = Side + Pipeline。Side意味着它是属于一个Player的，Pipeline意味着它是Pipeline。
+
+具体设计：
+
+一共有三条线，两条SidePipeline，一条Pipeline。
+
+Pipeline会往SidePipeline上挂东西，而SidePipeline上的东西会保持一个高度同频的执行。
+
+check_duel_start属于Pipeline。check_duel_start时，Pipeline会检查，并将打包好的DUEL SECTION完整地发给满足条件的SidePipeline。语义：注意，我使用的是“打包好的”、“满足条件的”，而不是其他表述。要分析我为什么这么说。
+
+> 如果符合条件，那么before_duel_start, logic_duel_start, on_duel_start以及after_duel_start，这四者应该是共同进行的。
+
+然而，SidePipeline的packed DUEL SECTION只有before_duel_start, logic_duel_start, on_duel_start, after_duel_start, **wait_skill_section_expand_check**, before_duel_end, logic_duel_end, on_duel_end, after_duel_end, wait_duel_section_expand_check这几个Node。
+
+SidePipeline走到wait_xxx_section_expand_check节点时会被阻塞，此时必须需要外界指令才能继续。当满足条件的SidePipeline被wait_skill_section_expand阻塞时，Pipeline对被阻塞的SidePipeline发送打包好的SKILL SECTION并恢复其运行
+
+Packed SKILL SECTION:
+b/l/o_skill_use
+**wait_dice_section_expand_check**
+after_skill_use
+wait_skill_section_expand_check -- Why here's another check?
+
+在满足条件的SidePipeline被wait_dice_section_expand_check阻塞时，Pipeline对被阻塞的SidePipeline发送打包好的DICE SECTION并恢复其运行。
+
+Packed DICE SECTION:
+b/l/o_dice_use
+wait_can_clash_check
+after_dice_use
+wait_dice_section_expand_check
+
+在满足条件的SidePipeline被wait_can_clash_check阻塞时，Pipeline检测是否有满足条件的SidePipeline未被阻塞（理论上应该不存在）。如果所有满足条件的SidePipeline都被阻塞，那么向所有满足条件的SidePipeline推送Packed CLASH SECTION；如果只有一个满足条件的SidePipeline，判断并推送Packed DICE HIT；如果有多个满足条件的SidePipeline但有的尚未被阻塞，则等待所有被阻塞。
+
+Packed CLASH SECTION:
+b/l/o_dice_clash
+wait_clash_result_check
+after_dice_clash
+
+在满足条件的所有SidePipeline都被wait_clash_result_check阻塞时，Pipeline根据每个SidePipeline传入的骰子的拼点结果，分别传入Packed CLASH WIN, Packed CLASH LOSE, Packed CLASH DRAW并恢复其运行。
+
+Packed CLASH WIN:
+before_clash_win
+logic_resolve_clash_result
+on_clash_win
+wait_can_hit_check
+after_clash_win
+
+Packed CLASH LOSE:
+before_clash_lose
+logic_resolve_clash_result
+on_clash_lose
+after_clash_lose
+
+Packed CLASH DRAW:
+before_clash_draw
+logic_resolve_clash_result
+on_clash_draw
+after_clash_draw
+
+在满足条件的SidePipeline被wait_can_hit_check阻塞时，Pipeline根据该SidePipeline的骰子的性质去判定，如果can_hit那么就传入Packed DICE HIT，否则不传入任何东西，然后恢复其运行。
+
+Packed DICE HIT:
+b/l/o/a_dice_hit
+
+
+当所有满足条件的SidePipeline都已经被wait_duel_section_expand阻塞时（理论上应该同时），Pipeline会将打包好的DUEL SECTION完整地发给满足条件的SidePipeline并恢复其运行。
+
+**务必注意语义**：为什么有的地方是“所有”而有的地方没有强调？为什么有些地方有括号解释，有些没有？注意代词的微妙差别。
+
+
+
+
+
+
+
+我来列一下：默认逗号前的是A方，逗号后的是B方；A三动，B第一张卡两动，第二张卡两动（通过特殊规则在一交锋内置两卡）
+交锋1
+
+
+b/l/o_d_s, b/l/o_d_s
+
+
+(w_s_s_e_c, w_s_s_e_c)
+
+
+Pipeline下发SKILL SECTION
+
+
+blo_su（双方）
+
+阻塞，Pipeline发包
+
+
+
+wait can clash肯定是双方都true（而且是同时抵达的）
+然后拼点相关的逻辑
+
+然后根据result走到不同的包内，A是可以命中的
+
+on_clash_win, on_clash_lose
+
+wait_can_hit_check, **None**
+
+Pipeline发包
+
+b/l/o/a_hit, ALL NONE!!!!
+
+after_clash, after_clash
+after_dice_use, after_dice_use
+
+
+我直接说第二骰的情况了。
+
+(wait = true, wait = false)
+
+Pipeline发包，接收下一个DICE SECTION, after_skill_use! 
+
+**这里起了冲突！**由于系统尚且是不完善的，为了解决这个冲突，我们需要引入新的东西。
+SECTION TYPE = DUEL, SKILL, DICE。
+
+在这一个时刻，本该：
+before_dice_use, before_skill_use
+
+但是所有骰子的效果都必须完全对齐，不能让骰子的触发器对上技能的触发器啊！
+此时SECTION TYPE不等，那么就涉及到“谁等谁”的问题了。由于DUEL能产出SKILL，SKILL能产出DICE，所以让DICE等SKILL，SKILL等DUEL。谁都不用等None。这时候其实就解决了一切问题：我们不需要研究“到底能不能等到被等的那个东西产出DICE”了。为什么？
+
+所以：
+
+None, before_skill_use
+None, on_skill_use
+(wait_check = true, 获取Pipeline的包)
+！此时B方也有骰子了，并且它的SECTION TYPE也等于DICE了
+before_dice_use, before_dice_use
+
+
+
+Pack Type应该有（按顺序逻辑列）
+
+DUEL, SKILL, DICE, CLASH, HIT，非常准确！
+
+但是这也要求我们必须每一次都是发pack，不能再发单独的node了。现在有一个行为是单独发node，找出来并调整。
+
+
+
+
+
+
+
