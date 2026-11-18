@@ -1,0 +1,609 @@
+{
+  "requirements": [
+    {
+      "id": "visible-screen-1",
+      "targets": [
+        "screen-01"
+      ]
+    },
+    {
+      "id": "visible-screen-2",
+      "targets": [
+        "screen-02"
+      ]
+    },
+    {
+      "id": "visible-screen-3",
+      "targets": [
+        "screen-03"
+      ]
+    },
+    {
+      "id": "visible-screen-4",
+      "targets": [
+        "screen-04"
+      ]
+    },
+    {
+      "id": "visible-screen-5",
+      "targets": [
+        "screen-05"
+      ]
+    },
+    {
+      "id": "visible-screen-6",
+      "targets": [
+        "screen-06"
+      ]
+    },
+    {
+      "id": "visible-screen-7",
+      "targets": [
+        "screen-07"
+      ]
+    },
+    {
+      "id": "visible-screen-8",
+      "targets": [
+        "screen-08"
+      ]
+    },
+    {
+      "id": "visible-screen-9",
+      "targets": [
+        "screen-09"
+      ]
+    },
+    {
+      "id": "visible-screen-10",
+      "targets": [
+        "screen-10"
+      ]
+    },
+    {
+      "id": "visible-screen-11",
+      "targets": [
+        "screen-11"
+      ]
+    },
+    {
+      "id": "visible-screen-12",
+      "targets": [
+        "screen-12"
+      ]
+    },
+    {
+      "id": "visible-screen-13",
+      "targets": [
+        "screen-13"
+      ]
+    },
+    {
+      "id": "visible-screen-14",
+      "targets": [
+        "screen-14"
+      ]
+    },
+    {
+      "id": "visible-screen-15",
+      "targets": [
+        "screen-15"
+      ]
+    },
+    {
+      "id": "visible-screen-16",
+      "targets": [
+        "screen-16"
+      ]
+    },
+    {
+      "id": "visible-screen-17",
+      "targets": [
+        "screen-17"
+      ]
+    },
+    {
+      "id": "visible-screen-18",
+      "targets": [
+        "screen-18"
+      ]
+    },
+    {
+      "id": "visible-screen-19",
+      "targets": [
+        "screen-19"
+      ]
+    },
+    {
+      "id": "visible-screen-20",
+      "targets": [
+        "screen-20"
+      ]
+    },
+    {
+      "id": "visible-screen-21",
+      "targets": [
+        "screen-21"
+      ]
+    },
+    {
+      "id": "visible-screen-22",
+      "targets": [
+        "screen-22"
+      ]
+    },
+    {
+      "id": "visible-screen-23",
+      "targets": [
+        "screen-23"
+      ]
+    },
+    {
+      "id": "visible-screen-24",
+      "targets": [
+        "screen-24"
+      ]
+    },
+    {
+      "id": "visible-screen-25",
+      "targets": [
+        "screen-25"
+      ]
+    },
+    {
+      "id": "visible-screen-26",
+      "targets": [
+        "screen-26"
+      ]
+    },
+    {
+      "id": "visible-screen-27",
+      "targets": [
+        "screen-27"
+      ]
+    },
+    {
+      "id": "visible-screen-28",
+      "targets": [
+        "screen-28"
+      ]
+    },
+    {
+      "id": "visible-screen-29",
+      "targets": [
+        "screen-29"
+      ]
+    },
+    {
+      "id": "visible-screen-30",
+      "targets": [
+        "screen-30"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "setup",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-01"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-02"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-03"
+          ],
+          "next": [
+            "3"
+          ]
+        },
+        {
+          "id": "3",
+          "targets": [
+            "screen-04"
+          ],
+          "next": [
+            "4"
+          ]
+        },
+        {
+          "id": "4",
+          "targets": [
+            "screen-06"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "placement",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-06"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-07"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-08"
+          ],
+          "next": [
+            "3"
+          ]
+        },
+        {
+          "id": "3",
+          "targets": [
+            "screen-09"
+          ],
+          "next": [
+            "4"
+          ]
+        },
+        {
+          "id": "4",
+          "targets": [
+            "screen-10"
+          ],
+          "next": [
+            "5"
+          ]
+        },
+        {
+          "id": "5",
+          "targets": [
+            "screen-11"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "combat",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-11"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-12"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-13"
+          ],
+          "next": [
+            "3"
+          ]
+        },
+        {
+          "id": "3",
+          "targets": [
+            "screen-14"
+          ],
+          "next": [
+            "4"
+          ]
+        },
+        {
+          "id": "4",
+          "targets": [
+            "screen-23"
+          ],
+          "next": [
+            "5"
+          ]
+        },
+        {
+          "id": "5",
+          "targets": [
+            "screen-04"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "inspection",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-06"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-15"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-25"
+          ],
+          "next": [
+            "3"
+          ]
+        },
+        {
+          "id": "3",
+          "targets": [
+            "screen-15"
+          ],
+          "next": [
+            "4"
+          ]
+        },
+        {
+          "id": "4",
+          "targets": [
+            "screen-06"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "decks",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-06"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-16"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-27"
+          ],
+          "next": [
+            "3"
+          ]
+        },
+        {
+          "id": "3",
+          "targets": [
+            "screen-16"
+          ],
+          "next": [
+            "4"
+          ]
+        },
+        {
+          "id": "4",
+          "targets": [
+            "screen-06"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-06"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-18"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-20"
+          ],
+          "next": [
+            "3"
+          ]
+        },
+        {
+          "id": "3",
+          "targets": [
+            "screen-18"
+          ],
+          "next": [
+            "4"
+          ]
+        },
+        {
+          "id": "4",
+          "targets": [
+            "screen-06"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "rules",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-18"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-19"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-18"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "recovery",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-07"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-21"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-06"
+          ],
+          "terminal": true
+        }
+      ]
+    },
+    {
+      "id": "terminal",
+      "starts": [
+        "0"
+      ],
+      "nodes": [
+        {
+          "id": "0",
+          "targets": [
+            "screen-14"
+          ],
+          "next": [
+            "1"
+          ]
+        },
+        {
+          "id": "1",
+          "targets": [
+            "screen-24"
+          ],
+          "next": [
+            "2"
+          ]
+        },
+        {
+          "id": "2",
+          "targets": [
+            "screen-01"
+          ],
+          "terminal": true
+        }
+      ]
+    }
+  ]
+}

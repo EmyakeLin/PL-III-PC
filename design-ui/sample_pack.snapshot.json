@@ -1,0 +1,289 @@
+{
+  "faction": "铁契军团",
+  "characters": [
+    {
+      "id": "char_iron_vanguard",
+      "name": "铁壁先锋",
+      "rank": "ELITE",
+      "max_hp": 15,
+      "passive_skills": [
+        
+      ],
+      "skills": [
+        {
+          "id": "char_iron_vanguard_01",
+          "name": "试探刺击",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+                
+              ]
+            }
+          ]
+        },
+        {
+          "id": "char_iron_vanguard_02",
+          "name": "盾袭推进",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {
+              "type": "guard",
+              "level": 2,
+              "base_value": 2,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        },
+        {
+          "id": "char_iron_vanguard_03",
+          "name": "破势重砸",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 3,
+              "base_value": 2,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+                "2"
+              ]
+            },
+            {
+              "type": "guard",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            }
+          ]
+        },
+        {
+          "id": "char_iron_vanguard_04",
+          "name": "全线守备",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "base_value": 2,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            }
+          ]
+        },
+        {
+          "id": "char_iron_vanguard_05",
+          "name": "铁誓反击",
+          "cost": 3,
+          "entries": [],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "base_value": 2,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "base_value": 3,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "char_crimson_duelist",
+      "name": "绯红决斗者",
+      "rank": "ELITE",
+      "max_hp": 12,
+      "passive_skills": [
+      ],
+      "skills": [
+        {
+          "id": "char_crimson_duelist_01",
+          "name": "伺机闪避",
+          "cost": 0,
+          "entries": [],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            }
+          ]
+        },
+        {
+          "id": "char_crimson_duelist_02",
+          "name": "弧影穿刺",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 2,
+              "base_value": 2,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            }
+          ]
+        },
+        {
+          "id": "char_crimson_duelist_03",
+          "name": "疾风连刺",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        },
+        {
+          "id": "char_crimson_duelist_04",
+          "name": "回旋掠斩",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 3,
+              "base_value": 1,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": []
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "base_value": 2,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        },
+        {
+          "id": "char_crimson_duelist_05",
+          "name": "决意贯穿",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "base_value": 3,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        },
+        {
+          "id": "char_crimson_duelist_06",
+          "name": "尖刺必杀",
+          "cost": 2,
+          "entries": [],
+          "out_of_combat": true,
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "base_value": 3,
+              "final_bonus": 0,
+              "multiplier": 1,
+              "calc_formula": "+",
+              "entries": [
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
