@@ -79,6 +79,7 @@ class Dice:
         self.final_score = None
         self.clash_score = None
         self.clash_result = None
+        self.win_branch_skipped = False
         self.destroyed = False
         self.critical = False
 
@@ -89,6 +90,14 @@ class Dice:
     @property
     def is_attack(self):
         return self.type in ("slash", "pierce", "blunt")
+
+    def make_blank(self):
+        """Only this use changes. The printed die remains available on redraw."""
+        self.type = "blank"
+        self.entries = []
+        self.repeat_requested = False
+        self.attack_redirected = False
+        self.attack_target = None
 
     @property
     def printed_level(self):

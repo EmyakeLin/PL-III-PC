@@ -37,6 +37,15 @@ def kind_of(owner):
 class Entry:
     """An instantiated rule. One owner may have several in card-pack order."""
 
+    @property
+    def owning_card(self):
+        return self.owner if kind_of(self.owner) == "card" else getattr(self.owner, "card", None)
+
+    @property
+    def blanked(self):
+        return (getattr(self.owner, "type", None) == "blank"
+                or getattr(self.owning_card, "range_deficit", 0) >= 3)
+
     def __init__(self, owner, trigger_type, trigger, operation, timing="AFTER", *,
                  scope="global", subject="any", target=None, authority=0, when=None,
                  period=None, origin=None, turn_limit=None):

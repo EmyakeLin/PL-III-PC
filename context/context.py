@@ -40,8 +40,37 @@ class Context:
             self.op_stack[-1] = value
 
     def cancel_op(self, authority=None, *, frame=-1):
-        if self.op_stack and (authority is None or authority >= self._op_events[frame].get("authority", 0)):
+        if (self.op_stack and not self._range_blocks_op(self.op_stack[frame], self._op_events[frame])
+                and (authority is None or authority >= self._op_events[frame].get("authority", 0))):
             self.op_stack[frame] = None
+
+    def range_blocks_target(self, target):
+        """Use the actual originating skill; character and status passives remain independent."""
+        card = self.executions[-1].entry.owning_card if self.executions else None
+        if card is None or not card.range_deficit or card.range_opponent is None:
+            return False
+        if isinstance(target, EntryExecution):
+            target = target.entry.owner
+        protected = card.range_opponent.character
+        return character_of(target) is protected or target is protected.player
+
+    def _range_blocks_op(self, opcode, fields):
+        if not self.executions:
+            return False
+        if opcode == OpCode.ENTRY:
+            return self.range_blocks_target(fields.get("execution"))
+        if opcode == OpCode.CLASH:
+            return any(self.range_blocks_target(die) for die in fields["clash_pair"].dice_dict.values())
+        if opcode in (OpCode.VALUE_CEILING, OpCode.VALUE_FLOOR):
+            return self.range_blocks_target(self.event.get("die") or self.event.get("card"))
+        operands = OPERANDS.get(opcode, ())
+        for key in ("die", "card", "target", "pool", "player"):
+            if key in operands:
+                target = fields[key]
+                if target == "target":
+                    target = self.event.get("target")
+                return self.range_blocks_target(target)
+        return False
 
     def push(self, value):
         self.stack.append(value)
@@ -119,9 +148,16 @@ class Context:
         mark = len(self.stack) - len(names)
         fields = dict(zip(names, self.stack[mark:]))
         originating_entry = self.executions[-1] if self.executions else None
+        if self._range_blocks_op(opcode, fields) or (
+                opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
+            del self.stack[mark:]
+            return None
         if originating_entry is not None:
             fields["execution"] = originating_entry
-        if opcode in VALUE_RESOLVERS:
+        if opcode == OpCode.RESOLVE_RANGE_DEFICIT:
+            card = fields["card"]
+            fields.update(value_ref=ValueBounds(), source=card.character, side=card.player.side)
+        elif opcode in VALUE_RESOLVERS:
             die = fields["die"]
             actor = character_of(die)
             fields.update(value_ref=ValueBounds(), source=actor, side=actor.player.side if actor else None,
@@ -210,6 +246,8 @@ class Context:
     def _in_scope(self, entry):
         owner, event = entry.owner, self.event
         character = character_of(owner)
+        if entry.blanked:
+            return False
         if character is not None and not character.is_alive:
             return False
         if getattr(owner, "destroyed", False) or getattr(getattr(owner, "state", None), "name", "") == "NEGATED":
@@ -367,7 +405,15 @@ class Context:
                     return
                 self.turn_entry_uses[key] = used + 1
             with self.binding(execution=self.event.get("execution", invocation)):
-                run_effect(self, entry, entry.operation)
+                # BEFORE programs can edit pending operands directly (e.g. a fee or
+                # a score). A protected skill still lets the listener act on its own caster.
+                protected_operands = (self.stack.copy() if self.event.get("timing") == "BEFORE"
+                                      and self._range_blocks_op(self.current_op, self.event) else None)
+                try:
+                    run_effect(self, entry, entry.operation)
+                finally:
+                    if protected_operands is not None:
+                        self.stack[:] = protected_operands
             if entry.trigger != OpCode.ENTRY and not invocation.cancelled:
                 with self.binding(execution=invocation, entry_trigger=entry.trigger):
                     self.dispatch_opcode(OpCode.ENTRY, "AFTER")
@@ -391,6 +437,8 @@ class Context:
         if die in self.hit_modifiers:
             fields["hit_modifiers"] = self.hit_modifiers[die]
         for e in self.entries:
+            if e.blanked:
+                continue
             if e.period and node_id == e.period.get("from") and self._window_owner(e, fields):
                 e.window_open = True
             if (node_id == "before_skill_use" and e.owner is card
@@ -413,7 +461,7 @@ class Context:
                         e.next_card = None
                         if e.detached:
                             self.entries.remove(e)
-                    if e.owner is card or getattr(e.owner, "card", None) is card:
+                    if not e.blanked and (e.owner is card or getattr(e.owner, "card", None) is card):
                         e.next_armed = True
             if node_id == "after_skill_use":
                 self.active_cards.pop(side, None)

@@ -51,6 +51,9 @@ class DuelSlot:
     def get_content(self, side):
         return self.content.get(side, [])
 
+    def play_mode(self, card):
+        return None
+
     def get_current_card(self, side):
         cards = self.get_content(side)
         index = self.current_card_index.get(side, 0)

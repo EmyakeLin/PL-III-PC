@@ -40,7 +40,7 @@ def main(argv=None):
         parser.error("双人对局至少需要两名可选角色")
     try:
         print("光点计划 III · 本地双人对局")
-        print("每方选择 1～3 名角色。先扣置，再统一开牌；按交锋顺序使用技能，消灭对方所有角色获胜。")
+        print("每方选择 1～3 名角色。双方扣置后先处理开牌前交锋，再统一开牌。消灭对方所有角色获胜。")
         game = Game([Player(1, "玩家一"), Player(2, "玩家二")], rng=random.Random(args.seed))
         game.select_character(characters)
         play_game(game, step=args.step)

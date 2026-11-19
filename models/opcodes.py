@@ -59,6 +59,12 @@ def handle_resolve_value(ctx):
     return die.record_value(ctx.current_op, ctx.event["value_ref"].apply(value))
 
 
+def handle_range_deficit(ctx):
+    value, card = ctx.pop(), ctx.pop()
+    card.range_deficit = min(3, max(0, int(ctx.event["value_ref"].apply(value))))
+    return card.range_deficit
+
+
 def handle_value_bound(ctx):
     bound, value_ref = ctx.pop(), ctx.pop()
     if ctx.current_op == OpCode.VALUE_FLOOR:
@@ -195,17 +201,23 @@ def handle_place(ctx):
         raise ValueError("交锋索引不能为负")
     if (getattr(card, "destroyed", False) or card.player.side != side
             or not card.character.is_alive
-            or any(card in placed.content.get(side, ()) for placed in game.duelspace.space)):
+            or any(card in placed.content.get(side, ()) for placed in game.board_slots())):
         return False
-    while idx >= len(game.duelspace.space):
-        game.duelspace.append_new_duel(DuelSlot(game))
-    slot = game.duelspace.space[idx]
+    space = game.active_duelspace
+    # Opening a new numbered pre-reveal duel requires a player's attack declaration.
+    if space is not game.duelspace and idx >= len(space.space):
+        return False
+    while idx >= len(space.space):
+        space.append_new_duel(DuelSlot(game))
+    slot = space.space[idx]
     side_cards = slot.content.get(side, [])
     zones = card.player.cardspace
-    if card.character and not any(c.character is card.character for c in side_cards if isinstance(c, Card)):
+    if (space is game.duelspace and card.character
+            and not any(c.character is card.character for c in side_cards if isinstance(c, Card))):
         card.character.used_duels += 1
     slot.add_content(side, card)
-    card.state = CardState.PLACED_FACE_UP if getattr(game, "cards_revealed", False) else CardState.PLACED_FACE_DOWN
+    face_up = game.cards_revealed or space is not game.duelspace
+    card.state = CardState.PLACED_FACE_UP if face_up else CardState.PLACED_FACE_DOWN
     for zone in (zones.hand, zones.draw, zones.delayed_discard, zones.out_of_combat):
         if card in zone.content:
             zone.remove_card(zone.content.index(card))
@@ -232,7 +244,7 @@ def handle_move_card(ctx):
     destination = getattr(zones, zone)
     if card in destination.content:
         return False
-    for slot in ctx.game.duelspace.space:
+    for slot in ctx.game.board_slots():
         if slot.remove_card(card):
             card.reset_for_draw()
             destination.add_card(card)
@@ -400,6 +412,7 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.RESOLVE_RANGE_DEFICIT: handle_range_deficit,
     OpCode.LOSE_HP: handle_lose_hp, OpCode.TURN_COST_ADD: handle_turn_cost_add,
     OpCode.TURN_DUELS_ADD: handle_turn_duels_add,
     **dict.fromkeys(VALUE_RESOLVERS, handle_resolve_value),
@@ -428,6 +441,7 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.RESOLVE_RANGE_DEFICIT: ("card", "value"),
     OpCode.LOSE_HP: ("target", "amount"), OpCode.TURN_DUELS_ADD: ("target", "amount"),
     OpCode.TURN_COST_ADD: ("pool", "amount"),
     **dict.fromkeys(VALUE_RESOLVERS, ("die", "value")),

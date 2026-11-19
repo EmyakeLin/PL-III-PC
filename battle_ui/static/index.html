@@ -127,11 +127,16 @@
       <div id="handoff" class="handoff" hidden>
         <svg class="handoff-icon icon" aria-hidden="true"><use href="#i-cards"/></svg>
         <h3 id="handoff-title">交接对局</h3>
-        <button id="handoff-action" class="btn btn-primary" type="button">接手</button>
+        <div class="handoff-seats">
+          <button id="handoff-action" class="btn btn-primary" type="button">接手</button>
+          <button id="handoff-other" class="btn btn-outline" type="button" hidden>接手</button>
+        </div>
       </div>
       <footer id="actions" class="actions">
         <div class="action-context"><span id="action-note" class="action-note"></span><button id="detail-btn" class="btn btn-quiet" type="button" hidden>技能详情</button></div>
         <div class="action-buttons">
+          <button id="switch-seat" class="btn btn-quiet" type="button" hidden>交给对方操作</button>
+          <button id="respond-btn" class="btn btn-outline" type="button" hidden>处理待迎击</button>
           <button id="pass-btn" class="btn btn-quiet" type="button" hidden>交出置卡权</button>
           <button id="end-btn" class="btn btn-outline" type="button" hidden>结束置卡</button>
           <button id="primary-btn" class="btn btn-primary" type="button" disabled>扣置技能</button>

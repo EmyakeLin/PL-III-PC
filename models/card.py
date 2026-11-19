@@ -1,6 +1,32 @@
 from enum import Enum, auto
 
 
+RANGE_NAMES = ("近战", "普通远程", "强化远程", "极限远程")
+
+
+def validate_skill_traits(data):
+    for key in ("range_level", "ignore_range"):
+        value = data.get(key, 0)
+        if type(value) is not int or not 0 <= value <= 3:
+            raise ValueError(f"{key} 必须是 0 到 3 的整数")
+    for key in ("pre_reveal", "interceptable"):
+        if key in data and type(data[key]) is not bool:
+            raise ValueError(f"{key} 必须是布尔值")
+
+
+def describe_skill_traits(data):
+    traits = []
+    if data.get("range_level"):
+        traits.append(RANGE_NAMES[data["range_level"]])
+    if data.get("ignore_range"):
+        traits.append(f"无视 {data['ignore_range']} 级远程")
+    if data.get("pre_reveal"):
+        traits.append("可在开牌前交锋打出")
+    if not data.get("interceptable", True):
+        traits.append("不可拦截")
+    return " · ".join(traits)
+
+
 class CardState(Enum):
     DEFAULT = auto()
     PLACED_FACE_UP = auto()
@@ -10,12 +36,17 @@ class CardState(Enum):
 
 class Card:
     def __init__(self, player, data, character=None):
+        validate_skill_traits(data)
         self.player = player
         self.character = character
         self.data = data
         self.id = data["id"]
         self.name = data["name"]
         self.cost = data["cost"]
+        self.range_level = data.get("range_level", 0)
+        self.ignore_range = data.get("ignore_range", 0)
+        self.range_opponent = None
+        self.range_deficit = 0
         self.out_of_combat = bool(data.get("out_of_combat"))
         self.entries = data.get("entries", [])
         self.dice = data.get("dice", [])
@@ -48,6 +79,19 @@ class Card:
             self.instantiated_dice[index] = die
         return self.instantiated_dice[index]
 
+    def set_range_opponent(self, opponent):
+        """Retain this pairing for excess dice, until the next skill joins."""
+        self.range_opponent = opponent
+        self.range_deficit = 0
+        if opponent is None:
+            return
+        deficit = max(0, opponent.range_level - self.range_level - self.ignore_range)
+        if deficit:
+            from models.opcode import OpCode
+            ctx = self.player.game.context
+            with ctx.binding(opponent_card=opponent, target=opponent.character):
+                ctx.eval_block([self, deficit, OpCode.RESOLVE_RANGE_DEFICIT])
+
     def advance_die(self):
         if self.instantiated_dice and self.has_next_die():
             index = self.current_dice_index
@@ -67,6 +111,8 @@ class Card:
         self.current_dice_index = 0
         self._dice_order = list(range(len(self.dice)))
         self.final_bonus = self.level_bonus = 0
+        self.range_opponent = None
+        self.range_deficit = 0
         self.use_state.clear()
         self.state = CardState.DEFAULT
         self.destroyed = False
@@ -91,7 +137,7 @@ class Card:
         from models.dice import describe_die
         actions = " → ".join(describe_die(die) for die in self.dice)
         effects = "；".join(describe_entry(entry) for entry in self.entries)
-        return " · ".join(part for part in [str(self), actions, effects] if part)
+        return " · ".join(part for part in [str(self), describe_skill_traits(self.data), actions, effects] if part)
 
 
 def describe_entry(entry):

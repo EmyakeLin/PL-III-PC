@@ -119,3 +119,9 @@
 | 手牌与主操作 | `ownerName`, `tile`, `head`, `dice`, `ownHand`, `keepIds`, `tiles`, `owner`, `selected`, `legal`, `chosen`, `remaining`, `quota` | 持牌人名称、卡片按钮、牌头与骰序、己方手牌、应保留的 ID 和已有节点、持牌角色、当前选择、是否可置、此卡是否选中、剩余交锋与额度提示。 |
 | 阶段切换与焦点 | `handoff`, `winner`, `finished`, `lastMessage`, `message`, `line`, `labels`, `state`, `previous`, `newMatch`, `wasHandoff`, `privateSideChanged`, `first`, `focus`, `p` | 交接状态、胜方、是否终局、最近的公开事件和最终文案及节点、主操作名称、服务端新旧快照、重开或离开交接标志、视角变化、交接后的首个操作和回退焦点，以及遍历中的玩家。 |
 | 请求和事件 | `action`, `fields`, `request`, `response`, `payload`, `generation`, `event` | 动作名、附加参数、带版本的提交内容、HTTP 响应、服务端回包、请求发出时的页面代次，以及触发点击、取消或离开页面的事件。 |
+| 开牌前交锋 | `deciding`, `early`, `earlyCombat`, `kind`, `target`, `targets`, `enemy`, `count`, `item` | 是否从手牌作决定、是否为开牌前槽、是否正在结算开牌前交锋、交锋类别、当前目标、可选目标（角色或常规槽）、敌方、目标槽的公开扣牌数及选择项。 |
+| 远程和操作标签 | `ranges`, `traits`, `characteristics`, `primary`, `secondary` | 各远程等级对应的牌面名称、详情词条、手牌摘要，以及各阶段的主、次操作标签。 |
+| 同屏接手与迎击 | `secondSeat`, `shared`, `dualRole`, `declaring`, `phaseName`, `attacking`, `pending`, `legalAttack`, `notes` | 可接手的另一方、双方皆可接手标记、兼有进攻和回应权标记、声明阶段及名称、自己的主动权、待回应场数、所选牌可否进攻和当前操作说明。 |
+| 迎击选择框 | `duelSelect`, `duelField`, `cardSelect`, `cardField`, `group`, `attack`, `respond`, `pass` | 待迎击编号与标签、己方手牌与标签、进攻方已公开的牌组与本场进攻牌，以及对所选编号迎击或放行的操作。 |
+| 空手回应 | `hasReplyCard` | 当前是否有可用于迎击的手牌，控制打出迎击牌按钮；空手时仍可明确放行。 |
+| 公开等待时间 | `responseTimer`, `timing`, `clock`, `start`, `end`, `now`, `seconds`, `minutes`, `remainder`, `tick` | 页面刷新计时文字的任务、该场的公开时间记录与显示元素、声明与结束或观察时的毫秒时间、当前毫秒时间、经过的整秒与分秒显示，以及更新待回应场次文字的回调。 |

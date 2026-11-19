@@ -4,11 +4,12 @@ from types import SimpleNamespace
 
 from context.context import Context
 from gamerule import GameRule
-from models.card import CardState, describe_entry
+from models.card import CardState, describe_entry, describe_skill_traits
 from models.character import Character, CharacterRank, ONE_TURN_STATUSES
 from models.dice import describe_die
 from models.duel import DuelSpace
 from models.opcode import OpCode
+from models.pre_reveal import PreRevealPhase
 from pipeline.pipeline import Pipeline
 from pipeline.pipeline_steps import step_list
 
@@ -39,6 +40,7 @@ class Game:
         self._private_player = None
         self.context = Context(game=self)
         self.duelspace = DuelSpace(self)
+        self.pre_reveal = PreRevealPhase(self)
         self.pipeline = Pipeline(self, step_list)
         self.tmp = SimpleNamespace()
 
@@ -102,7 +104,8 @@ class Game:
             dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
             entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
             zone = "战斗外" if skill.get("out_of_combat") else ""
-            print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费", dice, entries, zone) if s))
+            print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
+                                                  describe_skill_traits(skill), dice, entries, zone) if s))
 
     def begin_private_view(self, player):
         """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
@@ -120,6 +123,25 @@ class Game:
 
     def next_step(self):
         return self.pipeline.next_step()
+
+    @property
+    def active_duelspace(self):
+        if self.pre_reveal.phase == "resolving":
+            return self.pre_reveal.space
+        return self.duelspace
+
+    def board_slots(self):
+        yield from self.duelspace.space
+        yield from self.pre_reveal.space.space
+
+    def start_pre_reveal_declarations(self):
+        self.pre_reveal.start()
+        self.run_pre_reveal_declarations()
+
+    def run_pre_reveal_declarations(self):
+        if self.pre_reveal.actor is not None:
+            from pre_reveal_cli import run_declarations
+            run_declarations(self)
 
     def open_turn(self):
         number = self.turn_count + 1
@@ -148,7 +170,8 @@ class Game:
         if result == "win":
             character.won_clash_this_turn = True
         elif result == "lose":
-            character.player.lost_duels.add(self.duelspace.current_duel_index)
+            space = self.active_duelspace
+            character.player.lost_duels.add((space, space.current_duel_index))
 
     def draw_phase(self):
         self.prepare_turn()
@@ -210,16 +233,19 @@ class Game:
 
     def auto_place_in_duel(self, side, content):
         owner = content.character
-        if owner is None or owner.used_duels >= owner.max_duels:
+        if self.pre_reveal.phase != "idle" or owner is None or owner.used_duels >= owner.max_duels:
             return False
         return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
 
     def place_in_duel(self, side, content, duel_idx):
+        # Once regular placement closes, only an executing rule effect may insert a card.
+        if self.pre_reveal.phase != "idle" and not self.context.executions:
+            return False
         player = content.player
         owner = content.character
         if player.side != side or duel_idx < 0 or not owner.is_alive:
             return False
-        if any(content in slot.content.get(side, ()) for slot in self.duelspace.space):
+        if any(content in slot.content.get(side, ()) for slot in self.board_slots()):
             return False
         zones = player.cardspace
         old_zone = next((zone for zone in (zones.hand, zones.draw, zones.delayed_discard,
@@ -231,9 +257,9 @@ class Game:
         if old_zone is not None and content not in old_zone.content:
             return False
         self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
-        if duel_idx >= len(self.duelspace.space):
+        if duel_idx >= len(self.active_duelspace.space):
             return False
-        slot = self.duelspace.space[duel_idx]
+        slot = self.active_duelspace.space[duel_idx]
         if content not in slot.content.get(side, ()):
             return False
         event["duel"] = slot
@@ -277,7 +303,7 @@ class Game:
             player.turn_common_cost_bonus = 0
             self.context.eval_block([player, 0, 0, OpCode.RESET_COST])
 
-        on_board = [card for slot in self.duelspace.space for cards in slot.content.values()
+        on_board = [card for slot in self.board_slots() for cards in slot.content.values()
                     for card in cards]
         remaining = set(on_board)
         for card in [*self.used_cards, *on_board]:
@@ -290,6 +316,7 @@ class Game:
         self.used_cards.clear()
         self.duelspace.space.clear()
         self.duelspace.current_duel_index = 0
+        self.pre_reveal = PreRevealPhase(self)
         self.ended_player.clear()
         self.cards_revealed = False
         self.turn_count += 1

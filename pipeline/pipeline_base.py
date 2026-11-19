@@ -4,10 +4,11 @@ from .pipeline_errors import PipelineError
 
 
 class PipelineNode:
-    def __init__(self, id, operation_code, is_period=False, period_args=None):
+    def __init__(self, id, operation_code, is_period=False, period_args=None, *, ready=None):
         self.id = id
         self.period_args = period_args or {}
         self.is_period = is_period
+        self.ready = ready
         self.game = None
         if callable(operation_code):
             self.operation = operation_code

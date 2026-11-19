@@ -17,6 +17,10 @@ _PHASES = {
     )
     for node in nodes
 }
+for _node in pipeline_steps.reveal_phase:
+    if _node.id == "logic_reveal":
+        break
+    _PHASES[_node.id] = "pre_reveal"
 
 
 def _printed_die(spec):
@@ -33,6 +37,9 @@ def _printed_die(spec):
 def _printed_skill(data):
     return {
         "id": data["id"], "name": data["name"], "cost": data["cost"],
+        "pre_reveal": data.get("pre_reveal", False),
+        "interceptable": data.get("interceptable", True),
+        "range_level": data.get("range_level", 0), "ignore_range": data.get("ignore_range", 0),
         "starts_out_of_combat": bool(data.get("out_of_combat")),
         "dice": [_printed_die(spec) for spec in data.get("dice", ())],
         "entries": [describe_entry(entry) for entry in data.get("entries", ())],
@@ -66,7 +73,8 @@ def _live_die(die):
         "level": die.level.value if resolved else None, "roll_max": die.roll_max if resolved else None,
         "base_value": die.base_value, "rolled_value": die.value or None,
         "final_score": die.final_score, "clash_score": die.clash_score,
-        "result": die.clash_result, "critical": die.critical, "destroyed": die.destroyed,
+        "result": die.clash_result, "win_branch_skipped": die.win_branch_skipped,
+        "critical": die.critical, "destroyed": die.destroyed,
     }
 
 
@@ -90,6 +98,8 @@ class Displayer:
         node = pipe.step_list[index].id if 0 <= index < len(pipe.step_list) else None
         if game.is_over:
             phase = "finished"
+        elif game.pre_reveal.phase in ("attack", "intercept", "ready", "resolving"):
+            phase = "pre_reveal"
         elif pipe.in_duel_phase:
             phase = "combat"
         elif node is not None:
@@ -116,8 +126,33 @@ class Displayer:
                 ]}
                 for number, slot in enumerate(game.duelspace.space, 1)
             ],
-            "combat": self._combat() if pipe.in_duel_phase and game.cards_revealed and not game.is_over else None,
+            "pre_reveal": self._pre_reveal(),
+            "combat": self._combat() if pipe.in_duel_phase and not game.is_over else None,
         }
+
+    def _pre_reveal(self):
+        phase = self._game.pre_reveal
+        duels = []
+        for number, slot in enumerate(phase.space.space, 1):
+            if slot.intercept_card is not None:
+                target = {"kind": "intercept", "name": slot.intercept_card.name}
+            elif slot.target_duel_index is not None:
+                target = {"kind": "duel", "number": slot.target_duel_index + 1}
+            else:
+                target = {"kind": "character", "name": slot.target_character.name}
+            duels.append({
+                "number": number, "ready": slot.ready, "attacking_side": slot.attacking_side, "target": target,
+                "attack_card_id": slot.attack_card.id,
+                "pulled_card_id": slot.pulled_card.id if slot.pulled_card else None,
+                "resolved_target_id": slot.resolved_target.id if slot.resolved_target else None,
+                "sides": [{"side": p.side, "cards": [
+                    {**_visible_card(c), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)]}
+                          for p in self._game.players],
+            })
+        return {"phase": phase.phase, "duels": duels,
+                "eligible_sides": [p.side for p in phase.eligible_players()],
+                "actor_side": phase.actor.side if phase.actor else None,
+                "attacking_side": phase.attacker.side if phase.attacker else None}
 
     def catalog(self) -> dict:
         """Public printed rules for the selected roster, independent of card locations."""
@@ -170,9 +205,12 @@ class Displayer:
 
     def _combat(self):
         game = self._game
-        index = game.duelspace.current_duel_index
+        space = game.active_duelspace
+        index = space.current_duel_index
+        early = space is game.pre_reveal.space
         pipes = game.pipeline.side_pipelines
-        if any(pipe.card is not None and not self._board_visible(pipe.card) for pipe in pipes.values()):
+        if not early and (not game.cards_revealed or any(
+                pipe.card is not None and not self._board_visible(pipe.card) for pipe in pipes.values())):
             return None
         sides = []
         for player in game.players:
@@ -183,10 +221,13 @@ class Displayer:
                 "side": player.side, "node": pipe.current_node.id if pipe.current_node else None,
                 "waiting_at": pipe.blocked_at.id if pipe.blocked_at else None,
                 "card_id": card.id if card is not None else None,
+                "play_mode": space.space[index].play_mode(card) if early and card is not None else None,
+                "range_deficit": card.range_deficit if card is not None else 0,
                 "character_id": card.character.id if card is not None else None,
                 "target_id": target.id if target is not None and card is not None else None,
                 "die_number": card.current_dice_index + 1 if die is not None else None,
                 "die": _live_die(die),
             })
-        return {"duel_number": index + 1 if 0 <= index < len(game.duelspace.space) else None,
+        return {"kind": "pre_reveal" if early else "regular",
+                "duel_number": index + 1 if 0 <= index < len(space.space) else None,
                 "round_id": game.pipeline.round_id, "sides": sides}

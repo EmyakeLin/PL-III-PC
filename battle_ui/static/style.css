@@ -284,6 +284,7 @@ button.duel-card:hover strong { text-decoration: underline; text-underline-offse
   text-align: center;
 }
 .duel-row[data-active="true"] .duel-index { color: var(--surface); background: var(--acting); }
+.response-time { font-variant-numeric: tabular-nums; font-weight: 400; }
 .hand-area { border-top: 2px solid var(--ink); padding-top: var(--space-4); }
 .hand-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); font-variant-numeric: tabular-nums; }
 .hand {
@@ -350,6 +351,8 @@ button.duel-card:hover strong { text-decoration: underline; text-underline-offse
 }
 .hand:has(> .empty-state) { grid-auto-columns: 1fr; }
 .handoff { display: grid; justify-items: center; align-content: center; min-height: 185px; gap: var(--space-3); background: var(--surface); color: var(--ink); }
+.handoff-seats { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--space-2); }
+.dialog-actions { flex-wrap: wrap; }
 .handoff-icon { width: 24px; height: 24px; color: var(--muted); }
 .notice { margin-top: var(--space-3); font-size: 14px; color: var(--red); }
 .notice:empty { display: none; }

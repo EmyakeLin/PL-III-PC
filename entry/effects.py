@@ -94,7 +94,7 @@ def run_effect(ctx, entry, operation):
     if name == "place_skill":
         player = character_of(entry.owner).player
         duel = ctx.event.get("duel")
-        if duel not in ctx.game.duelspace.space:
+        if duel not in ctx.game.active_duelspace.space:
             return
         zone_name = data.get("zone", "out_of_combat")
         if zone_name not in ("hand", "draw", "delayed_discard", "out_of_combat"):
@@ -104,11 +104,11 @@ def run_effect(ctx, entry, operation):
         card = next((c for c in zone.content if c.id == card_id and c.player is player
                      and c.character.is_alive and not c.destroyed), None)
         if card is not None:
-            ctx.game.place_in_duel(player.side, card, ctx.game.duelspace.space.index(duel))
+            ctx.game.place_in_duel(player.side, card, ctx.game.active_duelspace.space.index(duel))
         return
     if name in ("roll_add", "roll_set", "base_add", "final_add"):
         die = select_entity(ctx, data.get("target", entry.target or "die"), entry.owner)
-        if die is None:
+        if die is None or ctx.range_blocks_target(die):
             return
         amount = int(data.get("amount", args[0] if args else 0))
         if name == "base_add":
@@ -122,6 +122,8 @@ def run_effect(ctx, entry, operation):
             ctx.roll_adjustments.setdefault(die, []).append((name, amount))
         return
     if name in ("damage_add", "damage_multiply", "armor"):
+        if ctx.range_blocks_target(ctx.event.get("target")):
+            return
         # A conditional program can run between the listener and the pending damage.
         modifiers = ctx.event.get("modifiers") if ctx.event.get("opcode") == "DAMAGE" else None
         if modifiers is None:

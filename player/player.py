@@ -40,7 +40,8 @@ class Player:
                     break
 
     def lost_clash_in_previous_duel(self):
-        return self.game.duelspace.current_duel_index - 1 in self.lost_duels
+        space = self.game.active_duelspace
+        return (space, space.current_duel_index - 1) in self.lost_duels
 
     def set_default_target(self, target):
         self.default_target_character = target

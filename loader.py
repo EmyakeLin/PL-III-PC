@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 def load_characters_from_packs(packs_dir=None):
+    from models.card import validate_skill_traits
     from models.character import CharacterRank, RANK_SKILL_COUNT
     from models.dice import Dice
 
@@ -38,6 +39,7 @@ def load_characters_from_packs(packs_dir=None):
                     raise ValueError(f"{char['name']} 应有 {RANK_SKILL_COUNT[rank]} 张常规技能")
                 card_ids = set()
                 for card in char["skills"]:
+                    validate_skill_traits(card)
                     if card["id"] in card_ids or card["cost"] < 0:
                         raise ValueError(f"{char['name']} 的技能 ID 重复或费用无效")
                     card_ids.add(card["id"])

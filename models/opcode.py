@@ -21,6 +21,7 @@ class OpCode(Enum):
     RESOLVE_DIE_LEVEL = auto()
     RESOLVE_FINAL_SCORE = auto()
     RESOLVE_CLASH_SCORE = auto()
+    RESOLVE_RANGE_DEFICIT = auto()
     VALUE_FLOOR = auto()
     VALUE_CEILING = auto()
     

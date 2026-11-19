@@ -279,7 +279,7 @@ class Character:
         removed.extend(card for card in zones.hand.content if card.character is self)
         for pile in (zones.draw, zones.delayed_discard):
             removed.extend(pile.remove_character(self))
-        for slot in self.game.duelspace.space:
+        for slot in self.game.board_slots():
             removed.extend(slot.remove_character(self))
         for card in dict.fromkeys(removed):
             card.destroyed = True
