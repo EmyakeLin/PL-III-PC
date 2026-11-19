@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f3eb">
+  <title>光点计划 III · 对战</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <svg xmlns="http://www.w3.org/2000/svg" class="symbol-sheet" aria-hidden="true">
+    <defs>
+      <symbol id="i-brand" viewBox="0 0 40 40">
+        <path fill="currentColor" d="m20 0 4.9 14.3L40 20l-15.1 5.7L20 40l-4.9-14.3L0 20l15.1-5.7z"/>
+        <path fill="#f6f3eb" d="m20 11 2.1 6.2L28 20l-5.9 2.8L20 29l-2.1-6.2L12 20l5.9-2.8z"/>
+      </symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 5v15m0-14C9 4 6 4 3 4v14c4 0 7 1 9 3 2-2 5-3 9-3V4c-3 0-6 0-9 2Z"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
+      <symbol id="i-cross" viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></symbol>
+      <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M3 12h17m-7-7 7 7-7 7"/></symbol>
+      <symbol id="i-log" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h10"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><path d="m12 1 11 11-11 11L1 12Zm0 9v7m0-11v1.5"/></symbol>
+      <symbol id="i-cards" viewBox="0 0 24 24"><path d="M8 3h12v15h-3M4 6h12v15H4z"/></symbol>
+      <symbol id="i-draw" viewBox="0 0 24 24"><path d="m3 9 9-5 9 5-9 5Zm0 4 9 5 9-5M3 17l9 5 9-5"/></symbol>
+      <symbol id="i-slash" viewBox="0 0 24 24"><path d="m5 19 4-4m-3-3 6 6m-3-4 9-11 2-1-1 5-9 8"/></symbol>
+      <symbol id="i-pierce" viewBox="0 0 24 24"><path d="m3 21 13-13m-8 1 5 1 1 5m0-11 7-1-1 7-4-2z"/></symbol>
+      <symbol id="i-blunt" viewBox="0 0 24 24"><path d="m4 21 9-9m-5-6 4-4 10 10-4 4z"/></symbol>
+      <symbol id="i-block" viewBox="0 0 24 24"><path d="M12 2 3 6v6c0 4 4 7 9 10 5-3 9-6 9-10V6zM12 6v11"/></symbol>
+      <symbol id="i-evade" viewBox="0 0 24 24"><path d="m3 15 7-7h5l-7 7m3 2 7-7h4"/></symbol>
+      <symbol id="i-blank" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></symbol>
+      <symbol id="i-speed" viewBox="0 0 24 24"><path d="m3 17 9-10h4l-4 5m0 5 9-10"/></symbol>
+      <symbol id="i-cost" viewBox="0 0 24 24"><path d="m12 2 8 10-8 10-8-10z"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 2 8 3v7c0 4-5 8-8 10-3-2-8-6-8-10V5z"/></symbol>
+      <symbol id="i-crossed" viewBox="0 0 24 24"><path d="m4 2 3 1 13 15-2 2L4 5zM20 2l-3 1-4 5m-4 4-5 6 2 2 5-6m4 4 4-4m-13 0 4 4"/></symbol>
+      <pattern id="flag-hatch" width="7" height="7" patternUnits="userSpaceOnUse">
+        <path d="M-2 2 2-2m-2 9 7-7m-2 9 4-4" stroke="white" stroke-opacity=".17" fill="none" stroke-width=".8"/>
+      </pattern>
+      <symbol id="standard-one" viewBox="0 0 124 156">
+        <path fill="currentColor" d="M0 0h124v119l-62 34L0 119z"/>
+        <path fill="url(#flag-hatch)" d="M0 0h36L0 36zm0 111 50 28 12 14L0 119zm124-57v18L78 98z"/>
+        <g fill="none" stroke="#d7e2cd">
+          <path opacity=".56" d="M5 0v116l57 32 57-32V0M12 0v15m100-15v15M44 127l18 10 18-10"/>
+          <path opacity=".55" d="M31 70 62 39l31 31-31 31zM24 70h8m60 0h8"/>
+        </g>
+        <g fill="#eef0d9">
+          <path d="m23 91 19-29 48-24-37 34-19 9 17-17-18 12z"/>
+          <path d="m44 91 16-20 34-17-27 28-12 5 11-13z"/>
+          <path d="m56 100 12-16 18-8-17 18z"/>
+          <path d="m62 21 3 5-3 5-3-5z"/>
+        </g>
+      </symbol>
+      <symbol id="standard-two" viewBox="0 0 124 156">
+        <path fill="currentColor" d="M0 0h124v119l-62 34L0 119z"/>
+        <path fill="url(#flag-hatch)" d="M124 0H88l36 36zm0 111-50 28-12 14 62-34zM0 54v18l46 26z"/>
+        <g fill="none" stroke="#eed5bb">
+          <path opacity=".6" d="M5 0v116l57 32 57-32V0M12 0v15m100-15v15M44 127l18 10 18-10"/>
+          <path opacity=".55" d="m31 70 31-31 31 31-31 31zM24 70h8m60 0h8"/>
+        </g>
+        <g fill="#fff0d8">
+          <path d="m62 34 5 20-3 34-2 13-3-13-2-34z"/>
+          <path d="m30 49 23 14 3 10-22-15zm64 0L71 63l-3 10 22-15z"/>
+          <path d="m34 67 21 12 2 8-18-11zm56 0L69 79l-2 8 18-11z"/>
+          <path d="m43 85 14 7 3 9-13-11zm38 0-14 7-3 9 13-11zM62 21l3 5-3 5-3-5z"/>
+        </g>
+      </symbol>
+    </defs>
+  </svg>
+
+  <header class="masthead">
+    <div class="masthead-inner">
+      <h1 class="wordmark"><svg aria-hidden="true" viewBox="0 0 40 40"><use href="#i-brand"/></svg>光点计划 <span>III</span></h1>
+      <nav class="page-tools" aria-label="对局菜单">
+        <button id="rules" type="button" class="btn btn-quiet"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg>规则</button>
+        <button id="new-game" type="button" class="btn btn-outline"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>新对局</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="board">
+    <section id="fighters" class="matchup" aria-label="出战双方与回合">
+      <button id="fighter-1" class="fighter fighter-one" type="button">
+        <svg class="standard" viewBox="0 0 124 156" aria-hidden="true"><use href="#standard-one"/></svg>
+        <span class="fighter-sheet">
+          <span class="fighter-side" data-field="side">玩家一</span>
+          <strong class="fighter-name" data-field="name">—</strong>
+          <span class="fighter-meta" data-field="meta"></span>
+          <span class="health"><span class="health-label">生命</span><b data-field="hp">—</b><span class="health-denominator">/ <span data-field="max-hp">—</span></span></span>
+          <progress class="health-bar" data-field="hp-bar" value="0" max="1" aria-label="玩家一生命"></progress>
+          <span class="fighter-stats" data-field="stats"></span>
+          <span class="fighter-status" data-field="statuses"></span>
+        </span>
+      </button>
+      <div class="round">
+        <span class="round-label">回合</span>
+        <strong id="round-number" class="round-number">—</strong>
+        <span id="phase-name" class="phase-name">准备中</span>
+      </div>
+      <button id="fighter-2" class="fighter fighter-two" type="button">
+        <svg class="standard" viewBox="0 0 124 156" aria-hidden="true"><use href="#standard-two"/></svg>
+        <span class="fighter-sheet">
+          <span class="fighter-side" data-field="side">玩家二</span>
+          <strong class="fighter-name" data-field="name">—</strong>
+          <span class="fighter-meta" data-field="meta"></span>
+          <span class="health"><span class="health-label">生命</span><b data-field="hp">—</b><span class="health-denominator">/ <span data-field="max-hp">—</span></span></span>
+          <progress class="health-bar" data-field="hp-bar" value="0" max="1" aria-label="玩家二生命"></progress>
+          <span class="fighter-stats" data-field="stats"></span>
+          <span class="fighter-status" data-field="statuses"></span>
+        </span>
+      </button>
+    </section>
+
+    <section class="arena" aria-labelledby="arena-title">
+      <header class="section-heading">
+        <div class="heading-group"><h2 id="arena-title">交锋区</h2><span id="arena-note" class="subline"></span></div>
+        <button id="history-toggle" class="btn btn-quiet" type="button"><svg class="icon" aria-hidden="true"><use href="#i-log"/></svg>战报</button>
+      </header>
+      <div id="duels" class="duel-list"></div>
+    </section>
+
+    <section id="hand-area" class="hand-area" aria-labelledby="hand-title">
+      <header class="section-heading">
+        <h2 id="hand-title">手牌</h2>
+        <span id="hand-meta" class="hand-meta"></span>
+      </header>
+      <div id="hand" class="hand"></div>
+      <div id="handoff" class="handoff" hidden>
+        <svg class="handoff-icon icon" aria-hidden="true"><use href="#i-cards"/></svg>
+        <h3 id="handoff-title">交接对局</h3>
+        <button id="handoff-action" class="btn btn-primary" type="button">接手</button>
+      </div>
+      <footer id="actions" class="actions">
+        <div class="action-context"><span id="action-note" class="action-note"></span><button id="detail-btn" class="btn btn-quiet" type="button" hidden>技能详情</button></div>
+        <div class="action-buttons">
+          <button id="pass-btn" class="btn btn-quiet" type="button" hidden>交出置卡权</button>
+          <button id="end-btn" class="btn btn-outline" type="button" hidden>结束置卡</button>
+          <button id="primary-btn" class="btn btn-primary" type="button" disabled>扣置技能</button>
+        </div>
+      </footer>
+    </section>
+    <p id="notice" class="notice" role="status" aria-live="polite"></p>
+    <noscript><p class="notice">请启用 JavaScript 以进行对局。</p></noscript>
+  </main>
+
+  <dialog id="modal" class="dialog" aria-labelledby="modal-title">
+    <div class="dialog-layout">
+      <header class="dialog-head"><h2 id="modal-title"></h2><button id="modal-close" class="btn btn-icon" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="#i-cross"/></svg></button></header>
+      <div id="modal-body" class="dialog-body"></div>
+      <footer id="modal-actions" class="dialog-actions"></footer>
+    </div>
+  </dialog>
+</body>
+</html>

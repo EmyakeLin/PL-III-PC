@@ -1,6 +1,9 @@
 from enum import Enum, auto
+import random
 
 from models.card import Card
+from models.opcode import OpCode
+
 
 class CharacterRank(Enum):
     NORMAL = auto()
@@ -8,111 +11,284 @@ class CharacterRank(Enum):
     BOSS = auto()
     EMPOWERED_BOSS = auto()
 
-RANK_DUEL_MAP = {
-    CharacterRank.NORMAL: 1,
-    CharacterRank.ELITE: 2,
-    CharacterRank.BOSS: 3,
-    CharacterRank.EMPOWERED_BOSS: 4,
+
+class SpeedDie:
+    """An unprinted d4 used only to determine initiative."""
+    card = None
+
+    def __init__(self, owner):
+        self.owner = owner
+        self.value = 0
+
+
+RANK_DUEL_MAP = dict(zip(CharacterRank, (1, 2, 3, 4)))
+RANK_SKILL_COUNT = dict(zip(CharacterRank, (3, 5, 7, 11)))
+STATUS_ALIASES = {
+    "burn": "烧伤", "bleed": "裂血", "energy": "能源", "breath": "呼吸",
+    "呼吸法": "呼吸", "stagger": "失衡", "fatal_stagger": "致命失衡",
+}
+STATUS_CAPS = {"裂血": 9, "呼吸": 6, "失衡": 20}
+ONE_TURN_STATUSES = ("强壮", "虚弱", "迅捷", "束缚")
+SHIELD_FIELDS = {
+    "normal": "shield", "shield": "shield", "护盾": "shield", "普通护盾": "shield",
+    "reinforced": "reinforced_shield", "强化护盾": "reinforced_shield",
+    "concept": "concept_shield", "概念护盾": "concept_shield",
+}
+DAMAGE_GRADES = {
+    "normal": "normal", "普通": "normal", "普通伤害": "normal",
+    "pierce": "pierce", "piercing": "pierce", "armor_piercing": "pierce", "穿甲": "pierce",
+    "concept": "concept", "super_armor_piercing": "concept", "超穿甲": "concept",
 }
 
-class Character():
-    def __init__(self, data: dict, player):
-        self.player = player
-        self.game = self.player.game if self.player else None
 
+class Character:
+    def __init__(self, data, player):
+        self.player = player
+        self.game = getattr(player, "game", None)
         self.data = data
-        self.faction = data["faction"]
+        self.faction = data.get("faction", "")
         self.id = data["id"]
         self.name = data["name"]
         self.rank = CharacterRank[data["rank"]]
-        self.max_duels = RANK_DUEL_MAP[self.rank]
-        
+        self.turn_duel_bonus = 0
+        self.next_turn_duels = 0
+        self.won_clash_this_turn = False
+        self.speed = 0
         self.max_hp = data["max_hp"]
-        self.passive_skill_data= data["passive_skills"]
-        self.passive_skills = []
+        self.passive_skill_data = data.get("passive_skills", [])
+        self.passive_skills = self.passive_skill_data
         self.skill_data = data["skills"]
         self.skills = []
-
         self.hp = self.max_hp
         self.is_alive = True
         self.used_duels = 0
-        
-        # 护盾防护体系 (每回合结束清空)
-        self.shield = 0              # 普通护盾
-        self.reinforced_shield = 0   # 强化护盾
-        self.concept_shield = 0      # 概念护盾
-
-        self.independent_cost = self.game.gamerule.CHAR_INDEPENDENT_COST if (self.game and hasattr(self.game, "gamerule")) else 1
+        self.reset_shields()
+        self.independent_cost = 0
         self.used_independent_cost = 0
+        self.turn_cost_adjustment = 0
+        self.statuses = {}
+        self._status_listeners = {}
+        self.bleed_burst = False
+        self._spent_fatal_stagger = False
+        if self.game:
+            self.game.status_entries.update(data.get("status_entries", {}))
+            self.game.turn_end_statuses.update(data.get("turn_end_statuses", ()))
+            self.game.context.register_entries(self, self.passive_skill_data)
+            player.register_faction_passives(self)
 
-        
+    @property
+    def max_duels(self):
+        return max(0, self.base_duels(self.data) + self.turn_duel_bonus)
+
+    @staticmethod
+    def base_duels(data):
+        return data.get("base_max_duels", RANK_DUEL_MAP[CharacterRank[data["rank"]]])
+
+    @property
+    def available_cost(self):
+        return self.independent_cost + self.turn_cost_adjustment - self.used_independent_cost
+
+    def queue_status(self, name, amount, source=None):
+        """Apply an already scheduled status before next turn's draw and speed roll."""
+        if self.is_alive:
+            source = self if source is None else source
+            authority = self.game.context.event.get("authority", 0)
+            self.game.next_turn_statuses.append((source, self, name, amount, authority))
+
+    def roll_speed(self):
+        die = SpeedDie(self)
+        with self.game.context.binding(roll_kind="speed"):
+            rolled = self.game.context.eval_block([1, 4, 0, die, OpCode.ROLL])
+        raw = min(4, max(1, die.value)) if rolled is not None else 0
+        self.speed = raw + self.statuses.get("迅捷", 0) - self.statuses.get("束缚", 0)
+        return self.speed
+
     def init_cards(self):
-        for s in self.skill_data:
-            self.skills.append(Card(self.player, s, self))
+        self.skills = [Card(self.player, skill, self) for skill in self.skill_data]
 
     def setup_deck(self):
-        for i in range(len(self.skills)):
-            if self.skills[i].out_of_combat == True:
-                self.player.cardspace.out_of_combat.add_card(self.skills[i])
-                continue
-            self.player.cardspace.draw.add_card(self.skills[i])
+        for card in self.skills:
+            zone = self.player.cardspace.out_of_combat if card.out_of_combat else self.player.cardspace.draw
+            zone.add_card(card)
 
-    # ==============================================================================
-    # >>> Generated by Gemini >>>
-    # ==============================================================================
-    def take_damage(self, amount: int, penetration: str = "normal", attack_type: str = "none") -> int:
-        """
-        承受伤害结算 (严格遵守光点三防护矩阵与攻击形态):
-        - penetration: "normal" 普通 / "pierce" 穿甲 / "concept" 超穿甲
-        - attack_type: "slash" 斩击 / "pierce" 突刺 / "blunt" 砸击 / "none" 无物理形态
-        返回最终实际扣除的生命值。
-        """
-        p_type = str(penetration).lower()
-        a_type = str(attack_type).lower()
-        remaining = amount
+    def reset_shields(self):
+        self.shield = self.reinforced_shield = self.concept_shield = 0
 
-        if p_type == "normal":
-            if self.reinforced_shield > 0:
-                blocked = min(self.reinforced_shield, remaining)
-                self.reinforced_shield -= blocked
-                remaining -= blocked
-            if remaining > 0 and self.shield > 0:
-                blocked = min(self.shield, remaining)
-                self.shield -= blocked
-                remaining -= blocked
-        elif p_type in ("pierce", "piercing", "armor_piercing"):
-            if self.reinforced_shield > 0:
-                blocked = min(self.reinforced_shield, remaining)
-                self.reinforced_shield -= blocked
-                remaining -= blocked
-            if self.shield > 0:
-                self.shield -= min(self.shield, amount)
-        elif p_type in ("concept", "super_armor_piercing"):
-            if self.concept_shield > 0:
-                blocked = min(self.concept_shield, remaining)
-                self.concept_shield -= blocked
-                remaining -= blocked
-            if self.reinforced_shield > 0:
-                self.reinforced_shield -= min(self.reinforced_shield, amount)
-            if self.shield > 0:
-                self.shield -= min(self.shield, amount)
+    def combat_summary(self):
+        parts = [f"{self.name} {self.hp}/{self.max_hp} HP"]
+        for label, value in (("护盾", self.shield), ("强化护盾", self.reinforced_shield),
+                             ("概念护盾", self.concept_shield)):
+            if value:
+                parts.append(f"{label} {value}")
+        for label, value in self.statuses.items():
+            if label == "裂血" and self.bleed_burst:
+                label = "裂血（爆发）"
+            parts.append(f"{label} {value}")
+        return " · ".join(parts)
 
-        self.hp -= remaining
-        if self.hp <= 0:
-            self.hp = 0
-            self.is_alive = False
-            print(f"💀 角色 [{self.name}] 阵亡！卡牌立即移出战斗！")
-            if self.game and hasattr(self.game, "duelspace"):
-                for slot in self.game.duelspace.space:
-                    for side, cards in list(slot.content.items()):
-                        for c in list(cards):
-                            if getattr(c, "character", None) is self:
-                                cards.remove(c)
-                                if hasattr(self.player, "cardspace") and hasattr(self.player.cardspace, "out_of_combat"):
-                                    self.player.cardspace.out_of_combat.add_card(c)
-            if self.game and hasattr(self.game, "check_game_over"):
-                self.game.check_game_over()
-        return remaining
-    # ==============================================================================
-    # <<< Generated by Gemini <<<
-    # ==============================================================================
+    def add_shield(self, kind, amount):
+        field = SHIELD_FIELDS[kind]
+        value = max(0, getattr(self, field) + int(amount))
+        setattr(self, field, value)
+        return value
+
+    def add_status(self, name, amount):
+        """Apply a status through the same listeners as a card or delayed effect."""
+        name = STATUS_ALIASES.get(name, name)
+        if self.game:
+            return self.game.context.eval_block([self, name, amount, OpCode.STATUS])
+        return self.apply_status_delta(name, amount)
+
+    def apply_status_delta(self, name, amount):
+        """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
+        if not self.is_alive:
+            return 0
+        name = STATUS_ALIASES.get(name, name)
+        previous = self.statuses.get(name, 0)
+        value = max(0, previous + int(amount))
+        cap = self.data.get("resource_rules", {}).get("caps", {}).get(name, STATUS_CAPS.get(name))
+        if cap is not None:
+            value = min(value, cap)
+        if value:
+            self.statuses[name] = value
+            if self.game and not previous and name in self.game.status_entries:
+                specs = self.game.status_entries[name]
+                self._status_listeners[name] = self.game.context.register_entries(self, specs)
+        else:
+            self.clear_status(name)
+        if name == "裂血":
+            self.bleed_burst = value >= 6 or (self.bleed_burst and value > 0)
+        return value
+
+    def clear_status(self, name):
+        """End a status and its listeners, including expiry after the holder dies."""
+        self.statuses.pop(name, None)
+        if name == "裂血":
+            self.bleed_burst = False
+        listeners = self._status_listeners.pop(name, None)
+        if listeners:
+            entries = self.game.context.entries
+            entries[:] = [entry for entry in entries if entry not in listeners]
+
+    def begin_dice_round(self):
+        self._spent_fatal_stagger = False
+
+    def damage_multiplier(self):
+        return 2 if self.statuses.get("致命失衡", 0) else 1
+
+    def _status_damage(self, name, amount, penetration):
+        if self.game:
+            return self.game.context.deal_damage(self, self, amount, penetration, damage_cause=name)
+        return self.take_damage(amount, penetration)
+
+    def on_duel_start(self):
+        if self.is_alive and self.statuses.get("裂血", 0) >= 3:
+            self._status_damage("裂血", 1, "pierce")
+
+    def after_damage_part(self):
+        if self.is_alive and self.bleed_burst:
+            self._status_damage("裂血爆发", 1, "pierce")
+            self.add_status("裂血", -2)
+
+    def on_attack_hit(self, die, target):
+        stacks = self.statuses.get("呼吸", 0)
+        rng = getattr(self.game, "rng", random)
+        die.critical = stacks > 0 and rng.randint(1, 6) <= stacks
+        if die.critical and self.game:
+            print(f"{self.name} 触发暴击。")
+            self.game.context.dispatch_pipeline("on_critical", source=self, target=target,
+                                                side=self.player.side, card=die.card, die=die)
+        return die.critical
+
+    def trigger_stagger(self):
+        if not self.is_alive:
+            return False
+        rng = getattr(self.game, "rng", random)
+        if rng.randint(1, 20) <= self.statuses.get("失衡", 0):
+            self.add_status("致命失衡", 1)
+            self.add_status("失衡", -5)
+            return True
+        self.add_status("失衡", 2)
+        return False
+
+    def on_turn_end(self):
+        if not self.is_alive:
+            return
+        burn = self.statuses.get("烧伤", 0) // 4
+        if burn:
+            actual = self._status_damage("烧伤", min(3, burn), "normal")
+            if actual:
+                self.add_status("烧伤", -burn - 2)
+
+    def heal(self, amount):
+        if not self.is_alive or amount <= 0:
+            return 0
+        old_hp = self.hp
+        self.hp = min(self.max_hp, self.hp + int(amount))
+        return self.hp - old_hp
+
+    def lose_hp(self, amount):
+        if not self.is_alive or amount <= 0:
+            return 0
+        lost = min(self.hp, amount)
+        self.hp -= lost
+        if not self.hp:
+            self._die()
+        return lost
+
+    def take_damage(self, amount, penetration="normal", attack_type="none", *, modified=False):
+        if not self.is_alive or amount <= 0:
+            return 0
+        grade = DAMAGE_GRADES[getattr(penetration, "name", str(penetration)).lower()]
+        incoming = max(0, int(amount if modified else amount * self.damage_multiplier()))
+        remaining = incoming
+        # A shield below the incident grade wears down even when it cannot absorb damage.
+        if grade == "concept":
+            absorb = ("concept_shield",)
+            erode = ("shield", "reinforced_shield")
+        elif grade == "pierce":
+            absorb = ("reinforced_shield",)
+            erode = ("shield",)
+        else:
+            absorb = ("reinforced_shield", "shield")
+            erode = ()
+        for field in absorb:
+            blocked = min(getattr(self, field), remaining)
+            setattr(self, field, getattr(self, field) - blocked)
+            remaining -= blocked
+        for field in erode:
+            setattr(self, field, max(0, getattr(self, field) - incoming))
+        lost = min(self.hp, remaining)
+        self.hp -= lost
+        if lost and self.statuses.get("致命失衡") and not self._spent_fatal_stagger:
+            self.add_status("致命失衡", -1)
+            self._spent_fatal_stagger = True
+        if not self.hp:
+            self._die()
+        return lost
+
+    def _die(self):
+        self.is_alive = False
+        if not self.game:
+            return
+        self.game.context.unregister_entries(self)
+        self._status_listeners.clear()
+        self.player.retire_faction_passives(self)
+        zones = self.player.cardspace
+        removed = list(self.skills)
+        removed.extend(card for card in zones.hand.content if card.character is self)
+        for pile in (zones.draw, zones.delayed_discard):
+            removed.extend(pile.remove_character(self))
+        for slot in self.game.duelspace.space:
+            removed.extend(slot.remove_character(self))
+        for card in dict.fromkeys(removed):
+            card.destroyed = True
+            self.game.context.unregister_entries(card)
+            for die in card.instantiated_dice or ():
+                if die:
+                    die.destroyed = True
+                    self.game.context.unregister_entries(die)
+            if card not in zones.out_of_combat.content:
+                zones.out_of_combat.add_card(card)
+        zones.hand.remove_character(self)
+        self.game.check_game_over()

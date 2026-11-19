@@ -23,9 +23,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-                
-              ]
+              "entries": ["2"]
             }
           ]
         },
@@ -51,8 +49,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["1"]
             }
           ]
         },
@@ -132,8 +129,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["3"]
             }
           ]
         }
@@ -177,8 +173,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["1"]
             },
             {
               "type": "evade",
@@ -204,8 +199,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["1"]
             },
             {
               "type": "pierce",
@@ -214,8 +208,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["1"]
             }
           ]
         },
@@ -241,8 +234,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["1"]
             }
           ]
         },
@@ -250,7 +242,17 @@
           "id": "char_crimson_duelist_05",
           "name": "决意贯穿",
           "cost": 2,
-          "entries": [],
+          "entries": [
+            {
+              "trigger": "on_clash_win",
+              "operation": {
+                "op": "place_skill",
+                "card_id": "char_crimson_duelist_06",
+                "zone": "out_of_combat"
+              },
+              "description": "拼点胜利时，将战斗外的「尖刺必杀」追加到本交锋；使用时另付费用"
+            }
+          ],
           "dice": [
             {
               "type": "pierce",
@@ -259,8 +261,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["2 穿甲"]
             }
           ]
         },
@@ -278,8 +279,7 @@
               "final_bonus": 0,
               "multiplier": 1,
               "calc_formula": "+",
-              "entries": [
-              ]
+              "entries": ["2 穿甲"]
             }
           ]
         }

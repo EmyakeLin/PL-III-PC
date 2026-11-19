@@ -1,0 +1,273 @@
+{
+  "faction": "阵线演练",
+  "characters": [
+    {
+      "id": "drill_scout",
+      "name": "演练斥候",
+      "rank": "NORMAL",
+      "max_hp": 9,
+      "passive_skills": [],
+      "skills": [
+        {
+          "id": "drill_scout_01",
+          "name": "点刺",
+          "cost": 1,
+          "entries": [
+            {"trigger": "on_critical", "operation": "Damage_Add: 1", "description": "暴击时，本次伤害部分 +1"}
+          ],
+          "dice": [
+            {"type": "pierce", "level": 2, "base_value": 1, "entries": ["1"]}
+          ]
+        },
+        {
+          "id": "drill_scout_02",
+          "name": "掩步",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {"type": "evade", "level": 3, "base_value": 1, "entries": []},
+            {"type": "slash", "level": 2, "base_value": 0, "entries": ["1"]}
+          ]
+        },
+        {
+          "id": "drill_scout_03",
+          "name": "调息",
+          "cost": 1,
+          "entries": [{"trigger": "on_skill_use", "operation": "Status: 呼吸, 2", "target": "self", "description": "使用时获得 2 层呼吸"}],
+          "dice": [
+            {"type": "evade", "level": 2, "base_value": 1, "entries": []}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "drill_medic",
+      "name": "演练医护",
+      "rank": "NORMAL",
+      "max_hp": 9,
+      "passive_skills": [],
+      "skills": [
+        {
+          "id": "drill_medic_01",
+          "name": "短杖",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {"type": "blunt", "level": 2, "base_value": 1, "entries": ["1"]}
+          ]
+        },
+        {
+          "id": "drill_medic_02",
+          "name": "急救",
+          "cost": 2,
+          "entries": [{"trigger": "on_skill_use", "operation": "Heal: 2", "target": "self", "description": "使用时恢复自身 2 点生命"}],
+          "dice": [
+            {"type": "block", "level": 2, "base_value": 1, "entries": []}
+          ]
+        },
+        {
+          "id": "drill_medic_03",
+          "name": "防身刺",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {"type": "pierce", "level": 3, "base_value": 0, "entries": ["1"]}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "drill_captain",
+      "name": "演练队长",
+      "rank": "BOSS",
+      "max_hp": 18,
+      "passive_skills": [],
+      "skills": [
+        {
+          "id": "drill_captain_01",
+          "name": "压阵",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "blunt", "level": 3, "base_value": 1, "entries": ["2"]}
+          ]
+        },
+        {
+          "id": "drill_captain_02",
+          "name": "整队",
+          "cost": 1,
+          "entries": [{"trigger": "on_skill_use", "operation": "Shield: 2", "target": "self", "description": "使用时获得 2 层普通护盾"}],
+          "dice": [
+            {"type": "block", "level": 3, "base_value": 1, "entries": []}
+          ]
+        },
+        {
+          "id": "drill_captain_03",
+          "name": "钩刃",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "slash", "level": 3, "base_value": 1, "entries": ["1", {"trigger": "on_dice_hit", "operation": "Status: 裂血, 3", "description": "命中时使目标获得 3 层裂血"}]}
+          ]
+        },
+        {
+          "id": "drill_captain_04",
+          "name": "压枪",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "pierce", "level": 3, "base_value": 0, "entries": ["1"]},
+            {"type": "pierce", "level": 2, "base_value": 0, "entries": ["1"]}
+          ]
+        },
+        {
+          "id": "drill_captain_05",
+          "name": "制动",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {"type": "block", "level": 3, "base_value": 2, "entries": [{"trigger": "on_clash_win", "operation": "Shield: 1, reinforced", "target": "self", "description": "拼点胜利时获得 1 层强化护盾"}]}
+          ]
+        },
+        {
+          "id": "drill_captain_06",
+          "name": "破甲刺",
+          "cost": 3,
+          "entries": [],
+          "dice": [
+            {"type": "pierce", "level": 4, "base_value": 1, "entries": ["3 穿甲"]}
+          ]
+        },
+        {
+          "id": "drill_captain_07",
+          "name": "追击",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {"type": "slash", "level": 3, "base_value": 1, "entries": ["1"]}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "drill_engine",
+      "name": "演练重装机",
+      "rank": "EMPOWERED_BOSS",
+      "max_hp": 24,
+      "passive_skills": [],
+      "skills": [
+        {
+          "id": "drill_engine_01",
+          "name": "热风",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "blunt", "level": 4, "base_value": 0, "entries": ["1", {"trigger": "on_dice_hit", "operation": "Status: 烧伤, 4", "description": "命中时使目标获得 4 层烧伤"}]}
+          ]
+        },
+        {
+          "id": "drill_engine_02",
+          "name": "回转斩",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "slash", "level": 3, "base_value": 1, "entries": ["1"]},
+            {"type": "slash", "level": 3, "base_value": 0, "entries": ["1"]}
+          ]
+        },
+        {
+          "id": "drill_engine_03",
+          "name": "架盾",
+          "cost": 1,
+          "entries": [{"trigger": "on_skill_use", "operation": "Shield: 2, reinforced", "target": "self", "description": "使用时获得 2 层强化护盾"}],
+          "dice": [
+            {"type": "block", "level": 4, "base_value": 0, "entries": []}
+          ]
+        },
+        {
+          "id": "drill_engine_04",
+          "name": "开路锤",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "blunt", "level": 4, "base_value": 2, "entries": ["2"]}
+          ]
+        },
+        {
+          "id": "drill_engine_05",
+          "name": "校准",
+          "cost": 1,
+          "entries": [{"trigger": "on_skill_use", "operation": "Status: 能源, 2", "target": "self", "description": "使用时积蓄 2 层能源"}],
+          "dice": [
+            {"type": "evade", "level": 3, "base_value": 2, "entries": []}
+          ]
+        },
+        {
+          "id": "drill_engine_06",
+          "name": "平衡破坏",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "blunt", "level": 4, "base_value": 1, "entries": ["1", {"trigger": "on_dice_hit", "operation": "Status: 失衡, 4", "description": "命中时使目标获得 4 层失衡"}]}
+          ]
+        },
+        {
+          "id": "drill_engine_07",
+          "name": "失衡爆发",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {"type": "blunt", "level": 4, "base_value": 1, "entries": ["2", {"trigger": "on_dice_hit", "operation": "Stagger", "description": "命中时进行失衡爆发判定"}]}
+          ]
+        },
+        {
+          "id": "drill_engine_08",
+          "name": "贯穿束",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "before_dice_hit",
+              "when": {"owner_status_at_least": {"能源": 2}},
+              "operation": [
+                {"op": "status", "name": "能源", "amount": -2, "target": "self"},
+                "Damage_Add: 1"
+              ],
+              "description": "命中前若有至少 2 层能源，消耗 2 层，本次伤害部分 +1"
+            }
+          ],
+          "dice": [
+            {"type": "pierce", "level": 4, "base_value": 2, "entries": ["3 超穿甲"]}
+          ]
+        },
+        {
+          "id": "drill_engine_09",
+          "name": "应急维修",
+          "cost": 2,
+          "entries": [{"trigger": "on_skill_use", "operation": "Heal: 2", "target": "self", "description": "使用时恢复自身 2 点生命"}],
+          "dice": [
+            {"type": "block", "level": 3, "base_value": 1, "entries": []}
+          ]
+        },
+        {
+          "id": "drill_engine_10",
+          "name": "扫击",
+          "cost": 1,
+          "entries": [],
+          "dice": [
+            {"type": "slash", "level": 3, "base_value": 1, "entries": ["1"]}
+          ]
+        },
+        {
+          "id": "drill_engine_11",
+          "name": "反应装甲",
+          "cost": 2,
+          "entries": [{"trigger": "on_skill_use", "operation": "Shield: 1, concept", "target": "self", "description": "使用时获得 1 层概念护盾"}],
+          "dice": [
+            {"type": "block", "level": 4, "base_value": 2, "entries": []},
+            {"type": "blunt", "level": 3, "base_value": 1, "entries": ["1"]}
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,2 +1,1 @@
-# 此目录已转正至 pipeline/ 模块，本目录功能已无效化废弃。
-raise RuntimeError("DynamicPipelines 已废弃并转正至 pipeline/ 模块，请使用 pipeline 相关的类与函数。")
+"""动态管线原型的历史入口，现行实现位于 pipeline 包。"""

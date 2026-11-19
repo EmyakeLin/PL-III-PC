@@ -48,3 +48,74 @@
 | skillbody | i, die, dy, label, effect | 骰子位次、骰子数据、行坐标、类型中文、伤害及词条摘要 |
 | 场景循环 | i, j, k, x, y, cx, sy, local, page, char, skill, title, detail, note, label, action, on, before, after, formula, shield, rows, body, score, kind, left, right, result, nextlabel, value, names, name, tab, color | 当前项与索引、布局坐标、分页索引、角色/技能数据、可见文案与状态；几何坐标为px，文本来自对应场景 |
 | 覆盖声明 | flows, name, route, nodes, i, target, node, coverage | 流程集合、流程名、画面序列、节点集合、节点序号、画面目标、节点对象及最终覆盖声明 |
+
+## 浏览器对战 · 数据与操作
+
+浏览器通过 `GET /api/state` 取得当前桌面，通过 `POST /api/action` 提交带版本号的操作。
+
+| 返回字段或请求参数 | 含义与来源 |
+|---|---|
+| `mode` | 桌面暂停的位置。可取 `placement` 置卡、`handoff` 交接、`reveal` 开牌、`combat` 交锋、`turn_end` 回合末和 `finished` 终局。 |
+| `frame`, `catalog` | `Displayer` 的当前局面与公开的印刷规则。置卡时使用当事方视角，其余阶段使用公开视角。 |
+| `active_side`, `choices` | 当前置卡者或即将接手者的阵营号，公开结算时为空。选人项带有卡包中的 `id`、`name`、`title`、`rank`、`max_hp` 和 `faction`。 |
+| `legal_cards`, `can_pass`, `window_remaining` | 当前可扣置的手牌 ID、能否提前交权、本窗口尚可扣置的张数，由角色存活情况、可用交锋和本窗口已扣张数推得。 |
+| `history` | 最近 100 条公开事件，按发生顺序排列，供结算提示和战报查看。 |
+| `action`, `card_id`, `roster` | 请求的操作名。`place` 携带所选技能 ID，`new` 携带两位玩家依次选定的不同角色 ID。`pass` 交权，`end` 结束本回合置卡，`ready` 确认接手，`next` 推进公开结算。 |
+| `revision` | 客户端复制最近收到的桌面版本。服务端接受操作后递增，收到过期请求时返回最新局面。 |
+
+### 对局适配器（battle_ui/match.py）
+
+| 作用域 | 变量 | 含义 |
+|---|---|---|
+| `BattleMatch.__init__` | `roster`, `seed`, `initial_handoff` | 两位玩家的出战角色 ID 顺序、引擎随机种子、首个置卡窗口是否先遮牌交接。 |
+| 建局与装配 | `pool`, `spec`, `key`, `choices` | 按角色 ID 索引的卡包定义、遍历到的角色条目、角色或字段的索引及供重开使用的选人清单。 |
+| 建局与装配 | `players`, `player`, `character`, `game`, `side`, `_views` | 两位玩家、当前装配对象及其角色、真实游戏、阵营号，以及按阵营号和公开视角保存的只读适配器。 |
+| 单局状态 | `mode`, `revision`, `_history`, `_window_size`, `_require_handoff` | 当前操作阶段、单局已接受操作序号、公开记录队列、本窗口容量（张）及下一窗口必须先交接的标志。 |
+| `_TableGame.run_placement` | `placing`, `first_player`, `placed_this_window` | 持有置卡权的玩家、本回合先手及本窗口已扣张数。 |
+| `snapshot`, `_legal_cards` | `placing`, `side`, `private`, `player`, `card`, `c` | 当前置卡者、行动方号、是否可展示该方私有区，以及读取手牌、筛选可置牌和复制选人项的循环对象。 |
+| `act`, `_place_action`, `_open_window` | `action`, `revision`, `card_id`, `game`, `player`, `card`, `c`, `previous`, `switching` | 命令、预期单局版本、所选牌 ID、局面、操作者、匹配的手牌、候选牌、上一窗口操作者及本次是否换人。 |
+| `_advance` | `game`, `node`, `count`, `message` | 正在推进的对局、刚完成的主节点或双阵营节点、揭开的交锋槽数及本次开牌记录。 |
+| `_combat_stop` | `nodes`, `checkpoints`, `node`, `game`, `combat`, `side`, `player` | 本次推进两侧实际执行的节点、需要读取的节点名、当前节点、引擎、公开交锋快照、该侧管线的可见字段与对应玩家。 |
+| `_combat_stop` | `character`, `die`, `pipe`, `verb`, `result`, `enemy`, `p`, `attack` | 出骰角色、实战骰快照、结算费用的管线、技能使用或支付失败用词、胜负字样、对手角色、选取对手时遍历的玩家及进攻类型文字。 |
+| `_combat_stop`, `_finish` | `actions`, `scores`, `pause`, `winner`, `fallen` | 本节点的公开事件片段、拼点数及胜负、是否应停留展示、胜方及阵亡角色名。 |
+
+### 本地 HTTP 会话（battle_ui/__main__.py）
+
+| 作用域 | 变量 | 含义 |
+|---|---|---|
+| 启动入口 | `ASSETS`, `STATIC_DIR`, `parser`, `args`, `server` | 公开 URL 对应的文件名和媒体类型、静态资源目录、参数解析器、含 `port` 与 `seed` 的启动选项及监听回环地址的服务器。 |
+| `BattleSession` | `seed`, `match`, `revision`, `lock` | 重开时沿用的随机种子、当前对局、跨重开的桌面版本及保护读取和提交的互斥锁。 |
+| `command` | `request`, `action`, `roster`, `item`, `frame` | 浏览器发送的 JSON、操作名、重开的出战组合、待校验的角色 ID 及提交后返回的整份桌面数据。 |
+| `_send`, `_json` | `status`, `body`, `content_type`, `data` | HTTP 状态码、已编码的响应字节、响应媒体类型及待编码的 JSON 数据。 |
+| `_local_request`, `do_GET` | `port`, `hosts`, `host`, `origin`, `path`, `name`, `content_type` | 实际监听端口、允许的本机主机名集合、请求主机及来源、去掉查询串的路径、对应文件名和类型。 |
+| `do_POST` | `size`, `request`, `status`, `frame`, `exc` | 请求体长度（字节）、解码后的动作、处理结果状态、返回桌面及面向玩家的校验错误。 |
+
+### 战场样式（battle_ui/static/style.css）
+
+| 作用域 | 参数 | 含义 |
+|---|---|---|
+| 页面与组件表面 | `--paper`, `--surface`, `--inset`, `--ink`, `--muted`, `--line`, `--line-strong` | 依次用于桌面底色、纸牌表面、内凹槽位、主要文字、辅助文字、细分隔线和高对比边界。 |
+| 阵营与阶段 | `--green`, `--green-wash`, `--red`, `--red-wash`, `--gold` | 双方各自的文字和战旗色、对应的浅色衬底，以及居中阶段指示的颜色。 |
+| 私有视角与角色 | `--acting`, `--acting-wash`, `--side-color`, `--side-wash` | 前两项随当前玩家改变选牌和操作的强调色，后两项在各角色栏内绑定该方颜色与底色。 |
+| 字体 | `--sans`, `--serif`, `--digits` | 操作及正文、角色和卡名、回合数及生命数值的字体栈。 |
+| 布局 | `--gutter`, `--board-width`, `--section-gap`, `--control-height`, `--hand-column` | 页面两侧留白、棋盘最大宽度、区块垂直间距、按钮目标高度和四列手牌的单列宽度。尺寸以 px 或随视口按 vw 计算，手牌列同时扣除三个列间距。 |
+| 内部间距 | `--space-1`, `--space-2`, `--space-3`, `--space-4`, `--space-5`, `--space-6` | 从 4、8、12、16、24 到 32 px 的六级间距，供标签、骰子行、按钮组与面板使用。 |
+| 形态与反馈 | `--corner`, `--far-corner`, `--button-cut`, `--fast`, `--shift`, `--ease` | 主按钮切角深度（px）、从远端扣除该深度的位置、由二者得到的轮廓、按钮反馈时间和布局变化时间（ms）、二者共用的缓动。 |
+
+### 战场交互（battle_ui/static/app.js）
+
+| 作用域 | 参数 | 含义 |
+|---|---|---|
+| 页面状态 | `match`, `selection`, `busy`, `pageGeneration`, `dialogGeneration`, `dialogTrigger`, `modal`, `hand` | 当前服务端快照、已选卡 ID、正在提交、页面和浮层各自的生命周期计数、打开详情的焦点来源、浮层根节点和手牌容器。计数用于丢弃过时的响应与退出动画。 |
+| 中文文案与 DOM | `typeNames`, `ranks`, `phases`, `outcomes`, `byId`, `id` | 骰型、位阶、对局阶段、拼点结果的显示名称，以及用稳定 ID 定位已有控件的入口与参数。 |
+| 元素和按钮模板 | `tag`, `className`, `text`, `node`, `label`, `primary`, `variant`, `activate`, `name`, `ns`, `svg`, `use` | 元素标签、样式类、显示文字、当前 DOM 节点、按钮文案及主次方案、激活回调，以及图形符号名称、命名空间、图标容器与符号引用。 |
+| 读快照与图鉴 | `side`, `player`, `characterId`, `character`, `actor`, `collection`, `currentHand`, `card`, `printed` | 阵营、玩家、要查找的角色 ID、角色项、当前出战者、该方图鉴、当前私有手牌、具体技能与印刷规则。 |
+| 浮层、战报、规则 | `title`, `build`, `body`, `actions`, `privateReset`, `generation`, `clearContents`, `animation`, `texts`, `list` | 标题、内容构建函数、正文与操作区、切私人视角时立即清空的标记、本次清理代次及函数、退出动画、待列出的词条与列表节点。 |
+| 技能与角色详情 | `die`, `summary`, `row`, `range`, `damage`, `section`, `formula`, `used`, `shields`, `statusList`, `count`, `passives`, `passive`, `skill` | 当前印刷骰、是否为手牌摘要、骰子行、变动点数范围、印刷伤害片段、单骰详情、公式说明、已占交锋、各型护盾、状态与层数、被动清单及条目、正在查看的技能。 |
+| 新对局 | `selectors`, `field`, `select`, `fighter`, `option`, `start`, `roster`, `validate`, `duplicate`, `other`, `item` | 两侧选择框及其标签、出战候选与选项、开局按钮、选定的两人、重复选择校验、是否重名及校验时比对的另一选择框。 |
+| 双方角色栏 | `lead`, `meta`, `bar`, `stats`, `statsField`, `statuses`, `shieldNames`, `kind`, `amount`, `statusesField` | 先手标记、头衔与位阶、生命条、速度及费用文字和容器、状态摘要、盾名称映射、当前盾型与数值、状态容器。 |
+| 槽位与拼点 | `duels`, `slots`, `vacancy`, `slot`, `group`, `cards`, `number`, `combat`, `active`, `info`, `parts` | 已有槽与用于绘制的槽序列、当前方可填入的空槽、具体槽、阵营牌组、可见牌、本槽号码、战斗帧、与该牌相符的活动方数据及其点数文字片段。 |
+| 交锋序列组件 | `placing`, `pending`, `resolved`, `note`, `rail`, `index`, `left`, `right`, `indexLabel`, `waiting`, `emptyMessage`, `empty`, `back`, `detail`, `current` | 是否置卡、预备槽号、是否开牌、阶段提示、槽列表、序号、左右两侧、槽号标签、等待状态、空区文案和节点、牌背、明牌按钮与当前骰结果。 |
+| 手牌与主操作 | `ownerName`, `tile`, `head`, `dice`, `ownHand`, `keepIds`, `tiles`, `owner`, `selected`, `legal`, `chosen`, `remaining`, `quota` | 持牌人名称、卡片按钮、牌头与骰序、己方手牌、应保留的 ID 和已有节点、持牌角色、当前选择、是否可置、此卡是否选中、剩余交锋与额度提示。 |
+| 阶段切换与焦点 | `handoff`, `winner`, `finished`, `lastMessage`, `message`, `line`, `labels`, `state`, `previous`, `newMatch`, `wasHandoff`, `privateSideChanged`, `first`, `focus`, `p` | 交接状态、胜方、是否终局、最近的公开事件和最终文案及节点、主操作名称、服务端新旧快照、重开或离开交接标志、视角变化、交接后的首个操作和回退焦点，以及遍历中的玩家。 |
+| 请求和事件 | `action`, `fields`, `request`, `response`, `payload`, `generation`, `event` | 动作名、附加参数、带版本的提交内容、HTTP 响应、服务端回包、请求发出时的页面代次，以及触发点击、取消或离开页面的事件。 |

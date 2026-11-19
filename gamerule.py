@@ -4,7 +4,7 @@ class GameRule():
     def __init__(self):
 
         # rule
-        self.MAX_CHAR_COUNT = 5
+        self.MAX_CHAR_COUNT = 3
 
         self.DRAW_COUNT = 2
 

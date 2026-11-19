@@ -1,133 +1,311 @@
-# game.py
-from pipeline.pipeline import Pipeline
-from pipeline.pipeline_steps import step_list
-
+import random
+import sys
 from types import SimpleNamespace
 
 from context.context import Context
-from models.duel import DuelSpace, DuelSlot
-
-from models.character import Character
-
 from gamerule import GameRule
+from models.card import CardState, describe_entry
+from models.character import Character, CharacterRank, ONE_TURN_STATUSES
+from models.dice import describe_die
+from models.duel import DuelSpace
+from models.opcode import OpCode
+from pipeline.pipeline import Pipeline
+from pipeline.pipeline_steps import step_list
+
 
 class Game:
-    def __init__(self, players):
-        self.players = players
+    def __init__(self, players, rng=None):
+        self.players = list(players)
+        if len(self.players) != 2 or len({p.side for p in self.players}) != 2:
+            raise ValueError("双人对局需要两名阵营不同的玩家。")
+        self.rng = random if rng is None else rng
         self.gamerule = GameRule()
-        for p in self.players:
-            p.game = self
-            p.max_cost = self.gamerule.MAX_BASIC_COST
+        for player in self.players:
+            player.game = self
         self.first_player = None
+        self.placing = None
         self.ended_player = []
+        self.placed_this_window = 0
+        self.used_cards = []
+        self.cards_revealed = False
         self.turn_count = 0
+        self.turn_number = 0
+        self._prepared_turn = -1
+        self.next_turn_statuses = []
+        self.status_entries = {}
+        self.turn_end_statuses = set(ONE_TURN_STATUSES)
         self.is_over = False
-        
-        # 初始化游戏根上下文
+        self.winner = None
+        self._private_player = None
         self.context = Context(game=self)
-
-        # 将自身实例 (game=self) 注入到管线中
+        self.duelspace = DuelSpace(self)
         self.pipeline = Pipeline(self, step_list)
-
-        # temp variables
         self.tmp = SimpleNamespace()
 
-        # 交锋槽位
-        self.duelspace = DuelSpace(self)
-
     def select_character(self, characters):
-        import copy
-        import random
-        from models.character import Character
-
-        pool = copy.deepcopy(characters)
-        chosen_data = {p: [] for p in self.players}
-
-        # === 阶段一：纯数据挑选阶段 ===
-        max_char_count = self.gamerule.MAX_CHAR_COUNT
-        for p in self.players:
-            while len(chosen_data[p]) < max_char_count:
-                print(f"\n--- [{p.name}] 请选择角色 (已选 {len(chosen_data[p])}/{max_char_count}) ---")
-                for idx, c in enumerate(pool, start=1):
-                    print(f"  [{idx}] {c['name']} ({c['rank']})")
-                
-                val = input("请输入角色编号 (直接回车确认并结束选人): ").strip()
-                if not val:
-                    if len(chosen_data[p]) == 0:
-                        print("至少需要选择 1 个角色！")
-                        continue
+        pool = list(characters)
+        if len(pool) < len(self.players):
+            raise ValueError("共享角色池至少需要两名角色，才能为双方各留一名。")
+        rosters = []
+        for index, player in enumerate(self.players):
+            reserve = len(self.players) - index - 1
+            limit = min(self.gamerule.MAX_CHAR_COUNT, len(pool) - reserve)
+            roster = []
+            while len(roster) < limit:
+                print(f"\n{player.name} 选人（已选 {len(roster)}，本次最多 {limit} 人）")
+                for number, data in enumerate(pool, 1):
+                    print(f"  [{number}] {self.character_summary(data)}")
+                answer = input("请输入角色编号，? 编号查看技能；选好后按回车确定 ").strip()
+                if answer.startswith("?"):
+                    number = answer[1:].strip()
+                    if number.isdecimal() and 1 <= int(number) <= len(pool):
+                        self.show_character(pool[int(number) - 1])
+                    continue
+                if not answer and roster:
                     break
-                
-                if val.isdigit() and 1 <= int(val) <= len(pool):
-                    picked = pool.pop(int(val) - 1)
-                    chosen_data[p].append(picked)
-                    print(f"已暂选: {picked['name']}")
+                if answer.isdecimal() and 1 <= int(answer) <= len(pool):
+                    roster.append(pool.pop(int(answer) - 1))
                 else:
-                    print("无效输入，请重新输入。")
-            
-            print(f"[{p.name}] 阵容锁定: {[c['name'] for c in chosen_data[p]]}")
+                    print("请至少选一名角色，并输入列表中的编号。")
+            print(f"{player.name} 出战：" + "、".join(data["name"] for data in roster))
+            rosters.append(roster)
 
-        # === 阶段二：双方全部确认后，统一实例化与装配卡组 ===
-        print("\n=== 双方确认完毕，正在初始化角色与牌库 ===")
-        for p in self.players:
-            p.characters = []
-            for data in chosen_data[p]:
-                char = Character(data, p)
-                char.init_cards()
-                char.setup_deck()
-                p.characters.append(char)
-            p.cardspace.draw.shuffle()
-            print(f"[{p.name}] 就绪！出战角色: {[c.name for c in p.characters]}，牌库总数: {len(p.cardspace.draw.content)}")
-            
+        for player, roster in zip(self.players, rosters):
+            for data in roster:
+                character = Character(data, player)
+                player.characters.append(character)
+                character.init_cards()
+                character.setup_deck()
+            player.cardspace.draw.shuffle(self.rng)
+
+    @staticmethod
+    def character_summary(data):
+        rank = CharacterRank[data["rank"]]
+        label = {"NORMAL": "常人", "ELITE": "精英", "BOSS": "Boss", "EMPOWERED_BOSS": "强化 Boss"}[rank.name]
+        title = f"　{data['title']}" if data.get("title") else ""
+        return f"{data['name']}{title}　{label}　生命 {data['max_hp']}　最多 {Character.base_duels(data)} 交锋"
+
+    @staticmethod
+    def show_character(data):
+        print(Game.character_summary(data))
+        if data.get("faction"):
+            print(f"所属阵营　{data['faction']}")
+        for key, label in (("faction_passives", "阵营被动"), ("passive_skills", "角色被动")):
+            for passive in data.get(key, []):
+                name = passive.get("name", "") if isinstance(passive, dict) else ""
+                entries = passive.get("entries", [passive]) if isinstance(passive, dict) else [passive]
+                if not entries and passive.get("description"):
+                    entries = [passive["description"]]
+                for entry in entries:
+                    print("  " + " · ".join(part for part in (label, name, describe_entry(entry)) if part))
+        for skill in data["skills"]:
+            dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
+            entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
+            zone = "战斗外" if skill.get("out_of_combat") else ""
+            print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费", dice, entries, zone) if s))
+
+    def begin_private_view(self, player):
+        """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
+        if self._private_player is player:
+            return
+        self._private_player = player
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            print("\033[2J\033[3J\033[H", end="", flush=True)
+            input(f"请把终端交给 {player.name}，接手后按回车查看自己的牌。")
+
+    def close_private_view(self):
+        if self._private_player is not None and sys.stdin.isatty() and sys.stdout.isatty():
+            print("\033[2J\033[3J\033[H", end="", flush=True)
+        self._private_player = None
 
     def next_step(self):
-        """推进一小步管线"""
         return self.pipeline.next_step()
 
-    def auto_place_in_duel(self, side, content):
-        """Place in the nearest empty duel"""
-        idx = self.duelspace.locate_nearest_empty_duel(side)
-        self.place_in_duel(side, content, idx)
+    def open_turn(self):
+        number = self.turn_count + 1
+        if self.turn_number != number:
+            self.turn_number = number
+            self.context.turn_entry_uses.clear()
 
-    def place_in_duel(self, side, content, duel_idx):
-        from entry.builtin_operations import parse_builtin_operation
-        op = parse_builtin_operation(f"Place-Card: {side}, {duel_idx}, {id(content)}", self)
-        self.context.eval_block(op)
+    def prepare_turn(self):
+        self.open_turn()
+        if self._prepared_turn == self.turn_count:
+            return
+        self._prepared_turn = self.turn_count
+        pending, self.next_turn_statuses = self.next_turn_statuses, []
+        for player in self.players:
+            player.turn_common_cost_bonus, player.next_turn_common_cost = player.next_turn_common_cost, 0
+            player.lost_duels.clear()
+            for char in player.characters:
+                char.won_clash_this_turn = False
+                char.turn_duel_bonus, char.next_turn_duels = char.next_turn_duels, 0
+        for source, target, name, amount, authority in pending:
+            if target.is_alive and not self.is_over:
+                with self.context.binding(source=source, target=target, side=source.player.side, authority=authority):
+                    self.context.eval_block([target, name, amount, OpCode.STATUS])
 
+    def record_clash_result(self, character, result):
+        if result == "win":
+            character.won_clash_this_turn = True
+        elif result == "lose":
+            character.player.lost_duels.add(self.duelspace.current_duel_index)
+
+    def draw_phase(self):
+        self.prepare_turn()
+        print(f"\n第 {self.turn_count + 1} 回合")
+        self.cards_revealed = False
+        self._private_player = None
+        for player in self.players:
+            if self.is_over:
+                break
+            player.draw_for_turn()
+
+    def start_turn(self):
+        self.prepare_turn()
+        for player in sorted(self.players, key=lambda p: p is not self.first_player):
+            player.reset_on_turn_start()
+
+    def determine_first_player(self):
+        self.prepare_turn()
+        self.close_private_view()
+        left, right = self.players
+        while True:
+            for player in self.players:
+                player.calculate_speed()
+                members = "、".join(f"{char.name} {char.speed:g}" for char in player.characters if char.is_alive)
+                print(f"{player.name} 速度：{members}；阵营速度 {player.speed:g}。")
+            if left.speed != right.speed:
+                self.first_player = left if left.speed > right.speed else right
+                print(f"{self.first_player.name} 先手。")
+                return
+            print("速度相同，双方重掷。")
 
     def switch_place_right(self):
-        """切换放置权；必须提前检查是否均置卡结束"""
-        if self.ended_player:
-            if self.ended_player == self.players:
-                raise Exception("All players have ended placement, but switch_place_right() is still called. This should not happen.")
-            self.placing = [p for p in self.players if p not in self.ended_player][0]
-        else:
-            self.placing = [p for p in self.players if p != self.placing][0]
+        self.placing = next(
+            (p for p in self.players if p is not self.placing and p not in self.ended_player),
+            self.placing if self.placing not in self.ended_player else None,
+        )
 
-    # Since Dice can be used anywhere (Speed Dice or other check dices), 
-    # We define the instanciate method in Game, not other places.
-    
+    def run_placement(self):
+        self.placing = self.first_player
+        capacity = 1
+        while self.placing is not None and not self.is_over:
+            player = self.placing
+            self.placed_this_window = 0
+            self.begin_private_view(player)
+            for _ in range(capacity):
+                action = player.place_card(self)
+                if action == "ended":
+                    self.ended_player.append(player)
+                    break
+                if action == "passed":
+                    break
+                if action != "placed":
+                    raise ValueError(f"未知置卡动作 {action!r}")
+                self.placed_this_window += 1
+                if self.is_over:
+                    break
+            self.switch_place_right()
+            capacity = self.gamerule.PLACE_CAPACITY
+
+    def auto_place_in_duel(self, side, content):
+        owner = content.character
+        if owner is None or owner.used_duels >= owner.max_duels:
+            return False
+        return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
+
+    def place_in_duel(self, side, content, duel_idx):
+        player = content.player
+        owner = content.character
+        if player.side != side or duel_idx < 0 or not owner.is_alive:
+            return False
+        if any(content in slot.content.get(side, ()) for slot in self.duelspace.space):
+            return False
+        zones = player.cardspace
+        old_zone = next((zone for zone in (zones.hand, zones.draw, zones.delayed_discard,
+                                            zones.out_of_combat) if content in zone.content), None)
+        event = dict(side=side, source=owner, card=content)
+        self.context.dispatch_pipeline("before_place", **event)
+        if not owner.is_alive or content.state == CardState.NEGATED:
+            return False
+        if old_zone is not None and content not in old_zone.content:
+            return False
+        self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
+        if duel_idx >= len(self.duelspace.space):
+            return False
+        slot = self.duelspace.space[duel_idx]
+        if content not in slot.content.get(side, ()):
+            return False
+        event["duel"] = slot
+        self.context.dispatch_pipeline("on_place", **event)
+        self.context.dispatch_pipeline("after_place", **event)
+        return True
+
+    def reveal_cards(self):
+        self.cards_revealed = True
+        self.close_private_view()
+        if not self.duelspace.space:
+            print("双方空过。")
+            return
+        for slot in self.duelspace.space:
+            for cards in slot.content.values():
+                for card in cards:
+                    if card.state == CardState.PLACED_FACE_DOWN:
+                        card.state = CardState.PLACED_FACE_UP
+        print("双方开牌。")
+        for number, slot in enumerate(self.duelspace.space, 1):
+            sides = []
+            for player in self.players:
+                cards = slot.content.get(player.side, ())
+                names = "、".join(card.name for card in cards) or "空"
+                sides.append(f"{player.name}：{names}")
+            print(f"交锋 {number}　" + "　对　".join(sides))
+
+    def finish_turn(self):
+        ordered = sorted(self.players, key=lambda player: player is not self.first_player)
+        for player in ordered:
+            for character in player.characters:
+                if character.is_alive and not self.is_over:
+                    character.on_turn_end()
+        for player in ordered:
+            for character in player.characters:
+                character.reset_shields()
+                character.used_duels = 0
+                character.turn_duel_bonus = 0
+                for status in self.turn_end_statuses:
+                    character.clear_status(status)
+            player.turn_common_cost_bonus = 0
+            self.context.eval_block([player, 0, 0, OpCode.RESET_COST])
+
+        on_board = [card for slot in self.duelspace.space for cards in slot.content.values()
+                    for card in cards]
+        remaining = set(on_board)
+        for card in [*self.used_cards, *on_board]:
+            if card in remaining and card.character.is_alive:
+                remaining.remove(card)
+                card.reset_for_draw()
+                card.player.cardspace.draw.add_card(card)
+        for player in self.players:
+            player.cardspace.delayed_discard.push_to_draw()
+        self.used_cards.clear()
+        self.duelspace.space.clear()
+        self.duelspace.current_duel_index = 0
+        self.ended_player.clear()
+        self.cards_revealed = False
+        self.turn_count += 1
+        print(f"第 {self.turn_count} 回合结束。")
+        self.check_game_over()
+
     def init_dice(self, data):
         from models.dice import Dice
         return Dice(data, game=self)
 
-    # ==============================================================================
-    # >>> Generated by Gemini >>>
-    # ==============================================================================
     def check_game_over(self):
-        """检查全局胜负，若分出胜负则标记 is_over 并宣布终局"""
-        alive_players = [
-            p for p in self.players 
-            if any(getattr(c, "is_alive", True) for c in p.characters)
-        ]
-        if len(alive_players) < len(self.players):
-            self.is_over = True
-            if len(alive_players) == 1:
-                print(f"\n🎉 终局！获胜玩家为: [{alive_players[0].name}]！\n")
-            else:
-                print("\n💥 终局！双方角色同时全灭，平局！\n")
+        if self.is_over:
             return True
-        return False
-    # ==============================================================================
-    # <<< Generated by Gemini <<<
-    # ==============================================================================
+        alive = [p for p in self.players if any(c.is_alive for c in p.characters)]
+        if len(alive) == len(self.players):
+            return False
+        self.is_over = True
+        self.winner = alive[0] if alive else None
+        return True

@@ -136,6 +136,11 @@ def parse_builtin_operation(text: str, owner=None):
         return None
 
     cleaned_text = text.strip()
+    from entry.effects import damage_part
+    part = damage_part(cleaned_text)
+    if part is not None:
+        amount, grade = part
+        return [owner if isinstance(owner, Character) else "target", amount, grade, "none", OpCode.DAMAGE]
     if ":" in cleaned_text:
         cmd_part, arg_part = cleaned_text.split(":", 1)
         parsed_vals = parse_args_from_text(arg_part)
@@ -143,6 +148,11 @@ def parse_builtin_operation(text: str, owner=None):
         cmd_part = cleaned_text
         parsed_vals = []
 
+    # Older packs may spell the grade as part of the command.
+    damage_commands = {"damage-pierce": "pierce", "damage-concept": "concept"}
+    if cmd_part.strip().lower() in damage_commands and len(parsed_vals) == 1:
+        return stack_damage(parsed_vals[0], damage_commands[cmd_part.strip().lower()],
+                            target=owner if isinstance(owner, Character) else "target")
     func_name = "stack_" + cmd_part.strip().lower().replace("-", "_")
     func = globals().get(func_name)
     if func is None:
@@ -151,6 +161,8 @@ def parse_builtin_operation(text: str, owner=None):
     # 门禁 2：校验文本参数个数与声明的 args，支持函数形参默认值智能回退
     sig = inspect.signature(func)
     declared_args = getattr(func, "expect_args", [])
+    if len(parsed_vals) > len(declared_args):
+        raise ValueError(f"{cmd_part} 只接受 {len(declared_args)} 个参数")
     bound_text_args = {}
     for idx, arg_name in enumerate(declared_args):
         if idx < len(parsed_vals):

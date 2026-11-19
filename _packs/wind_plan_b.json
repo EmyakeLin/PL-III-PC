@@ -1,0 +1,317 @@
+{
+  "faction": "PlanB",
+  "turn_end_statuses": ["骰子等级降低", "骰级免疫"],
+  "status_entries": {
+    "涡流": [
+      {
+        "trigger": "BEFORE RESOLVE_CLASH_SCORE",
+        "operation": {"op": "program", "code": [
+          "$value_ref", "$self", "涡流", "STATUS_COUNT", 10, "MIN", "VALUE_FLOOR"
+        ]},
+        "description": "自身拼点点数至少为当前涡流层数，保底最多计入10点。"
+      },
+      {
+        "trigger": "on_turn_end",
+        "operation": {"op": "program", "code": [
+          "$self", "涡流", 2, "SPEND_STATUS", "POP",
+          "$self", "$self", "骰子等级降低", 1, "QUEUE_STATUS"
+        ]},
+        "description": "回合结束时消耗2层涡流，并在下回合获得1层骰子等级降低。"
+      }
+    ],
+    "骰子等级降低": [
+      {
+        "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+        "operation": {"op": "program", "code": ["$self", "骰子等级降低", "STATUS_COUNT", "SUB"]},
+        "description": "本回合每层使持有者的骰子等级降低1级。"
+      }
+    ],
+    "骰级免疫": [
+      {
+        "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+        "operation": {"op": "program", "code": [
+          "$value_ref", "$printed_level", "VALUE_FLOOR", "$value_ref", "$printed_level", "VALUE_CEILING"
+        ]},
+        "description": "本回合自身按印刷骰级使用骰子。"
+      }
+    ]
+  },
+  "characters": [
+    {
+      "id": "plan_b_annolin",
+      "name": "安诺琳",
+      "title": "飘流翠风",
+      "rank": "ELITE",
+      "max_hp": 9,
+      "base_max_duels": 3,
+      "passive_skills": [
+        {
+          "name": "A级条目",
+          "entries": [{
+            "trigger": "on_turn_start",
+            "operation": {"op": "program", "code": ["$player", 1, "DRAW", "$self", 2, "HEAL"]},
+            "description": "初始交锋上限为3。回合开始时，额外抽1张手牌并回复2生命值。"
+          }]
+        },
+        {
+          "name": "PlanB 组织",
+          "entries": [{
+            "trigger": "on_turn_start",
+            "operation": {"op": "program", "code": [
+              "$own_skills_in_hand", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
+            ]},
+            "description": "回合开始时，在A级条目的额外抽牌后，若自己的5张技能均在手中，本回合自身交锋数+1，己方获得1通用费。"
+          }]
+        },
+        {
+          "name": "飘流翠风",
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+              "when": {"owner_status_at_least": {"涡流": 1}},
+              "operation": {"op": "program", "code": [
+                "$value_ref", "$printed_level", "VALUE_FLOOR", "$value_ref", "$printed_level", "VALUE_CEILING"
+              ]},
+              "description": "自身带有涡流时，无视骰子等级增减效果。"
+            },
+            {
+              "trigger": "on_turn_start",
+              "operation": {"op": "program", "code": [
+                "$turn_number", 1, "EQ", ["$self", "涡流", 4, "STATUS"], "WHEN"
+              ]},
+              "description": "首个回合开始时获得4层涡流。"
+            }
+          ]
+        },
+        {
+          "name": "翠流漂泊",
+          "entries": [
+            {
+              "trigger": "on_clash_lose",
+              "when": {"die_type": "evade"},
+              "turn_limit": {"key": "drifting_evade", "count": 2},
+              "operation": {"op": "program", "code": ["$self", 1, "HEAL", "$self", "涡流", 1, "STATUS"]},
+              "description": "自身闪避骰拼点失败、打平或跳过拼点时，回复1生命值并获得1层涡流，每回合合计至多2次。"
+            },
+            {
+              "trigger": "on_clash_draw",
+              "when": {"die_type": "evade"},
+              "turn_limit": {"key": "drifting_evade", "count": 2},
+              "operation": {"op": "program", "code": ["$self", 1, "HEAL", "$self", "涡流", 1, "STATUS"]},
+              "description": "自身闪避骰拼点打平时同样触发翠流漂泊。"
+            },
+            {
+              "trigger": "on_clash_skip",
+              "when": {"die_type": "evade"},
+              "turn_limit": {"key": "drifting_evade", "count": 2},
+              "operation": {"op": "program", "code": ["$self", 1, "HEAL", "$self", "涡流", 1, "STATUS"]},
+              "description": "自身闪避骰跳过拼点时同样触发翠流漂泊。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "annolin_drifting_sword",
+          "name": "漂泊剑法",
+          "cost": 1,
+          "entries": [{
+            "trigger": "after_skill_use",
+            "operation": {"op": "program", "code": [
+              "$card", "first_die_hit", "SKILL_STATE", ["$card", "hand", "MOVE_CARD"], "WHEN"
+            ]},
+            "description": "若首骰命中，本技能使用结束后回到手中。"
+          }],
+          "dice": [
+            {"type": "slash", "level": 2, "entries": ["1物理",
+              {"trigger": "AFTER RESOLVE_HIT", "when": {"result": true}, "operation": {"op": "program", "code": [
+                "$card", "first_die_hit", 1, "SET_SKILL_STATE"
+              ]}, "description": "命中时使本技能在使用结束后回手。"}
+            ]},
+            {"type": "slash", "level": 3, "entries": [
+              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1, "target": "self"},
+               "description": "命中时获得1层涡流。"}
+            ]},
+            {"type": "evade", "level": 2, "entries": [
+              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+            ]},
+            {"type": "slash", "level": 2, "entries": [
+              {"trigger": "before_dice_pair", "operation": {"op": "program", "code": [
+                "$die", "$next_duel_target", "ROUTE_DIE_ATTACK"
+              ]}, "description": "对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"},
+              "1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "骰子等级降低", "amount": 1},
+               "description": "命中时施加1层骰子等级降低。"}
+            ]}
+          ]
+        },
+        {
+          "id": "annolin_vortex_sword",
+          "name": "剑携涡流",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "program", "code": [
+                "$skill_target", "enemy", "STORE",
+                {"local": "enemy"}, [
+                  {"local": "enemy"}, "涡流", "STATUS_COUNT", 1, "GE",
+                  ["$card", "vortex_target", {"local": "enemy"}, "SET_SKILL_STATE"], "WHEN"
+                ], "WHEN"
+              ]},
+              "description": "使用时，若目标带有涡流，本技能骰子伤害+1，并在技能使用后消耗该目标1层涡流。"
+            },
+            {
+              "trigger": "before_dice_hit",
+              "operation": {"op": "program", "code": [
+                "$card", "vortex_target", "SKILL_STATE", [{"op": "damage_add", "amount": 1}], "WHEN"
+              ]},
+              "description": "使用时目标带有涡流，则本技能骰子伤害+1。"
+            },
+            {
+              "trigger": "after_skill_use",
+              "operation": {"op": "program", "code": [
+                "$card", "vortex_target", "SKILL_STATE", "enemy", "STORE",
+                {"local": "enemy"}, [{"local": "enemy"}, "涡流", 1, "SPEND_STATUS", "POP"], "WHEN"
+              ]},
+              "description": "使用后结算已标记目标的涡流消耗。"
+            }
+          ],
+          "dice": [
+            {"type": "slash", "level": 4, "entries": ["1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": ["$self", 1, "LOSE_HP"]},
+               "description": "命中时自身失去1生命值。"}
+            ]},
+            {"type": "block", "level": 3, "entries": [
+              {"trigger": "on_clash_win", "operation": {"op": "program", "code": [
+                "$self", "涡流", 1, "STATUS", "$self", "normal", 1, "SHIELD"
+              ]}, "description": "拼点胜利时获得1层涡流与1点护盾。"}
+            ]},
+            {"type": "pierce", "level": 4, "entries": ["1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1, "target": "self"},
+               "description": "命中时获得1层涡流。"}
+            ]}
+          ]
+        },
+        {
+          "id": "annolin_breeze",
+          "name": "流风习习",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "program", "code": ["$card", "gain_on_damage", 1, "SET_SKILL_STATE"]},
+              "description": "使用时，本交锋内自身受到伤害时获得1层涡流。"
+            },
+            {
+              "trigger": "AFTER DAMAGE",
+              "scope": "duel",
+              "subject": "target",
+              "when": {"result_at_least": 1},
+              "operation": {"op": "program", "code": [
+                "$owner", "gain_on_damage", "SKILL_STATE", ["$self", "涡流", 1, "STATUS"], "WHEN"
+              ]},
+              "description": "本技能发动后，每次在本交锋实际受到伤害时获得1层涡流。"
+            }
+          ],
+          "dice": [
+            {"type": "evade", "level": 1, "entries": [
+              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+            ]},
+            {"type": "evade", "level": 1, "entries": [
+              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+            ]},
+            {"type": "slash", "level": 3, "entries": ["0物理",
+              {"trigger": "before_dice_hit", "when": {"owner_status_at_least": {"涡流": 3}},
+               "operation": {"op": "damage_add", "amount": 1}, "description": "自身涡流≥3时，伤害+1。"}
+            ]},
+            {"type": "blunt", "level": 3, "entries": ["1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1},
+               "description": "命中时对目标施加1层涡流。"}
+            ]}
+          ]
+        },
+        {
+          "id": "annolin_burst",
+          "name": "翠流迸发",
+          "cost": 3,
+          "entries": [{
+            "trigger": "on_skill_use",
+            "operation": {"op": "program", "code": ["$self", "涡流", 2, "SPEND_STATUS", "POP"]},
+            "description": "使用时消耗2层涡流。"
+          }, {
+            "trigger": "before_dice_use",
+            "operation": {"op": "program", "code": [
+              "$card", "next_die_bonus", "SKILL_STATE", "bonus", "STORE", {"local": "bonus"}, 0, "GT", [
+                "$die", {"local": "bonus"}, "DIE_FINAL_ADD", "$card", "next_die_bonus", 0, "SET_SKILL_STATE"
+              ], "WHEN"
+            ]},
+            "description": "下骰使用时结算并清除首骰给予的最终点数加成。"
+          }],
+          "dice": [
+            {"type": "slash", "level": 4, "entries": ["1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": [
+                "$self", 4, "LOSE_HP", "$card", "next_die_bonus", 15, "SET_SKILL_STATE"
+              ]}, "description": "命中时自身失去4生命值，以使下骰最终点数+15。"}
+            ]},
+            {"type": "slash", "level": 6, "entries": [
+              {"trigger": "AFTER RESOLVE_HIT", "operation": {"op": "program", "damage_part": true, "code": [
+                "$self", "涡流", "STATUS_COUNT", 3, "FLOOR_DIV", 2, "MIN", "primary_bonus", "STORE",
+                "$enemies", [
+                  "$target", 4, "$is_primary_target", [{"local": "primary_bonus"}, "ADD"], "WHEN",
+                  "normal", "slash", "DAMAGE"
+                ], "FOR_EACH_TARGET"
+              ]}, "description": "群伤4物理。自身每持有3层涡流，对主要目标的伤害+1（至多+2）。"}
+            ]}
+          ]
+        },
+        {
+          "id": "annolin_drifting_wind",
+          "name": "飘流翠风",
+          "cost": 5,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "program", "code": [
+                "$self", "涡流", "all", "SPEND_STATUS", "spent", "STORE",
+                {"local": "spent"}, 0, "GT", [
+                  "$self", "强壮", {"local": "spent"}, "STATUS",
+                  "$self", "$self", "强壮", {"local": "spent"}, "QUEUE_STATUS"
+                ], "WHEN"
+              ]},
+              "description": "使用时消耗全部涡流，并在本回合与下回合获得等于实际消耗量的强壮。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "status", "name": "骰级免疫", "amount": 1, "target": "self"},
+              "description": "使用时，本回合自身无视骰子等级增减效果。"
+            }
+          ],
+          "dice": [
+            {"type": "evade", "level": 3, "entries": [
+              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+            ]},
+            {"type": "pierce", "level": 4, "entries": ["1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": [
+                "$self", "$self", "涡流", 1, "QUEUE_STATUS"
+              ]}, "description": "命中时在下回合获得1层涡流。"}
+            ]},
+            {"type": "blunt", "level": 4, "entries": ["1物理",
+              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": [
+                "$self", "$self", "涡流", 1, "QUEUE_STATUS"
+              ]}, "description": "命中时在下回合获得1层涡流。"}
+            ]},
+            {"type": "slash", "level": 6, "entries": [
+              {"trigger": "AFTER RESOLVE_HIT", "operation": {"op": "program", "damage_part": true, "code": [
+                "$enemies", [
+                  "$target", 2, "normal", "slash", "DAMAGE",
+                  "$self", "$target", "骰子等级降低", 1, "QUEUE_STATUS"
+                ], "FOR_EACH_TARGET"
+              ]}, "description": "群伤2物理，并在下回合对全体敌方施加1层骰子等级降低。"}
+            ]}
+          ]
+        }
+      ]
+    }
+  ]
+}

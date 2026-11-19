@@ -1,0 +1,711 @@
+{
+  "faction": "WAA东部四科",
+  "status_entries": {
+    "能源封印": [
+      {
+        "trigger": "BEFORE SPEND_STATUS",
+        "when": {"status": "充能"},
+        "operation": {"op": "program", "code": ["POP", 0]}
+      },
+      {
+        "trigger": "BEFORE SPEND_STATUS",
+        "when": {"status": "纯能"},
+        "operation": {"op": "program", "code": ["POP", 0]}
+      },
+      {
+        "trigger": "AFTER STATUS",
+        "when": {"status": "充能", "result_at_least": 8},
+        "operation": {
+          "op": "program",
+          "code": ["$self", "能源封印", 0, "$self", "能源封印", "STATUS_COUNT", "SUB", "STATUS"]
+        }
+      }
+    ]
+  },
+  "faction_passives": [
+    {
+      "name": "WAA东部四科",
+      "entries": [
+        {
+          "trigger": "on_hand_changed",
+          "operation": {
+            "op": "program",
+            "code": [
+              "$previous_hand_count", 3, "LT", "$current_hand_count", 3, "GE", "AND",
+              ["$self", "充能", 1, "TEAM_STATUS"], "WHEN"
+            ]
+          },
+          "description": "当己方手牌数从少于3张达到至少3张时，全体友方角色获得1层充能。"
+        }
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "id": "waa_lake",
+      "name": "莱克",
+      "title": "XIII阶代理人",
+      "rank": "NORMAL",
+      "max_hp": 6,
+      "passive_skills": [
+        {
+          "name": "突击",
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$duel_number", 1, "EQ", ["$card", 2, "SKILL_FINAL_ADD", "$self", "充能", 1, "STATUS"], "WHEN"]
+              },
+              "description": "第一交锋中，自身使用技能时，本技能最终点数+2，自身获得1层充能。"
+            }
+          ]
+        },
+        {
+          "name": "应变",
+          "entries": [
+            {
+              "trigger": "on_turn_end",
+              "operation": {
+                "op": "program",
+                "code": ["$won_clash", "NOT", ["$self", 1, "NEXT_TURN_DUELS"], "WHEN"]
+              },
+              "description": "回合结束时，若自身本回合未取得拼点胜利，下回合自身交锋数+1。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "waa_lake_assault",
+          "name": "突击攻击",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "status", "name": "充能", "amount": 1, "target": "self"},
+              "description": "使用时获得1层充能。"
+            },
+            {
+              "trigger": "after_skill_use",
+              "operation": {"op": "status", "name": "强壮", "amount": 2, "target": "self"},
+              "description": "使用后获得2层强壮。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "1",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "status", "name": "充能", "amount": 1, "target": "self"},
+                  "description": "命中时获得1层充能。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "充能", 1, "SPEND_STATUS_IN_FULL",
+                      ["$full_hp", ["$player", 1, "DRAW", "$self", 1, "NEXT_TURN_DUELS"], ["$self", 1, "HEAL"], "IF_ELSE"],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "拼点胜利时，消耗1层充能以回复1生命；若生命已满，改为抽1张牌并使下回合自身交锋数+1。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "waa_lake_contract",
+          "name": "执行委托",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "roll_max": 10,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "status", "name": "充能", "amount": 1, "target": "self"},
+                  "description": "拼点胜利时获得1层充能。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": ["1"]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": ["1"]
+            },
+            {
+              "type": "pierce",
+              "level": 1,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "充能", 1, "SPEND_STATUS_IN_FULL",
+                      [{"op": "damage", "amount": 1, "grade": "normal", "damage_part": true}],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "命中时，消耗1层充能以追加1点物理伤害。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "waa_lake_finisher",
+          "name": "猛烈斩杀",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "充能", "all", "SPEND_STATUS", "spent", "STORE", "$card", {"local": "spent"}, 2,
+                  "FLOOR_DIV", 5, "MIN", "SKILL_FINAL_ADD", "$card", {"local": "spent"}, 5, "FLOOR_DIV",
+                  2, "MIN", "SKILL_LEVEL_ADD"
+                ]
+              },
+              "description": "使用时消耗全部充能。每实际消耗2层，本技能最终点数+1（至多+5）；每实际消耗5层，骰子等级+1（至多+2）。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "2",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$target", "虚弱", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "命中目标下回合获得1层虚弱。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                "1",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "充能", 2, "NEXT_TEAM_STATUS"]
+                  },
+                  "description": "命中时，全体友方角色下回合获得2层充能。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "waa_grolina",
+      "name": "格罗琳娜",
+      "title": "XIII阶代理人",
+      "rank": "NORMAL",
+      "max_hp": 6,
+      "passive_skills": [
+        {
+          "name": "快速行动",
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$faster", ["$card", 1, "SKILL_FINAL_ADD"], "WHEN"]
+              },
+              "description": "己方速度高于对方时，本回合自身最终点数+1。"
+            }
+          ]
+        },
+        {
+          "name": "推进输出",
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$duel_number", 1, "GT", "$previous_loss", "NOT", "AND",
+                  ["$card", 1, "SKILL_LEVEL_ADD", "$card", "advance_reward", 1, "SET_SKILL_STATE"],
+                  "WHEN"
+                ]
+              },
+              "description": "使用技能时，若不是第一交锋且上一交锋己方无人拼点失败，本技能骰子等级+1。"
+            },
+            {
+              "trigger": "after_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$card", "advance_reward", "SKILL_STATE",
+                  ["$card", "advance_reward", 0, "SET_SKILL_STATE", "$self", "充能", 1, "STATUS"],
+                  "WHEN"
+                ]
+              },
+              "description": "满足推进输出的技能使用后获得1层充能。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "waa_grolina_quick",
+          "name": "快进",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "before_dice_use",
+              "operation": {
+                "op": "program",
+                "code": ["$die", "$self", "充能", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_FINAL_ADD"]
+              },
+              "description": "每持有4层充能，本技能最终点数+1（至多+2）。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": ["1"]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$self", "迅捷", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "命中时，下回合获得1层迅捷。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "waa_grolina_delay",
+          "name": "阻滞",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "before_dice_use",
+              "operation": {
+                "op": "program",
+                "code": ["$die", "$self", "充能", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_FINAL_ADD"]
+              },
+              "description": "每持有4层充能，本技能最终点数+1（至多+2）。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "before_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$faster", ["$die", 2, "DIE_LEVEL_ADD"], "WHEN"]
+                  },
+                  "description": "若对方速度低于己方，本骰子等级+2。"
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "status", "name": "充能", "amount": 1, "target": "self"},
+                  "description": "拼点胜利时获得1层充能。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": [
+                    {"op": "status", "name": "充能", "amount": 2, "target": "self"},
+                    {
+                      "op": "program",
+                      "code": ["$self", "$target", "束缚", 1, "QUEUE_STATUS"]
+                    },
+                    {
+                      "op": "program",
+                      "code": ["$self", "$target", "虚弱", 1, "QUEUE_STATUS"]
+                    }
+                  ],
+                  "description": "命中时获得2层充能，目标下回合获得1层束缚及1层虚弱。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "waa_grolina_opportunity",
+          "name": "借机",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "before_dice_use",
+              "operation": {
+                "op": "program",
+                "code": ["$die", "$self", "充能", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_LEVEL_ADD"]
+              },
+              "description": "每持有4层充能，本技能骰子等级+1（至多+2）。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "充能", "STATUS_COUNT", 4, "LE",
+                  ["$self", "充能", 4, "STATUS"],
+                  ["$self", "充能", "STATUS_COUNT", 12, "GE", ["$card", 3, "SKILL_FINAL_ADD"], "WHEN"],
+                  "IF_ELSE"
+                ]
+              },
+              "description": "使用时，若充能≤4，则获得4层充能；若充能≥12，本技能最终点数再+3。"
+            },
+            {
+              "trigger": "after_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "充能", "$self", "充能", "all", "SPEND_STATUS", 4, "FLOOR_DIV", 3, "MIN", "TEAM_STATUS"]
+              },
+              "description": "使用后消耗全部充能，每消耗4层，全体友方各获得1层充能（至多3层）。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": [
+                "1",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": "Draw: 1",
+                  "description": "命中时抽取1张手牌。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$player", 1, "NEXT_TURN_COST"]
+                  },
+                  "description": "命中时，己方下回合获得1点通用费用。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "1",
+                {
+                  "trigger": "before_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "充能", 4, "SPEND_STATUS", "POP", {"op": "damage_add", "amount": 2}]
+                  },
+                  "description": "命中时，若充能不少于16，则消耗4层充能并使伤害+2。",
+                  "when": {"owner_status_at_least": {"充能": 16}}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "waa_erkes",
+      "name": "厄尔克斯",
+      "title": "XIV阶代理人",
+      "rank": "NORMAL",
+      "max_hp": 9,
+      "resource_rules": {
+        "caps": {"纯能": 5}
+      },
+      "passive_skills": [
+        {
+          "name": "纯能电池",
+          "entries": [],
+          "description": "自身可以安全持有纯能，纯能上限为5。"
+        },
+        {
+          "name": "扩散充能装置",
+          "entries": [
+            {
+              "trigger": "AFTER SPEND_STATUS",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "充能", 1, "TEAM_STATUS"]
+              },
+              "description": "每次自身消耗纯能，全体友方获得1层充能。",
+              "subject": "target",
+              "when": {"status": "纯能", "result_at_least": 1}
+            }
+          ]
+        },
+        {
+          "name": "自发增压武器",
+          "entries": [
+            {
+              "trigger": "BEFORE DAMAGE",
+              "operation": {
+                "op": "program",
+                "code": ["$damage_cause", "NOT", "$self_damage", "NOT", "AND", [{"op": "damage_add", "amount": 1}], "WHEN"]
+              },
+              "description": "纯能≥3时，自身造成的伤害+1。",
+              "subject": "source",
+              "when": {"owner_status_at_least": {"纯能": 3}}
+            },
+            {
+              "trigger": "BEFORE STATUS",
+              "when": {"status": "充能", "amount_at_least": 1, "owner_status_at_least": {"纯能": 3}},
+              "operation": {"op": "program", "code": ["POP", 0]},
+              "description": "纯能≥3时，无法获得充能。"
+            },
+            {
+              "trigger": "BEFORE SPEND_STATUS",
+              "when": {"status": "充能", "amount_at_least": 1, "owner_status_at_least": {"纯能": 3}},
+              "operation": {"op": "program", "code": [1, "ADD"]},
+              "description": "纯能≥3时，定量消耗的充能+1。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "waa_erkes_load",
+          "name": "纯能填装",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "after_skill_use",
+              "operation": {"op": "status", "name": "纯能", "amount": 1, "target": "self"},
+              "description": "使用后获得1层纯能。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "充能", "STATUS_COUNT", 8, "LE",
+                      ["$self", "充能", 2, "STATUS"],
+                      "WHEN", "$self", "纯能", "STATUS_COUNT", 2, "LE",
+                      ["$self", "纯能", 1, "STATUS"],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "拼点胜利时，若充能≤8，获得2层充能；若纯能≤2，获得1层纯能。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "status", "name": "充能", "amount": 1, "target": "self"},
+                  "description": "拼点胜利时获得1层充能。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "waa_erkes_dissipate",
+          "name": "能源逸散",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "充能", 4, "SPEND_STATUS_IN_FULL", ["$card", 2, "SKILL_FINAL_ADD"], "WHEN"]
+              },
+              "description": "使用时消耗4层充能以使本技能最终点数+2。"
+            },
+            {
+              "trigger": "after_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "纯能", "STATUS_COUNT", 2, "GE", "$self", "充能", "STATUS_COUNT", 8, "LE", "AND",
+                  ["$self", "纯能", 1, "SPEND_STATUS_IN_FULL", ["$self", "充能", 3, "STATUS"], "WHEN"],
+                  "WHEN"
+                ]
+              },
+              "description": "使用后，若纯能≥2且充能≤8，消耗1层纯能以获得3层充能。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": "Heal: 1",
+                  "description": "拼点胜利时回复1生命值。"
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                "1",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "纯能", 1, "SPEND_STATUS_IN_FULL",
+                      [
+                        {"op": "damage", "amount": 1, "grade": "normal", "damage_part": true},
+                        {"op": "status", "name": "虚弱", "amount": 2, "target": "target"}
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "命中时，消耗1层纯能以追加1点物理伤害并对目标施加2层虚弱。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "waa_erkes_burst",
+          "name": "武器增压迸发",
+          "cost": 5,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "纯能", "STATUS_COUNT", 3, "LT", ["$self", "纯能", 1, "STATUS"], "WHEN"]
+              },
+              "description": "使用时，若纯能少于3则获得1层纯能。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "$self", "充能", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MUL", 4, "MIN", "SKILL_FINAL_ADD"]
+              },
+              "description": "使用时，每持有4层充能，本技能最终点数+2（至多+4）。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "充能", "STATUS_COUNT", 8, "LT", "needs_seal", "STORE", "$self", "充能", "all",
+                  "SPEND_STATUS", "POP", {"local": "needs_seal"},
+                  ["$self", "能源封印", 1, "STATUS"],
+                  "WHEN"
+                ]
+              },
+              "description": "使用时消耗全部充能。若消耗前的充能低于8层，随后对自身施加能源封印。封印持续至充能达到8层，期间无法消耗充能或纯能。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                "1",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "充能", 2, "SPEND_STATUS", "POP"]
+                  },
+                  "description": "命中时消耗2层充能。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": [
+                "1",
+                {
+                  "trigger": "before_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$die", "$card", "充能", "SPENT_STATUS_COUNT", 3, "FLOOR_DIV", "DIE_LEVEL_ADD"]
+                  },
+                  "description": "本技能每实际消耗3层充能，本骰子等级+1。"
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                "1",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "纯能", "STATUS_COUNT", 3, "GE", "$repeat_count", 3, "LT", "AND",
+                      ["$self", "纯能", 1, "SPEND_STATUS_IN_FULL", ["$die", "REPEAT_DIE"], "WHEN"],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "命中时，若纯能≥3，消耗1层纯能以使本骰重复使用1次（每次技能至多重复3次）。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
