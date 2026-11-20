@@ -264,6 +264,9 @@ function fighterDetails(side) {
         const shields = actor.shields;
         body.append(element("p", "dialog-copy", player.name + " · " + (ranks[actor.rank] || actor.rank)));
         body.append(element("p", "dialog-copy", `生命 ${actor.hp}/${actor.max_hp} · 交锋 ${used}/${actor.duels.max} · 个人费 ${actor.cost.available} · 通用费 ${player.cost.available}`));
+        body.append(element("p", "dialog-copy", `光点形态群完整度 ${actor.lightcore_hp}/${actor.max_lightcore_hp}`));
+        const lethalHeal = actor.alive && actor.hp >= actor.max_lightcore_hp && actor.hp < actor.max_hp;
+        if (lethalHeal) body.append(element("p", "dialog-copy", "当前实际回复生命会立即阵亡。"));
         body.append(element("p", "dialog-copy", `普通盾 ${shields.normal} · 强化盾 ${shields.reinforced} · 概念盾 ${shields.concept}`));
         const statusList = Object.entries(actor.statuses);
         if (statusList.length) {
@@ -300,6 +303,8 @@ function rulesDialog() {
             "开牌前由先手方先取得进攻权。每张进攻牌可以指定角色或常规交锋。对手考虑迎击期间，进攻方可以继续出牌。防守方可任选一场待迎击的进攻，用手牌迎击或明确放行。",
             "取得进攻权后仍可处理此前待迎击的牌。双方都结束主动进攻、每场都已就绪后，按进攻编号结算。仍指向常规交锋的进攻会牵走对手的扣牌。随后统一开牌。技能使用时先付个人费，再付通用费。",
             "双方逐骰比拼点点数。攻击骰获胜时命中，攻击骰无对位时单方面攻击。生命归零时判定阵亡，具有免死效果的角色仍可行动。",
+            "光点伤害扣除完整度。完整度从正数降到零时触发崩塌，承受原始生命上限一半的真实伤害（向上取整），完整度上限减少 4，再按新上限回满。追加的光点伤害另算一段。",
+            "回复前生命已达到当前完整度上限，且此次实际回复了生命，角色立即阵亡。此规则优先于免死。",
             "用置卡机会或牌面许可补入友方空常规交锋，均须有剩余常规交锋额度，置入一张占一次。场内即时进攻默认直接结算，只有牌面明示可迎击时才开放回应。",
             "换卡时换下的牌回手，原费用不退。新牌须自己付费，从第一骰重新使用。",
             "已经对位的骰子在拼点结果产生前消失，会形成空白轮。仅对方取得拼点胜利，消失骰没有拼点结果。",
@@ -325,7 +330,7 @@ function newGameDialog() {
             const field = element("label", "field", player.name);
             const select = element("select");
             for (const fighter of match.choices) {
-                const label = `${fighter.name} · ${fighter.max_hp} 生命`;
+                const label = `${fighter.name} · 生命 ${fighter.max_hp} · 完整度 ${fighter.max_lightcore_hp}`;
                 const option = element("option", "", label);
                 option.value = fighter.id;
                 select.append(option);
@@ -366,6 +371,7 @@ function updateFighter(player) {
     setText(field("meta"), meta.join(" · "));
     setText(field("hp"), String(actor.hp));
     setText(field("max-hp"), String(actor.max_hp));
+    setText(field("lightcore"), `完整度 ${actor.lightcore_hp}/${actor.max_lightcore_hp}`);
     const bar = field("hp-bar");
     bar.max = actor.max_hp;
     bar.value = actor.hp;

@@ -92,7 +92,9 @@ class Game:
         rank = CharacterRank[data["rank"]]
         label = {"NORMAL": "常人", "ELITE": "精英", "BOSS": "Boss", "EMPOWERED_BOSS": "强化 Boss"}[rank.name]
         title = f"　{data['title']}" if data.get("title") else ""
-        return f"{data['name']}{title}　{label}　生命 {data['max_hp']}　最多 {Character.base_duels(data)} 交锋"
+        integrity = Character.initial_lightcore_max(data["max_hp"])
+        return (f"{data['name']}{title}　{label}　生命 {data['max_hp']}　完整度 {integrity}"
+                f"　最多 {Character.base_duels(data)} 交锋")
 
     @staticmethod
     def show_character(data):

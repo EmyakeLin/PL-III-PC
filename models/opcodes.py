@@ -410,7 +410,8 @@ def handle_damage(ctx):
         else:
             fixed += -value if kind == "armor" else value
     proposed = max(0, int(amount * multiplier + fixed))
-    damage = ctx.eval_block([target, proposed, OpCode.RESOLVE_DAMAGE])
+    ctx.stack.extend((target, proposed))
+    damage = ctx.execute_op(OpCode.RESOLVE_DAMAGE, base_amount=amount)
     if damage is None or not target.is_alive or (ctx.executions and ctx.executions[-1].cancelled):
         ctx.current_op = None
         return None
@@ -431,8 +432,56 @@ def handle_heal(ctx):
     amount, target = ctx.pop(), ctx.pop()
     actual = target.heal(amount)
     if actual:
-        print(f"{target.combat_name} 恢复 {actual} 点生命（{target.hp}/{target.max_hp}）。")
+        if target.is_alive:
+            print(f"{target.combat_name} 恢复 {actual} 点生命（{target.hp}/{target.max_hp}）。")
+        else:
+            print(f"{target.combat_name} 实际恢复 {actual} 点生命，回复生命触发即死，阵亡。")
     return actual
+
+
+def handle_lightcore_damage(ctx):
+    amount, target = max(0, int(ctx.pop())), ctx.pop()
+    if target == "target":
+        target = ctx.event.get("target")
+    if target is None or not target.is_alive:
+        ctx.current_op = None
+        return
+    lost = min(target.lightcore_hp, amount)
+    target.lightcore_hp -= lost
+    collapsed = lost > 0 and target.lightcore_hp == 0
+    ctx.event.update(amount=amount, lightcore_lost=lost, lightcore_collapsed=collapsed)
+    cause = getattr(ctx.event.get("source"), "combat_name", "效果")
+    print(f"{cause} 对 {target.combat_name} 造成 {amount} 点光点伤害"
+          f"（完整度 {target.lightcore_hp}/{target.max_lightcore_hp}）。")
+    if collapsed:
+        # This whole segment has been consumed. A subsequent segment sees the new pool.
+        print(f"{target.combat_name} 的光点形态群崩塌。")
+        with ctx.binding(source=target, damage_cause="光点形态群崩塌"):
+            ctx.eval_block([target, (target.original_max_hp + 1) // 2, OpCode.REAL_DAMAGE])
+        target.max_lightcore_hp = max(0, target.max_lightcore_hp - 4)
+        target.lightcore_hp = target.max_lightcore_hp
+        print(f"{target.combat_name} 的光点生命上限降至 {target.max_lightcore_hp}，"
+              f"完整度恢复为 {target.lightcore_hp}/{target.max_lightcore_hp}。")
+    return amount
+
+
+def handle_real_damage(ctx):
+    amount, target = max(0, int(ctx.pop())), ctx.pop()
+    if target == "target":
+        target = ctx.event.get("target")
+    if target is None or not target.is_alive:
+        ctx.current_op = None
+        return
+    lost = target.lose_hp(amount)
+    if not target.is_alive and ctx.game.is_over:
+        ctx.close_combat_effects()
+    ctx.event.update(amount=amount, hp_lost=lost)
+    cause = ctx.event.get("damage_cause") or getattr(ctx.event.get("source"), "combat_name", "效果")
+    print(f"{target.combat_name} 承受 {amount} 点真实伤害"
+          f"（来源：{cause}，剩余生命 {target.hp}/{target.max_hp}）。")
+    if not target.is_alive:
+        print(f"{target.combat_name} 阵亡。")
+    return amount
 
 
 def handle_lose_hp(ctx):
@@ -563,7 +612,8 @@ DISPATCH_TABLE = {
     OpCode.DIE_FINAL_ADD: handle_final_add, OpCode.DIE_LEVEL_ADD: handle_die_level_add,
     OpCode.REPEAT_DIE: handle_repeat_die, OpCode.NEXT_TURN_DUELS: handle_next_turn_duels,
     OpCode.SET_SKILL_STATE: handle_set_skill_state, OpCode.QUEUE_STATUS: handle_queue_status,
-    OpCode.DAMAGE: handle_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
+    OpCode.DAMAGE: handle_damage, OpCode.LIGHTCORE_DAMAGE: handle_lightcore_damage,
+    OpCode.REAL_DAMAGE: handle_real_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
     OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
     OpCode.STATUS: handle_status, OpCode.STAGGER: handle_stagger,
     OpCode.SPEND_STATUS: handle_spend_status,
@@ -600,6 +650,7 @@ OPERANDS = {
     OpCode.MOVE_CARD: ("card", "zone"), OpCode.ROUTE_DIE_ATTACK: ("die", "target"),
     OpCode.FOR_EACH_TARGET: ("targets", "block"),
     OpCode.DAMAGE: ("target", "amount", "penetration", "attack_type"),
+    OpCode.LIGHTCORE_DAMAGE: ("target", "amount"), OpCode.REAL_DAMAGE: ("target", "amount"),
     OpCode.HEAL: ("target", "amount"), OpCode.STATUS: ("target", "status", "amount"),
     OpCode.SPEND_STATUS: ("target", "status", "amount"),
     OpCode.SHIELD: ("target", "shield_kind", "amount"), OpCode.STAGGER: ("target",),

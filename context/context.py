@@ -30,6 +30,7 @@ class Context:
         self.active_dice = {}
         self.hit_modifiers = {}
         self.roll_adjustments = {}
+        self._combat_effects_closed = False
         # Entries whose printed duration outlives the physical card's return to hand.
         self._lasting_entries = {}
 
@@ -194,22 +195,28 @@ class Context:
             fields.update(source=actor, side=actor.player.side if actor else None)
             if "die" in fields:
                 fields["card"] = part.card
-        elif opcode in (OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
+        elif opcode in (OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD):
             fields.setdefault("source", self.event.get("source") or fields["target"])
             fields["side"] = fields["source"].player.side
-            if opcode == OpCode.LOSE_HP:
-                fields.update(damage_amount=None, hp_lost=None, result=None)
-        elif opcode in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE):
+        elif opcode in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.LOSE_HP,
+                        OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE):
             if fields["target"] == "target":
                 fields["target"] = self.event.get("target")
-            # Nested damage has its own measurements, even inside an AFTER DAMAGE listener.
-            fields.update(result=None, hp_lost=None)
+            # A follow-up segment owns its measurements even inside another channel's listener.
+            fields.update(result=None, hp_lost=None, damage_amount=None,
+                          lightcore_lost=None, lightcore_collapsed=False)
+            fields.setdefault("base_amount", fields["amount"])
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
-                fields.update(base_amount=fields["amount"], damage_amount=None)
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
-            else:
+            elif opcode == OpCode.RESOLVE_DAMAGE:
                 fields["damage_amount"] = fields["amount"]
+            else:
+                fields.update(damage_part=False, penetration=None, attack_type=None, modifiers=None)
+                if opcode == OpCode.LOSE_HP:
+                    fields["base_amount"] = None
+                    fields.setdefault("source", self.event.get("source") or fields["target"])
+                    fields["side"] = fields["source"].player.side
         with self.binding(**fields) as event, self._pending(opcode):
             self.dispatch_opcode(opcode, "BEFORE")
             if self.current_op is None or (originating_entry is not None and originating_entry.cancelled):
@@ -260,12 +267,19 @@ class Context:
                 else:
                     self.entries.remove(entry)
 
+    def close_combat_effects(self):
+        """Stop combatants' outstanding effects; global observers can still read terminal results."""
+        self._combat_effects_closed = True
+        for execution in self.executions:
+            if character_of(execution.entry.owner) is not None:
+                execution.cancelled = True
+
     def _in_scope(self, entry):
         owner, event = entry.owner, self.event
         character = character_of(owner)
         if entry.blanked:
             return False
-        if character is not None and not character.is_alive:
+        if character is not None and (not character.is_alive or self._combat_effects_closed):
             return False
         if getattr(owner, "destroyed", False) or getattr(getattr(owner, "state", None), "name", "") == "NEGATED":
             return False
@@ -346,7 +360,8 @@ class Context:
                     and event.get("player") is not None):
                 return getattr(character, "player", None) is event["player"]
             if entry.trigger_type == TriggerType.OPCODE and entry.trigger in (
-                    OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.SHIELD,
+                    OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE,
+                    OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.SHIELD,
                     OpCode.DESTROY, OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
                 subject = "target"
             else:

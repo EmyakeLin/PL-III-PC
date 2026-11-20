@@ -60,7 +60,7 @@ class Player:
         default = self.get_default_target(enemy_player)
         print(f"{self.name} 选择单方面攻击的目标：")
         for number, character in enumerate(alive, 1):
-            print(f"  [{number}] {character.name}　生命 {character.hp}/{character.max_hp}")
+            print(f"  [{number}] {character.combat_summary()}")
         while True:
             answer = input(f"输入编号，回车选 {default.name}，set 编号可更改默认目标 ").strip()
             if not answer:

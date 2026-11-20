@@ -305,6 +305,7 @@ class Displayer:
         return {
             "id": c.id, "name": c.name, "title": c.data.get("title"), "faction": c.faction,
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
+            "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": dict(c.statuses), "bleed_burst": c.bleed_burst,
             "cost": {"available": c.available_cost, "refill": c.independent_cost, "spent": c.used_independent_cost},

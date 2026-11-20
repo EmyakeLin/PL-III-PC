@@ -38,7 +38,7 @@ def _actions(phase):
 def _attack(game, player, card):
     enemy = game.pre_reveal.opponent(player)
     targets = game.pre_reveal.attack_targets(card)
-    labels = [f"{c.name}　生命 {c.hp}/{c.max_hp}" if c is not None
+    labels = [c.combat_summary() if c is not None
               else f"常规交锋 {i + 1}　对手置牌 {len(game.duelspace.space[i].get_content(enemy.side))} 张"
               for c, i in targets]
     index = _choose(labels, "选择目标，回车返回公开桌面 ")

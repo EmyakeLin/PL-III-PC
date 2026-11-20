@@ -1,5 +1,7 @@
 from enum import Enum, auto
 
+from models.opcode import OpCode
+
 
 RANGE_NAMES = ("近战", "普通远程", "强化远程", "极限远程")
 
@@ -227,9 +229,14 @@ def describe_entry(entry):
         if entry.get("description"):
             return entry["description"]
         return f"{entry.get('trigger', '命中')} {entry.get('operation', '')}".strip()
-    from entry.effects import GRADE_NAMES, damage_part
+    from entry.effects import GRADE_NAMES, damage_part, independent_damage_part
     part = damage_part(entry)
     if part:
         amount, grade = part
         return f"{amount} 点{GRADE_NAMES[grade]}伤害"
+    independent = independent_damage_part(entry)
+    if independent:
+        amount, opcode = independent
+        label = "光点" if opcode is OpCode.LIGHTCORE_DAMAGE else "真实"
+        return f"{amount} 点{label}伤害"
     return str(entry)

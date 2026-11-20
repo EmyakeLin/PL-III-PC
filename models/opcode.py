@@ -27,6 +27,8 @@ class OpCode(Enum):
     
     # 状态与业务原子操作
     DAMAGE = auto()
+    LIGHTCORE_DAMAGE = auto()
+    REAL_DAMAGE = auto()
     HEAL = auto()
     DRAW = auto()
     DESTROY = auto()

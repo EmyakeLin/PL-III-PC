@@ -18,6 +18,10 @@ def run_program(ctx, entry, tokens):
         event = ctx.event
         if field == "hp":
             return actor.hp
+        if field in ("lightcore_hp", "max_lightcore_hp"):
+            return getattr(actor, field)
+        if field in ("target_lightcore_hp", "target_max_lightcore_hp"):
+            return getattr(event.get("target"), field.removeprefix("target_"), 0)
         if field == "speed_lead":
             return actor.speed - next(other.speed for other in ctx.game.players if other is not player)
         if field == "target_alive":
@@ -39,7 +43,8 @@ def run_program(ctx, entry, tokens):
             return event["opponent_die"].clash_score
         if field in ("opponent_card", "opponent_die", "combat_window", "clash_difference", "prospective_result"):
             return event.get(field)
-        if field in ("damage_amount", "base_amount", "hp_lost"):
+        if field in ("amount", "result", "damage_amount", "base_amount", "hp_lost",
+                     "lightcore_lost", "lightcore_collapsed"):
             return event.get(field)
         if field in ("card", "die", "target", "play_mode", "replaced_card"):
             return event.get(field)

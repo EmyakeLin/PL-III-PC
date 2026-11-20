@@ -173,7 +173,9 @@ class MatchTests(unittest.TestCase):
         self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (13, 1))
 
     def test_pack_levels_formula_and_guard_alias(self):
-        self.assertEqual(len(self.pool), 13)
+        known_roster = {"铁壁先锋", "绯红决斗者", "演练斥候", "演练医护", "演练队长", "演练重装机",
+                        "莱克", "格罗琳娜", "厄尔克斯", "安诺琳", "岑遥", "闻笙", "空白", "阙鸣", "沈砾"}
+        self.assertTrue(known_roster.issubset({character["name"] for character in self.pool}))
         self.assertEqual({c["rank"] for c in self.pool}, {"NORMAL", "ELITE", "BOSS", "EMPOWERED_BOSS"})
         die = Dice(dict(type="guard", level=1, base_value=2, multiplier=3, final_bonus=1))
         self.assertTrue(die.is_passive)

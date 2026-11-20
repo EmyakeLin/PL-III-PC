@@ -39,7 +39,8 @@ class BattleMatch:
                 or roster[0] == roster[1] and not pool[roster[0]].get("mirror_allowed")):
             raise ValueError("请选择两名可出战的角色；允许镜像的角色可由双方同时选用。")
         self.choices = [
-            {key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")}
+            {**{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")},
+             "max_lightcore_hp": Character.initial_lightcore_max(spec["max_hp"])}
             for spec in pool.values()
         ]
         players = [Player(1, "玩家一"), Player(2, "玩家二")]
@@ -439,7 +440,8 @@ class BattleMatch:
             elif node == "after_dice_hit" and die:
                 enemy = next(p.characters[0] for p in game.players if p is not player)
                 attack = "单方面攻击" if die["result"] is None else "进攻"
-                actions.append(f"{character.combat_name}{attack}，{enemy.combat_name}生命 {enemy.hp}/{enemy.max_hp}")
+                actions.append(f"{character.combat_name}{attack}，{enemy.combat_name}生命 {enemy.hp}/{enemy.max_hp}，"
+                               f"完整度 {enemy.lightcore_hp}/{enemy.max_lightcore_hp}")
                 pause = True
         if scores:
             actions.append("拼点 " + " · ".join(scores))

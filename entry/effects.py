@@ -30,7 +30,8 @@ from entry.entry import character_of
 from models.opcode import OpCode
 
 
-_DAMAGE_PART = re.compile(r"(\d+)\s*(超穿甲|穿甲|普通|物理)?\Z")
+_DAMAGE_PART = re.compile(r"(\d+)\s*(?:点\s*)?(超穿甲|穿甲|普通|物理)?(?:直伤|伤害)?\Z")
+_INDEPENDENT_DAMAGE_PART = re.compile(r"(\d+)\s*(?:点\s*)?(光点|真实)(?:伤害)?\Z")
 GRADES = {"普通": "normal", "物理": "normal", "穿甲": "pierce", "超穿甲": "concept", "normal": "normal",
           "pierce": "pierce", "concept": "concept"}
 GRADE_RANK = {"normal": 0, "pierce": 1, "concept": 2}
@@ -40,6 +41,13 @@ GRADE_NAMES = {"normal": "普通", "pierce": "穿甲", "concept": "超穿甲"}
 def damage_part(text):
     match = _DAMAGE_PART.fullmatch(str(text).strip())
     return (int(match[1]), GRADES[match[2] or "普通"]) if match else None
+
+
+def independent_damage_part(text):
+    match = _INDEPENDENT_DAMAGE_PART.fullmatch(str(text).strip())
+    if match:
+        opcode = OpCode.LIGHTCORE_DAMAGE if match[2] == "光点" else OpCode.REAL_DAMAGE
+        return int(match[1]), opcode
 
 
 def select_entity(ctx, selector, owner):
@@ -78,9 +86,14 @@ def run_effect(ctx, entry, operation):
         operation(ctx)
         return
     if isinstance(operation, str):
-        name, _, rest = operation.partition(":")
-        args = [x.strip() for x in rest.split(",") if x.strip()]
-        data = {}
+        part = independent_damage_part(operation)
+        if part:
+            amount, opcode = part
+            name, args, data = opcode.name, [], {"amount": amount}
+        else:
+            name, _, rest = operation.partition(":")
+            args = [x.strip() for x in rest.split(",") if x.strip()]
+            data = {}
     elif isinstance(operation, dict):
         data = operation
         name, args = data["op"], data.get("args", [])
@@ -163,7 +176,9 @@ def run_effect(ctx, entry, operation):
         ctx.deal_damage(source, target, amount, grade, attack_type,
                         damage_part=data.get("damage_part", False))
         return
-    if name == "status":
+    if name in ("lightcore_damage", "real_damage"):
+        block = [target, amount, OpCode[name.upper()]]
+    elif name == "status":
         status = data.get("name", args[0] if args else None)
         if not status:
             raise ValueError("Status 需要状态名")

@@ -54,7 +54,10 @@ class Character:
         self.next_turn_duels = 0
         self.won_clash_this_turn = False
         self.speed = 0
-        self.max_hp = data["max_hp"]
+        self.original_max_hp = data["max_hp"]
+        self.max_hp = self.original_max_hp
+        self.max_lightcore_hp = self.initial_lightcore_max(self.original_max_hp)
+        self.lightcore_hp = self.max_lightcore_hp
         self.passive_skill_data = data.get("passive_skills", [])
         self.passive_skills = self.passive_skill_data
         self.skill_data = data["skills"]
@@ -86,6 +89,10 @@ class Character:
                              for player in self.game.players for c in player.characters):
             return f"{self.player.name}的{self.name}"
         return self.name
+
+    @staticmethod
+    def initial_lightcore_max(original_max_hp):
+        return ((original_max_hp + 2) // 3) * 4 + 4
 
     @staticmethod
     def base_duels(data):
@@ -123,7 +130,7 @@ class Character:
         self.shield = self.reinforced_shield = self.concept_shield = 0
 
     def combat_summary(self):
-        parts = [f"{self.name} {self.hp}/{self.max_hp} HP"]
+        parts = [f"{self.name}　生命 {self.hp}/{self.max_hp}", f"完整度 {self.lightcore_hp}/{self.max_lightcore_hp}"]
         for label, value in (("护盾", self.shield), ("强化护盾", self.reinforced_shield),
                              ("概念护盾", self.concept_shield)):
             if value:
@@ -228,7 +235,14 @@ class Character:
             return 0
         old_hp = self.hp
         self.hp = min(self.max_hp, self.hp + int(amount))
-        return self.hp - old_hp
+        recovered = self.hp - old_hp
+        if recovered > 0 and old_hp >= self.max_lightcore_hp:
+            # An actual heal at or above the integrity cap is unconditional death.
+            self.hp = 0
+            self._die()
+            if self.game and self.game.is_over:
+                self.game.context.close_combat_effects()
+        return recovered
 
     def lose_hp(self, amount):
         if not self.is_alive or amount <= 0:
