@@ -4,7 +4,9 @@ from collections import deque
 import random
 import time
 
+from context.context import Context
 from displayer import Displayer, _passives, _printed_skill, special_seats, timing_label
+from entry.entry import Entry, character_of
 from game import Game
 from loader import load_characters_from_packs
 from models.card import CardState
@@ -112,6 +114,55 @@ class _TableCharacter(Character):
             )
         return triggered
 
+    def add_shield(self, kind, amount):
+        before = (self.shield, self.reinforced_shield, self.concept_shield)
+        val = super().add_shield(kind, amount)
+        after = (self.shield, self.reinforced_shield, self.concept_shield)
+        if self.game and hasattr(self.game, "emit_fx"):
+            deltas = (
+                ("normal", after[0] - before[0], after[0]),
+                ("reinforced", after[1] - before[1], after[1]),
+                ("concept", after[2] - before[2], after[2]),
+            )
+            for k, d, tot in deltas:
+                if d > 0:
+                    self.game.emit_fx(
+                        "shield_gain",
+                        side=self.player.side,
+                        character_id=self.id,
+                        name=self.name,
+                        shield_kind=k,
+                        amount=d,
+                        total=tot,
+                    )
+        return val
+
+    def apply_status_delta(self, name, amount):
+        before = dict(self.statuses)
+        val = super().apply_status_delta(name, amount)
+        if self.game and hasattr(self.game, "emit_fx"):
+            # Resolve canonical key that changed
+            changed = None
+            for k in set(before) | set(self.statuses):
+                if before.get(k, 0) != self.statuses.get(k, 0):
+                    changed = k
+                    break
+            if changed is not None:
+                prev_v = before.get(changed, 0)
+                cur_v = self.statuses.get(changed, 0)
+                self.game.emit_fx(
+                    "status_change",
+                    side=self.player.side,
+                    character_id=self.id,
+                    character_name=self.name,
+                    status=changed,
+                    before=prev_v,
+                    after=cur_v,
+                    delta=cur_v - prev_v,
+                    burst=(changed == "裂血" and self.bleed_burst),
+                )
+        return val
+
     def _die(self):
         was_alive = self.is_alive
         super()._die()
@@ -181,10 +232,79 @@ class _TablePlayer(Player):
         return paid
 
 
+class _TableContext(Context):
+    def register_entries(self, owner, specs):
+        if getattr(owner, "type", None) == "blank":
+            return super().register_entries(owner, specs)
+        registered = []
+        for spec in specs or ():
+            if isinstance(spec, dict) and "entries" in spec and "trigger" not in spec:
+                group = super().register_entries(owner, spec["entries"])
+                p_name = spec.get("name") or ""
+                for entry in group:
+                    entry._passive_name = p_name
+                registered.extend(group)
+            else:
+                registered.extend(super().register_entries(owner, [spec]))
+        return registered
+
+    def _invoke(self, entry):
+        p_name = getattr(entry, "_passive_name", None)
+        char = character_of(entry.owner) if p_name else None
+        if not p_name or char is None or not self.game or not hasattr(self.game, "emit_fx"):
+            return super()._invoke(entry)
+
+        seq_before = self.game._fx_seq
+        player = getattr(char, "player", None)
+        card = self.event.get("card")
+        vref = self.event.get("value_ref")
+        hm = self.event.get("hit_modifiers")
+        before = (
+            char.turn_duel_bonus,
+            char.next_turn_duels,
+            char.turn_cost_adjustment,
+            player.turn_cost_adjustment if player else 0,
+            len(player.cardspace.hand.content) if player else 0,
+            (getattr(card, "final_bonus", 0), getattr(card, "level_bonus", 0), len(getattr(card, "use_state", {}))) if card else None,
+            (getattr(vref, "floor", None), getattr(vref, "ceiling", None)) if vref else None,
+            len(hm) if isinstance(hm, list) else 0,
+            len(self.game.next_turn_statuses),
+        )
+        res = super()._invoke(entry)
+        after = (
+            char.turn_duel_bonus,
+            char.next_turn_duels,
+            char.turn_cost_adjustment,
+            player.turn_cost_adjustment if player else 0,
+            len(player.cardspace.hand.content) if player else 0,
+            (getattr(card, "final_bonus", 0), getattr(card, "level_bonus", 0), len(getattr(card, "use_state", {}))) if card else None,
+            (getattr(vref, "floor", None), getattr(vref, "ceiling", None)) if vref else None,
+            len(hm) if isinstance(hm, list) else 0,
+            len(self.game.next_turn_statuses),
+        )
+        # Skip noisy value_ref floor/ceiling pin when no level debuff was actually active
+        only_vref_changed = (
+            self.game._fx_seq == seq_before
+            and before[:6] == after[:6]
+            and before[7:] == after[7:]
+            and before[6] != after[6]
+        )
+        if self.game._fx_seq > seq_before or (before != after and not (only_vref_changed and not char.statuses.get("骰子等级降低", 0))):
+            self.game.emit_fx(
+                "passive_trigger",
+                side=player.side if player else None,
+                character_id=char.id,
+                character_name=char.name,
+                passive_name=p_name,
+            )
+        return res
+
+
 class _TableGame(Game):
     def __init__(self, players, rng=None):
         super().__init__(players, rng=rng)
-        self.fx_events = deque(maxlen=160)
+        self.context = _TableContext(game=self)
+        self.fx_events = deque(maxlen=220)
         self._fx_seq = 0
         self._pending_draws = []
         self.last_speed_rolls = []
@@ -846,6 +966,18 @@ class BattleMatch:
                 attack = "单方面攻击" if die["result"] is None else "进攻"
                 if target is not None:
                     actions.append(f"{character.name}{attack}，{target.name}生命 {target.hp}/{target.max_hp}")
+                    game.emit_fx(
+                        "combat_strike",
+                        attacker_side=player.side,
+                        attacker_id=character.id,
+                        attacker_name=character.name,
+                        target_side=target.player.side,
+                        target_id=target.id,
+                        target_name=target.name,
+                        die_type=die["type"],
+                        one_sided=die["result"] is None,
+                        card_id=side["card_id"],
+                    )
                 else:
                     actions.append(f"{character.name}{attack}")
                 pause = True

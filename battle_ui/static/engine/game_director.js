@@ -1,11 +1,11 @@
 /**
- * Bright, clean, pure-WebGL Game Director for 《光点计划 III》.
- * Commercial-grade information clarity:
- *  - Library of Ruina style cards: clean [Icon] [1~max] face + instant 376px 100% VERBATIM Card Panel on hover
- *  - Arknights style characters: bold HP, shields shown ONLY when > 0, click ANY character to pin full Character Dossier (all verbatim passives + statuses + skills!)
- *  - Limbus Company style statuses: crisp 26x26 custom vector icons + stack numerals, hover for 100% verbatim rule text
- *  - ZERO paraphrasing, ZERO "Lv.X", ZERO "无附加词条", ZERO flavor/annotation text
- *  - ZERO black, ZERO blue-purple, ZERO DOM controls
+ * Living Confrontational Pure-WebGL Game Director for 《光点计划 III》.
+ *  - Confrontational Left(P1) vs Right(P2) Stage: living animated character figures facing each other across the sunlit arena
+ *  - Expanded Character Passives directly on stage beside each fighter (NEVER collapsed into a "被动(4)" button!), igniting with 3D energy beams whenever triggered
+ *  - Living Visual Choreography: animated status auras, concentric shield domes, 3D slash/pierce/blunt/block/evade VFX, actor lunge/recoil/dash, Matter.js colliding 3D dice & shield erosion shards
+ *  - Phase-Driven Dynamic Staging: horizontal face-to-face duel bridge during placement/pre-reveal -> dramatic focused Center-Stage Showdown during combat with live verbatim clash panels
+ *  - 100% Verbatim Rule Fidelity: ZERO paraphrasing, ZERO "Lv.X", ZERO "无附加词条", ZERO flavor/annotation filler
+ *  - Strictly Bright Palette: ZERO black, ZERO blue-purple, ZERO DOM controls
  */
 
 import * as PIXI from '../vendor/pixi.min.mjs';
@@ -25,10 +25,12 @@ import {
   drawStatusIcon,
   drawShieldGlyph,
   drawLightStar,
+  drawCostCrystal,
   buildCardBack,
   buildCardFront,
   buildVerbatimCardPanel,
 } from './card_print.js';
+import { createCharacterActor } from './stage_actors.js';
 import {
   makeSealButton,
   buildCharacterDossier,
@@ -90,7 +92,14 @@ export class GameDirector {
     this.state = null;
     this.lastFxSeq = 0;
 
+    // Live kinetic state ticked at 60fps
     this.hpDisplay = new Map();
+    this.hpWidgets = new Map();      // charId -> { barG, hpTxt, barX, barY, barW, barH, maxHp, accent }
+    this.actorNodes = new Map();     // charId -> { actor, liveCh, cx, cy, side }
+    this.actorMotion = new Map();    // charId -> { lunge, recoil, evade, hitFlash, healGlow, passiveFlare }
+    this.passivePlates = new Map();  // `${charId}:${passiveName}` -> { x, y, w, h, cx, cy, glowG, pulse }
+    this.passivePulses = new Map();  // `${charId}:${passiveName}` -> remaining sec (0..1.6)
+    this.costAnchors = new Map();    // side -> { x, y }
     this.floaters = [];
     this.banner = null;
     this.toast = null;
@@ -101,39 +110,47 @@ export class GameDirector {
     this.autoTimer = 0;
 
     // Inspection & interactive state
-    this.hoveredCard = null;    // { card, side, ownerName, anchorX }
-    this.hoveredInfo = null;    // { kind: 'status'|'passives', items, x, y }
+    this.hoveredCard = null;
+    this.hoveredInfo = null;
+    this._hiddenHoverSprite = null;
+    this._inspectAnim = null;
     this.dragState = null;
     this.selectedHandCardId = null;
 
     // Modals / Pinned Sheets
-    this.dossierModal = null;   // { charId, side, selectedSkillId, scrollY, maxScroll }
+    this.dossierModal = null;
     this.rosterModal = null;
     this.codexModal = null;
     this.pileModal = null;
     this.drawSelected = new Set();
 
+    // Spatial hit-test geometry maps
     this.layout = {};
     this.charRects = new Map();
     this.regularSlotRects = new Map();
+    this.regularLaneRects = new Map();
     this.preRevealSlotRects = new Map();
     this.pileCenters = new Map();
     this.handCardViews = new Map();
     this.preTimerTexts = [];
 
-    // Matter.js real dice collision callback -> exact contact audio + Three.js sparks + ripple
+    // Matter.js real dice collision callback -> exact contact audio + Three.js sparks + ripple + defense barrier
     this.physics.onClashImpact = ({ x, y, group }) => {
       const heavy = group.outcome !== 'draw';
       this.audio.clashImpact(heavy);
-      this.three.spawnImpactBurst(x, y, group.winnerColor || 0xe89b32, heavy ? 34 : 20, heavy);
-      this.physics.applyGentleImpulse(x, y, 280, heavy ? 0.036 : 0.02);
-      if (heavy) this._triggerShake(7, 0.22);
+      this.three.spawnImpactBurst(x, y, group.winnerColor || 0xe89b32, heavy ? 36 : 22, heavy);
+      this.physics.applyGentleImpulse(x, y, 290, heavy ? 0.036 : 0.02);
+      if (heavy) this._triggerShake(7.5, 0.22);
+      if (group.winDieType === 'block') {
+        this.three.spawnBlockBarrier({ x, y, colorHex: DIE_STYLE.block.color });
+      }
     };
 
     this.worldRoot = new PIXI.Container();
     app.stage.addChild(this.worldRoot);
 
-    this.zonesLayer = new PIXI.Container();
+    this.wingsLayer = new PIXI.Container();
+    this.actorsLayer = new PIXI.Container();
     this.boardLayer = new PIXI.Container();
     this.shardGraphic = new PIXI.Graphics();
     this.clashLayer = new PIXI.Container();
@@ -147,7 +164,8 @@ export class GameDirector {
     this.toastLayer = new PIXI.Container();
 
     this.worldRoot.addChild(
-      this.zonesLayer,
+      this.wingsLayer,
+      this.actorsLayer,
       this.boardLayer,
       this.shardGraphic,
       this.clashLayer,
@@ -188,24 +206,37 @@ export class GameDirector {
   _computeLayout() {
     const w = this.w;
     const h = this.h;
-    const pad = 18;
-    const leftW = Math.round(Math.max(256, Math.min(296, w * 0.21)));
-    const rightW = Math.round(Math.max(176, Math.min(206, w * 0.145)));
-    const arenaX = pad + leftW + 22;
-    const arenaW = Math.max(440, w - leftW - rightW - pad * 2 - 44);
-    const cardW = 138;
-    const cardH = 190;
-    const handY = h - cardH / 2 - 20;
-    const arenaTop = 56;
-    const arenaBottom = handY - cardH / 2 - 18;
-    const arenaH = Math.max(260, arenaBottom - arenaTop);
+    const pad = 16;
+    const wingW = Math.round(Math.max(274, Math.min(342, w * 0.242)));
+    const arenaGap = 16;
+    const arenaX = pad + wingW + arenaGap;
+    const arenaW = Math.max(460, w - (pad + wingW + arenaGap) * 2);
+    const cardW = 136;
+    const cardH = 186;
+    const handY = h - cardH / 2 - 12;
+    const actionStripY = handY - cardH / 2 - 42;
+    const arenaTop = 50;
+    const arenaBottom = actionStripY - 8;
+    const arenaH = Math.max(240, arenaBottom - arenaTop);
 
     this.layout = {
-      w, h, pad, leftW, rightW,
-      rightX: w - rightW - pad,
+      w, h, pad, wingW,
+      leftWingX: pad,
+      rightWingX: w - pad - wingW,
       arenaX, arenaW, arenaTop, arenaH,
+      actionStripY,
+      showdownBottom: h - 64,
       handY, cardW, cardH,
     };
+  }
+
+  _getMotion(charId) {
+    let m = this.actorMotion.get(charId);
+    if (!m) {
+      m = { lunge: 0, recoil: 0, evade: 0, hitFlash: 0, healGlow: 0, passiveFlare: 0 };
+      this.actorMotion.set(charId, m);
+    }
+    return m;
   }
 
   applyState(nextState, { isInitial = false } = {}) {
@@ -222,8 +253,10 @@ export class GameDirector {
     this.state = nextState;
     this.drawSelected.clear();
 
+    const isCombat = Boolean(nextState.frame?.combat);
     const phaseTint = PHASE_TINTS[nextState.frame?.phase] || 0xfaecc8;
     this.three.setPhaseTint(phaseTint);
+    this.three.setCombatFocus(isCombat);
 
     for (const p of nextState.frame?.players || []) {
       for (const c of p.characters || []) {
@@ -239,8 +272,12 @@ export class GameDirector {
     if (isInitial) {
       if (events.length) {
         const lastSpeed = [...events].reverse().find((e) => e.kind === 'speed_roll');
+        const initialPassives = events.filter((e) => e.kind === 'passive_trigger');
         this.lastFxSeq = events[events.length - 1].seq;
         if (lastSpeed) this._playSpeedRollFx(lastSpeed, true);
+        initialPassives.forEach((ev, idx) => {
+          setTimeout(() => this._playPassiveTriggerFx(ev, true), 180 + idx * 240);
+        });
       }
     } else {
       const fresh = events.filter((e) => e.seq > this.lastFxSeq);
@@ -260,31 +297,73 @@ export class GameDirector {
       if (ev.kind === 'speed_roll') delay += 460;
       else if (ev.kind === 'card_pull') delay += 360;
       else if (ev.kind === 'cards_reveal') delay += 320;
-      else if (ev.kind === 'dice_clash') delay += 260;
-      else if (ev.kind === 'damage') delay += 180;
+      else if (ev.kind === 'dice_clash') delay += 280;
+      else if (ev.kind === 'combat_strike') delay += 220;
+      else if (ev.kind === 'damage') delay += 170;
+      else if (ev.kind === 'passive_trigger') delay += 140;
       else delay += 55;
     }
+  }
+
+  _actorPos(charId) {
+    const node = this.actorNodes.get(charId);
+    if (node) return { x: node.cx, y: node.cy };
+    const r = this.charRects.get(charId);
+    if (r) return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+    return { x: this.w * 0.5, y: this.h * 0.45 };
   }
 
   _triggerSingleFx(ev) {
     if (!this.state) return;
     if (ev.kind === 'speed_roll') {
       this._playSpeedRollFx(ev, false);
+    } else if (ev.kind === 'passive_trigger') {
+      this._playPassiveTriggerFx(ev, false);
+    } else if (ev.kind === 'status_change') {
+      this._playStatusChangeFx(ev);
+    } else if (ev.kind === 'shield_gain') {
+      this._playShieldGainFx(ev);
+    } else if (ev.kind === 'combat_strike') {
+      this._playCombatStrikeFx(ev);
     } else if (ev.kind === 'draw') {
       this.audio.cardSlide();
       const dp = this.pileCenters.get(`${ev.side}:draw`);
-      if (dp) this._spawnFloater(dp.x, dp.y - 34, `+${ev.count}`, SIDE_THEME[ev.side].accent);
+      if (dp) {
+        this.three.spawnCardFlipArc({
+          fromX: dp.x, fromY: dp.y,
+          toX: this.layout.arenaX + this.layout.arenaW / 2,
+          toY: this.layout.handY,
+          width: 72, height: 100,
+          accentHex: SIDE_THEME[ev.side]?.accentHex || '#1c8a64',
+          flipFromBack: true, duration: 0.4, peakZ: 90,
+        });
+        this._spawnFloater(dp.x, dp.y - 36, `+${ev.count} 抽牌`, SIDE_THEME[ev.side].accent);
+      }
     } else if (ev.kind === 'draw_bottom') {
       this.audio.cardPlace();
       const dp = this.pileCenters.get(`${ev.side}:draw`);
-      if (dp) this._spawnFloater(dp.x, dp.y + 34, `置底 ${ev.count}`, INK.gold);
+      if (dp) this._spawnFloater(dp.x, dp.y - 32, `置底 ${ev.count}`, INK.gold);
     } else if (ev.kind === 'cost_refill') {
       this.audio.coinClink(1.08);
+      const ca = this.costAnchors.get(ev.side);
+      if (ca) this.three.triggerRipple(ca.x, ca.y, INK.gold);
     } else if (ev.kind === 'cost_pay') {
       if (ev.paid) {
         this.audio.coinClink(0.95);
-        const r = this.charRects.get(ev.character_id);
-        if (r && ev.cost > 0) this._spawnFloater(r.x + r.w - 28, r.y + 8, `-${ev.cost}费`, INK.gold);
+        const ca = this.costAnchors.get(ev.side);
+        const pos = this._actorPos(ev.character_id);
+        if (ev.cost > 0) {
+          if (ca) {
+            this.three.spawnEnergyBeam({
+              fromX: ca.x, fromY: ca.y,
+              toX: this.layout.arenaX + this.layout.arenaW * (ev.side === 1 ? 0.28 : 0.72),
+              toY: this.layout.arenaTop + 180,
+              colorHex: INK.gold,
+              duration: 0.42,
+            });
+          }
+          this._spawnFloater(pos.x, pos.y - 44, `-${ev.cost} 费`, INK.gold, 14);
+        }
       } else {
         this.audio.shieldErode();
         this._showBanner(`费用不足 · 跳过「${ev.card_name}」`, 0xcf4932, 1.5);
@@ -297,7 +376,7 @@ export class GameDirector {
         fromX: from ? from.cx : this.w * 0.5,
         fromY: from ? from.cy : this.h * 0.52,
         toX: to ? to.cx : this.w * 0.5,
-        toY: to ? to.cy : this.h * 0.24,
+        toY: to ? to.cy : this.h * 0.2,
         title: ev.card_name,
         accentHex: SIDE_THEME[ev.defender_side]?.accentHex || '#1c8a64',
         flipFromBack: true,
@@ -318,7 +397,7 @@ export class GameDirector {
               this.three.triggerRipple(rect.cx, rect.cy, SIDE_THEME[s].accent);
               this.three.spawnCardFlipArc({
                 fromX: rect.cx, fromY: rect.cy, toX: rect.cx, toY: rect.cy,
-                width: 108, height: 148, title: '', accentHex: SIDE_THEME[s].accentHex,
+                width: 96, height: 132, title: '', accentHex: SIDE_THEME[s].accentHex,
                 flipFromBack: true, duration: 0.46, peakZ: 115,
               });
             }, idx * 100);
@@ -332,41 +411,40 @@ export class GameDirector {
       this._playDamageFx(ev);
     } else if (ev.kind === 'heal') {
       this.audio.healChime();
-      const r = this.charRects.get(ev.target_id);
-      if (r) this._spawnFloater(r.x + r.w * 0.6, r.y + 14, `+${ev.amount}`, 0x269463, 18);
+      const pos = this._actorPos(ev.target_id);
+      this._getMotion(ev.target_id).healGlow = 1.0;
+      this.three.spawnImpactBurst(pos.x, pos.y, 0x269463, 14, false);
+      this._spawnFloater(pos.x, pos.y - 36, `+${ev.amount}`, 0x269463, 19);
     } else if (ev.kind === 'lose_hp') {
       this.audio.hitDamage();
-      const r = this.charRects.get(ev.target_id);
-      if (r) this._spawnFloater(r.x + r.w * 0.6, r.y + 14, `失去 ${ev.amount} 生命`, 0xc44569);
+      const pos = this._actorPos(ev.target_id);
+      this._getMotion(ev.target_id).recoil = 0.7;
+      this._getMotion(ev.target_id).hitFlash = 0.8;
+      this._spawnFloater(pos.x, pos.y - 34, `失去 ${ev.amount} 生命`, 0xc44569, 16);
     } else if (ev.kind === 'breath_crit') {
       this.audio.clashImpact(true);
-      const r = this.charRects.get(ev.character_id);
-      if (r) {
-        this._spawnFloater(r.x + r.w * 0.5, r.y - 6, '暴击', 0x1a8775, 17);
-        this.three.spawnImpactBurst(r.x + r.w * 0.5, r.y + 16, 0x24967c, 22, true);
-      }
+      const pos = this._actorPos(ev.character_id);
+      this._spawnFloater(pos.x, pos.y - 46, '✦ 暴击', 0x1a8775, 19);
+      this.three.spawnImpactBurst(pos.x, pos.y, 0x24967c, 26, true);
     } else if (ev.kind === 'stagger_check') {
-      const r = this.charRects.get(ev.target_id);
-      if (r) {
-        this._spawnFloater(r.x + r.w * 0.5, r.y + 4, ev.triggered ? '致命失衡' : '失衡 +2', ev.triggered ? 0xd4223a : 0xbf9119);
-      }
+      const pos = this._actorPos(ev.target_id);
+      if (ev.triggered) this._triggerShake(8, 0.3);
+      this._spawnFloater(pos.x, pos.y - 42, ev.triggered ? '致命失衡' : '失衡 +2', ev.triggered ? 0xd4223a : 0xbf9119, 17);
     } else if (ev.kind === 'card_replace') {
       this.audio.cardFlip();
       const { arenaX, arenaW, arenaTop, arenaH, handY } = this.layout;
       this.three.spawnCardFlipArc({
-        fromX: arenaX + arenaW * 0.5, fromY: arenaTop + arenaH * 0.5,
+        fromX: arenaX + arenaW * 0.5, fromY: arenaTop + arenaH * 0.45,
         toX: arenaX + arenaW * 0.5, toY: handY,
         title: '', accentHex: SIDE_THEME[ev.side]?.accentHex || '#1a8775',
         flipFromBack: false, duration: 0.44, peakZ: 120,
       });
     } else if (ev.kind === 'character_death') {
       this.audio.clashImpact(true);
-      this._triggerShake(10, 0.4);
-      const r = this.charRects.get(ev.character_id);
-      if (r) {
-        this.physics.spawnShieldShards(r.x + r.w / 2, r.y + r.h / 2, 0xcf4330, 16, true);
-        this.three.spawnImpactBurst(r.x + r.w / 2, r.y + r.h / 2, 0xcf4330, 36, true);
-      }
+      this._triggerShake(11, 0.45);
+      const pos = this._actorPos(ev.character_id);
+      this.physics.spawnShieldShards(pos.x, pos.y, 0xcf4330, 18, true);
+      this.three.spawnImpactBurst(pos.x, pos.y, 0xcf4330, 38, true);
       this._showBanner(`${ev.name} 阵亡`, 0xcf4330, 2.0);
     } else if (ev.kind === 'turn_recycle') {
       this.audio.turnBell();
@@ -376,9 +454,9 @@ export class GameDirector {
         if (dp && total > 0) {
           this.three.spawnCardFlipArc({
             fromX: this.layout.arenaX + this.layout.arenaW / 2,
-            fromY: this.layout.arenaTop + this.layout.arenaH / 2,
+            fromY: this.layout.arenaTop + 210,
             toX: dp.x, toY: dp.y,
-            width: 88, height: 120, title: '', accentHex: SIDE_THEME[s.side].accentHex,
+            width: 82, height: 112, title: '', accentHex: SIDE_THEME[s.side].accentHex,
             flipFromBack: false, duration: 0.5, peakZ: 88,
           });
         }
@@ -386,11 +464,74 @@ export class GameDirector {
     }
   }
 
+  _playPassiveTriggerFx(ev, silent) {
+    if (!silent) this.audio.coinClink(1.22);
+    const key = `${ev.character_id}:${ev.passive_name}`;
+    this.passivePulses.set(key, 1.65);
+
+    const pos = this._actorPos(ev.character_id);
+    this._getMotion(ev.character_id).passiveFlare = 1.0;
+
+    const plate = this.passivePlates.get(key);
+    if (plate) {
+      this.three.spawnEnergyBeam({
+        fromX: plate.cx, fromY: plate.cy,
+        toX: pos.x, toY: pos.y,
+        colorHex: INK.gold,
+        duration: 0.46,
+      });
+    } else {
+      this.three.triggerRipple(pos.x, pos.y, INK.gold);
+    }
+    this._spawnFloater(pos.x, pos.y - 50, `✦ ${ev.passive_name}`, INK.gold, 14.5);
+  }
+
+  _playStatusChangeFx(ev) {
+    const pos = this._actorPos(ev.character_id);
+    const col = STATUS_COLORS[ev.status] || INK.secondary;
+    const sign = ev.delta > 0 ? '+' : '';
+    if (ev.delta > 0) {
+      this.three.triggerRipple(pos.x, pos.y, col);
+    }
+    this._spawnFloater(pos.x, pos.y - 26, `${ev.status} ${sign}${ev.delta}`, col, 14);
+  }
+
+  _playShieldGainFx(ev) {
+    this.audio.shieldBlock();
+    const pos = this._actorPos(ev.character_id);
+    const st = SHIELD_STYLE[ev.shield_kind] || SHIELD_STYLE.normal;
+    this.three.spawnShieldDomePulse({ x: pos.x, y: pos.y, radius: 56, colorHex: st.color });
+    this._spawnFloater(pos.x, pos.y - 36, `+${ev.amount} ${st.label}`, st.color, 14.5);
+  }
+
+  _playCombatStrikeFx(ev) {
+    const from = this._actorPos(ev.attacker_id);
+    const to = this._actorPos(ev.target_id);
+    const ds = DIE_STYLE[ev.die_type] || DIE_STYLE.slash;
+
+    // Physical actor lunge & target recoil!
+    this._getMotion(ev.attacker_id).lunge = 1.0;
+    this._getMotion(ev.target_id).recoil = 0.85;
+    this._getMotion(ev.target_id).hitFlash = 0.9;
+
+    if (ev.die_type === 'slash') {
+      this.audio.clashImpact(true);
+      this.three.spawnSlashArc({ fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, colorHex: ds.color });
+    } else if (ev.die_type === 'pierce') {
+      this.audio.clashImpact(false);
+      this.three.spawnPierceLance({ fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, colorHex: ds.color });
+    } else {
+      this.audio.clashImpact(true);
+      this.three.spawnBluntImpact({ toX: to.x, toY: to.y, colorHex: ds.color });
+      this._triggerShake(8, 0.24);
+    }
+  }
+
   _playSpeedRollFx(ev, silent) {
     if (!silent) this.audio.diceRoll();
-    const { arenaX, arenaW, arenaTop, arenaH } = this.layout;
+    const { arenaX, arenaW, arenaTop } = this.layout;
     const cx = arenaX + arenaW * 0.5;
-    const cy = arenaTop + arenaH * 0.46;
+    const cy = arenaTop + 175;
     let idx = 0;
     for (const s of ev.sides || []) {
       const sign = s.side === 1 ? -1 : 1;
@@ -400,10 +541,10 @@ export class GameDirector {
           dieType: 'speed',
           rolledValue: r.speed,
           subLabel: r.name.slice(0, 4),
-          startX: cx + sign * 210,
-          startY: cy + (s.side === 1 ? 80 : -80),
-          targetX: cx + sign * (78 + (idx % 3) * 58),
-          targetY: cy + (s.side === 1 ? 30 : -30),
+          startX: cx + sign * 220,
+          startY: cy + 50,
+          targetX: cx + sign * (78 + (idx % 3) * 56),
+          targetY: cy,
           radius: 23,
           lifetime: 1.65,
         });
@@ -421,18 +562,35 @@ export class GameDirector {
 
   _playDiceClashFx(ev) {
     this.audio.diceRoll();
-    const { arenaX, arenaW, arenaTop, arenaH } = this.layout;
+    const { arenaX, arenaW, arenaTop } = this.layout;
     const cx = arenaX + arenaW * 0.5;
-    const cy = arenaTop + arenaH * 0.4;
+    const cy = arenaTop + 132;
 
     const p1 = (ev.sides || []).find((s) => s.side === 1);
     const p2 = (ev.sides || []).find((s) => s.side === 2);
+
+    // Trigger kinetic actor stances (evade wind-dash / attack lunge / block stance)
+    for (const sd of ev.sides || []) {
+      if (sd.character_id) {
+        if (sd.result === 'win' && sd.type === 'evade') {
+          this._getMotion(sd.character_id).evade = 1.0;
+          const pos = this._actorPos(sd.character_id);
+          this.three.triggerRipple(pos.x, pos.y, DIE_STYLE.evade.color);
+        } else if (sd.result === 'win' && sd.type === 'block') {
+          const pos = this._actorPos(sd.character_id);
+          this.three.spawnBlockBarrier({ x: pos.x + (sd.side === 1 ? 36 : -36), y: pos.y, colorHex: DIE_STYLE.block.color });
+        } else if (sd.result === 'win') {
+          this._getMotion(sd.character_id).lunge = 0.65;
+        }
+      }
+    }
 
     if (p1 && p2 && !p1.skipped && !p2.skipped) {
       const outcome = p1.result === 'win' ? 'left_win' : p2.result === 'win' ? 'right_win' : 'draw';
       const winDie = p1.result === 'win' ? p1 : p2.result === 'win' ? p2 : null;
       const winColor = winDie ? (DIE_STYLE[winDie.type]?.color || INK.gold) : INK.gold;
-      const group = this.physics.createClashDicePair({ cx, cy, radius: 27, outcome, winnerColor: winColor });
+      const group = this.physics.createClashDicePair({ cx, cy, radius: 28, outcome, winnerColor: winColor });
+      group.winDieType = winDie?.type || null;
 
       for (const [sd, body] of [[p1, group.leftBody], [p2, group.rightBody]]) {
         const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
@@ -446,8 +604,8 @@ export class GameDirector {
           targetX: cx,
           targetY: cy,
           physicsBody: body,
-          radius: 27,
-          lifetime: 2.3,
+          radius: 28,
+          lifetime: 2.35,
         });
       }
     } else {
@@ -459,21 +617,21 @@ export class GameDirector {
           dieType: sd.type || 'blank',
           rolledValue: sd.clash_score ?? sd.rolled_value ?? '—',
           subLabel: sd.skipped ? '跳过' : `1~${sides}`,
-          startX: cx + (isP1 ? -220 : 220),
+          startX: cx + (isP1 ? -210 : 210),
           startY: cy,
-          targetX: cx + (isP1 ? -76 : 76),
+          targetX: cx + (isP1 ? -78 : 78),
           targetY: cy,
-          radius: 26,
-          lifetime: 1.85,
+          radius: 27,
+          lifetime: 1.9,
         });
       }
     }
   }
 
   _playDamageFx(ev) {
-    const r = this.charRects.get(ev.target_id);
-    const tx = r ? r.x + r.w * 0.55 : this.w * 0.25;
-    const ty = r ? r.y + r.h * 0.45 : this.h * 0.5;
+    const pos = this._actorPos(ev.target_id);
+    const tx = pos.x;
+    const ty = pos.y;
 
     const absorbedTotal = (ev.absorbed?.normal || 0) + (ev.absorbed?.reinforced || 0) + (ev.absorbed?.concept || 0);
     const erodedNormal = ev.eroded?.normal || 0;
@@ -483,31 +641,34 @@ export class GameDirector {
       this.audio.shieldBlock();
       const col = ev.absorbed.concept ? SHIELD_STYLE.concept.color
         : ev.absorbed.reinforced ? SHIELD_STYLE.reinforced.color : SHIELD_STYLE.normal.color;
-      this.physics.spawnShieldShards(tx, ty - 12, col, Math.min(10, 4 + absorbedTotal * 2), false);
-      this.three.spawnImpactBurst(tx, ty - 12, col, 16, false);
-      this._spawnFloater(tx + 18, ty - 26, `护盾 -${absorbedTotal}`, col);
+      this.three.spawnShieldDomePulse({ x: tx, y: ty, radius: 52, colorHex: col });
+      this.physics.spawnShieldShards(tx, ty - 8, col, Math.min(10, 4 + absorbedTotal * 2), false);
+      this.three.spawnImpactBurst(tx, ty - 8, col, 16, false);
+      this._spawnFloater(tx, ty - 42, `护盾抵扣 -${absorbedTotal}`, col, 15);
     }
 
     if (erodedNormal > 0 || erodedReinf > 0) {
       this.audio.shieldErode();
       if (erodedNormal > 0) {
-        this.physics.spawnShieldShards(tx - 16, ty - 10, SHIELD_STYLE.normal.color, 9 + erodedNormal * 2, true);
-        this._spawnFloater(tx - 20, ty - 42, `磨损 -${erodedNormal} 普通护盾`, INK.secondary);
+        this.physics.spawnShieldShards(tx - 14, ty - 6, SHIELD_STYLE.normal.color, 10 + erodedNormal * 2, true);
+        this._spawnFloater(tx - 18, ty - 58, `磨损 -${erodedNormal} 普通护盾`, INK.secondary, 14);
       }
       if (erodedReinf > 0) {
-        this.physics.spawnShieldShards(tx + 8, ty - 10, SHIELD_STYLE.reinforced.color, 9 + erodedReinf * 2, true);
-        this._spawnFloater(tx + 12, ty - 42, `磨损 -${erodedReinf} 强化护盾`, INK.gold);
+        this.physics.spawnShieldShards(tx + 10, ty - 6, SHIELD_STYLE.reinforced.color, 10 + erodedReinf * 2, true);
+        this._spawnFloater(tx + 14, ty - 58, `磨损 -${erodedReinf} 强化护盾`, INK.gold, 14);
       }
     }
 
     if (ev.hp_lost > 0) {
       this.audio.hitDamage();
-      this._triggerShake(Math.min(11, 5 + ev.hp_lost * 2), 0.26);
-      this.three.spawnImpactBurst(tx, ty, 0xcf4330, 22, ev.hp_lost >= 3);
+      this._getMotion(ev.target_id).recoil = 1.0;
+      this._getMotion(ev.target_id).hitFlash = 1.0;
+      this._triggerShake(Math.min(11, 5 + ev.hp_lost * 2), 0.28);
+      this.three.spawnImpactBurst(tx, ty, 0xcf4330, 24, ev.hp_lost >= 3);
       const multTag = ev.multiplier > 1 ? ` ×${ev.multiplier}` : '';
-      this._spawnFloater(tx, ty - 6, `-${ev.hp_lost} ${GRADE_LABEL[ev.grade] || ''}${multTag}`, 0xcf4330, 19);
+      this._spawnFloater(tx, ty - 18, `-${ev.hp_lost} ${GRADE_LABEL[ev.grade] || ''}${multTag}`, 0xcf4330, 21);
     } else if (absorbedTotal === 0) {
-      this._spawnFloater(tx, ty - 6, '0', INK.muted, 15);
+      this._spawnFloater(tx, ty - 14, '0', INK.muted, 15);
     }
   }
 
@@ -516,7 +677,7 @@ export class GameDirector {
     this.shakeTime = Math.max(this.shakeTime, duration);
   }
 
-  _spawnFloater(x, y, text, color = INK.primary, fontSize = 15) {
+  _spawnFloater(x, y, text, color = INK.primary, fontSize = 15.5) {
     const t = new PIXI.Text({
       text,
       style: {
@@ -527,10 +688,10 @@ export class GameDirector {
     t.anchor.set(0.5);
     t.position.set(x, y);
     this.fxTextLayer.addChild(t);
-    this.floaters.push({ obj: t, vx: (Math.random() - 0.5) * 24, vy: -52, age: 0, life: 1.4 });
+    this.floaters.push({ obj: t, vx: (Math.random() - 0.5) * 26, vy: -56, age: 0, life: 1.45 });
   }
 
-  _showBanner(text, color = INK.gold, duration = 1.6) {
+  _showBanner(text, color = INK.gold, duration = 1.65) {
     this.banner = { text, color, age: 0, duration };
     this._renderToast();
   }
@@ -543,7 +704,7 @@ export class GameDirector {
   _rebuildAll() {
     if (!this.state) return;
     this._rebuildCornerHud();
-    this._rebuildCharactersAndStacks();
+    this._rebuildConfrontationWings();
     this._rebuildDynamicBoard();
     this._rebuildOverlay();
   }
@@ -576,40 +737,40 @@ export class GameDirector {
       text: turnStr,
       style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: INK.primary },
     });
-    const pillW = metaTxt.width + 42;
+    const pillW = metaTxt.width + 40;
     const pillG = new PIXI.Graphics();
-    pillG.roundRect(pad + 2, 14, pillW, 30, 15).fill({ color: INK.shadow, alpha: 0.2 });
-    pillG.roundRect(pad, 12, pillW, 30, 15)
+    pillG.roundRect(pad + 2, 12, pillW, 28, 14).fill({ color: INK.shadow, alpha: 0.2 });
+    pillG.roundRect(pad, 10, pillW, 28, 14)
       .fill({ color: INK.paper, alpha: 0.96 })
       .stroke({ width: 1.4, color: INK.line });
-    drawLightStar(pillG, pad + 17, 27, 8, INK.gold, 0.95);
+    drawLightStar(pillG, pad + 16, 24, 7.5, INK.gold, 0.95);
     metaTxt.anchor.set(0, 0.5);
-    metaTxt.position.set(pad + 30, 27);
+    metaTxt.position.set(pad + 29, 24);
     this.cornerHudLayer.addChild(pillG, metaTxt);
 
     const tools = [
       {
         label: this.autoPace ? '自动·开' : '自动',
-        w: 66,
+        w: 64,
         accent: this.autoPace ? 0x1c8a64 : INK.secondary,
         solid: this.autoPace,
         fn: () => { this.autoPace = !this.autoPace; this.autoTimer = 0.35; this._rebuildCornerHud(); },
       },
       {
         label: this.audio.muted ? '静音' : '音效',
-        w: 56,
+        w: 54,
         accent: this.audio.muted ? INK.muted : INK.secondary,
         fn: () => { this.audio.toggleMute(); this._rebuildCornerHud(); },
       },
       {
         label: '规则',
-        w: 56,
+        w: 54,
         accent: INK.gold,
         fn: () => { this.codexModal = { tab: 'rules', scrollY: 0, maxScroll: 0 }; this._rebuildOverlay(); },
       },
       {
         label: '选人',
-        w: 56,
+        w: 54,
         accent: 0x1c8a64,
         fn: () => this._openRosterModal(),
       },
@@ -619,70 +780,112 @@ export class GameDirector {
       const t = tools[i];
       rx -= t.w;
       const btn = makeSealButton(t.label, {
-        width: t.w, height: 28, accent: t.accent, solid: !!t.solid, fontSize: 11.5, radius: 14, onClick: t.fn,
+        width: t.w, height: 27, accent: t.accent, solid: !!t.solid, fontSize: 11.5, radius: 13, onClick: t.fn,
       });
-      btn.position.set(rx, 13);
+      btn.position.set(rx, 11);
       this.cornerHudLayer.addChild(btn);
       rx -= 7;
     }
   }
 
-  _rebuildCharactersAndStacks() {
-    clearContainer(this.zonesLayer);
+  /**
+   * Confrontational Left (P1) & Right (P2) Fighter Wings:
+   *  - Top: Faction header + floating golden General Cost crystals (inline, no dead right sidebar!)
+   *  - Mid: Sculpted LIVING animated character figure standing on the arena-facing edge + bold HP + active shields + Limbus status icons
+   *  - Below each fighter: DIRECTLY EXPANDED VERBATIM PASSIVES (NEVER collapsed behind "被动(4)"!) with live trigger pulse glow!
+   *  - Bottom corner: Compact physical 3D card stacks (牌堆 / 弃牌 / 战外)
+   */
+  _rebuildConfrontationWings() {
+    clearContainer(this.wingsLayer);
+    clearContainer(this.actorsLayer);
     this.charRects.clear();
+    this.actorNodes.clear();
+    this.hpWidgets.clear();
+    this.passivePlates.clear();
     this.pileCenters.clear();
+    this.costAnchors.clear();
 
-    const { pad, leftW, rightW, rightX, h } = this.layout;
+    const { leftWingX, rightWingX, wingW, h } = this.layout;
     const frame = this.state.frame;
 
-    const sideConfigs = [
-      { side: 2, anchorTop: 56 },
-      { side: 1, anchorBottom: h - 18 },
-    ];
-
-    for (const cfg of sideConfigs) {
-      const player = frame.players.find((p) => p.side === cfg.side);
+    for (const side of [1, 2]) {
+      const player = (frame.players || []).find((p) => p.side === side);
       if (!player) continue;
-      const theme = SIDE_THEME[cfg.side];
-      const chars = player.characters || [];
-      const plateH = chars.length === 1 ? 132 : chars.length === 2 ? 114 : 94;
-      const gap = 8;
-      const stackH = 24 + chars.length * plateH + (chars.length - 1) * gap;
-      const baseY = cfg.anchorTop !== undefined ? cfg.anchorTop : Math.max(h * 0.5 + 6, cfg.anchorBottom - stackH);
-
-      const isFirst = frame.first_side === cfg.side;
-      const tagTxt = new PIXI.Text({
-        text: `${player.name}${isFirst ? ' ★先手' : ''} · 速${Number(player.speed || 0).toFixed(player.speed % 1 ? 1 : 0)} · 手牌 ${player.hand_count}`,
-        style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: theme.accent },
-      });
-      tagTxt.position.set(pad + 4, baseY + 2);
-      this.zonesLayer.addChild(tagTxt);
-
-      chars.forEach((ch, idx) => {
-        const py = baseY + 22 + idx * (plateH + gap);
-        const rect = { x: pad, y: py, w: leftW, h: plateH, side: cfg.side };
-        this.charRects.set(ch.id, rect);
-        this._drawCharacterUnit(ch, rect, cfg.side);
-      });
-
-      const rightY = cfg.side === 2 ? 56 : Math.max(h * 0.46, h - 296);
-      this._drawRightZones(player, rightX, rightY, rightW);
+      const wx = side === 1 ? leftWingX : rightWingX;
+      this._buildPlayerWing(player, wx, wingW, h);
     }
   }
 
-  /**
-   * Arknights + Limbus Company inspired Character Unit:
-   *  - Bold clear HP bar & numeral
-   *  - Shields ONLY displayed when > 0 (zero "普0 强0 概0" noise!)
-   *  - Limbus-style 26x26 vector Status Icons with stack counts (hover for full verbatim text)
-   *  - Click character plate anytime to pin full Verbatim Character Dossier (passives + statuses + skills!)
-   */
-  _drawCharacterUnit(ch, rect, side) {
-    const { x, y, w, h } = rect;
+  _buildPlayerWing(player, wx, wingW, h) {
+    const side = player.side;
     const theme = SIDE_THEME[side];
-    const plate = new PIXI.Container();
-    plate.position.set(x, y);
+    const frame = this.state.frame;
+    const isLeft = side === 1;
 
+    // 1. Wing Header: Faction Name + Initiative + Speed + Hand Count + General Cost Crystals!
+    const headY = 48;
+    const isFirst = frame.first_side === side;
+    const speedVal = Number(player.speed || 0).toFixed(player.speed % 1 ? 1 : 0);
+    const headTxt = new PIXI.Text({
+      text: `${player.name}${isFirst ? ' ★先手' : ''} · 速${speedVal} · 手牌${player.hand_count}`,
+      style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: theme.accent },
+    });
+    headTxt.anchor.set(isLeft ? 0 : 1, 0);
+    headTxt.position.set(isLeft ? wx + 2 : wx + wingW - 2, headY);
+    this.wingsLayer.addChild(headTxt);
+
+    // Inline General Cost Crystals
+    const costY = headY + 26;
+    const avail = player.cost?.available ?? 0;
+    const spent = player.cost?.spent ?? 0;
+    const total = Math.min(8, Math.max(avail + spent, player.cost?.refill || 5));
+    const costG = new PIXI.Graphics();
+    const costLabel = new PIXI.Text({
+      text: `通用费 ${avail}`,
+      style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: INK.secondary },
+    });
+    if (isLeft) {
+      costLabel.position.set(wx + 2, costY - 7);
+      const startX = wx + costLabel.width + 14;
+      for (let i = 0; i < total; i++) {
+        const isAv = i < avail;
+        drawCostCrystal(costG, startX + i * 19, costY, 7.5, isAv ? INK.gold : INK.paperTint, isAv ? 0x99610b : INK.line);
+      }
+      this.costAnchors.set(side, { x: startX + Math.max(0, avail - 1) * 19, y: costY });
+    } else {
+      costLabel.anchor.set(1, 0);
+      costLabel.position.set(wx + wingW - 2, costY - 7);
+      const endX = wx + wingW - costLabel.width - 14;
+      for (let i = 0; i < total; i++) {
+        const isAv = i < avail;
+        drawCostCrystal(costG, endX - i * 19, costY, 7.5, isAv ? INK.gold : INK.paperTint, isAv ? 0x99610b : INK.line);
+      }
+      this.costAnchors.set(side, { x: endX - Math.max(0, avail - 1) * 19, y: costY });
+    }
+    this.wingsLayer.addChild(costG, costLabel);
+
+    // 2. Bottom Corner Physical Card Stacks (compact 3D stacks, zero sidebar bloat!)
+    const stackH = 60;
+    const stackY = h - stackH - 22;
+    this._drawCornerStacks(player, wx, stackY, wingW, stackH);
+
+    // 3. Fighters + Directly Expanded Verbatim Passives
+    const chars = player.characters || [];
+    const zoneTop = costY + 18;
+    const zoneBottom = stackY - 12;
+    const zoneH = Math.max(220, zoneBottom - zoneTop);
+    const gap = 10;
+    const perCharH = Math.floor((zoneH - gap * (chars.length - 1)) / Math.max(1, chars.length));
+
+    chars.forEach((ch, idx) => {
+      const cy = zoneTop + idx * (perCharH + gap);
+      this._buildFighterAndPassives(ch, side, wx, cy, wingW, perCharH, chars.length);
+    });
+  }
+
+  _buildFighterAndPassives(ch, side, x, y, w, availH, teamCount) {
+    const theme = SIDE_THEME[side];
+    const isLeft = side === 1;
     const activeSide = this.state.active_side;
     const defaultTarget = activeSide && activeSide !== side && this.state.default_targets?.[String(activeSide)] === ch.id;
     const catChar = this._catalogChar(ch.id);
@@ -691,18 +894,27 @@ export class GameDirector {
       ...(catChar?.passives || []).map((p) => ({ ...p, kind: '角色被动' })),
     ];
 
-    const bg = new PIXI.Graphics();
-    bg.roundRect(2, 5, w, h, 12).fill({ color: INK.shadow, alpha: 0.24 });
-    bg.roundRect(0, 0, w, h, 12)
-      .fill({ color: ch.alive ? INK.paper : 0xede8de, alpha: ch.alive ? 0.98 : 0.78 })
-      .stroke({ width: defaultTarget ? 2.2 : 1.5, color: ch.alive ? theme.border : INK.line });
-    bg.roundRect(0, 0, 6, h, 3).fill({ color: ch.alive ? theme.accent : INK.muted });
-    plate.addChild(bg);
+    // Fighter Stage Pedestal height
+    const stageH = teamCount === 1 ? 124 : teamCount === 2 ? 102 : 84;
+    const rect = { x, y, w, h: stageH, side };
+    this.charRects.set(ch.id, rect);
 
-    // Click entire character plate -> open Pinned Character Dossier (passives + statuses + skills!)
-    plate.eventMode = 'static';
-    plate.cursor = 'pointer';
-    plate.on('pointertap', (e) => {
+    const card = new PIXI.Container();
+    card.position.set(x, y);
+
+    const bg = new PIXI.Graphics();
+    bg.roundRect(2, 5, w, stageH, 13).fill({ color: INK.shadow, alpha: 0.22 });
+    bg.roundRect(0, 0, w, stageH, 13)
+      .fill({ color: ch.alive ? INK.paper : 0xede8de, alpha: ch.alive ? 0.94 : 0.76 })
+      .stroke({ width: defaultTarget ? 2.4 : 1.5, color: defaultTarget ? INK.gold : ch.alive ? theme.border : INK.line });
+    // Arena-facing accent ribbon edge
+    bg.roundRect(isLeft ? w - 6 : 0, 0, 6, stageH, 3).fill({ color: ch.alive ? theme.accent : INK.muted });
+    card.addChild(bg);
+
+    // Click fighter -> open Pinned Character Dossier (full passives + statuses + skills + focus target!)
+    card.eventMode = 'static';
+    card.cursor = 'pointer';
+    card.on('pointertap', (e) => {
       if (this.dragState) return;
       e.stopPropagation();
       this.dossierModal = {
@@ -718,113 +930,126 @@ export class GameDirector {
       this._rebuildOverlay();
     });
 
-    // Row 1: Character Name + Duel Quota Pips + Speed + Personal Cost
+    // Living Animated Character Actor positioned on the INNER arena-facing edge!
+    const actorR = teamCount === 1 ? 37 : teamCount === 2 ? 31 : 25;
+    const actorLocalX = isLeft ? w - actorR - 14 : actorR + 14;
+    const actorLocalY = stageH * 0.54;
+    const actor = createCharacterActor(ch, side, { radius: actorR });
+    actor.position.set(x + actorLocalX, y + actorLocalY);
+    actor.tick(this.time, this._getMotion(ch.id), ch);
+    this.actorsLayer.addChild(actor);
+    this.actorNodes.set(ch.id, { actor, liveCh: ch, cx: x + actorLocalX, cy: y + actorLocalY, side });
+
+    // Info column sits beside the living figure (outer half of the pedestal)
+    const infoPad = 12;
+    const actorReserve = actorR * 2 + 26;
+    const infoX = isLeft ? infoPad : actorReserve;
+    const infoW = w - actorReserve - infoPad;
+
+    // Row 1: Character Name + Speed + Personal Cost crystal
     const nameTxt = new PIXI.Text({
       text: `${ch.name}${ch.alive ? '' : ' [阵亡]'}`,
-      style: { fontFamily: FONT_UI, fontSize: 15.5, fontWeight: '800', fill: ch.alive ? INK.primary : INK.muted },
+      style: { fontFamily: FONT_UI, fontSize: teamCount === 1 ? 16 : 14.5, fontWeight: '800', fill: ch.alive ? INK.primary : INK.muted },
     });
-    nameTxt.position.set(14, 8);
-    plate.addChild(nameTxt);
+    nameTxt.position.set(infoX, 9);
+    card.addChild(nameTxt);
 
-    // Personal Cost pebble
     const pCost = ch.cost?.available ?? 0;
-    bg.circle(w - 20, 18, 10)
-      .fill({ color: pCost > 0 ? INK.gold : INK.paperTint })
-      .stroke({ width: 1.4, color: pCost > 0 ? 0xa86b0d : INK.line });
+    const pcX = infoX + infoW - 11;
+    const pcY = 18;
+    drawCostCrystal(bg, pcX, pcY, 9.5, pCost > 0 ? INK.gold : INK.paperTint, pCost > 0 ? 0xa3680c : INK.line);
     const pcTxt = new PIXI.Text({
       text: String(pCost),
-      style: { fontFamily: FONT_NUM, fontSize: 11.5, fontWeight: '800', fill: pCost > 0 ? INK.paper : INK.muted },
+      style: { fontFamily: FONT_NUM, fontSize: 11, fontWeight: '900', fill: pCost > 0 ? INK.paper : INK.muted },
     });
     pcTxt.anchor.set(0.5);
-    pcTxt.position.set(w - 20, 18);
-    plate.addChild(pcTxt);
+    pcTxt.position.set(pcX, pcY);
+    card.addChild(pcTxt);
 
-    // Speed chip
-    bg.roundRect(w - 72, 9, 36, 18, 6).fill({ color: INK.paperSoft }).stroke({ width: 1, color: INK.line });
+    // Speed + Duel Quota pips
     const spTxt = new PIXI.Text({
       text: `速${ch.speed ?? 0}`,
       style: { fontFamily: FONT_NUM, fontSize: 10.5, fontWeight: '800', fill: INK.secondary },
     });
-    spTxt.anchor.set(0.5);
-    spTxt.position.set(w - 54, 18);
-    plate.addChild(spTxt);
+    spTxt.anchor.set(1, 0.5);
+    spTxt.position.set(pcX - 15, pcY);
+    card.addChild(spTxt);
 
-    // Duel Quota Pips
     const maxD = ch.duels?.max ?? 1;
     const usedD = ch.duels?.used;
-    const pipRight = w - 80;
+    const pipStartX = infoX + nameTxt.width + 10;
     for (let i = 0; i < maxD; i++) {
-      const px = pipRight - (maxD - 1 - i) * 11;
+      const px = pipStartX + i * 10;
+      if (px > pcX - 42) break;
       const used = usedD !== null && i < usedD;
-      bg.circle(px, 18, 3.8)
+      bg.circle(px, pcY, 3.6)
         .fill({ color: usedD === null ? INK.line : used ? INK.paperTint : theme.accent })
         .stroke({ width: 1.2, color: usedD === null ? INK.muted : theme.accent });
     }
 
-    // Row 2: Arknights-style Bold HP Bar + Clear Numeral + Active Shields ONLY if > 0
-    const hpY = 34;
-    const barW = w - 76;
-    const barH = 14;
+    // Row 2: Bold HP Bar + Exact Numeral (live-animated without rebuilding containers!)
+    const hpY = teamCount === 3 ? 31 : 35;
+    const barH = teamCount === 3 ? 12 : 14;
+    const barW = infoW - 50;
     const displayHp = this.hpDisplay.get(ch.id) ?? ch.hp;
     const ratio = Math.max(0, Math.min(1, displayHp / Math.max(1, ch.max_hp)));
 
-    bg.roundRect(14, hpY, barW, barH, 7).fill({ color: INK.paperTint }).stroke({ width: 1, color: INK.line });
+    bg.roundRect(infoX, hpY, barW, barH, 7).fill({ color: INK.paperTint }).stroke({ width: 1, color: INK.line });
+    const hpBarG = new PIXI.Graphics();
     if (ratio > 0) {
-      bg.roundRect(15, hpY + 1, Math.max(7, (barW - 2) * ratio), barH - 2, 6)
+      hpBarG.roundRect(infoX + 1, hpY + 1, Math.max(7, (barW - 2) * ratio), barH - 2, 6)
         .fill({ color: ratio < 0.34 ? 0xd94524 : theme.accent });
     }
     const hpTxt = new PIXI.Text({
       text: `${Math.round(displayHp)}/${ch.max_hp}`,
-      style: { fontFamily: FONT_NUM, fontSize: 14, fontWeight: '900', fill: INK.primary },
+      style: { fontFamily: FONT_NUM, fontSize: teamCount === 3 ? 12.5 : 14, fontWeight: '900', fill: INK.primary },
     });
     hpTxt.anchor.set(1, 0.5);
-    hpTxt.position.set(w - 10, hpY + barH / 2);
-    plate.addChild(hpTxt);
+    hpTxt.position.set(infoX + infoW, hpY + barH / 2);
+    card.addChild(hpBarG, hpTxt);
+    this.hpWidgets.set(ch.id, { hpBarG, hpTxt, infoX, hpY, barW, barH, maxHp: ch.max_hp, accent: theme.accent });
 
-    // Row 3: Active Shields (ONLY if > 0) + Limbus-Company-style Status Icons!
-    const row3Y = 56;
-    let cx = 14;
-
+    // Row 3: Active Shields (ONLY if > 0) + Limbus-style 26x26 Status Icons (hover for full verbatim text!)
+    const row3Y = hpY + barH + 8;
+    let cx = infoX;
     const shields = ch.shields || {};
     for (const kind of ['normal', 'reinforced', 'concept']) {
       const val = shields[kind] || 0;
       if (val <= 0) continue;
       const st = SHIELD_STYLE[kind];
-      bg.roundRect(cx, row3Y, 44, 26, 6).fill({ color: st.bg }).stroke({ width: 1.4, color: st.color });
-      drawShieldGlyph(bg, kind, cx + 12, row3Y + 13, 7);
+      bg.roundRect(cx, row3Y, 42, 24, 6).fill({ color: st.bg }).stroke({ width: 1.4, color: st.color });
+      drawShieldGlyph(bg, kind, cx + 11, row3Y + 12, 6.5);
       const stNum = new PIXI.Text({
         text: String(val),
-        style: { fontFamily: FONT_NUM, fontSize: 13, fontWeight: '900', fill: st.color },
+        style: { fontFamily: FONT_NUM, fontSize: 12.5, fontWeight: '900', fill: st.color },
       });
       stNum.anchor.set(0, 0.5);
-      stNum.position.set(cx + 23, row3Y + 13);
-      plate.addChild(stNum);
-      cx += 49;
+      stNum.position.set(cx + 22, row3Y + 12);
+      card.addChild(stNum);
+      cx += 46;
     }
 
-    // Limbus-style 26x26 Status Icons + crisp corner stack count
     const statuses = Object.entries(ch.statuses || {});
     for (const [name, val] of statuses) {
-      if (cx + 28 > w - 10) break;
+      if (cx + 25 > infoX + infoW + 4) break;
       const col = STATUS_COLORS[name] || INK.secondary;
       const burst = name === '裂血' && ch.bleed_burst;
       const iconBox = new PIXI.Container();
       iconBox.position.set(cx, row3Y);
       const ig = new PIXI.Graphics();
-      ig.roundRect(0, 0, 26, 26, 6)
+      ig.roundRect(0, 0, 25, 25, 6)
         .fill({ color: burst ? 0xfce0e4 : INK.paperSoft })
         .stroke({ width: burst ? 2 : 1.4, color: col });
-      drawStatusIcon(ig, name, 13, 12, 8.5, col);
-      // Stack number corner badge
-      ig.roundRect(13, 14, 15, 13, 4).fill({ color: col });
+      drawStatusIcon(ig, name, 12.5, 11.5, 8, col);
+      ig.roundRect(12, 13, 14, 12.5, 3.5).fill({ color: col });
       iconBox.addChild(ig);
 
       const valTxt = new PIXI.Text({
         text: String(val),
-        style: { fontFamily: FONT_NUM, fontSize: 10, fontWeight: '900', fill: INK.paper },
+        style: { fontFamily: FONT_NUM, fontSize: 9.5, fontWeight: '900', fill: INK.paper },
       });
       valTxt.anchor.set(0.5);
-      valTxt.position.set(20.5, 20.5);
+      valTxt.position.set(19, 19);
       iconBox.addChild(valTxt);
 
       iconBox.eventMode = 'static';
@@ -843,7 +1068,7 @@ export class GameDirector {
               text: (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '',
             };
           }),
-          x: x + w + 12,
+          side,
           y: y + 8,
         };
         this._renderInspection();
@@ -852,135 +1077,198 @@ export class GameDirector {
         this.hoveredInfo = null;
         this._renderInspection();
       });
-      plate.addChild(iconBox);
-      cx += 31;
+      card.addChild(iconBox);
+      cx += 29;
     }
 
-    // Bottom clean strip: Passive hover trigger + Dossier affordance (NO truncated 3-char pills!)
-    if (h >= 106) {
-      const footY = h - 26;
-      if (allPassives.length) {
-        const pBtn = new PIXI.Container();
-        pBtn.position.set(14, footY);
-        const pg = new PIXI.Graphics();
-        const label = `被动 (${allPassives.length})`;
-        const pw = 66;
-        pg.roundRect(0, 0, pw, 20, 5).fill({ color: INK.goldBg }).stroke({ width: 1, color: INK.gold, alpha: 0.7 });
-        pBtn.addChild(pg);
-        const pt = new PIXI.Text({
-          text: label,
-          style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '800', fill: 0x99620d },
-        });
-        pt.anchor.set(0.5);
-        pt.position.set(pw / 2, 10);
-        pBtn.addChild(pt);
-        pBtn.eventMode = 'static';
-        pBtn.cursor = 'help';
-        pBtn.on('pointerover', () => {
-          this.hoveredInfo = {
-            kind: 'passives',
-            title: `${ch.name} · 被动技能`,
-            items: allPassives.map((p) => ({
-              name: p.name || p.kind,
-              color: INK.gold,
-              text: (p.entries || []).join('\n') || p.description || '',
-            })),
-            x: x + w + 12,
-            y: y + 8,
-          };
-          this._renderInspection();
-        });
-        pBtn.on('pointerout', () => {
-          this.hoveredInfo = null;
-          this._renderInspection();
-        });
-        plate.addChild(pBtn);
-      }
-
-      const detailHint = new PIXI.Text({
-        text: defaultTarget ? '◎ 集火 · 档案' : '档案 ›',
-        style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '700', fill: defaultTarget ? INK.gold : INK.muted },
+    if (defaultTarget) {
+      const ft = new PIXI.Text({
+        text: '◎ 集火目标',
+        style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '800', fill: INK.gold },
       });
-      detailHint.anchor.set(1, 0.5);
-      detailHint.position.set(w - 12, footY + 10);
-      plate.addChild(detailHint);
+      ft.position.set(infoX, stageH - 18);
+      card.addChild(ft);
     }
 
-    this.zonesLayer.addChild(plate);
+    this.wingsLayer.addChild(card);
+
+    // 4. DIRECTLY EXPANDED CHARACTER PASSIVES right below the fighter! (NEVER hidden behind a "被动(4)" button!)
+    const passivesTop = y + stageH + 7;
+    const passivesAvailH = Math.max(0, y + availH - passivesTop);
+    if (allPassives.length && passivesAvailH >= 36) {
+      this._drawExpandedPassives(ch, side, allPassives, x, passivesTop, w, passivesAvailH);
+    }
   }
 
-  _drawRightZones(player, x, y, w) {
+  /**
+   * Renders ALL character passives directly expanded on screen with 100% verbatim rule text
+   * and live golden-jade trigger glow overlays!
+   */
+  _drawExpandedPassives(ch, side, passives, x, y, w, availH) {
+    const theme = SIDE_THEME[side];
+    const gap = 6;
+    const dense = passives.length >= 4 && availH < 340;
+    const veryDense = availH < 110;
+    const titleSize = veryDense ? 10.5 : dense ? 11 : 11.8;
+    const bodySize = veryDense ? 10 : dense ? 10.4 : 11.2;
+    const lineH = veryDense ? 13.5 : dense ? 14.5 : 15.8;
+    const maxChars = Math.max(22, Math.floor((w - 28) / (bodySize * 0.56)));
+
+    // Pre-measure to fit all verbatim passives cleanly without truncating a single word!
+    const prepared = passives.map((p) => {
+      const fullText = (p.entries || []).join('\n') || p.description || '';
+      const head = new PIXI.Text({
+        text: p.name || p.kind,
+        style: { fontFamily: FONT_UI, fontSize: titleSize, fontWeight: '800', fill: p.kind === '阵营被动' ? theme.accent : 0xa3680c },
+      });
+      const body = fullText ? new PIXI.Text({
+        text: wrapCjkText(fullText, maxChars),
+        style: {
+          fontFamily: FONT_UI,
+          fontSize: bodySize,
+          fill: INK.primary,
+          lineHeight: lineH,
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: w - 26,
+        },
+      }) : null;
+      const boxH = 22 + (body ? body.height + 7 : 4);
+      return { p, fullText, head, body, boxH };
+    });
+
+    const totalNeeded = prepared.reduce((acc, it) => acc + it.boxH, 0) + gap * Math.max(0, prepared.length - 1);
+    const fitsAllVerbatim = totalNeeded <= availH + 6;
+
+    let curY = y;
+    for (const item of prepared) {
+      const { p, fullText, head, body, boxH } = item;
+      const key = `${ch.id}:${p.name || p.kind}`;
+      const remainingH = y + availH - curY;
+      if (remainingH < 24) {
+        head.destroy();
+        if (body) body.destroy();
+        break;
+      }
+
+      const drawH = fitsAllVerbatim ? boxH : Math.min(boxH, Math.max(28, Math.floor((availH - gap * (prepared.length - 1)) / prepared.length)));
+      const showBodyInPlace = fitsAllVerbatim || drawH >= boxH - 2;
+
+      const plate = new PIXI.Container();
+      plate.position.set(x, curY);
+      const bg = new PIXI.Graphics();
+      bg.roundRect(1, 3, w, drawH, 9).fill({ color: INK.shadow, alpha: 0.16 });
+      bg.roundRect(0, 0, w, drawH, 9)
+        .fill({ color: p.kind === '阵营被动' ? theme.warmTint : INK.paper, alpha: 0.96 })
+        .stroke({ width: 1.2, color: p.kind === '阵营被动' ? theme.border : INK.line });
+      // Sculpted passive emblem diamond on left
+      drawLightStar(bg, 12, 12, 5.2, p.kind === '阵营被动' ? theme.accent : INK.gold, 0.9);
+      plate.addChild(bg);
+
+      head.position.set(22, 4);
+      plate.addChild(head);
+
+      if (showBodyInPlace && body) {
+        body.position.set(12, 22);
+        plate.addChild(body);
+      } else {
+        if (body) body.destroy();
+        // Compact 3v3 fallback: show full passive name + hover reveals full 100% verbatim text!
+        const tag = new PIXI.Text({
+          text: p.kind === '阵营被动' ? '阵营' : '被动',
+          style: { fontFamily: FONT_UI, fontSize: 9.5, fontWeight: '700', fill: INK.muted },
+        });
+        tag.anchor.set(1, 0.5);
+        tag.position.set(w - 10, drawH / 2);
+        plate.addChild(tag);
+      }
+
+      // Live trigger glow layer ticked every frame when this passive fires!
+      const glowG = new PIXI.Graphics();
+      plate.addChild(glowG);
+
+      plate.eventMode = 'static';
+      plate.cursor = 'pointer';
+      plate.on('pointerover', () => {
+        if (!showBodyInPlace && fullText) {
+          this.hoveredInfo = {
+            kind: 'passives',
+            title: `${ch.name} · ${p.name || p.kind}`,
+            items: [{ name: p.name || p.kind, color: INK.gold, text: fullText }],
+            side,
+            y: curY,
+          };
+          this._renderInspection();
+        }
+      });
+      plate.on('pointerout', () => {
+        if (!showBodyInPlace) {
+          this.hoveredInfo = null;
+          this._renderInspection();
+        }
+      });
+
+      this.wingsLayer.addChild(plate);
+      this.passivePlates.set(key, {
+        x, y: curY, w, h: drawH,
+        cx: x + w / 2, cy: curY + drawH / 2,
+        glowG,
+      });
+      curY += drawH + gap;
+    }
+  }
+
+  _drawCornerStacks(player, wx, y, wingW, stackH) {
     const side = player.side;
     const theme = SIDE_THEME[side];
-
-    const avail = player.cost?.available ?? 0;
-    const spent = player.cost?.spent ?? 0;
-    const total = Math.min(8, Math.max(avail + spent, player.cost?.refill || 5));
-
-    const lbl = new PIXI.Text({
-      text: `${player.name} 通用费 ${avail}`,
-      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: INK.secondary },
-    });
-    lbl.position.set(x, y);
-    this.zonesLayer.addChild(lbl);
-
-    const gemG = new PIXI.Graphics();
-    for (let i = 0; i < total; i++) {
-      const isAvail = i < avail;
-      const gx = x + 10 + i * 21;
-      const gy = y + 27;
-      gemG.circle(gx + 1, gy + 2, 8).fill({ color: INK.shadow, alpha: 0.24 });
-      gemG.circle(gx, gy, 8)
-        .fill({ color: isAvail ? INK.gold : INK.paperSoft })
-        .stroke({ width: 1.5, color: isAvail ? 0xa3680c : INK.line });
-      if (isAvail) gemG.circle(gx - 2.2, gy - 2.2, 2.4).fill({ color: INK.paper, alpha: 0.7 });
-    }
-    this.zonesLayer.addChild(gemG);
-
-    const stackY = y + 48;
     const stacks = [
       { key: 'draw', label: '牌堆', count: player.draw_count, cards: null, col: theme.accent, bg: theme.softBg },
       { key: 'delayed_discard', label: '弃牌', count: player.delayed_discard_count, cards: player.delayed_discard, col: 0xcc7b14, bg: 0xfef4df },
       { key: 'out_of_combat', label: '战外', count: player.out_of_combat_count, cards: player.out_of_combat, col: INK.muted, bg: INK.paperSoft },
     ];
-    const cardW = 50;
-    const cardH = 68;
+    const cardW = 52;
     const gap = 12;
+    const totalW = stacks.length * cardW + (stacks.length - 1) * gap;
+    const startX = side === 1 ? wx : wx + wingW - totalW;
 
     stacks.forEach((st, idx) => {
-      const sx = x + idx * (cardW + gap);
-      this.pileCenters.set(`${side}:${st.key}`, { x: sx + cardW / 2, y: stackY + cardH / 2 });
+      const sx = startX + idx * (cardW + gap);
+      this.pileCenters.set(`${side}:${st.key}`, { x: sx + cardW / 2, y: y + stackH / 2 });
       const box = new PIXI.Container();
-      box.position.set(sx, stackY);
+      box.position.set(sx, y);
       const g = new PIXI.Graphics();
 
       if (st.count === 0) {
-        g.roundRect(0, 0, cardW, cardH, 7).fill({ color: INK.paperSoft, alpha: 0.5 }).stroke({ width: 1.2, color: INK.line });
+        g.roundRect(0, 0, cardW, stackH, 7)
+          .fill({ color: INK.paperSoft, alpha: 0.42 })
+          .stroke({ width: 1, color: INK.line, alpha: 0.7 });
       } else {
-        const layers = Math.min(6, st.count);
+        const layers = Math.min(5, st.count);
         for (let l = layers; l >= 1; l--) {
-          g.roundRect(l * 1.4, -l * 1.6, cardW, cardH, 7).fill({ color: INK.paper }).stroke({ width: 1, color: st.col, alpha: 0.45 });
+          g.roundRect(l * 1.4, -l * 1.5, cardW, stackH, 7)
+            .fill({ color: INK.paper })
+            .stroke({ width: 1, color: st.col, alpha: 0.45 });
         }
-        g.roundRect(0, 0, cardW, cardH, 7).fill({ color: st.bg }).stroke({ width: 1.6, color: st.col });
-        if (st.key === 'draw') drawLightStar(g, cardW / 2, cardH / 2 - 6, 11, st.col, 0.55);
+        g.roundRect(0, 0, cardW, stackH, 7).fill({ color: st.bg }).stroke({ width: 1.6, color: st.col });
+        if (st.key === 'draw') drawLightStar(g, cardW / 2, stackH / 2 - 6, 10, st.col, 0.55);
       }
       box.addChild(g);
 
       const num = new PIXI.Text({
         text: String(st.count),
-        style: { fontFamily: FONT_NUM, fontSize: 16, fontWeight: '900', fill: st.count > 0 ? st.col : INK.muted },
+        style: { fontFamily: FONT_NUM, fontSize: 15, fontWeight: '900', fill: st.count > 0 ? st.col : INK.muted },
       });
       num.anchor.set(0.5);
-      num.position.set(cardW / 2, st.key === 'draw' && st.count > 0 ? cardH - 16 : cardH / 2 - 4);
+      num.position.set(cardW / 2, st.key === 'draw' && st.count > 0 ? stackH - 14 : stackH / 2 - 2);
       const cap = new PIXI.Text({
         text: st.label,
-        style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '700', fill: INK.secondary },
+        style: { fontFamily: FONT_UI, fontSize: 9.5, fontWeight: '700', fill: INK.secondary },
       });
       cap.anchor.set(0.5, 0);
-      cap.position.set(cardW / 2, cardH + 5);
+      cap.position.set(cardW / 2, stackH + 3);
       box.addChild(num, cap);
 
-      if (st.cards !== null) {
+      if (st.cards !== null && st.count > 0) {
         box.eventMode = 'static';
         box.cursor = 'pointer';
         box.on('pointertap', (e) => {
@@ -989,18 +1277,43 @@ export class GameDirector {
           this._rebuildOverlay();
         });
       }
-      this.zonesLayer.addChild(box);
+      this.wingsLayer.addChild(box);
     });
   }
 
+  /**
+   * Phase-Driven Dynamic Center Stage:
+   *  - During Combat -> switches cleanly into Focused Center-Stage Showdown!
+   *  - During Placement / Pre-Reveal / Reveal -> Wide Confrontational Horizontal Duel Bridge (Left P1 ⚔ Right P2)!
+   */
   _rebuildDynamicBoard() {
     clearContainer(this.boardLayer);
     clearContainer(this.clashLayer);
     clearContainer(this.controlsLayer);
     this.regularSlotRects.clear();
+    this.regularLaneRects.clear();
     this.preRevealSlotRects.clear();
     this.preTimerTexts = [];
 
+    const frame = this.state.frame;
+    if (frame.combat) {
+      this._rebuildCombatShowdownStage();
+      this.physics.pruneHandCards(new Set());
+      clearContainer(this.handLayer);
+      this.handCardViews.clear();
+      this._rebuildActionControls();
+      return;
+    }
+
+    this._rebuildConfrontationBridge();
+    this._rebuildHandFan();
+    this._rebuildActionControls();
+  }
+
+  /**
+   * MODE A: Confrontational Horizontal Duel Bridge (Left P1 card faces Right P2 card directly!)
+   */
+  _rebuildConfrontationBridge() {
     const { arenaX, arenaW, arenaTop, arenaH } = this.layout;
     const frame = this.state.frame;
     const charNames = this._charNameMap();
@@ -1017,51 +1330,47 @@ export class GameDirector {
     let regTop = arenaTop;
     let regH = arenaH;
 
-    // 1. Pre-Reveal / Instant Lane (only shown when active)
+    // 1. Pre-Reveal / Instant Arch (ONLY visible when active!)
     if (showPreLane) {
-      const preH = Math.round(arenaH * 0.34);
-      regTop = arenaTop + preH + 14;
-      regH = arenaH - preH - 14;
+      const preH = Math.min(138, Math.round(arenaH * 0.31));
+      regTop = arenaTop + preH + 12;
+      regH = arenaH - preH - 12;
 
       const pendingNumbers = new Set(this.state.pending_responses || []);
-      const laneG = new PIXI.Graphics();
-      laneG.roundRect(arenaX, arenaTop, arenaW, preH, 12)
-        .fill({ color: 0xfbf5e8, alpha: 0.78 })
-        .stroke({ width: 1.4, color: INK.gold, alpha: 0.55 });
-      this.boardLayer.addChild(laneG);
+      const archG = new PIXI.Graphics();
+      archG.roundRect(arenaX, arenaTop, arenaW, preH, 13)
+        .fill({ color: 0xfbf5e8, alpha: 0.82 })
+        .stroke({ width: 1.5, color: INK.gold, alpha: 0.65 });
+      this.boardLayer.addChild(archG);
 
       if (!allTopDuels.length) {
         const cue = new PIXI.Text({
           text: '开牌前交锋',
-          style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: INK.gold },
+          style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.gold },
         });
         cue.anchor.set(0.5);
         cue.position.set(arenaX + arenaW / 2, arenaTop + preH / 2);
         this.boardLayer.addChild(cue);
       } else {
         const count = allTopDuels.length;
-        const slotW = Math.min(210, Math.floor((arenaW - 24 - (count - 1) * 10) / count));
-        const slotH = preH - 18;
+        const slotW = Math.min(208, Math.floor((arenaW - 22 - (count - 1) * 10) / count));
+        const slotH = preH - 16;
         const totalW = count * slotW + (count - 1) * 10;
         const startX = arenaX + (arenaW - totalW) / 2;
 
         allTopDuels.forEach((slot, idx) => {
           const sx = startX + idx * (slotW + 10);
-          const sy = arenaTop + 9;
+          const sy = arenaTop + 8;
           const isPendingForMe = slot._kind === 'pre_reveal' && !slot.ready && pendingNumbers.has(slot.number);
-          const isCombatHere = frame.combat && frame.combat.kind === slot._kind && frame.combat.duel_number === slot.number;
           if (slot._kind === 'pre_reveal') {
             this.preRevealSlotRects.set(slot.number, { x: sx, y: sy, w: slotW, h: slotH, cx: sx + slotW / 2, cy: sy + slotH / 2 });
           }
 
           const sg = new PIXI.Graphics();
-          sg.roundRect(sx + 2, sy + 4, slotW, slotH, 10).fill({ color: INK.shadow, alpha: 0.22 });
+          sg.roundRect(sx + 2, sy + 4, slotW, slotH, 10).fill({ color: INK.shadow, alpha: 0.2 });
           sg.roundRect(sx, sy, slotW, slotH, 10)
-            .fill({ color: isCombatHere ? INK.goldBg : INK.paper })
-            .stroke({
-              width: isCombatHere || isPendingForMe ? 2.2 : 1.3,
-              color: isCombatHere ? INK.gold : isPendingForMe ? 0xcf4932 : slot.ready ? 0x1c8a64 : INK.line,
-            });
+            .fill({ color: INK.paper })
+            .stroke({ width: isPendingForMe ? 2.2 : 1.3, color: isPendingForMe ? 0xcf4932 : slot.ready ? 0x1c8a64 : INK.line });
           this.boardLayer.addChild(sg);
 
           const prefix = slot._kind === 'instant' ? '即时' : '开牌前';
@@ -1080,7 +1389,7 @@ export class GameDirector {
             text: `${baseHeader}${elapsed}`,
             style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '800', fill: isPendingForMe ? 0xcf4932 : INK.primary },
           });
-          head.position.set(sx + 8, sy + 6);
+          head.position.set(sx + 8, sy + 5);
           this.boardLayer.addChild(head);
           if (timingRec?.declared_at_ms && !timingRec.answered_at_ms) {
             this.preTimerTexts.push({ txt: head, baseHeader, declaredAt: timingRec.declared_at_ms });
@@ -1088,9 +1397,9 @@ export class GameDirector {
 
           const sub = new PIXI.Text({
             text: targetTxt,
-            style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '700', fill: INK.secondary },
+            style: { fontFamily: FONT_UI, fontSize: 9.8, fontWeight: '700', fill: INK.secondary },
           });
-          sub.position.set(sx + 8, sy + 21);
+          sub.position.set(sx + 8, sy + 19);
           this.boardLayer.addChild(sub);
 
           const cards = [];
@@ -1098,19 +1407,23 @@ export class GameDirector {
             for (const c of sEntry.cards || []) cards.push({ card: c, side: sEntry.side });
           }
           cards.forEach(({ card, side }, cIdx) => {
-            const miniW = Math.min(86, (slotW - 18) / Math.max(1, cards.length) - 4);
-            const scale = Math.min(miniW / 138, (slotH - 42) / 190);
+            const miniW = Math.min(82, (slotW - 18) / Math.max(1, cards.length) - 4);
+            const scale = Math.min(miniW / 138, (slotH - 36) / 190);
             const cxCard = sx + 10 + (138 * scale) / 2 + cIdx * (138 * scale + 6);
             const spr = buildCardFront(card, {
               side, ownerName: charNames[card.character_id] || '', showOwner: multiChar,
               width: 138, height: 190, legal: true, playMode: card.play_mode,
             });
             spr.scale.set(scale);
-            spr.position.set(cxCard, sy + 38 + (190 * scale) / 2);
+            const cyCard = sy + 33 + (190 * scale) / 2;
+            spr.position.set(cxCard, cyCard);
             spr.eventMode = 'static';
             spr.cursor = 'pointer';
             spr.on('pointerover', () => {
-              this.hoveredCard = { card, side, ownerName: charNames[card.character_id] || '', anchorX: cxCard };
+              this.hoveredCard = {
+                card, side, ownerName: charNames[card.character_id] || '',
+                anchorX: cxCard, anchorY: cyCard, cardH: 190 * scale, source: 'board', sourceSprite: spr,
+              };
               this._renderInspection();
             });
             spr.on('pointerout', () => {
@@ -1122,64 +1435,86 @@ export class GameDirector {
 
           if (isPendingForMe) {
             const passBtn = makeSealButton('放行', {
-              width: 54, height: 24, accent: 0xcf4932, solid: true, fontSize: 11, radius: 6,
+              width: 52, height: 24, accent: 0xcf4932, solid: true, fontSize: 11, radius: 6,
               onClick: () => this._sendAction('let_through', { duel_number: slot.number }),
             });
-            passBtn.position.set(sx + slotW - 60, sy + slotH - 30);
+            passBtn.position.set(sx + slotW - 58, sy + slotH - 29);
             this.boardLayer.addChild(passBtn);
           }
         });
       }
     }
 
-    // 2. Center Regular Duel Lanes (① ② ③ ④)
+    // 2. Horizontal Face-to-Face Regular Duel Lanes (Left P1 ⚔ Right P2)
     const duels = frame.duels || [];
     const activeSide = this.state.active_side;
     const nextEmptyNum = this._findFirstEmptyRegularDuel(activeSide);
     const slotCount = Math.max(3, duels.length + (this.state.mode === 'placement' && nextEmptyNum > duels.length ? 1 : 0));
-    const slotGap = 20;
-    const slotW = Math.min(176, Math.floor((arenaW - (slotCount - 1) * slotGap) / slotCount));
-    const totalRegW = slotCount * slotW + (slotCount - 1) * slotGap;
-    const startRegX = arenaX + (arenaW - totalRegW) / 2;
+
+    const useTwoCols = slotCount >= 4 && arenaW >= 540;
+    const cols = useTwoCols ? 2 : 1;
+    const rows = Math.ceil(slotCount / cols);
+    const colGap = 14;
+    const rowGap = 10;
+    const laneW = Math.floor((arenaW - colGap * (cols - 1)) / cols);
+    const laneH = Math.min(156, Math.floor((regH - rowGap * (rows - 1)) / rows));
+    const totalH = rows * laneH + (rows - 1) * rowGap;
+    const startY = regTop + Math.max(0, Math.floor((regH - totalH) / 2));
 
     for (let i = 0; i < slotCount; i++) {
       const number = i + 1;
-      const sx = startRegX + i * (slotW + slotGap);
-      const sy = regTop + 6;
-      const sh = regH - 12;
-      const midY = sy + sh / 2;
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const lx = arenaX + col * (laneW + colGap);
+      const ly = startY + row * (laneH + rowGap);
+      const midX = lx + laneW / 2;
+      const midY = ly + laneH / 2;
       const slotData = duels[i] || { number, sides: [{ side: 1, cards: [] }, { side: 2, cards: [] }] };
-      const isCombatHere = frame.combat && frame.combat.kind === 'regular' && frame.combat.duel_number === number;
       const isNextDropSlot = this.state.mode === 'placement' && number === nextEmptyNum;
 
-      const laneG = new PIXI.Graphics();
-      laneG.moveTo(sx + 10, midY).lineTo(sx + slotW - 10, midY)
-        .stroke({ width: 1.2, color: isCombatHere ? INK.gold : INK.line });
-      laneG.circle(sx + slotW / 2, midY, 13)
-        .fill({ color: isCombatHere ? INK.gold : INK.paper })
-        .stroke({ width: 1.5, color: isCombatHere ? INK.gold : INK.line });
-      this.boardLayer.addChild(laneG);
+      this.regularLaneRects.set(number, { x: lx, y: ly, w: laneW, h: laneH, cx: midX, cy: midY });
+
+      // Confrontational bridge backdrop + opposing directional arrows meeting at the clash emblem!
+      const bridgeG = new PIXI.Graphics();
+      bridgeG.roundRect(lx, ly, laneW, laneH, 14)
+        .fill({ color: INK.paper, alpha: 0.44 })
+        .stroke({ width: 1.1, color: INK.line, alpha: 0.72 });
+      bridgeG.moveTo(lx + 18, midY).lineTo(lx + laneW - 18, midY)
+        .stroke({ width: 1.4, color: INK.line, alpha: 0.85 });
+      // Opposing arrows
+      bridgeG.poly([midX - 24, midY - 4, midX - 16, midY, midX - 24, midY + 4]).fill({ color: SIDE_THEME[1].accent, alpha: 0.7 });
+      bridgeG.poly([midX + 24, midY - 4, midX + 16, midY, midX + 24, midY + 4]).fill({ color: SIDE_THEME[2].accent, alpha: 0.7 });
+      // Central Duel Seal ① ② ③
+      bridgeG.circle(midX, midY, 15)
+        .fill({ color: INK.paper })
+        .stroke({ width: 1.8, color: isNextDropSlot ? INK.gold : INK.line });
+      this.boardLayer.addChild(bridgeG);
 
       const numTxt = new PIXI.Text({
         text: CIRCLED[i] || String(number),
-        style: { fontFamily: FONT_UI, fontSize: 13.5, fontWeight: '800', fill: isCombatHere ? INK.paper : INK.secondary },
+        style: { fontFamily: FONT_UI, fontSize: 14, fontWeight: '900', fill: isNextDropSlot ? INK.gold : INK.secondary },
       });
       numTxt.anchor.set(0.5);
-      numTxt.position.set(sx + slotW / 2, midY);
+      numTxt.position.set(midX, midY);
       this.boardLayer.addChild(numTxt);
 
-      for (const s of [2, 1]) {
-        const halfY = s === 2 ? sy : midY + 18;
-        const halfH = sh / 2 - 18;
-        const wellRect = { x: sx + 4, y: halfY, w: slotW - 8, h: halfH, cx: sx + slotW / 2, cy: halfY + halfH / 2 };
+      // Left Half = Side 1 well, Right Half = Side 2 well!
+      const wellPadX = 12;
+      const wellW = Math.floor(laneW / 2 - 28 - wellPadX);
+      const wellH = laneH - 12;
+
+      for (const s of [1, 2]) {
+        const wx = s === 1 ? lx + wellPadX : midX + 28;
+        const wy = ly + 6;
+        const wellRect = { x: wx, y: wy, w: wellW, h: wellH, cx: wx + wellW / 2, cy: wy + wellH / 2 };
         this.regularSlotRects.set(`${number}:${s}`, wellRect);
 
         const isTargetWell = isNextDropSlot && s === activeSide;
         const wellG = new PIXI.Graphics();
-        wellG.roundRect(wellRect.x, wellRect.y, wellRect.w, wellRect.h, 12)
-          .fill({ color: isTargetWell ? SIDE_THEME[s].warmTint : INK.paperSoft, alpha: isTargetWell ? 0.92 : 0.56 })
+        wellG.roundRect(wellRect.x, wellRect.y, wellRect.w, wellRect.h, 11)
+          .fill({ color: isTargetWell ? SIDE_THEME[s].warmTint : INK.paperSoft, alpha: isTargetWell ? 0.94 : 0.52 })
           .stroke({
-            width: isTargetWell ? 2 : 1.1,
+            width: isTargetWell ? 2.2 : 1.1,
             color: isTargetWell ? SIDE_THEME[s].accent : SIDE_THEME[s].border,
             alpha: isTargetWell ? 0.95 : 0.36,
           });
@@ -1199,11 +1534,9 @@ export class GameDirector {
         const sideEntry = (slotData.sides || []).find((x) => x.side === s);
         const cards = sideEntry ? sideEntry.cards : [];
         cards.forEach((card, cIdx) => {
-          const fitScale = Math.min((wellRect.w - 8) / 138, (wellRect.h - 6) / 190, 0.94);
-          const ox = (cIdx - (cards.length - 1) / 2) * 18;
+          const fitScale = Math.min((wellRect.w - 8) / 138, (wellRect.h - 6) / 190, 0.88);
+          const ox = (cIdx - (cards.length - 1) / 2) * 20;
           const isFaceDown = card.hidden || (!frame.cards_revealed && card.state === 'placed_face_down');
-          const combatSide = isCombatHere
-            ? (frame.combat.sides || []).find((cs) => cs.side === s && cs.card_id === card.id) : null;
           const spr = isFaceDown
             ? buildCardBack(s, { width: 138, height: 190 })
             : buildCardFront(card, {
@@ -1212,8 +1545,6 @@ export class GameDirector {
                 showOwner: multiChar,
                 width: 138, height: 190,
                 legal: true,
-                activeDieNumber: combatSide?.die_number || null,
-                rangeDeficit: combatSide?.range_deficit || 0,
               });
           spr.scale.set(fitScale);
           spr.position.set(wellRect.cx + ox, wellRect.cy);
@@ -1221,7 +1552,10 @@ export class GameDirector {
             spr.eventMode = 'static';
             spr.cursor = 'pointer';
             spr.on('pointerover', () => {
-              this.hoveredCard = { card, side: s, ownerName: charNames[card.character_id] || '', anchorX: wellRect.cx };
+              this.hoveredCard = {
+                card, side: s, ownerName: charNames[card.character_id] || '',
+                anchorX: wellRect.cx + ox, anchorY: wellRect.cy, cardH: 190 * fitScale, source: 'board', sourceSprite: spr,
+              };
               this._renderInspection();
             });
             spr.on('pointerout', () => {
@@ -1233,10 +1567,242 @@ export class GameDirector {
         });
       }
     }
+  }
 
-    this._rebuildClashHud();
-    this._rebuildHandFan();
-    this._rebuildActionControls();
+  /**
+   * MODE B: Focused Center-Stage Combat Showdown!
+   *  - Top compact Duel Progress Rail (all pre-reveal & regular duels at a glance)
+   *  - Center 3D Dice Clash Arena + Sculpted 4-Layer Score Medallions (基础 → 变动 → 最终 → 拼点)
+   *  - Directly below: BOTH active clashing skills rendered side-by-side with full 100% VERBATIM text & active die glow!
+   */
+  _rebuildCombatShowdownStage() {
+    const { arenaX, arenaW, arenaTop, showdownBottom } = this.layout;
+    const frame = this.state.frame;
+    const combat = frame.combat;
+    const charNames = this._charNameMap();
+
+    // 1. Compact Top Duel Progress Rail (y = 48..78)
+    const railItems = [];
+    for (const d of frame.pre_reveal?.duels || []) {
+      railItems.push({ kind: 'pre_reveal', number: d.number, label: `开牌前${CIRCLED[d.number - 1] || d.number}` });
+    }
+    for (const d of frame.special_duels || []) {
+      railItems.push({ kind: 'instant', number: d.number, label: `即时${CIRCLED[d.number - 1] || d.number}` });
+    }
+    for (const d of frame.duels || []) {
+      railItems.push({ kind: 'regular', number: d.number, label: `常规${CIRCLED[d.number - 1] || d.number}` });
+    }
+
+    const chipH = 26;
+    const chipGap = 8;
+    const chipWidths = railItems.map((it) => (it.kind === 'regular' ? 70 : 84));
+    const totalRailW = chipWidths.reduce((a, b) => a + b, 0) + chipGap * Math.max(0, railItems.length - 1);
+    let rx = arenaX + Math.max(0, (arenaW - totalRailW) / 2);
+    const railY = arenaTop;
+
+    railItems.forEach((it, idx) => {
+      const cw = chipWidths[idx];
+      const active = combat.kind === it.kind && combat.duel_number === it.number;
+      const g = new PIXI.Graphics();
+      g.roundRect(rx, railY, cw, chipH, 13)
+        .fill({ color: active ? INK.gold : INK.paper, alpha: active ? 1 : 0.9 })
+        .stroke({ width: active ? 2 : 1.2, color: active ? 0xa3680c : INK.line });
+      this.boardLayer.addChild(g);
+      const t = new PIXI.Text({
+        text: active ? `⚔ ${it.label}` : it.label,
+        style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: active ? INK.paper : INK.secondary },
+      });
+      t.anchor.set(0.5);
+      t.position.set(rx + cw / 2, railY + chipH / 2);
+      this.boardLayer.addChild(t);
+      rx += cw + chipGap;
+    });
+
+    // 2. Sculpted 3D Dice Clash Arena & Score Medallions (y = 86..234)
+    const clashTop = railY + chipH + 10;
+    const clashH = 148;
+    const cx = arenaX + arenaW / 2;
+
+    const arenaG = new PIXI.Graphics();
+    arenaG.roundRect(arenaX, clashTop, arenaW, clashH, 16)
+      .fill({ color: INK.paper, alpha: 0.72 })
+      .stroke({ width: 1.6, color: INK.gold, alpha: 0.72 });
+    // Center confrontation axis & luminous clash ring (where the Matter.js 3D dice physically smash!)
+    arenaG.moveTo(arenaX + 18, clashTop + clashH / 2).lineTo(arenaX + arenaW - 18, clashTop + clashH / 2)
+      .stroke({ width: 1.2, color: INK.line, alpha: 0.65 });
+    arenaG.circle(cx, clashTop + clashH / 2, 42)
+      .fill({ color: INK.goldBg, alpha: 0.55 })
+      .stroke({ width: 1.8, color: INK.gold, alpha: 0.75 });
+    this.clashLayer.addChild(arenaG);
+
+    const kindName = { pre_reveal: '开牌前', regular: '常规', instant: '即时' }[combat.kind] || '交锋';
+    const roundBadge = new PIXI.Text({
+      text: `${kindName}${CIRCLED[(combat.duel_number || 1) - 1] || combat.duel_number} · 第 ${combat.round_id || 1} 轮`,
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: INK.gold },
+    });
+    roundBadge.anchor.set(0.5, 0);
+    roundBadge.position.set(cx, clashTop + 6);
+    this.clashLayer.addChild(roundBadge);
+
+    const vsTxt = new PIXI.Text({
+      text: 'VS',
+      style: { fontFamily: FONT_NUM, fontSize: 16, fontWeight: '900', fill: INK.gold },
+    });
+    vsTxt.anchor.set(0.5);
+    vsTxt.position.set(cx, clashTop + clashH / 2);
+    this.clashLayer.addChild(vsTxt);
+
+    // Draw Left (P1) & Right (P2) Sculpted Live Die Score Medallions
+    const medW = Math.min(226, Math.floor(arenaW / 2 - 58));
+    for (const s of combat.sides || []) {
+      const isLeft = s.side === 1;
+      const mx = isLeft ? arenaX + 14 : arenaX + arenaW - medW - 14;
+      const my = clashTop + 26;
+      const mh = clashH - 36;
+      const die = s.die;
+      const theme = SIDE_THEME[s.side];
+
+      if (!die) {
+        const empty = new PIXI.Text({
+          text: `${theme.name} · 无对位`,
+          style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '700', fill: INK.muted },
+        });
+        empty.anchor.set(0.5);
+        empty.position.set(mx + medW / 2, my + mh / 2);
+        this.clashLayer.addChild(empty);
+        continue;
+      }
+
+      const ds = DIE_STYLE[die.type] || DIE_STYLE.blank;
+      const win = die.result === 'win';
+      const lose = die.result === 'lose';
+      const mg = new PIXI.Graphics();
+      mg.roundRect(mx, my, medW, mh, 12)
+        .fill({ color: win ? INK.goldBg : ds.bg, alpha: lose ? 0.65 : 0.96 })
+        .stroke({ width: win ? 2.5 : 1.4, color: win ? INK.gold : ds.color });
+      drawDieIcon(mg, die.type, mx + 22, my + 24, 10, ds.color);
+      this.clashLayer.addChild(mg);
+
+      const rangeStr = formatDieRange(die);
+      const resLabel = win
+        ? (die.win_branch_skipped ? '胜（跳过拼赢）' : '胜')
+        : lose ? '负' : die.result === 'draw' ? '平' : '';
+
+      const head = new PIXI.Text({
+        text: `${ds.label} ${rangeStr}${s.range_deficit ? ` 压制-${s.range_deficit}` : ''}`,
+        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: INK.primary },
+      });
+      head.position.set(mx + 38, my + 12);
+      this.clashLayer.addChild(head);
+
+      // 4-Layer Score Breakdown Cascade
+      const layers = [
+        `基础 ${die.base_value ?? 0}`,
+        `变动 ${die.rolled_value ?? '—'}`,
+        `最终 ${die.final_score ?? '—'}`,
+      ].join('  ·  ');
+      const lTxt = new PIXI.Text({
+        text: layers,
+        style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '700', fill: INK.secondary },
+      });
+      lTxt.position.set(mx + 14, my + mh - 24);
+      this.clashLayer.addChild(lTxt);
+
+      // Big Clash Score Numeral + Win/Lose Stamp
+      const scoreVal = die.clash_score !== null && die.clash_score !== undefined ? String(die.clash_score) : '—';
+      const scTxt = new PIXI.Text({
+        text: scoreVal,
+        style: {
+          fontFamily: FONT_NUM, fontSize: 34, fontWeight: '900',
+          fill: win ? ds.color : lose ? INK.muted : INK.primary,
+        },
+      });
+      scTxt.anchor.set(1, 0.5);
+      scTxt.position.set(mx + medW - 14, my + 42);
+      this.clashLayer.addChild(scTxt);
+
+      if (resLabel) {
+        const rt = new PIXI.Text({
+          text: resLabel,
+          style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: win ? INK.gold : lose ? INK.muted : INK.secondary },
+        });
+        rt.position.set(mx + 38, my + 34);
+        this.clashLayer.addChild(rt);
+      }
+    }
+
+    // 3. Face-to-Face Active Skill Cards with FULL 100% VERBATIM RULE TEXT directly on the Showdown Stage!
+    const cardsTop = clashTop + clashH + 14;
+    const cardsAvailH = Math.max(180, showdownBottom - cardsTop);
+    const colGap = 16;
+    const colW = Math.min(360, Math.floor((arenaW - colGap) / 2));
+    const pairStartX = arenaX + Math.floor((arenaW - (colW * 2 + colGap)) / 2);
+
+    const activeCardsBySide = this._findActiveCombatCards();
+    for (const side of [1, 2]) {
+      const combatSide = (combat.sides || []).find((cs) => cs.side === side);
+      const card = activeCardsBySide.get(side);
+      const px = side === 1 ? pairStartX : pairStartX + colW + colGap;
+
+      if (!card) {
+        const emptyG = new PIXI.Graphics();
+        emptyG.roundRect(px, cardsTop, colW, Math.min(180, cardsAvailH), 12)
+          .fill({ color: INK.paperSoft, alpha: 0.55 })
+          .stroke({ width: 1.2, color: INK.line });
+        this.boardLayer.addChild(emptyG);
+        const et = new PIXI.Text({
+          text: `${SIDE_THEME[side].name} · 无迎击技能`,
+          style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '700', fill: INK.muted },
+        });
+        et.anchor.set(0.5);
+        et.position.set(px + colW / 2, cardsTop + Math.min(180, cardsAvailH) / 2);
+        this.boardLayer.addChild(et);
+        continue;
+      }
+
+      const panel = buildVerbatimCardPanel(card, {
+        side,
+        ownerName: charNames[card.character_id] || '',
+        width: colW,
+        activeDieNumber: combatSide?.die_number || null,
+        compact: colW < 330 || cardsAvailH < 340,
+      });
+      if (panel._boxHeight > cardsAvailH) {
+        const fit = Math.max(0.76, cardsAvailH / panel._boxHeight);
+        panel.scale.set(fit);
+        panel.position.set(px + (colW * (1 - fit)) / 2, cardsTop);
+      } else {
+        panel.position.set(px, cardsTop);
+      }
+      this.boardLayer.addChild(panel);
+    }
+  }
+
+  _findActiveCombatCards() {
+    const out = new Map();
+    const frame = this.state?.frame;
+    const combat = frame?.combat;
+    if (!combat) return out;
+
+    const pools = [];
+    if (combat.kind === 'regular') {
+      const slot = (frame.duels || []).find((d) => d.number === combat.duel_number);
+      if (slot) pools.push(...(slot.sides || []));
+    } else if (combat.kind === 'pre_reveal') {
+      const slot = (frame.pre_reveal?.duels || []).find((d) => d.number === combat.duel_number);
+      if (slot) pools.push(...(slot.sides || []));
+    } else if (combat.kind === 'instant') {
+      const slot = (frame.special_duels || []).find((d) => d.number === combat.duel_number);
+      if (slot) pools.push(...(slot.sides || []));
+    }
+
+    for (const cs of combat.sides || []) {
+      if (!cs.card_id) continue;
+      const sidePool = pools.find((p) => p.side === cs.side);
+      const found = sidePool?.cards?.find((c) => c.id === cs.card_id);
+      if (found) out.set(cs.side, found);
+    }
+    return out;
   }
 
   _findFirstEmptyRegularDuel(side) {
@@ -1247,94 +1813,6 @@ export class GameDirector {
       if (!s || !s.cards.length) return d.number;
     }
     return duels.length + 1;
-  }
-
-  _rebuildClashHud() {
-    clearContainer(this.clashLayer);
-    const combat = this.state?.frame?.combat;
-    if (!combat) return;
-
-    const { arenaX, arenaW, arenaTop, arenaH } = this.layout;
-    const barW = Math.min(580, arenaW - 12);
-    const barH = 90;
-    const bx = arenaX + (arenaW - barW) / 2;
-    const by = arenaTop + arenaH - barH - 4;
-
-    const g = new PIXI.Graphics();
-    g.roundRect(bx + 3, by + 5, barW, barH, 12).fill({ color: INK.shadow, alpha: 0.3 });
-    g.roundRect(bx, by, barW, barH, 12).fill({ color: INK.paper, alpha: 0.97 }).stroke({ width: 1.8, color: INK.gold });
-    this.clashLayer.addChild(g);
-
-    const kindName = { pre_reveal: '开牌前', regular: '常规', instant: '即时' }[combat.kind] || '交锋';
-    const title = new PIXI.Text({
-      text: `${kindName}${CIRCLED[(combat.duel_number || 1) - 1] || combat.duel_number} · 第 ${combat.round_id || 1} 轮`,
-      style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: INK.gold },
-    });
-    title.anchor.set(0.5, 0);
-    title.position.set(bx + barW / 2, by + 6);
-    this.clashLayer.addChild(title);
-
-    for (const s of combat.sides || []) {
-      const isLeft = s.side === 1;
-      const sx = isLeft ? bx + 12 : bx + barW / 2 + 16;
-      const sw = barW / 2 - 28;
-      const die = s.die;
-      const theme = SIDE_THEME[s.side];
-      if (!die) {
-        const empty = new PIXI.Text({
-          text: `${theme.name} · 无对位`,
-          style: { fontFamily: FONT_UI, fontSize: 12, fill: INK.muted },
-        });
-        empty.position.set(sx, by + 42);
-        this.clashLayer.addChild(empty);
-        continue;
-      }
-      const ds = DIE_STYLE[die.type] || DIE_STYLE.blank;
-      const rg = new PIXI.Graphics();
-      rg.roundRect(sx, by + 23, sw, 58, 8)
-        .fill({ color: ds.bg })
-        .stroke({ width: die.result === 'win' ? 2.2 : 1.2, color: die.result === 'win' ? INK.gold : ds.color });
-      drawDieIcon(rg, die.type, sx + 18, by + 43, 8.5, ds.color);
-      this.clashLayer.addChild(rg);
-
-      // Exact live range (NO Lv.X!)
-      const rangeStr = formatDieRange(die);
-      const resLabel = die.result === 'win'
-        ? (die.win_branch_skipped ? '胜（跳过拼赢）' : '胜')
-        : die.result === 'lose' ? '负' : die.result === 'draw' ? '平' : '';
-      const head = new PIXI.Text({
-        text: `${theme.name} · ${ds.label} ${rangeStr}${s.range_deficit ? ` [压制${s.range_deficit}]` : ''}`,
-        style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: INK.primary },
-      });
-      head.position.set(sx + 32, by + 29);
-      this.clashLayer.addChild(head);
-
-      const sub = new PIXI.Text({
-        text: `基础${die.base_value ?? 0}  变动${die.rolled_value ?? '—'}  最终${die.final_score ?? '—'}${resLabel ? '  ' + resLabel : ''}`,
-        style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '600', fill: INK.secondary },
-      });
-      sub.position.set(sx + 32, by + 53);
-      this.clashLayer.addChild(sub);
-
-      const score = new PIXI.Text({
-        text: die.clash_score !== null && die.clash_score !== undefined ? String(die.clash_score) : '—',
-        style: {
-          fontFamily: FONT_NUM, fontSize: 27, fontWeight: '900',
-          fill: die.result === 'win' ? ds.color : die.result === 'lose' ? INK.muted : INK.primary,
-        },
-      });
-      score.anchor.set(1, 0.5);
-      score.position.set(sx + sw - 10, by + 52);
-      this.clashLayer.addChild(score);
-    }
-
-    const vs = new PIXI.Text({
-      text: 'VS',
-      style: { fontFamily: FONT_NUM, fontSize: 13, fontWeight: '900', fill: INK.gold },
-    });
-    vs.anchor.set(0.5);
-    vs.position.set(bx + barW / 2, by + 52);
-    this.clashLayer.addChild(vs);
   }
 
   _rebuildHandFan() {
@@ -1364,9 +1842,9 @@ export class GameDirector {
     const multiChar = (player.characters || []).length > 1;
 
     const count = hand.length;
-    const maxSpread = Math.min(arenaW - cardW - 18, Math.max(220, count * 126));
-    const step = count > 1 ? Math.min(144, maxSpread / (count - 1)) : 0;
-    const deckOrigin = this.pileCenters.get(`${viewerSide}:draw`) || { x: cx + 260, y: handY };
+    const maxSpread = Math.min(arenaW - cardW + 40, Math.max(200, count * 124));
+    const step = count > 1 ? Math.min(142, maxSpread / (count - 1)) : 0;
+    const deckOrigin = this.pileCenters.get(`${viewerSide}:draw`) || { x: cx, y: handY + 40 };
     const validKeys = new Set();
 
     hand.forEach((card, i) => {
@@ -1374,7 +1852,7 @@ export class GameDirector {
       validKeys.add(cardKey);
       const norm = count > 1 ? (i / (count - 1)) * 2 - 1 : 0;
       const baseX = cx + (i - (count - 1) / 2) * step;
-      const baseY = handY + norm * norm * 10 - 6;
+      const baseY = handY + norm * norm * 10 - 4;
       const baseAngle = norm * 0.055;
       const isLegal = legalSet.has(card.id);
       const isSelected = this.selectedHandCardId === card.id;
@@ -1403,10 +1881,13 @@ export class GameDirector {
       spr.on('pointerover', () => {
         if (this.dragState) return;
         this.audio.cardSlide();
-        this.hoveredCard = { card, side: viewerSide, ownerName: charNames[card.character_id] || '', anchorX: baseX };
-        bodyEntry.targetY = baseY - 30;
+        this.hoveredCard = {
+          card, side: viewerSide, ownerName: charNames[card.character_id] || '',
+          anchorX: baseX, anchorY: baseY, cardH, source: 'hand', sourceSprite: spr,
+        };
+        bodyEntry.targetY = baseY - 12;
         bodyEntry.targetAngle = 0;
-        bodyEntry.targetScale = 1.08;
+        bodyEntry.targetScale = 1.04;
         this.handLayer.setChildIndex(spr, this.handLayer.children.length - 1);
         this._renderInspection();
       });
@@ -1426,6 +1907,8 @@ export class GameDirector {
           return;
         }
         e.stopPropagation();
+        this.hoveredCard = null;
+        this._renderInspection();
         let kind = 'place';
         if (this.state.mode === 'pre_attack' || this.state.mode === 'intercept') {
           if (this.state.mode === 'intercept' && interceptSet.has(card.id) && !attackSet.has(card.id)) kind = 'intercept';
@@ -1453,56 +1936,67 @@ export class GameDirector {
     this.physics.pruneHandCards(validKeys);
   }
 
+  /**
+   * Floating Foreground Action Seals docked cleanly at the arena bottom — ZERO dead sidebar!
+   */
   _rebuildActionControls() {
     clearContainer(this.controlsLayer);
-    const { rightX, rightW, h } = this.layout;
+    const { arenaX, arenaW, handY, cardH, h } = this.layout;
     const mode = this.state.mode;
+    const isCombat = Boolean(this.state.frame?.combat);
     const buttons = [];
 
     if (mode === 'placement') {
       if (this.selectedHandCardId) {
-        buttons.push({ label: '扣置', accent: 0x1c8a64, solid: true, fn: () => this._placeCard(this.selectedHandCardId) });
+        buttons.push({ label: '扣置', w: 92, accent: 0x1c8a64, solid: true, fn: () => this._placeCard(this.selectedHandCardId) });
       }
       if (this.state.can_pass) {
-        buttons.push({ label: '交权', accent: INK.gold, fn: () => this._sendAction('pass') });
+        buttons.push({ label: '交权', w: 92, accent: INK.gold, solid: true, fn: () => this._sendAction('pass') });
       }
       buttons.push({
         label: `结束置卡（余${this.state.window_remaining}）`,
+        w: 146,
         accent: 0xcf4932,
         fn: () => this._sendAction('end'),
       });
     } else if (mode === 'pre_attack' || mode === 'intercept') {
       if (this.state.can_end_attack) {
-        buttons.push({ label: '结束主动进攻', accent: INK.gold, solid: true, fn: () => this._sendAction('end_attack') });
+        buttons.push({ label: '结束主动进攻', w: 136, accent: INK.gold, solid: true, fn: () => this._sendAction('end_attack') });
       }
       if ((this.state.eligible_sides || []).length > 1) {
-        buttons.push({ label: '切换席位', accent: 0x1a8775, fn: () => this._sendAction('switch_side') });
+        buttons.push({ label: '切换席位', w: 102, accent: 0x1a8775, fn: () => this._sendAction('switch_side') });
       }
     } else if (mode === 'reveal' || mode === 'combat' || mode === 'turn_end' || mode === 'timing') {
       const labelMap = {
-        reveal: '常规交锋',
+        reveal: '进入常规交锋',
         combat: '下一拍',
         timing: '继续',
-        turn_end: '下回合',
+        turn_end: '下一回合',
       };
-      buttons.push({ label: labelMap[mode], accent: 0x1c8a64, solid: true, fn: () => this._sendAction('next') });
+      buttons.push({ label: labelMap[mode], w: 144, accent: 0x1c8a64, solid: true, fn: () => this._sendAction('next') });
     }
 
     if (this.state.special_available && mode !== 'finished' && mode !== 'draw_select' && mode !== 'special' && mode !== 'special_handoff') {
-      buttons.push({ label: '特殊行动', accent: 0x1a8775, solid: true, fn: () => this._sendAction('open_special') });
+      buttons.push({ label: '特殊行动', w: 112, accent: 0x1a8775, solid: true, fn: () => this._sendAction('open_special') });
     }
 
-    const btnW = rightW;
-    const btnH = 38;
-    let by = h - 22 - btnH;
-    for (let i = buttons.length - 1; i >= 0; i--) {
-      const b = buttons[i];
+    if (!buttons.length) return;
+    const gap = 10;
+    const totalW = buttons.reduce((acc, b) => acc + b.w, 0) + gap * (buttons.length - 1);
+    let bx = arenaX + (arenaW - totalW) / 2;
+    const btnH = 34;
+    // In combat/reveal/turn_end -> center bottom; in hand phases -> dedicated action strip cleanly above hand!
+    const by = isCombat || mode === 'reveal' || mode === 'turn_end'
+      ? h - btnH - 16
+      : this.layout.actionStripY;
+
+    for (const b of buttons) {
       const btn = makeSealButton(b.label, {
-        width: btnW, height: btnH, accent: b.accent, solid: !!b.solid, fontSize: 13, radius: 10, onClick: b.fn,
+        width: b.w, height: btnH, accent: b.accent, solid: !!b.solid, fontSize: 13, radius: 17, onClick: b.fn,
       });
-      btn.position.set(rightX, by);
+      btn.position.set(bx, by);
       this.controlsLayer.addChild(btn);
-      by -= btnH + 8;
+      bx += b.w + gap;
     }
   }
 
@@ -1511,7 +2005,6 @@ export class GameDirector {
     if (!this.state) return;
     const { w, h } = this.layout;
 
-    // Pinned Character Dossier (Arknights / Library of Ruina style)
     if (this.dossierModal) {
       const m = this.dossierModal;
       const pl = (this.state.frame.players || []).find((p) => p.side === m.side);
@@ -1590,8 +2083,10 @@ export class GameDirector {
       const m = this.pileModal;
       const ov = buildPileOverlay(w, h, {
         title: m.title, side: m.side, cards: m.cards, charNames: this._charNameMap(),
-        onHoverCard: (card, side, ownerName) => {
-          this.hoveredCard = card ? { card, side, ownerName, anchorX: w * 0.4 } : null;
+        onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
+          this.hoveredCard = card
+            ? { card, side, ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 190, source: 'board', sourceSprite: spr }
+            : null;
           this._renderInspection();
         },
         onClose: () => { this.pileModal = null; this.hoveredCard = null; this._renderInspection(); this._rebuildOverlay(); },
@@ -1624,8 +2119,10 @@ export class GameDirector {
           this._rebuildOverlay();
         },
         onConfirm: () => this._sendAction('draw_bottom', { card_ids: Array.from(this.drawSelected) }),
-        onHoverCard: (card, side, ownerName) => {
-          this.hoveredCard = card ? { card, side, ownerName, anchorX: w * 0.4 } : null;
+        onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
+          this.hoveredCard = card
+            ? { card, side, ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 198, source: 'draw', sourceSprite: spr }
+            : null;
           this._renderInspection();
         },
       });
@@ -1671,31 +2168,74 @@ export class GameDirector {
   }
 
   /**
-   * Renders the wide 100% Verbatim Card Panel OR the Verbatim Status/Passive List cleanly on screen.
+   * True In-Place Card Expansion (ZERO separate "detail popup" and ZERO left/right jumping!):
+   * The hovered card ITSELF hides its resting miniature (keeping hit area intact) and seamlessly
+   * grows right in-place into its full 100% verbatim readable face where your eyes already are.
    */
   _renderInspection() {
     clearContainer(this.inspectLayer);
+    this._inspectAnim = null;
+    if (this._hiddenHoverSprite && !this._hiddenHoverSprite.destroyed) {
+      this._hiddenHoverSprite.alpha = 1;
+    }
+    this._hiddenHoverSprite = null;
     if (this.state?.mode === 'handoff' || this.state?.mode === 'special_handoff') return;
 
-    const { w, h, pad, leftW } = this.layout;
+    const { w, h } = this.layout;
 
     if (this.hoveredCard) {
-      const { card, side, ownerName, anchorX } = this.hoveredCard;
-      const panel = buildVerbatimCardPanel(card, { side, ownerName, width: 376 });
-      // Smart side placement so panel never hides the card you're reading
-      const placeLeft = anchorX > w * 0.56;
-      const px = placeLeft ? Math.max(pad + leftW + 14, 24) : Math.min(w - panel._boxWidth - 18, w - 394);
-      const py = Math.max(52, Math.min(h - panel._boxHeight - 18, (h - panel._boxHeight) / 2));
+      const { card, side, ownerName, anchorX, anchorY, cardH = 186, source = 'hand', sourceSprite = null } = this.hoveredCard;
+      const W = 348;
+      const panel = buildVerbatimCardPanel(card, { side, ownerName, width: W, compact: h < 740 });
+      const H = panel._boxHeight;
+
+      // Hide the resting miniature so there is ONLY ONE card — the card itself grew in-place!
+      if (sourceSprite && !sourceSprite.destroyed) {
+        sourceSprite.alpha = 0;
+        this._hiddenHoverSprite = sourceSprite;
+      }
+
+      const targetX = anchorX ?? w * 0.5;
+      const targetY = anchorY ?? h - 100;
+      const px = Math.max(16, Math.min(w - W - 16, targetX - W / 2));
+      let py;
+      let pivotY;
+      if (source === 'hand') {
+        // Rises smoothly from the bottom edge directly out of its own hand slot!
+        py = Math.max(46, h - H - 10);
+        pivotY = py + H;
+      } else if (source === 'draw') {
+        // Expands upward from the card's own bottom edge so the "保留/置底" pill right underneath stays visible!
+        const cardBottom = targetY + cardH / 2;
+        py = Math.max(46, Math.min(h - H - 56, cardBottom - H));
+        pivotY = cardBottom;
+      } else {
+        // Board / Pile card expands right around its own exact center!
+        py = Math.max(46, Math.min(h - H - 14, targetY - H / 2));
+        pivotY = targetY;
+      }
+
+      const wrap = new PIXI.Container();
+      wrap.eventMode = 'none';
       panel.position.set(px, py);
-      this.inspectLayer.addChild(panel);
+      wrap.addChild(panel);
+
+      const pivotX = Math.max(px + 24, Math.min(px + W - 24, targetX));
+      wrap.pivot.set(pivotX, pivotY);
+      wrap.position.set(pivotX, pivotY);
+      const startScale = source === 'hand' ? 0.72 : 0.68;
+      wrap.scale.set(startScale);
+      wrap.alpha = 0.55;
+      this.inspectLayer.addChild(wrap);
+      this._inspectAnim = { node: wrap, age: 0, duration: 0.11, startScale };
     }
 
     if (this.hoveredInfo) {
       const info = this.hoveredInfo;
-      const W = 356;
+      const W = 352;
       const body = new PIXI.Container();
       let cy = 38;
-      const maxChars = 42;
+      const maxChars = 41;
 
       for (const item of info.items || []) {
         const isStatus = info.kind === 'statuses';
@@ -1730,10 +2270,14 @@ export class GameDirector {
       }
 
       const H = cy + 8;
-      const tx = Math.min(w - W - 16, Math.max(pad + leftW + 10, info.x));
-      const ty = Math.min(h - H - 16, Math.max(52, info.y));
+      // Directly adjacent to the exact fighter wing that you hovered
+      const tx = info.side === 2
+        ? Math.max(16, this.layout.rightWingX - W - 12)
+        : Math.min(w - W - 16, this.layout.arenaX + 4);
+      const ty = Math.min(h - H - 16, Math.max(52, info.y || 80));
 
       const frame = new PIXI.Graphics();
+      frame.eventMode = 'none';
       frame.roundRect(tx + 4, ty + 6, W, H, 12).fill({ color: INK.shadow, alpha: 0.34 });
       frame.roundRect(tx, ty, W, H, 12).fill({ color: INK.paper, alpha: 0.99 }).stroke({ width: 1.6, color: INK.line });
       const head = new PIXI.Text({
@@ -1749,20 +2293,20 @@ export class GameDirector {
   _renderToast() {
     clearContainer(this.toastLayer);
     const items = [];
-    if (this.banner) items.push({ ...this.banner, y: 27, size: 13.5 });
-    if (this.toast) items.push({ ...this.toast, y: this.layout.handY - this.layout.cardH / 2 - 26, size: 12.5 });
+    if (this.banner) items.push({ ...this.banner, y: 24, size: 13.5 });
+    if (this.toast) items.push({ ...this.toast, y: this.layout.handY - this.layout.cardH / 2 - 58, size: 12.5 });
     for (const item of items) {
       const t = new PIXI.Text({
         text: item.text,
         style: { fontFamily: FONT_UI, fontSize: item.size, fontWeight: '800', fill: INK.primary },
       });
       const bw = t.width + 32;
-      const bh = 30;
+      const bh = 28;
       const bx = this.w / 2 - bw / 2;
       const by = item.y - bh / 2;
       const bg = new PIXI.Graphics();
-      bg.roundRect(bx + 2, by + 4, bw, bh, 15).fill({ color: INK.shadow, alpha: 0.26 });
-      bg.roundRect(bx, by, bw, bh, 15).fill({ color: INK.paper, alpha: 0.98 }).stroke({ width: 1.8, color: item.color });
+      bg.roundRect(bx + 2, by + 4, bw, bh, 14).fill({ color: INK.shadow, alpha: 0.26 });
+      bg.roundRect(bx, by, bw, bh, 14).fill({ color: INK.paper, alpha: 0.98 }).stroke({ width: 1.8, color: item.color });
       t.anchor.set(0.5);
       t.position.set(this.w / 2, item.y);
       this.toastLayer.addChild(bg, t);
@@ -1837,14 +2381,8 @@ export class GameDirector {
         }
         const duels = this.state.frame.duels || [];
         for (let i = 1; i <= duels.length; i++) {
-          const r1 = this.regularSlotRects.get(`${i}:1`);
-          const r2 = this.regularSlotRects.get(`${i}:2`);
-          if (!r1 || !r2) continue;
-          const minX = Math.min(r1.x, r2.x) - 10;
-          const maxX = Math.max(r1.x + r1.w, r2.x + r2.w) + 10;
-          const minY = Math.min(r1.y, r2.y) - 10;
-          const maxY = Math.max(r1.y + r1.h, r2.y + r2.h) + 10;
-          if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+          const lane = this.regularLaneRects.get(i);
+          if (lane && x >= lane.x - 8 && x <= lane.x + lane.w + 8 && y >= lane.y - 8 && y <= lane.y + lane.h + 8) {
             this.audio.cardPlace();
             this._sendAction('attack', { card_id: d.card.id, target: { kind: 'duel', number: i } });
             return;
@@ -1914,8 +2452,8 @@ export class GameDirector {
         fromY: view.bodyEntry.body.position.y,
         toX: dest.cx,
         toY: dest.cy,
-        width: 108,
-        height: 148,
+        width: 96,
+        height: 132,
         title: view.card.name,
         cost: view.card.cost,
         accentHex: SIDE_THEME[side].accentHex,
@@ -1941,12 +2479,62 @@ export class GameDirector {
   update(dtSec) {
     this.time += dtSec;
 
+    // 1. Camera shake decay
     if (this.shakeTime > 0) {
       this.shakeTime = Math.max(0, this.shakeTime - dtSec);
       const decay = this.shakeTime > 0 ? this.shakePower * (this.shakeTime / 0.32) : 0;
       this.worldRoot.position.set((Math.random() - 0.5) * decay, (Math.random() - 0.5) * decay);
     } else {
       this.worldRoot.position.set(0, 0);
+    }
+
+    // 2. Tick all Living Character Actors + Status Auras + Shield Domes + Combat Motions at 60fps!
+    const decayRate = Math.pow(0.012, dtSec);
+    for (const [charId, m] of this.actorMotion.entries()) {
+      m.lunge *= decayRate;
+      m.recoil *= decayRate;
+      m.evade *= Math.pow(0.025, dtSec);
+      m.hitFlash *= Math.pow(0.01, dtSec);
+      m.healGlow *= Math.pow(0.04, dtSec);
+      m.passiveFlare *= Math.pow(0.05, dtSec);
+      if (m.lunge < 0.004) m.lunge = 0;
+      if (m.recoil < 0.004) m.recoil = 0;
+      if (m.evade < 0.004) m.evade = 0;
+      if (m.hitFlash < 0.004) m.hitFlash = 0;
+      if (m.healGlow < 0.004) m.healGlow = 0;
+      if (m.passiveFlare < 0.004) m.passiveFlare = 0;
+    }
+    for (const [charId, node] of this.actorNodes.entries()) {
+      if (node.actor && !node.actor.destroyed) {
+        node.actor.tick(this.time, this._getMotion(charId), node.liveCh);
+      }
+    }
+
+    // 3. Tick Expanded Passive Trigger Pulses!
+    for (const [key, plate] of this.passivePlates.entries()) {
+      if (!plate.glowG || plate.glowG.destroyed) continue;
+      const rem = this.passivePulses.get(key) || 0;
+      plate.glowG.clear();
+      if (rem > 0) {
+        const nextRem = Math.max(0, rem - dtSec);
+        this.passivePulses.set(key, nextRem);
+        const t = nextRem / 1.65;
+        const pulse = 0.55 + Math.sin(this.time * 14) * 0.25;
+        plate.glowG.roundRect(-2, -2, plate.w + 4, plate.h + 4, 10)
+          .fill({ color: INK.goldBg, alpha: t * 0.28 })
+          .stroke({ width: 2.6, color: INK.gold, alpha: Math.min(1, t * 1.4 * pulse) });
+      }
+    }
+
+    // 4. Sync Matter.js hand cards & smooth in-place card expansion
+    if (this._inspectAnim && !this._inspectAnim.node.destroyed) {
+      this._inspectAnim.age += dtSec;
+      const t = Math.min(1, this._inspectAnim.age / this._inspectAnim.duration);
+      const ease = 1 - Math.pow(1 - t, 3);
+      const s0 = this._inspectAnim.startScale ?? 0.72;
+      this._inspectAnim.node.scale.set(s0 + (1 - s0) * ease);
+      this._inspectAnim.node.alpha = 0.55 + 0.45 * ease;
+      if (t >= 1) this._inspectAnim = null;
     }
 
     for (const view of this.handCardViews.values()) {
@@ -1956,6 +2544,7 @@ export class GameDirector {
       view.container.scale.set(view.bodyEntry.scale);
     }
 
+    // 5. Render Matter.js tumbling Shield Wear / Shatter Shards
     const sg = this.shardGraphic;
     sg.clear();
     if (this.physics.shards.length) {
@@ -1969,6 +2558,7 @@ export class GameDirector {
       }
     }
 
+    // 6. Live Pre-Reveal elapsed timers
     if (this.preTimerTexts.length) {
       const nowMs = Date.now();
       for (const item of this.preTimerTexts) {
@@ -1978,7 +2568,29 @@ export class GameDirector {
       }
     }
 
+    // 7. Animated Aiming Arcs & Fighter-to-Card Tethers
     this.tetherLayer.clear();
+    if (!this.state?.frame?.combat) {
+      // Subtle luminous energy threads connecting each placed visible card back to its living fighter figure!
+      for (const duel of this.state?.frame?.duels || []) {
+        for (const sEntry of duel.sides || []) {
+          const well = this.regularSlotRects.get(`${duel.number}:${sEntry.side}`);
+          if (!well) continue;
+          for (const card of sEntry.cards || []) {
+            if (card.hidden || !card.character_id) continue;
+            const fp = this._actorPos(card.character_id);
+            const col = SIDE_THEME[sEntry.side]?.accent || INK.gold;
+            const anchorX = sEntry.side === 1 ? well.x + 6 : well.x + well.w - 6;
+            const ctrlX = (fp.x + anchorX) * 0.5;
+            const ctrlY = (fp.y + well.cy) * 0.5 - 12;
+            this.tetherLayer.moveTo(fp.x, fp.y)
+              .quadraticCurveTo(ctrlX, ctrlY, anchorX, well.cy)
+              .stroke({ width: 1.5, color: col, alpha: 0.24 });
+          }
+        }
+      }
+    }
+
     const preDuels = this.state?.frame?.pre_reveal?.duels || [];
     for (const slot of preDuels) {
       const from = this.preRevealSlotRects.get(slot.number);
@@ -1990,19 +2602,20 @@ export class GameDirector {
         const enemy = this.state.frame.players.find((p) => p.side !== slot.attacking_side);
         const ch = enemy?.characters?.find((c) => c.name === slot.target.name);
         if (ch) {
-          const r = this.charRects.get(ch.id);
-          if (r) to = { cx: r.x + r.w, cy: r.y + r.h / 2 };
+          const p = this._actorPos(ch.id);
+          to = { cx: p.x, cy: p.y };
         }
       }
       if (to) {
         const col = slot.ready ? 0x1c8a64 : 0xcf4932;
         this.tetherLayer.moveTo(from.cx, from.cy + from.h * 0.35)
-          .quadraticCurveTo((from.cx + to.cx) / 2, Math.min(from.cy, to.cy) - 22, to.cx, to.cy)
-          .stroke({ width: 2.2, color: col, alpha: 0.65 });
-        this.tetherLayer.circle(to.cx, to.cy, 5).fill({ color: col, alpha: 0.9 });
+          .quadraticCurveTo((from.cx + to.cx) / 2, Math.min(from.cy, to.cy) - 24, to.cx, to.cy)
+          .stroke({ width: 2.4, color: col, alpha: 0.72 });
+        this.tetherLayer.circle(to.cx, to.cy, 6).fill({ color: col, alpha: 0.92 });
       }
     }
 
+    // Live drag aiming arc
     if (this.dragState && this.dragState.moved) {
       const { startX, startY, x, y, canAttack, canIntercept, side } = this.dragState;
       const pulse = 0.72 + Math.sin(this.time * 10) * 0.28;
@@ -2010,32 +2623,45 @@ export class GameDirector {
         const nextNum = this._findFirstEmptyRegularDuel(side);
         const well = this.regularSlotRects.get(`${nextNum}:${side}`);
         if (well) {
-          this.tetherLayer.roundRect(well.x - 3, well.y - 3, well.w + 6, well.h + 6, 13)
+          this.tetherLayer.roundRect(well.x - 3, well.y - 3, well.w + 6, well.h + 6, 12)
             .stroke({ width: 3, color: SIDE_THEME[side].accent, alpha: pulse });
         }
       } else if (canAttack || canIntercept) {
         this.tetherLayer.moveTo(startX, startY)
-          .quadraticCurveTo((startX + x) / 2, Math.min(startY, y) - 50, x, y)
+          .quadraticCurveTo((startX + x) / 2, Math.min(startY, y) - 52, x, y)
           .stroke({ width: 3, color: INK.gold, alpha: 0.9 });
-        this.tetherLayer.circle(x, y, 8).stroke({ width: 2.2, color: INK.gold, alpha: 0.95 });
+        this.tetherLayer.circle(x, y, 9).stroke({ width: 2.2, color: INK.gold, alpha: 0.95 });
       }
     }
 
-    let hpDirty = false;
+    // 8. Smooth zero-rebuild HP bar interpolation at 60fps
     for (const p of this.state?.frame?.players || []) {
       for (const ch of p.characters || []) {
         const cur = this.hpDisplay.get(ch.id);
+        let nextVal = cur;
         if (cur !== undefined && Math.abs(cur - ch.hp) > 0.04) {
-          this.hpDisplay.set(ch.id, cur + (ch.hp - cur) * Math.min(1, dtSec * 8));
-          hpDirty = true;
+          nextVal = cur + (ch.hp - cur) * Math.min(1, dtSec * 8);
+          this.hpDisplay.set(ch.id, nextVal);
         } else if (cur !== ch.hp) {
-          this.hpDisplay.set(ch.id, ch.hp);
-          hpDirty = true;
+          nextVal = ch.hp;
+          this.hpDisplay.set(ch.id, nextVal);
+        } else {
+          continue;
+        }
+        const hw = this.hpWidgets.get(ch.id);
+        if (hw && !hw.hpBarG.destroyed && !hw.hpTxt.destroyed) {
+          const ratio = Math.max(0, Math.min(1, nextVal / Math.max(1, hw.maxHp)));
+          hw.hpBarG.clear();
+          if (ratio > 0) {
+            hw.hpBarG.roundRect(hw.infoX + 1, hw.hpY + 1, Math.max(7, (hw.barW - 2) * ratio), hw.barH - 2, 6)
+              .fill({ color: ratio < 0.34 ? 0xd94524 : hw.accent });
+          }
+          hw.hpTxt.text = `${Math.round(nextVal)}/${hw.maxHp}`;
         }
       }
     }
-    if (hpDirty) this._rebuildCharactersAndStacks();
 
+    // 9. Kinetic Floating Numbers & Passive Callouts
     for (let i = this.floaters.length - 1; i >= 0; i--) {
       const f = this.floaters[i];
       f.age += dtSec;
@@ -2061,6 +2687,7 @@ export class GameDirector {
     }
     if (toastCleared) this._renderToast();
 
+    // 10. Optional Auto-Pace during resolution
     if (this.autoPace && !this.transport.busy && !this.dossierModal && !this.rosterModal && !this.codexModal && !this.pileModal) {
       const m = this.state?.mode;
       if (m === 'combat' || m === 'reveal' || m === 'timing') {

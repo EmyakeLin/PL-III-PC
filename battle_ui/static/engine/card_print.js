@@ -325,6 +325,136 @@ export function drawLightStar(g, cx, cy, outerR, color, alpha = 0.9) {
   g.circle(cx, cy, outerR * 0.16).fill({ color: INK.paper, alpha: 1 });
 }
 
+/**
+ * Sculpted faceted cost crystal (replaces flat circle for tactile game craft).
+ */
+export function drawCostCrystal(g, cx, cy, r, fillCol, rimCol = INK.paper) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI * 2) / 6;
+    pts.push(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  g.poly(pts).fill({ color: fillCol }).stroke({ width: 1.5, color: rimCol, alpha: 0.9 });
+  // Specular top facet highlight
+  g.poly([
+    cx, cy - r * 0.85,
+    cx + r * 0.65, cy - r * 0.35,
+    cx, cy - r * 0.08,
+    cx - r * 0.65, cy - r * 0.35,
+  ]).fill({ color: INK.paper, alpha: 0.28 });
+}
+
+/**
+ * Procedural visual card artwork derived from the card's actual die composition, range & special timing.
+ * Gives every skill a distinct sculptural visual silhouette instead of a blank white text box!
+ */
+export function drawCardEmblemArt(g, card, x, y, w, h, side = 1, isBlanked = false) {
+  const theme = SIDE_THEME[side] || SIDE_THEME[1];
+  const dice = card.dice || [];
+  const counts = { slash: 0, pierce: 0, blunt: 0, block: 0, evade: 0 };
+  for (const d of dice) {
+    if (counts[d.type] !== undefined) counts[d.type]++;
+  }
+  let dom = 'slash';
+  let best = -1;
+  for (const [k, v] of Object.entries(counts)) {
+    if (v > best) { best = v; dom = k; }
+  }
+  const ds = isBlanked ? DIE_STYLE.blank : (DIE_STYLE[dom] || DIE_STYLE.slash);
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const accent = isBlanked ? INK.muted : ds.color;
+
+  // Sunlit framed art field
+  g.roundRect(x, y, w, h, 6)
+    .fill({ color: isBlanked ? 0xebe6dc : ds.bg })
+    .stroke({ width: 1, color: accent, alpha: 0.42 });
+
+  // Soft radiant backdrop halo
+  g.circle(cx, cy, Math.min(w, h) * 0.48).fill({ color: INK.paper, alpha: 0.66 });
+  g.circle(cx, cy, Math.min(w, h) * 0.36).stroke({ width: 1, color: accent, alpha: 0.35 });
+
+  // Weapon / Defense kinetic geometric illustration
+  if (dom === 'slash') {
+    g.moveTo(x + w * 0.16, y + h * 0.82)
+      .quadraticCurveTo(cx - w * 0.04, cy - h * 0.36, x + w * 0.86, y + h * 0.16)
+      .stroke({ width: 3.4, color: accent, alpha: 0.85, cap: 'round' });
+    g.moveTo(x + w * 0.22, y + h * 0.88)
+      .quadraticCurveTo(cx + w * 0.08, cy + h * 0.06, x + w * 0.82, y + h * 0.38)
+      .stroke({ width: 1.8, color: INK.gold, alpha: 0.78, cap: 'round' });
+    g.poly([cx + 12, cy - 10, cx + 17, cy - 6, cx + 12, cy - 2, cx + 7, cy - 6])
+      .fill({ color: INK.paper, alpha: 0.95 });
+  } else if (dom === 'pierce') {
+    g.moveTo(x + w * 0.12, y + h * 0.74).lineTo(x + w * 0.86, y + h * 0.24)
+      .stroke({ width: 2.6, color: accent, cap: 'round' });
+    g.poly([
+      x + w * 0.89, y + h * 0.22,
+      x + w * 0.68, y + h * 0.22,
+      x + w * 0.77, y + h * 0.42,
+    ]).fill({ color: accent });
+    g.moveTo(x + w * 0.16, y + h * 0.48).lineTo(x + w * 0.62, y + h * 0.18)
+      .stroke({ width: 1.3, color: INK.gold, alpha: 0.7 });
+    g.moveTo(x + w * 0.32, y + h * 0.82).lineTo(x + w * 0.76, y + h * 0.52)
+      .stroke({ width: 1.3, color: INK.gold, alpha: 0.7 });
+  } else if (dom === 'blunt') {
+    for (let k = 0; k < 2; k++) {
+      const rr = Math.min(w, h) * (0.28 + k * 0.16);
+      const pts = [];
+      for (let i = 0; i < 8; i++) {
+        const a = Math.PI / 8 + (i * Math.PI) / 4;
+        pts.push(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      }
+      g.poly(pts).stroke({ width: k === 0 ? 2.4 : 1.3, color: accent, alpha: k === 0 ? 0.85 : 0.45 });
+    }
+    g.poly([cx - 10, cy - 8, cx + 10, cy - 8, cx + 13, cy + 8, cx - 13, cy + 8])
+      .fill({ color: accent, alpha: 0.85 });
+  } else if (dom === 'block') {
+    for (let dx of [-14, 0, 14]) {
+      const pts = [];
+      const rr = dx === 0 ? 13 : 9;
+      for (let i = 0; i < 6; i++) {
+        const a = -Math.PI / 6 + (i * Math.PI) / 3;
+        pts.push(cx + dx + Math.cos(a) * rr, cy + Math.sin(a) * rr);
+      }
+      g.poly(pts).fill({ color: accent, alpha: dx === 0 ? 0.3 : 0.14 }).stroke({ width: 1.8, color: accent, alpha: 0.85 });
+    }
+  } else {
+    // evade: twin flowing emerald wind curves
+    g.moveTo(x + w * 0.14, cy + 6)
+      .bezierCurveTo(cx - 10, y + 4, cx + 10, y + h - 4, x + w * 0.86, cy - 6)
+      .stroke({ width: 2.4, color: accent, alpha: 0.85, cap: 'round' });
+    g.moveTo(x + w * 0.2, cy + 12)
+      .bezierCurveTo(cx - 6, y + 10, cx + 14, y + h - 2, x + w * 0.82, cy + 2)
+      .stroke({ width: 1.4, color: theme.accent, alpha: 0.6, cap: 'round' });
+  }
+
+  // Rangefinder concentric arcs for ranged skills
+  if (card.range_level > 0 && !isBlanked) {
+    for (let i = 0; i < card.range_level; i++) {
+      g.arc(x + 12, cy, 18 + i * 11, -0.55, 0.55)
+        .stroke({ width: 1.5, color: INK.gold, alpha: 0.82 - i * 0.15 });
+    }
+    g.circle(x + w - 18, cy, 6).stroke({ width: 1.4, color: INK.gold });
+    g.moveTo(x + w - 26, cy).lineTo(x + w - 10, cy).stroke({ width: 1.2, color: INK.gold });
+    g.moveTo(x + w - 18, cy - 8).lineTo(x + w - 18, cy + 8).stroke({ width: 1.2, color: INK.gold });
+  }
+
+  // Radiant light-point crest for pre_reveal or anytime special cards
+  if ((card.pre_reveal || card.anytime_replace || (card.anytime_play && card.anytime_play.length)) && !isBlanked) {
+    drawLightStar(g, x + w - 14, y + 11, 7, INK.gold, 0.92);
+  }
+
+  // Die-sequence mini-gems along bottom edge of art window
+  const count = Math.min(dice.length, 6);
+  if (count > 0) {
+    const span = (count - 1) * 9;
+    for (let i = 0; i < count; i++) {
+      const dc = isBlanked ? INK.muted : (DIE_STYLE[dice[i].type]?.color || INK.muted);
+      g.circle(cx - span / 2 + i * 9, y + h - 5, 2.5).fill({ color: dc, alpha: 0.9 });
+    }
+  }
+}
+
 export function buildCardBack(side = 1, { width = 136, height = 188 } = {}) {
   const theme = SIDE_THEME[side] || SIDE_THEME[1];
   const root = new PIXI.Container();
@@ -339,15 +469,19 @@ export function buildCardBack(side = 1, { width = 136, height = 188 } = {}) {
   g.roundRect(-hw + 7, -hh + 7, width - 14, height - 14, 6)
     .fill({ color: theme.softBg })
     .stroke({ width: 1, color: theme.border, alpha: 0.65 });
+  // Inner diamond frame
+  g.poly([0, -hh + 18, hw - 18, 0, 0, hh - 18, -hw + 18, 0])
+    .stroke({ width: 1.1, color: theme.accent, alpha: 0.35 });
   drawLightStar(g, 0, 0, Math.min(width, height) * 0.25, theme.accent, 0.88);
   root.addChild(g);
   return root;
 }
 
 /**
- * Library-of-Ruina style compact card face for hand & board:
- *  - Shows Cost, Exact Name, Exact Range/Trait markers (only if present)
- *  - Shows each Die as [Die Icon] [Exact Range 1~12] + exact pure-damage line if short + [◆] marker if full text exists
+ * Crafted visual card face for hand, board & combat showdown:
+ *  - Faceted cost crystal + sculpted procedural emblem artwork window
+ *  - Shows exact Name, exact Range/Trait markers (only if present)
+ *  - Shows each Die as [Die Icon] [Exact Range 1~12] + exact pure-damage if present + [◆] marker if full text exists
  *  - NEVER paraphrases, NEVER summarizes, NEVER prints "Lv.2", NEVER truncates sentences!
  */
 export function buildCardFront(card, {
@@ -367,31 +501,41 @@ export function buildCardFront(card, {
   const hw = width / 2;
   const hh = height / 2;
   const isBlanked = rangeDeficit >= 3;
+  const highCost = (card.cost ?? 0) >= 4;
 
   const g = new PIXI.Graphics();
-  g.roundRect(-hw + 3, -hh + 6, width, height, 12).fill({ color: INK.shadow, alpha: selected ? 0.42 : 0.3 });
+  g.roundRect(-hw + 3, -hh + 6, width, height, 12).fill({ color: INK.shadow, alpha: selected ? 0.44 : 0.3 });
   if (selected) {
     g.roundRect(-hw - 3, -hh - 3, width + 6, height + 6, 13).stroke({ width: 3, color: INK.gold });
   }
-  const borderCol = isBlanked ? INK.muted : selected ? INK.gold : legal ? theme.accent : INK.line;
+  const borderCol = isBlanked ? INK.muted : selected ? INK.gold : highCost ? INK.gold : legal ? theme.accent : INK.line;
   g.roundRect(-hw, -hh, width, height, 10)
     .fill({ color: isBlanked ? 0xf2eee6 : INK.paper })
-    .stroke({ width: selected ? 2.4 : 1.7, color: borderCol });
+    .stroke({ width: selected ? 2.4 : highCost ? 2.1 : 1.7, color: borderCol });
 
-  // Clean header crest
-  const headerH = showOwner || card.range_level || card.pre_reveal || card.anytime_replace || (card.anytime_play && card.anytime_play.length) ? 44 : 38;
-  g.roundRect(-hw + 2, -hh + 2, width - 4, headerH, 8).fill({ color: isBlanked ? 0xe8e2d7 : theme.softBg });
-  g.moveTo(-hw + 6, -hh + headerH + 2).lineTo(hw - 6, -hh + headerH + 2).stroke({ width: 1, color: borderCol, alpha: 0.35 });
+  // Inner fine foil trim line
+  g.roundRect(-hw + 3, -hh + 3, width - 6, height - 6, 8)
+    .stroke({ width: 0.9, color: highCost ? INK.gold : theme.border, alpha: 0.4 });
 
-  // Cost circle
+  // Header band
+  const hasSub = Boolean(showOwner || card.range_level || card.pre_reveal || card.anytime_replace || (card.anytime_play && card.anytime_play.length));
+  const headerH = hasSub ? 40 : 34;
+  g.roundRect(-hw + 3, -hh + 3, width - 6, headerH, 7).fill({ color: isBlanked ? 0xe8e2d7 : theme.softBg });
+
+  // Faceted Cost Crystal
   const cx = -hw + 20;
-  const cy = -hh + headerH / 2 + 1;
-  g.circle(cx, cy, 13).fill({ color: isBlanked ? INK.muted : theme.accent });
+  const cy = -hh + 3 + headerH / 2;
+  drawCostCrystal(g, cx, cy, 13, isBlanked ? INK.muted : highCost ? INK.gold : theme.accent);
+
+  // Procedural visual emblem artwork window right below header!
+  const artY = -hh + headerH + 6;
+  const artH = Math.max(30, Math.min(44, Math.floor(height * 0.2)));
+  drawCardEmblemArt(g, card, -hw + 7, artY, width - 14, artH, side, isBlanked);
   root.addChild(g);
 
   const costTxt = new PIXI.Text({
     text: String(card.cost ?? 0),
-    style: { fontFamily: FONT_NUM, fontSize: 15, fontWeight: '800', fill: INK.paper },
+    style: { fontFamily: FONT_NUM, fontSize: 14.5, fontWeight: '900', fill: INK.paper },
   });
   costTxt.anchor.set(0.5);
   costTxt.position.set(cx, cy + 0.5);
@@ -401,16 +545,16 @@ export function buildCardFront(card, {
     text: card.name || '',
     style: {
       fontFamily: FONT_UI,
-      fontSize: card.name && card.name.length > 5 ? 11.5 : 13,
+      fontSize: card.name && card.name.length > 5 ? 11 : 12.5,
       fontWeight: '800',
       fill: isBlanked ? INK.muted : INK.primary,
     },
   });
   nameTxt.anchor.set(0, 0.5);
-  nameTxt.position.set(-hw + 37, headerH > 38 ? -hh + 15 : cy);
+  nameTxt.position.set(-hw + 36, hasSub ? -hh + 14 : cy);
   root.addChild(nameTxt);
 
-  if (headerH > 38) {
+  if (hasSub) {
     const bits = [];
     if (showOwner && ownerName) bits.push(ownerName);
     if (card.range_level) bits.push(RANGE_LABELS[card.range_level]);
@@ -420,10 +564,10 @@ export function buildCardFront(card, {
     if (card.interceptable === false) bits.push('不可拦截');
     const subTxt = new PIXI.Text({
       text: bits.slice(0, 2).join(' · '),
-      style: { fontFamily: FONT_UI, fontSize: 9.5, fontWeight: '700', fill: card.range_level ? INK.gold : theme.accent },
+      style: { fontFamily: FONT_UI, fontSize: 9.2, fontWeight: '700', fill: card.range_level ? INK.gold : theme.accent },
     });
     subTxt.anchor.set(0, 0.5);
-    subTxt.position.set(-hw + 37, -hh + 33);
+    subTxt.position.set(-hw + 36, -hh + 31);
     root.addChild(subTxt);
   }
 
@@ -443,21 +587,21 @@ export function buildCardFront(card, {
     root.addChild(t);
   }
 
-  // Clean Library-of-Ruina Dice Column: [Icon] [1~12] + exact pure damage string if present + indicator dot if verbatim text exists
+  // Dice Column right beneath the procedural artwork band
   const dice = card.dice || [];
   const hasSkillEntries = !isBlanked && card.entries && card.entries.length > 0;
-  const startY = -hh + headerH + 8;
+  const startY = artY + artH + 5;
   const maxRows = Math.min(dice.length, 5);
-  const footSpace = hasSkillEntries ? 22 : 8;
-  const availH = height - headerH - 10 - footSpace;
-  const rowH = maxRows ? Math.min(28, Math.floor(availH / maxRows) - 3) : 24;
+  const footSpace = hasSkillEntries ? 19 : 7;
+  const availH = hh - footSpace - startY;
+  const rowH = maxRows ? Math.max(17, Math.min(25, Math.floor(availH / maxRows) - 2)) : 20;
 
   const rowG = new PIXI.Graphics();
   root.addChild(rowG);
 
   for (let i = 0; i < maxRows; i++) {
     const die = dice[i];
-    const ry = startY + i * (rowH + 3);
+    const ry = startY + i * (rowH + 2.5);
     const isActive = activeDieNumber === i + 1;
     const isSpent = activeDieNumber !== null && i + 1 < activeDieNumber;
     const dType = isBlanked ? 'blank' : die.type;
@@ -465,34 +609,33 @@ export function buildCardFront(card, {
 
     rowG.roundRect(-hw + 7, ry, width - 14, rowH, 5)
       .fill({ color: isActive ? INK.goldBg : ds.bg, alpha: isSpent ? 0.45 : 1 })
-      .stroke({ width: isActive ? 1.8 : 1, color: isActive ? INK.gold : ds.color, alpha: isSpent ? 0.3 : 0.72 });
+      .stroke({ width: isActive ? 2 : 1, color: isActive ? INK.gold : ds.color, alpha: isSpent ? 0.3 : 0.72 });
 
-    drawDieIcon(rowG, dType, -hw + 19, ry + rowH / 2, 7.2, isSpent ? INK.muted : ds.color);
+    drawDieIcon(rowG, dType, -hw + 18, ry + rowH / 2, Math.min(7, rowH * 0.33), isSpent ? INK.muted : ds.color);
 
     const rangeText = formatDieRange(die);
     const rngTxt = new PIXI.Text({
       text: rangeText,
-      style: { fontFamily: FONT_NUM, fontSize: 12.5, fontWeight: '800', fill: isSpent ? INK.muted : INK.primary },
+      style: { fontFamily: FONT_NUM, fontSize: rowH < 20 ? 11 : 12, fontWeight: '800', fill: isSpent ? INK.muted : INK.primary },
     });
     rngTxt.anchor.set(0, 0.5);
-    rngTxt.position.set(-hw + 32, ry + rowH / 2);
+    rngTxt.position.set(-hw + 30, ry + rowH / 2);
     root.addChild(rngTxt);
 
     if (!isBlanked && die.entries && die.entries.length) {
-      // Only extract literal pure damage entry (e.g. "1 点普通伤害" -> exact damage number + grade), never paraphrase effects!
       const pureDmg = die.entries.find((e) => /^\d+\s*点?(?:普通伤害|穿甲伤害|超穿甲伤害|物理|穿甲|超穿甲)$/.test(e.trim()));
       const hasOtherText = die.entries.some((e) => e !== pureDmg);
       let rx = hw - 10;
       if (hasOtherText) {
-        rowG.poly([rx - 4, ry + rowH / 2 - 4, rx, ry + rowH / 2, rx - 4, ry + rowH / 2 + 4, rx - 8, ry + rowH / 2])
+        rowG.poly([rx - 3.5, ry + rowH / 2 - 3.5, rx, ry + rowH / 2, rx - 3.5, ry + rowH / 2 + 3.5, rx - 7, ry + rowH / 2])
           .fill({ color: isSpent ? INK.muted : ds.color, alpha: 0.85 });
-        rx -= 12;
+        rx -= 10;
       }
       if (pureDmg) {
         const cleanDmg = pureDmg.replace(/\s+/g, '').replace('点普通伤害', '普通').replace('点穿甲伤害', '穿甲').replace('点超穿甲伤害', '超穿甲');
         const dt = new PIXI.Text({
           text: cleanDmg,
-          style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '700', fill: isSpent ? INK.muted : ds.color },
+          style: { fontFamily: FONT_UI, fontSize: 9.5, fontWeight: '700', fill: isSpent ? INK.muted : ds.color },
         });
         dt.anchor.set(1, 0.5);
         dt.position.set(rx, ry + rowH / 2);
@@ -501,16 +644,15 @@ export function buildCardFront(card, {
     }
   }
 
-  // Subtle literal marker if skill has card-level verbatim entries (no fake summary!)
   if (hasSkillEntries) {
-    const fy = hh - 19;
+    const fy = hh - 16;
     rowG.moveTo(-hw + 12, fy - 4).lineTo(hw - 12, fy - 4).stroke({ width: 1, color: INK.line });
     const countTxt = new PIXI.Text({
       text: `◆ ${card.entries.length} 条技能词条`,
-      style: { fontFamily: FONT_UI, fontSize: 9.5, fontWeight: '700', fill: INK.secondary },
+      style: { fontFamily: FONT_UI, fontSize: 9, fontWeight: '700', fill: INK.secondary },
     });
     countTxt.anchor.set(0.5);
-    countTxt.position.set(0, fy + 5);
+    countTxt.position.set(0, fy + 4);
     root.addChild(countTxt);
   }
 
@@ -523,69 +665,80 @@ export function buildCardFront(card, {
 }
 
 /**
- * Wide, crystal-clear, 100% VERBATIM Card Panel (Library-of-Ruina Combat Page style).
+ * Wide, crystal-clear, 100% VERBATIM Card Panel (with procedural emblem artwork + optional active die highlight).
  * ZERO paraphrasing, ZERO "Lv.2", ZERO "无附加词条", ZERO annotation/flavor text!
  */
-export function buildVerbatimCardPanel(card, { side = 1, ownerName = '', width = 376 } = {}) {
+export function buildVerbatimCardPanel(card, {
+  side = 1,
+  ownerName = '',
+  width = 376,
+  activeDieNumber = null,
+  compact = false,
+} = {}) {
   const theme = SIDE_THEME[side] || SIDE_THEME[1];
   const W = width;
   const root = new PIXI.Container();
   const content = new PIXI.Container();
-  let cursorY = 58;
+  const fontSize = compact ? 11.5 : 12.5;
+  const lineH = compact ? 16.5 : 18.5;
+  const headerH = compact ? 42 : 48;
+  let cursorY = headerH + 8;
 
   // Exact printed traits (ONLY if present)
   const traits = exactSkillTraits(card);
   if (traits.length) {
     const tTxt = new PIXI.Text({
-      text: wrapCjkText(traits.join(' · '), Math.floor((W - 32) / 6.5)),
+      text: wrapCjkText(traits.join(' · '), Math.floor((W - 28) / (compact ? 6.1 : 6.5))),
       style: {
         fontFamily: FONT_UI,
-        fontSize: 12,
+        fontSize: compact ? 11 : 12,
         fontWeight: '700',
         fill: INK.gold,
-        lineHeight: 18,
+        lineHeight: compact ? 16 : 18,
         wordWrap: true,
         breakWords: true,
-        wordWrapWidth: W - 32,
+        wordWrapWidth: W - 28,
       },
     });
-    tTxt.position.set(16, cursorY);
+    tTxt.position.set(14, cursorY);
     content.addChild(tTxt);
-    cursorY += tTxt.height + 10;
+    cursorY += tTxt.height + 7;
   }
 
   // 100% Verbatim Skill-Level Entries (ONLY if present)
   if (card.entries && card.entries.length) {
     const joined = card.entries.join('\n');
     const txt = new PIXI.Text({
-      text: wrapCjkText(joined, Math.floor((W - 44) / 6.8)),
+      text: wrapCjkText(joined, Math.floor((W - 38) / (compact ? 6.2 : 6.8))),
       style: {
         fontFamily: FONT_UI,
-        fontSize: 12.5,
+        fontSize,
         fill: INK.primary,
-        lineHeight: 19,
+        lineHeight: lineH,
         wordWrap: true,
         breakWords: true,
-        wordWrapWidth: W - 44,
+        wordWrapWidth: W - 38,
       },
     });
     const box = new PIXI.Graphics();
-    box.roundRect(14, cursorY, W - 28, txt.height + 14, 7)
+    box.roundRect(12, cursorY, W - 24, txt.height + 12, 7)
       .fill({ color: INK.paperSoft })
       .stroke({ width: 1, color: INK.line });
-    txt.position.set(22, cursorY + 7);
+    txt.position.set(19, cursorY + 6);
     content.addChild(box, txt);
-    cursorY += txt.height + 22;
+    cursorY += txt.height + 18;
   }
 
   // 100% Verbatim Dice Stack (Icon + Exact Range on left, Verbatim entries on right — EMPTY if none!)
-  const leftColW = 92;
-  const textColX = 14 + leftColW + 10;
-  const textColW = W - textColX - 20;
-  const maxDieChars = Math.max(24, Math.floor(textColW / 6.5));
+  const leftColW = compact ? 80 : 92;
+  const textColX = 12 + leftColW + 8;
+  const textColW = W - textColX - 16;
+  const maxDieChars = Math.max(20, Math.floor(textColW / (compact ? 6.0 : 6.5)));
 
-  for (const die of card.dice || []) {
+  (card.dice || []).forEach((die, idx) => {
     const ds = DIE_STYLE[die.type] || DIE_STYLE.blank;
+    const isActive = activeDieNumber === idx + 1;
+    const isSpent = activeDieNumber !== null && idx + 1 < activeDieNumber;
     const entries = (die.entries || []).filter(Boolean);
     let bodyTxt = null;
     if (entries.length) {
@@ -593,72 +746,74 @@ export function buildVerbatimCardPanel(card, { side = 1, ownerName = '', width =
         text: wrapCjkText(entries.join('\n'), maxDieChars),
         style: {
           fontFamily: FONT_UI,
-          fontSize: 12.5,
-          fill: INK.primary,
-          lineHeight: 18.5,
+          fontSize,
+          fill: isSpent ? INK.muted : INK.primary,
+          lineHeight: lineH,
           wordWrap: true,
           breakWords: true,
           wordWrapWidth: textColW,
         },
       });
     }
-    const rowH = Math.max(36, bodyTxt ? bodyTxt.height + 14 : 36);
+    const minRowH = compact ? 30 : 36;
+    const rowH = Math.max(minRowH, bodyTxt ? bodyTxt.height + 12 : minRowH);
     const rowBg = new PIXI.Graphics();
-    rowBg.roundRect(14, cursorY, W - 28, rowH, 7)
-      .fill({ color: ds.bg })
-      .stroke({ width: 1.2, color: ds.color, alpha: 0.72 });
+    rowBg.roundRect(12, cursorY, W - 24, rowH, 7)
+      .fill({ color: isActive ? INK.goldBg : ds.bg, alpha: isSpent ? 0.5 : 1 })
+      .stroke({ width: isActive ? 2.2 : 1.2, color: isActive ? INK.gold : ds.color, alpha: isSpent ? 0.35 : 0.78 });
 
-    // Die icon + exact range (e.g. "1~12", NO "Lv.4"!)
-    const midY = cursorY + Math.min(rowH / 2, 18);
-    drawDieIcon(rowBg, die.type, 29, midY, 8.5, ds.color);
+    const midY = cursorY + Math.min(rowH / 2, minRowH / 2);
+    drawDieIcon(rowBg, die.type, 26, midY, compact ? 7.5 : 8.5, isSpent ? INK.muted : ds.color);
     const rngTxt = new PIXI.Text({
       text: formatDieRange(die),
-      style: { fontFamily: FONT_NUM, fontSize: 14, fontWeight: '900', fill: ds.color },
+      style: { fontFamily: FONT_NUM, fontSize: compact ? 13 : 14, fontWeight: '900', fill: isSpent ? INK.muted : ds.color },
     });
     rngTxt.anchor.set(0, 0.5);
-    rngTxt.position.set(44, midY);
+    rngTxt.position.set(40, midY);
 
     content.addChild(rowBg, rngTxt);
     if (bodyTxt) {
-      bodyTxt.position.set(textColX, cursorY + (entries.length === 1 && bodyTxt.height < 22 ? (rowH - bodyTxt.height) / 2 : 7));
+      bodyTxt.position.set(textColX, cursorY + (entries.length === 1 && bodyTxt.height < 21 ? (rowH - bodyTxt.height) / 2 : 6));
       content.addChild(bodyTxt);
     }
-    cursorY += rowH + 6;
-  }
+    cursorY += rowH + 5;
+  });
 
-  const H = Math.max(120, cursorY + 10);
+  const H = Math.max(108, cursorY + 8);
   const bg = new PIXI.Graphics();
   bg.roundRect(4, 7, W, H, 13).fill({ color: INK.shadow, alpha: 0.36 });
   bg.roundRect(0, 0, W, H, 12)
     .fill({ color: INK.paper, alpha: 0.99 })
     .stroke({ width: 2, color: theme.accent });
-  bg.roundRect(2, 2, W - 4, 48, 10).fill({ color: theme.softBg });
-  bg.circle(26, 26, 15).fill({ color: theme.accent });
+  bg.roundRect(2, 2, W - 4, headerH, 10).fill({ color: theme.softBg });
+  // Compact emblem preview on top-right of panel header
+  drawCardEmblemArt(bg, card, W - 82, 5, 68, headerH - 10, side, false);
+  drawCostCrystal(bg, 25, headerH / 2 + 1, compact ? 13 : 15, theme.accent);
   root.addChild(bg);
 
   const cTxt = new PIXI.Text({
     text: String(card.cost ?? 0),
-    style: { fontFamily: FONT_NUM, fontSize: 17, fontWeight: '800', fill: INK.paper },
+    style: { fontFamily: FONT_NUM, fontSize: compact ? 15 : 17, fontWeight: '900', fill: INK.paper },
   });
   cTxt.anchor.set(0.5);
-  cTxt.position.set(26, 26);
+  cTxt.position.set(25, headerH / 2 + 1);
   root.addChild(cTxt);
 
   const titleTxt = new PIXI.Text({
     text: card.name || '',
-    style: { fontFamily: FONT_UI, fontSize: 16.5, fontWeight: '800', fill: INK.primary },
+    style: { fontFamily: FONT_UI, fontSize: compact ? 14.5 : 16.5, fontWeight: '800', fill: INK.primary },
   });
   titleTxt.anchor.set(0, 0.5);
-  titleTxt.position.set(49, 26);
+  titleTxt.position.set(46, ownerName ? headerH * 0.38 : headerH / 2 + 1);
   root.addChild(titleTxt);
 
   if (ownerName) {
     const owTxt = new PIXI.Text({
       text: ownerName,
-      style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: theme.accent },
+      style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '700', fill: theme.accent },
     });
-    owTxt.anchor.set(1, 0.5);
-    owTxt.position.set(W - 16, 26);
+    owTxt.anchor.set(0, 0.5);
+    owTxt.position.set(46, headerH * 0.74);
     root.addChild(owTxt);
   }
 

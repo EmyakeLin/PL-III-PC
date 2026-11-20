@@ -424,12 +424,14 @@ export function buildDrawSelectOverlay(w, h, { prompt, selectedIds, onToggle, on
   const cardH = 198;
   const spacing = Math.min(174, (w - 140) / Math.max(1, count));
   const startX = cx - ((count - 1) * spacing) / 2;
-  const cardY = h * 0.46;
+  const cardY = Math.max(h * 0.56, h - 224);
 
   prompt.candidates.forEach((card, i) => {
     const isMarked = selectedIds.has(card.id);
+    const cardX = startX + i * spacing;
+    const drawY = isMarked ? cardY + 20 : cardY - 6;
     const holder = new PIXI.Container();
-    holder.position.set(startX + i * spacing, isMarked ? cardY + 24 : cardY - 6);
+    holder.position.set(cardX, drawY);
     const spr = buildCardFront(card, {
       side: prompt.side,
       ownerName: card.character_name || '',
@@ -454,7 +456,7 @@ export function buildDrawSelectOverlay(w, h, { prompt, selectedIds, onToggle, on
 
     holder.eventMode = 'static';
     holder.cursor = 'pointer';
-    holder.on('pointerover', () => onHoverCard && onHoverCard(card, prompt.side, card.character_name || ''));
+    holder.on('pointerover', () => onHoverCard && onHoverCard(card, prompt.side, card.character_name || '', cardX, drawY, cardH, spr));
     holder.on('pointerout', () => onHoverCard && onHoverCard(null));
     holder.on('pointertap', (e) => {
       e.stopPropagation();
@@ -465,10 +467,10 @@ export function buildDrawSelectOverlay(w, h, { prompt, selectedIds, onToggle, on
 
   const ready = selectedIds.size === prompt.discard_count;
   const btn = makeSealButton('确认', {
-    width: 176, height: 44, accent: ready ? theme.accent : INK.muted, solid: ready, disabled: !ready, fontSize: 15,
+    width: 176, height: 42, accent: ready ? theme.accent : INK.muted, solid: ready, disabled: !ready, fontSize: 15,
     onClick: () => onConfirm(),
   });
-  btn.position.set(cx - 88, h - 94);
+  btn.position.set(cx - 88, h - 66);
   root.addChild(btn);
 
   return root;
@@ -878,10 +880,12 @@ export function buildPileOverlay(w, h, { title, side, cards, charNames, onHoverC
       const spr = buildCardFront(card, {
         side, ownerName: charNames[card.character_id] || '', showOwner: true, width: 138, height: 190, legal: true,
       });
-      spr.position.set(startX + c * gapX, startY + r * gapY);
+      const cardX = startX + c * gapX;
+      const cardY = startY + r * gapY;
+      spr.position.set(cardX, cardY);
       spr.eventMode = 'static';
       spr.cursor = 'pointer';
-      spr.on('pointerover', () => onHoverCard && onHoverCard(card, side, charNames[card.character_id] || ''));
+      spr.on('pointerover', () => onHoverCard && onHoverCard(card, side, charNames[card.character_id] || '', cardX, cardY, 190, spr));
       spr.on('pointerout', () => onHoverCard && onHoverCard(null));
       spr.on('pointertap', (e) => e.stopPropagation());
       root.addChild(spr);

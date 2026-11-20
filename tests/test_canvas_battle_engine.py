@@ -33,6 +33,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
             "/engine/physics.js",
             "/engine/three_world.js",
             "/engine/card_print.js",
+            "/engine/stage_actors.js",
             "/engine/table_overlays.js",
             "/engine/game_director.js",
             "/vendor/matter.min.js",
@@ -65,10 +66,10 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 )
 
     def test_no_paraphrasing_die_level_labels_or_filler_text(self):
-        for name in ("card_print.js", "table_overlays.js", "game_director.js", "three_world.js"):
+        for name in ("card_print.js", "stage_actors.js", "table_overlays.js", "game_director.js", "three_world.js"):
             raw = (STATIC_DIR / "engine" / name).read_text(encoding="utf-8")
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", raw, flags=re.S)
-            for forbidden in ("Lv.", "无附加词条", "compactDieBadges", "compactSkillTag", "拖入扣置或双击"):
+            for forbidden in ("Lv.", "无附加词条", "compactDieBadges", "compactSkillTag", "拖入扣置或双击", "被动 (", "placeLeft"):
                 self.assertNotIn(forbidden, code, f"Forbidden text {forbidden!r} found in {name}")
 
     def test_multi_character_roster_draw_peek_bottom_and_speed_rolls(self):
@@ -143,6 +144,10 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertEqual(dmg_ev["absorbed"], {"normal": 0, "reinforced": 2, "concept": 0})
         self.assertEqual(dmg_ev["eroded"], {"normal": 3, "reinforced": 0})
         self.assertEqual(dmg_ev["hp_lost"], 1)
+        kinds = {ev["kind"] for ev in session.state()["fx_events"]}
+        self.assertIn("shield_gain", kinds)
+        self.assertIn("passive_trigger", kinds)
+        self.assertIn("status_change", kinds)
 
     def test_full_match_emits_reveal_clash_and_recycle_fx_events(self):
         session = BattleSession(seed=37)
@@ -171,4 +176,8 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 cmd = {"action": "next"}
             status, s = session.command({**cmd, "revision": s["revision"]})
             self.assertEqual(status, HTTPStatus.OK)
-        self.assertTrue({"speed_roll", "cost_refill", "cards_reveal", "cost_pay", "dice_clash", "damage", "turn_recycle"} <= seen_kinds, seen_kinds)
+        self.assertTrue(
+            {"speed_roll", "cost_refill", "cards_reveal", "cost_pay", "dice_clash", "combat_strike", "damage", "turn_recycle"}
+            <= seen_kinds,
+            seen_kinds,
+        )
