@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from copy import copy
 import random
 
-from entry.effects import GRADES, damage_part, run_effect
+from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from models.opcode import OpCode
 from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
@@ -30,6 +30,7 @@ class Context:
         self.active_dice = {}
         self.hit_modifiers = {}
         self.roll_adjustments = {}
+        self.next_die_effects = {}
         self._combat_effects_closed = False
         # Entries whose printed duration outlives the physical card's return to hand.
         self._lasting_entries = {}
@@ -65,7 +66,7 @@ class Context:
             return self.range_blocks_target(fields.get("execution"))
         if opcode == OpCode.CLASH:
             return any(self.range_blocks_target(die) for die in fields["clash_pair"].dice_dict.values())
-        if opcode == OpCode.SPLIT_CLASH:
+        if opcode in (OpCode.SPLIT_CLASH, OpCode.SKIP_ROUND):
             pair = self.game.pipeline.current_clash_pair
             return pair is not None and any(self.range_blocks_target(die) for die in pair.dice_dict.values())
         if opcode in (OpCode.VALUE_CEILING, OpCode.VALUE_FLOOR):
@@ -78,6 +79,19 @@ class Context:
                     target = self.event.get("target")
                 return self.range_blocks_target(target)
         return False
+
+    def apply_next_die_effects(self, die, **event):
+        """Resolve effects already promised to this character's next actual use."""
+        actor = die.card.character
+        pending = self.next_die_effects.pop(actor, [])
+        for index, (source, authority, block) in enumerate(pending):
+            if die.destroyed:
+                self.next_die_effects.setdefault(actor, [])[:0] = pending[index:]
+                break
+            if actor.is_alive and (source is None or source.is_alive):
+                with self.binding(**{**event, "die": die, "card": die.card, "source": source,
+                                     "target": actor, "authority": authority}):
+                    self.eval_block(block)
 
     def push(self, value):
         self.stack.append(value)
@@ -189,6 +203,7 @@ class Context:
             actor = fields["target"]
             fields.update(source=actor, side=actor.player.side)
         elif opcode in (OpCode.SKILL_FINAL_ADD, OpCode.SKILL_LEVEL_ADD, OpCode.SET_SKILL_STATE,
+                        OpCode.QUEUE_HIT, OpCode.SKIP_ROUND,
                         OpCode.DIE_FINAL_ADD, OpCode.DIE_LEVEL_ADD, OpCode.REPEAT_DIE, OpCode.ROUTE_DIE_ATTACK):
             part = fields.get("die") or fields["card"]
             actor = character_of(part)
@@ -287,6 +302,11 @@ class Context:
             return False
         card = owner if kind_of(owner) == "card" else getattr(owner, "card", None)
         if card is not None and getattr(card, "destroyed", False):
+            return False
+        if (card is not None and card is getattr(event.get("die"), "card", None)
+                and event.get("hit_mode") == "damage_only"
+                and entry.trigger in ("before_dice_hit", "on_dice_hit", "after_dice_hit", OpCode.RESOLVE_HIT)
+                and not (isinstance(entry.operation, dict) and entry.operation.get("damage_part"))):
             return False
         player = getattr(character, "player", None)
         side = getattr(player, "side", None)
@@ -465,6 +485,8 @@ class Context:
 
     def dispatch_pipeline(self, node_id, **fields):
         side, card, die = fields.get("side"), fields.get("card"), fields.get("die")
+        if node_id == "before_turn_end":
+            self.game.resolve_status_batches()
         if node_id == "before_turn_start":
             self.game.open_turn()
         if node_id == "before_skill_use":
@@ -599,7 +621,7 @@ class Context:
         source = card.character
         with self.binding(**{**fields, "source": source, "target": target, "die": die, "card": card,
                               "hit_modifiers": self.hit_modifiers.get(die, [])}):
-            self.eval_block([die, target, OpCode.RESOLVE_HIT])
+            return self.eval_block([die, target, OpCode.RESOLVE_HIT])
 
     def execute_hit_parts(self, die, target):
         """Report whether the die landed, independently of HP lost to its damage parts."""
@@ -608,6 +630,10 @@ class Context:
         if (not (die.is_attack or self.event.get("simultaneous_solo") and die.is_passive)
                 or not target.is_alive or not source.is_alive or die.destroyed or card.destroyed):
             return False
+        if self.event.get("hit_mode") == "damage_only":
+            print(f"{source.combat_name}「{card.name}」命中 {target.combat_name}，仅结算伤害部分。")
+        elif (self.event.get("hit_index") or 0) > 1:
+            print(f"{source.combat_name}「{card.name}」追加命中 {target.combat_name}。")
         source.on_attack_hit(die, target)
         for text in die.entries or ():
             if not target.is_alive or not source.is_alive or die.destroyed or card.destroyed:
@@ -618,6 +644,6 @@ class Context:
             if part:
                 bit = {"op": "damage", "amount": part[0], "grade": part[1], "damage_part": True}
                 self._invoke(Entry(die, TriggerType.PIPELINE, "damage_part", bit))
-            else:
+            elif self.event.get("hit_mode") != "damage_only" or independent_damage_part(text):
                 self._invoke(Entry(die, TriggerType.PIPELINE, "on_dice_hit", text))
         return True

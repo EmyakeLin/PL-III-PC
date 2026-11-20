@@ -96,7 +96,8 @@ class BattleMatch:
         return {
             "mode": mode, "revision": self.revision, "active_side": side,
             "special_available": bool(seats), "special_options": special_options,
-            "special_pending": self.game.special.pending_attack is not None or self.game.special.placement_owner is not None,
+            "special_pending": self.game.special.pending_attack is not None or self.game.special.decision_owner is not None,
+            "card_choice": self.game.special.card_decision is not None,
             "queued_placement": self.game.special.placement_owner is not None,
             "special_timing": self._timing,
             "frame": frame,
@@ -155,7 +156,7 @@ class BattleMatch:
         if action == "ready" and self._special_seat is None:
             self._special_seat = self._choose_seat(side if side is not None else seats[0].side, seats)
             return
-        if action == "leave_special" and game.special.pending_attack is None and game.special.placement_owner is None:
+        if action == "leave_special" and game.special.pending_attack is None and game.special.decision_owner is None:
             self._return_from_special()
             return
         if action == "switch_side" and self._special_seat is not None:
@@ -186,6 +187,8 @@ class BattleMatch:
                 message += f"，翻正常规交锋 {move.duel_index + 1} 的{move.target_card.name}"
         elif move.kind == "queue_card":
             message = f"向常规交锋 {move.duel_index + 1} 追加技能"
+        elif move.kind in ("choose_card", "decline_card"):
+            message = "依词条选择技能" if move.kind == "choose_card" else "放弃此次选牌"
         else:
             message = f"打出{move.card.name}"
         suffix = "受阻" if succeeded is False else ""
@@ -194,7 +197,7 @@ class BattleMatch:
         self._special_seat = None
         if game.is_over:
             self._finish()
-        elif game.special.pending_attack is not None or game.special.placement_owner is not None:
+        elif game.special.pending_attack is not None or game.special.decision_owner is not None:
             self._special_open = True
         elif game.pipeline.interrupt_space is not old_space:
             self._special_open = False
@@ -348,10 +351,10 @@ class BattleMatch:
                 continue
             if game.is_over:
                 break
-            if game.special.placement_owner is not None:
+            if game.special.decision_owner is not None:
                 self._special_open = True
                 self._special_seat = None
-                self._timing = "选择追加技能的交锋"
+                self._timing = "选择技能" if game.special.card_decision else "选择追加技能的交锋"
                 self.mode = "combat"
                 return
             if self._interrupt_return is not None:

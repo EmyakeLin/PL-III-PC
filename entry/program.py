@@ -26,6 +26,33 @@ def run_program(ctx, entry, tokens):
             return actor.speed - next(other.speed for other in ctx.game.players if other is not player)
         if field == "target_alive":
             return bool(getattr(event.get("target"), "is_alive", False))
+        if field == "target_player":
+            return getattr(event.get("target"), "player", None)
+        if field == "target_next_die":
+            return ctx.game.pipeline.next_planned_die(event.get("target"))
+        if field == "own_hand_skills":
+            return ctx.game.special.own_hand_skills(actor)
+        if field == "target_board_skills":
+            return ctx.game.special.board_skills(event.get("target"))
+        if field == "chosen_card":
+            return event.get("chosen_card")
+        if field == "allies":
+            return [member for member in player.characters if member.is_alive]
+        if field == "roll_value":
+            return event["die"].value
+        if field == "roll_max":
+            return event["die"].roll_max
+        if field == "is_attack":
+            return event["die"].is_attack
+        if field == "is_repeat":
+            return event["die"].is_repeat
+        if field == "has_damage_part":
+            return event["die"].has_damage_part
+        if field == "clash_result":
+            return event["die"].clash_result
+        if field in ("hit_index", "hit_mode", "targets", "status_overflow",
+                     "previous_stacks", "current_stacks", "actual_delta"):
+            return event.get(field)
         if field in ("in_duel", "duel_damage_taken"):
             duel = ctx.game.resolving_duel
             if field == "in_duel":
@@ -46,7 +73,7 @@ def run_program(ctx, entry, tokens):
         if field in ("amount", "result", "damage_amount", "base_amount", "hp_lost",
                      "lightcore_lost", "lightcore_collapsed"):
             return event.get(field)
-        if field in ("card", "die", "target", "play_mode", "replaced_card"):
+        if field in ("card", "die", "duel", "target", "play_mode", "replaced_card"):
             return event.get(field)
         if field == "skill_target":
             return event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
@@ -100,7 +127,7 @@ def run_program(ctx, entry, tokens):
 
     def status_count(vm):
         name, target = vm.pop(), vm.pop()
-        vm.push(target.statuses.get(name, 0))
+        vm.push(target.statuses.get(name, 0) if target is not None else 0)
 
     def shield_count(vm):
         kind, target = vm.pop(), vm.pop()
@@ -129,6 +156,15 @@ def run_program(ctx, entry, tokens):
         name = vm.pop()
         variables[name] = vm.pop()
 
+    def skill_use(vm):
+        from models.special_actions import SkillUse
+        discount, card = vm.pop(), vm.pop()
+        vm.push(SkillUse(card, discount))
+
+    def insert_at(vm):
+        at, entity = vm.pop(), vm.pop()
+        vm.push({"at": at, "target": entity})
+
     def spend(vm):
         vm.push(vm.execute_op(OpCode.SPEND_STATUS) or 0)
 
@@ -136,6 +172,7 @@ def run_program(ctx, entry, tokens):
         vm.push(bool(vm.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full")))
 
     words = {
+        "SKILL_USE": skill_use, "INSERT_AT": insert_at,
         "TAKE_HAND_CARD": lambda vm: vm.push(vm.execute_op(OpCode.TAKE_HAND_CARD)),
         "SHIELD_COUNT": shield_count,
         "STATUS_COUNT": status_count, "SPENT_STATUS_COUNT": spent_count,
@@ -152,6 +189,8 @@ def run_program(ctx, entry, tokens):
                 block.append(compile_block(token))
             elif isinstance(token, dict) and "local" in token:
                 block.append(lambda vm, name=token["local"]: vm.push(variables[name]))
+            elif isinstance(token, dict) and "literal" in token:
+                block.append(token["literal"])
             elif isinstance(token, dict):
                 block.append(lambda vm, operation=token: run_effect(vm, entry, operation))
             elif isinstance(token, str) and token.startswith("$"):

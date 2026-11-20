@@ -25,6 +25,7 @@ class SidePipeline:
         self.withdrawn = False
         self.used = False
         self.opposing_card = None
+        self.range_pairing = None
         self.target = None
 
     @property
@@ -67,6 +68,7 @@ class CombatFrame:
         self.active_dice = {}
         self.runner = None
         self.parent_round_triggers = {}
+        self.suspended_skills = {p.side: [] for p in players}
 
 
 class Pipeline:
@@ -144,6 +146,64 @@ class Pipeline:
                 pipe.side, self.current_clash_pair, pipe.opposing_card)
         return pipe.target
 
+    def next_planned_die(self, target):
+        """The next concrete die belonging to this target, in the order already on the board."""
+        if target is None or not target.is_alive:
+            return None
+        spaces = [frame.space for frame in reversed(self._frames)]
+        if self.game.pre_reveal.phase == "resolving":
+            spaces.append(self.game.pre_reveal.space)
+        spaces.append(self.game.duelspace)
+        for space in dict.fromkeys(spaces):
+            for slot in space.space[space.current_duel_index:]:
+                if self.can_join(slot):
+                    die = next(self._planned_slot_dice(slot, target), None)
+                    if die is not None:
+                        return die
+        return None
+
+    def _planned_slot_dice(self, slot, target):
+        side = target.player.side
+        cards = slot.get_content(side)[slot.current_card_index.get(side, 0):]
+        anchored = {}
+        for card in cards:
+            anchor = card.use_state.get("die_anchor")
+            if anchor:
+                anchored.setdefault(anchor, []).append(card)
+        visited = set()
+
+        def uses(card):
+            if card in visited or card.destroyed or not card.character.is_alive or card.state == CardState.NEGATED:
+                return
+            visited.add(card)
+            bound = self._bound_use(slot, card)
+            pipe = bound[1] if bound else None
+            if pipe and pipe.paid is False:
+                return
+            current = pipe.die if pipe else None
+            after_current = current is not None and (current.clash_result is not None
+                                                     or not pipe.is_blocked_at(steps.NEXT_DIE))
+            if after_current:
+                for child in anchored.get(("after_die", current), ()):
+                    yield from uses(child)
+            if card.character is not target and not anchored:
+                return
+            for die in card.planned_dice(self.game, after_current=after_current):
+                for child in anchored.get(("before_die", die), ()):
+                    yield from uses(child)
+                if card.character is target:
+                    yield die
+                for child in anchored.get(("after_die", die), ()):
+                    yield from uses(child)
+
+        for card in cards:
+            if not card.use_state.get("die_anchor"):
+                yield from uses(card)
+        # Anchors whose die was already destroyed fall back to ordinary slot order.
+        for card in cards:
+            if card not in visited:
+                yield from uses(card)
+
     def start_duel_combat(self):
         if self.in_duel_phase:
             raise RuntimeError("交锋已经开始")
@@ -182,18 +242,125 @@ class Pipeline:
     def can_join(self, slot):
         return slot not in self._closed_slots
 
+    def insert_skill(self, use, anchor, event):
+        """Commit the physical card; only its own side changes its use order."""
+        at = anchor.get("at") if isinstance(anchor, dict) else anchor
+        subject = anchor.get("target") if isinstance(anchor, dict) else None
+        if isinstance(anchor, dict) and "target" in anchor and subject is None:
+            return False
+        card = use.card
+        side = card.player.side
+        if card not in self.game.special.own_hand_skills(card.character):
+            return False
+        if at == "slot_tail":
+            slot = subject or event.get("duel")
+        else:
+            if at not in ("before_die", "after_die", "before_skill", "after_skill"):
+                raise ValueError(f"未知的技能插入位置 {at!r}")
+            is_die = at.endswith("_die")
+            subject = subject or event.get("die" if is_die else "card")
+            parent = getattr(subject, "card", None) if is_die else subject
+            slot = next((s for s in self.game.board_slots() if parent in s.get_content(side)), None)
+            if slot is None or parent.destroyed:
+                return False
+            index = slot.get_content(side).index(parent)
+            if index < slot.current_card_index.get(side, 0):
+                return False
+            if is_die:
+                instances = parent.instantiated_dice or ()
+                if subject not in instances[parent.current_dice_index:]:
+                    return False
+                pipe = self.side_pipelines.get(side)
+                if at == "before_die" and pipe is not None and pipe.die is subject:
+                    return False
+            elif at == "before_skill" and self.in_use(slot, parent):
+                return False
+        if slot is None or not self.can_join(slot):
+            return False
+        active = self.game.active_duelspace
+        regular = slot in self.game.duelspace.space
+        space = self.game.duelspace if regular else active
+        if slot not in space.space:
+            return False
+        if not self.game.place_in_duel(side, card, space.space.index(slot), queued=regular):
+            return False
+        card.use_state["use_discount"] = max(0, use.discount)
+        if at == "slot_tail":
+            return True
+        cards = slot.get_content(side)
+        if at.endswith("_die"):
+            card.use_state["die_anchor"] = (at, subject)
+        elif parent in cards:
+            cards.remove(card)
+            index = cards.index(parent)
+            if at == "after_skill":
+                index += 1
+                while index < len(cards) and cards[index].use_state.get("after_skill_anchor") is parent:
+                    index += 1
+                card.use_state["after_skill_anchor"] = parent
+            cards.insert(index, card)
+        return True
+
+    def _start_inserted(self, slot, pipes, side, die, at):
+        cards = slot.get_content(side)
+        batch = [card for card in cards if card.use_state.get("die_anchor") == (at, die)
+                 and not card.destroyed and card.character.is_alive]
+        if not batch:
+            return False
+        for card in batch:
+            card.use_state.pop("die_anchor")
+            cards.remove(card)
+        index = slot.current_card_index.get(side, 0)
+        cards[index:index] = batch
+        parent = self.side_pipelines[side]
+        self._frame.suspended_skills[side].append((parent, batch))
+        child = SidePipeline(side, self.game)
+        child.blocked_at = steps.SKILL[-1]
+        self._frame.sides[side] = child
+        pipes[pipes.index(parent)] = child
+        self._frame.active_cards.pop(side, None)
+        self._frame.active_dice.pop(side, None)
+        return True
+
+    def _resume_inserted(self, slot, pipes):
+        resumed = False
+        for index, pipe in enumerate(pipes):
+            pending = self._frame.suspended_skills[pipe.side]
+            if not pending or pipe.card is not None or not pipe.is_blocked_at(steps.NEXT_CARD):
+                continue
+            parent, batch = pending[-1]
+            if slot.next_playable_card(pipe.side) in batch:
+                continue
+            pending.pop()
+            pipes[index] = self._frame.sides[pipe.side] = parent
+            if self._card_live(parent):
+                self._frame.active_cards[pipe.side] = parent.card
+            resumed = True
+        return resumed
+
+    def _bound_use(self, slot, card):
+        side = card.player.side
+        for frame in reversed(self._frames):
+            pos = frame.space.current_duel_index
+            if pos >= len(frame.space.space) or frame.space.space[pos] is not slot:
+                continue
+            active = frame.sides[side]
+            if active.card is card and not active.withdrawn:
+                return frame, active
+            for suspended, _ in reversed(frame.suspended_skills[side]):
+                if suspended.card is card and not suspended.withdrawn:
+                    return frame, suspended
+        return None
+
     def can_replace(self, slot, card):
         side = card.player.side
         if not self.can_join(slot) or not card.character.is_alive or card.destroyed or card.state == CardState.NEGATED:
             return False
         if card not in slot.get_content(side)[slot.current_card_index.get(side, 0):]:
             return False
-        for frame in self._frames:
-            if slot not in frame.space.space:
-                continue
-            pipe = frame.sides[side]
-            if pipe.card is card and not pipe.withdrawn and pipe.current_node:
-                return pipe.paid is not False and pipe.current_node.id not in ("after_skill_use", steps.NEXT_CARD)
+        if binding := self._bound_use(slot, card):
+            pipe = binding[1]
+            return pipe.paid is not False and pipe.current_node.id not in ("after_skill_use", steps.NEXT_CARD)
         return True
 
     def before_use(self, slot, card):
@@ -201,22 +368,13 @@ class Pipeline:
                 and slot is self._get_current_duel() and slot.get_current_card(card.player.side) is card)
 
     def in_use(self, slot, card):
-        for frame in self._frames:
-            index = frame.space.current_duel_index
-            if index < len(frame.space.space) and frame.space.space[index] is slot:
-                pipe = frame.sides[card.player.side]
-                return pipe.card is card and not pipe.withdrawn
-        return False
+        return self._bound_use(slot, card) is not None
 
     def withdraw_skill(self, slot, card):
         """Invalidate this use even if the same physical card is immediately played again."""
         side = card.player.side
-        for frame in self._frames:
-            if slot not in frame.space.space:
-                continue
-            pipe = frame.sides[side]
-            if pipe.card is not card or pipe.withdrawn:
-                continue
+        if binding := self._bound_use(slot, card):
+            frame, pipe = binding
             pipe.withdrawn = True
             self.game.context.withdraw_card_use(card, slot, pipe.used)
             self.game.context.close_cancelled_use(side, card=card, die=pipe.die)
@@ -278,6 +436,8 @@ class Pipeline:
         yield from self._run_to(pipes, steps.NEXT_CARD)
 
         while True:
+            if self._resume_inserted(slot, pipes):
+                yield from self._start_skills(pipes, [])
             # The remaining die waits here while its opponent changes skills.
             # A side with no skill left is idle, so it cannot block a solo die.
             # An effect may have placed a skill for a previously empty side.
@@ -329,11 +489,17 @@ class Pipeline:
             if not ready:
                 break
 
+            inserted = [self._start_inserted(slot, pipes, p.side, p.die, "before_die") for p in ready]
+            if any(inserted):
+                continue
+
             yield from self._play_round(ready)
             for pipe in ready:
+                die = pipe.die
                 if self._card_live(pipe):
                     pipe.card.advance_die()
                 pipe.die = None
+                self._start_inserted(slot, pipes, pipe.side, die, "after_die")
             self._frame.pair = None
             self._frame.results = {}
 
@@ -347,20 +513,36 @@ class Pipeline:
         current = [p for p in pipes if self._card_live(p)]
         for pipe in current:
             pipe.card.set_range_opponent(None)
+            pipe.range_pairing = None
         if len(current) == 2:
-            far, near = sorted(current, key=lambda p: p.card.range_level, reverse=True)
-            if far.card.range_level > near.card.range_level + near.card.ignore_range:
+            far, near = sorted(current, key=lambda p: p.card.effective_range, reverse=True)
+            if far.card.effective_range > near.card.effective_range + near.card.effective_ignore_range:
                 # A card must actually pay before it can blank the opposing
                 # pre-use and fee entries. Its price hooks can still alter or cancel payment.
                 if far in entrants:
                     yield from self._run_to([far], "logic_skill_use")
                 if far.paid and self._card_live(far) and self._card_live(near):
-                    near.card.set_range_opponent(far.card)
-                    if near.card.range_deficit:
-                        print(f"「{far.card.name}」对「{near.card.name}」有 {near.card.range_deficit} 级远程优势。")
-                if near in entrants:
-                    yield from self._run_to([near], "logic_skill_use")
+                    self._refresh_skill_range(near, far.card)
+            pending = [p for p in entrants if p.paid is None]
+            if pending:
+                yield from self._run_to(pending, "logic_skill_use")
+            if all(p.paid and self._card_live(p) for p in current):
+                # Paying can remove a condition for range or immunity, including
+                # reversing which side has the advantage before on-use effects.
+                self._refresh_skill_range(far, near.card)
+                self._refresh_skill_range(near, far.card)
         yield from self._run_to(entrants, steps.NEXT_DIE)
+
+    def _refresh_skill_range(self, pipe, opponent):
+        card = pipe.card
+        signature = (opponent, card.effective_range, opponent.effective_range, card.effective_ignore_range)
+        if pipe.range_pairing == signature:
+            return
+        pipe.range_pairing = signature
+        card.set_range_opponent(opponent, own_range=signature[1], opposing_range=signature[2],
+                                ignore_range=signature[3])
+        if card.range_deficit:
+            print(f"「{opponent.name}」对「{card.name}」有 {card.range_deficit} 级远程优势。")
 
     def _card_live(self, pipe):
         return (pipe.card is not None and not pipe.withdrawn and pipe.card.character.is_alive
@@ -390,6 +572,40 @@ class Pipeline:
             a, b = ready
             a.opposing_card, b.opposing_card = b.card, a.card
             a.target, b.target = b.card.character, a.card.character
+        for pipe in ready:
+            if pipe.range_pairing:
+                self._refresh_skill_range(pipe, pipe.range_pairing[0])
+        if any(p.die.type == "skip" for p in ready):
+            print("SKIP：跳过本轮。")
+            for pipe in ready:
+                pipe.die.clash_result = "skip"
+                pipe.push_pack(steps.SKIPPED_DICE)
+            yield from self._run_to(ready, steps.NEXT_DIE)
+            return
+
+        # A die's range lasts through its whole use (including additional hits),
+        # then the two skills resume their original relationship.
+        saved_ranges = []
+        if any(p.die.effective_range != p.card.effective_range
+               or p.die.effective_ignore_range != p.card.effective_ignore_range for p in ready):
+            for pipe in ready:
+                other = next((p for p in ready if p is not pipe), None)
+                opposing = other.card if other else pipe.opposing_card
+                if opposing is None:
+                    continue
+                card = pipe.card
+                saved_ranges.append((pipe, card, card.range_opponent, card.range_deficit))
+                card.set_range_opponent(opposing, own_range=pipe.die.effective_range,
+                                        ignore_range=pipe.die.effective_ignore_range,
+                                        opposing_range=other.die.effective_range if other else opposing.effective_range)
+        try:
+            yield from self._pair_dice(ready)
+        finally:
+            for pipe, card, opponent, deficit in saved_ranges:
+                if pipe.card is card and not pipe.withdrawn:
+                    card.range_opponent, card.range_deficit = opponent, deficit
+
+    def _pair_dice(self, ready):
         for pipe in ready:
             if pipe.card.range_deficit >= 3 or (len(ready) == 1 and pipe.die.is_attack
                                                 and pipe.card.range_deficit >= 2):
@@ -458,12 +674,19 @@ class Pipeline:
                 pair = self.current_clash_pair
                 difference = abs(live[0].die.clash_score - live[1].die.clash_score)
                 for p in live:
-                    if pair.split or not all(self._die_live(other) for other in live):
+                    if pair.split or pair.skipped or not all(self._die_live(other) for other in live):
                         break
                     self.game.context.dispatch_pipeline("before_clash_result", **self._event(p),
                                                         prospective_result=results[p.side],
                                                         clash_difference=difference)
-                if pair.split:
+                if pair.skipped:
+                    print("跳过本轮：双方均不判胜负。")
+                    for p in live:
+                        p.die.clash_result = "skip"
+                        p.push_pack(steps.PASSIVE_SKIP)
+                    yield from self._run_to(live, "on_clash_skip")
+                    results = None
+                elif pair.split:
                     print("双方改为单方面攻击，按拼点点数依次命中。")
                     # The pipes are already in initiative order, which breaks score ties.
                     for p in sorted(live, key=lambda p: p.die.clash_score, reverse=True):
@@ -473,7 +696,7 @@ class Pipeline:
                             yield from self._hit(p)
                     results = None
                 live = [p for p in live if self._die_live(p)]
-        if len(live) == 1 and not self.current_clash_pair.split:
+        if len(live) == 1 and not (self.current_clash_pair.split or self.current_clash_pair.skipped):
             # A formed pair lost its die before a result. The vanished side has
             # no result at all, including skip. Only the survivor enters a branch.
             results = {live[0].side: "win"}
@@ -511,19 +734,40 @@ class Pipeline:
         if winner and not winner.die.win_branch_skipped:
             yield from self._run_to([winner], steps.CAN_HIT)
             yield from self._hit(winner)
+        for p in live:
+            if p is not winner and p.die.queued_hits:
+                yield from self._hit(p, automatic=False)
 
-    def _hit(self, pipe):
+    def _hit(self, pipe, *, automatic=True):
         split = self.current_clash_pair and self.current_clash_pair.split
         if (not self._die_live(pipe) or pipe.card.range_deficit
                 or not (pipe.die.is_attack or split and pipe.die.is_passive)):
             return
-        target = pipe.die.attack_target if pipe.die.attack_redirected else self.resolve_skill_target(pipe.card)
+        if pipe.die.attack_redirected:
+            target = pipe.die.attack_target
+        elif self.current_clash_pair:
+            target = pipe.target
+        else:
+            target = self.resolve_skill_target(pipe.card)
         if target is None or not target.is_alive:
             return
         if not self.current_clash_pair:
             print(f"单方面攻击：{pipe.card.character.combat_name} → {target.combat_name}")
-        pipe.push_pack(steps.HIT)
-        yield from self._run_to([pipe], "after_dice_hit")
+        die = pipe.die
+        die.hit_target = target
+        if automatic:
+            die.queued_hits.appendleft("full")
+        try:
+            while die.queued_hits and self._die_live(pipe) and target.is_alive and not self.game.is_over:
+                die.hit_mode = die.queued_hits.popleft()
+                die.hit_index = die.landed_hits + 1
+                pipe.push_pack(steps.HIT)
+                yield from self._run_to([pipe], "after_dice_hit")
+                if die.landed_hits < die.hit_index:
+                    break
+        finally:
+            die.hit_mode = die.hit_target = None
+            die.queued_hits.clear()
 
     def _run_to(self, pipes, stops):
         """Run selected sides in initiative order; others keep their exact position."""
@@ -550,7 +794,9 @@ class Pipeline:
         other = next(p for p in self.side_pipelines.values() if p is not pipe)
         opponent = other.card or pipe.opposing_card
         target = pipe.target
-        if pipe.die is not None and pipe.die.attack_redirected:
+        if pipe.die is not None and pipe.die.hit_target is not None:
+            target = pipe.die.hit_target
+        elif pipe.die is not None and pipe.die.attack_redirected:
             target = pipe.die.attack_target
         elif target is None and opponent is not None and opponent.character.is_alive:
             target = opponent.character
@@ -565,6 +811,10 @@ class Pipeline:
                     card=pipe.card, die=pipe.die, target=target, duel=duel,
                     play_mode=play_mode, combat_window=combat_window,
                     simultaneous_solo=bool(self.current_clash_pair and self.current_clash_pair.split),
+                    hit_mode=getattr(pipe.die, "hit_mode", None),
+                    hit_index=getattr(pipe.die, "hit_index", 0),
+                    clash_result=getattr(pipe.die, "clash_result", None),
+                    is_repeat=getattr(pipe.die, "is_repeat", False),
                     opponent_card=opponent, opponent_die=other.die, round_id=self.round_id)
 
     def _execute(self, node, pipe):
@@ -586,6 +836,13 @@ class Pipeline:
             if not all(self._die_live(self.side_pipelines[s]) for s in self.current_clash_pair.dice_dict):
                 return None
         event = self._event(pipe)
+        if name == "before_dice_use":
+            self.game.context.apply_next_die_effects(**event)
+            if not self._die_live(pipe):
+                return None
+        if (name in ("on_dice_hit", "after_dice_hit")
+                and pipe.die.landed_hits < pipe.die.hit_index):
+            return None
         if not name.startswith("logic_"):
             if name == "on_skill_use":
                 pipe.used = True
@@ -597,8 +854,9 @@ class Pipeline:
                     if char.is_alive and not self.game.is_over:
                         char.on_duel_start()
         elif name == "logic_skill_use":
-            with self.game.context.binding(**event):
-                payment = self.game.context.eval_block([pipe.card, pipe.card.cost, OpCode.PAY_COST])
+            discount = pipe.card.use_state.pop("use_discount", 0)
+            with self.game.context.binding(**event, use_discount=discount):
+                payment = self.game.context.eval_block([pipe.card, max(0, pipe.card.cost - discount), OpCode.PAY_COST])
             pipe.paid = payment is True
             if pipe.paid:
                 self.game.used_cards.append(pipe.card)
@@ -611,5 +869,6 @@ class Pipeline:
             with self.game.context.binding(**event):
                 pipe.die.roll()
         elif name == "logic_dice_hit" and event["target"] and event["target"].is_alive:
-            self.game.context.resolve_hit(**event)
+            if self.game.context.resolve_hit(**event):
+                pipe.die.landed_hits += 1
         return name

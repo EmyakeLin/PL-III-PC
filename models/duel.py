@@ -133,6 +133,7 @@ class ClashPair:
             raise ValueError("每次拼点最多两方")
         self.dice_dict = dict(dice_dict)
         self.split = False
+        self.skipped = False
 
     def clash_roll(self):
         for die in self.dice_dict.values():

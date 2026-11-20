@@ -76,3 +76,8 @@ class OpCode(Enum):
     QUEUE_PREPAID_CARD = auto()
     CHECK_DEATH = auto()
     RANDOM_INT = auto()
+    QUEUE_HIT = auto()
+    SKIP_ROUND = auto()
+    QUEUE_DIE_EFFECT = auto()
+    CHOOSE_CARD = auto()
+    INSERT_SKILL = auto()

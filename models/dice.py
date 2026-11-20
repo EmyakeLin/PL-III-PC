@@ -1,9 +1,11 @@
 import ast
 import operator
+from collections import deque
 from enum import Enum, auto
 from functools import lru_cache
 
-from models.card import describe_entry
+from entry.effects import damage_part, independent_damage_part
+from models.card import describe_entry, describe_range_traits, range_trait, validate_range_trait
 from models.opcode import OpCode
 
 
@@ -14,6 +16,7 @@ class DiceType(Enum):
     BLOCK = auto()
     EVADE = auto()
     BLANK = auto()
+    SKIP = auto()
 
 
 class DiceLevel(Enum):
@@ -29,7 +32,7 @@ dice_value_range = {level: (1, int(level.name[1:])) for level in DiceLevel}
 dice_type_map = {kind.name.lower(): kind for kind in DiceType}
 dice_type_map["guard"] = DiceType.BLOCK
 TYPE_NAMES = {"slash": "斩击", "pierce": "突刺", "blunt": "砸击",
-              "block": "招架", "evade": "闪避", "blank": "空白骰"}
+              "block": "招架", "evade": "闪避", "blank": "空白骰", "skip": "跳过"}
 ARITHMETIC = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
               ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod}
 
@@ -56,11 +59,14 @@ class Dice:
     def __init__(self, data, game=None):
         self.game = game
         self.card = None
+        for key in ("range_level", "ignore_range"):
+            validate_range_trait(data, key)
+        self.data = data
         kind = data["type"]
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
         self.type = dice_type_map[kind].name.lower()
-        self._printed_level = DiceLevel(data["level"])
+        self._printed_level = DiceLevel(1 if self.type == "skip" else data["level"])
         self._printed_roll_max = data.get("roll_max", dice_value_range[self._printed_level][1])
         if type(self._printed_roll_max) is not int or self._printed_roll_max < 1:
             raise ValueError("变动点数上限必须是正整数")
@@ -68,6 +74,14 @@ class Dice:
         self._resolved_level = None
         self.position = None
         self.repeat_requested = False
+        self.repeat_materialized = False
+        self.entries_registered = False
+        self.is_repeat = False
+        self.queued_hits = deque()
+        self.hit_mode = None
+        self.hit_target = None
+        self.hit_index = 0
+        self.landed_hits = 0
         self.attack_redirected = False
         self.attack_target = None
         self.base_value = data.get("base_value", 0)
@@ -91,11 +105,26 @@ class Dice:
     def is_attack(self):
         return self.type in ("slash", "pierce", "blunt")
 
+    @property
+    def effective_range(self):
+        return max(self.card.effective_range if self.card else 0, range_trait(self.data, "range_level", self.card))
+
+    @property
+    def effective_ignore_range(self):
+        return max(self.card.effective_ignore_range if self.card else 0, range_trait(self.data, "ignore_range", self.card))
+
+    @property
+    def has_damage_part(self):
+        return any(damage_part(entry) is not None or independent_damage_part(entry) is not None or (
+            isinstance(entry, dict) and isinstance(entry.get("operation"), dict)
+            and entry["operation"].get("damage_part")) for entry in self.entries)
+
     def make_blank(self):
         """Only this use changes. The printed die remains available on redraw."""
         self.type = "blank"
         self.entries = []
         self.repeat_requested = False
+        self.queued_hits.clear()
         self.attack_redirected = False
         self.attack_target = None
 
@@ -194,9 +223,11 @@ class Dice:
 def describe_die(data):
     die = Dice(data)
     name = TYPE_NAMES[die.type]
+    if die.type == "skip":
+        return "SKIP（跳过本轮）"
     die.value = 1
     first = die.get_value()
     die.value = die.roll_max
     last = die.get_value()
-    effects = "；".join(describe_entry(entry) for entry in die.entries)
+    effects = "；".join([*describe_range_traits(data), *(describe_entry(entry) for entry in die.entries)])
     return f"{name} {die.level.name.lower()}（{first}～{last}）" + (f"〔{effects}〕" if effects else "")

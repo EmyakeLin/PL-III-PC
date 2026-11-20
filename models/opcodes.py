@@ -109,6 +109,44 @@ def handle_repeat_die(ctx):
     return die.card is not None and _usable_component(die) and die.request_repeat()
 
 
+def handle_queue_hit(ctx):
+    mode, die = ctx.pop(), ctx.pop()
+    if mode not in ("full", "damage_only"):
+        raise ValueError(f"未知命中结算方式 {mode!r}")
+    if die is not None and die.is_attack and _usable_component(die):
+        die.queued_hits.append(mode)
+        return True
+    return False
+
+
+def handle_skip_round(ctx):
+    die = ctx.pop()
+    pair = ctx.game.pipeline.current_clash_pair
+    if pair is not None and die in pair.dice_dict.values():
+        pair.skipped = True
+        return True
+    return False
+
+
+def handle_queue_die_effect(ctx):
+    block, target = ctx.pop(), ctx.pop()
+    if target is not None and target.is_alive:
+        ctx.next_die_effects.setdefault(target, []).append(
+            (ctx.event.get("source"), ctx.event.get("authority", 0), block))
+        return True
+    return False
+
+
+def handle_choose_card(ctx):
+    specification, candidates = ctx.pop(), ctx.pop()
+    return ctx.game.special.choose_card(ctx, candidates, specification)
+
+
+def handle_insert_skill(ctx):
+    anchor, use = ctx.pop(), ctx.pop()
+    return ctx.game.special.insert_skill(use, anchor, ctx)
+
+
 def handle_set_skill_state(ctx):
     value, key, card = ctx.pop(), ctx.pop(), ctx.pop()
     if _usable_component(card):
@@ -156,7 +194,7 @@ def handle_queue_prepaid_card(ctx):
         return False
     actor = card.character
     hand = actor.player.cardspace.hand
-    if card not in hand.content or actor.statuses.get(resource, 0) < card.cost:
+    if card not in hand.content or actor.skill_restricted(card) or actor.statuses.get(resource, 0) < card.cost:
         return False
     slots = [i for i, slot in enumerate(ctx.game.duelspace.space)
              if ctx.game.pipeline.can_join(slot)
@@ -233,6 +271,7 @@ def handle_pay_cost(ctx):
     ctx.event.update(amount=cost, personal_spent=0, common_spent=0)
     player, character = card.player, card.character
     if (character is None or character.player is not player or not character.is_alive
+            or character.skill_restricted(card)
             or card.destroyed or card.state == CardState.NEGATED):
         return False
     personal = min(cost, max(0, character.available_cost))
@@ -253,6 +292,8 @@ def handle_pay_cost(ctx):
     character.used_independent_cost += personal
     player.used_cost += common
     ctx.event.update(personal_spent=personal, common_spent=common)
+    if ctx.event.get("use_discount"):
+        print(f"「{card.name}」本次费用减免 {ctx.event['use_discount']}，实付 {cost} 费。")
     return True
 
 
@@ -511,9 +552,17 @@ def handle_shield(ctx):
 
 def handle_status(ctx):
     amount, name, target = ctx.pop(), ctx.pop(), ctx.pop()
+    if target is None or not target.is_alive:
+        ctx.current_op = None
+        return
     proposed = ctx.event["amount"]
     ctx.event["amount"] = amount
+    old = target.statuses.get(name, 0)
     total = target.apply_status_delta(name, amount)
+    cap = target.status_cap(name)
+    overflow = max(0, old + amount - cap) if cap is not None and target.is_alive else 0
+    ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=total-old,
+                     status_overflow=overflow)
     if amount == 0 and isinstance(proposed, (int, float)) and proposed > 0:
         print(f"{target.combat_name} 未能获得{name}。")
     else:
@@ -525,7 +574,7 @@ def handle_spend_status(ctx):
     """Drain up to the adjusted cost and report the actual debit and its sufficiency."""
     requested, name, target = ctx.pop(), ctx.pop(), ctx.pop()
     ctx.event.update(amount=requested, paid_in_full=False)
-    balance = target.statuses.get(name, 0)
+    balance = target.spendable_status(name)
     if requested == "all" and balance and not target.is_alive:
         target.clear_status(name)
         ctx.event["paid_in_full"] = True
@@ -563,9 +612,13 @@ def handle_destroy(ctx):
         # A contradictory protection can intercept DESTROY before it executes.
         target.cancelled = True
     elif isinstance(target, Card):
+        if not target.destroyed:
+            print(f"「{target.get_meta()}」被摧毁。")
         target.destroyed = True
         target.state = CardState.NEGATED
     elif hasattr(target, "card") and hasattr(target, "roll"):
+        if not target.destroyed:
+            print("一颗骰子被摧毁。")
         target.destroyed = True
     else:
         raise ValueError("摧毁只能作用于技能、骰子或一次词条执行")
@@ -586,6 +639,9 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
+    OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
+    OpCode.QUEUE_DIE_EFFECT: handle_queue_die_effect,
     OpCode.SET_SKILL_FORM: handle_set_skill_form, OpCode.SPLIT_CLASH: handle_split_clash,
     OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
     OpCode.TAKE_HAND_CARD: handle_take_hand_card, OpCode.QUEUE_PREPAID_CARD: handle_queue_prepaid_card,
@@ -622,6 +678,9 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
+    OpCode.QUEUE_HIT: ("die", "mode"), OpCode.SKIP_ROUND: ("die",),
+    OpCode.QUEUE_DIE_EFFECT: ("target", "block"),
     OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
     OpCode.TAKE_HAND_CARD: ("target", "receiver"), OpCode.QUEUE_PREPAID_CARD: ("card", "resource"),

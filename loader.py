@@ -13,10 +13,27 @@ def load_characters_from_packs(packs_dir=None):
     characters = []
     ids = set()
     status_entries = {}
+    status_rules = {}
     turn_end_statuses = []
     for path in sorted(directory.glob("*.json")):
         try:
             pack = json.loads(path.read_text(encoding="utf-8-sig"))
+            for name, rule in pack.get("status_rules", {}).items():
+                if name in status_rules:
+                    raise ValueError(f"重复的状态规则 {name}")
+                cap = rule.get("cap")
+                if "cap" in rule and (type(cap) is not int or cap < 0):
+                    raise ValueError(f"{name} 的上限须为非负整数")
+                batch = rule.get("overflow_batch")
+                if batch is not None and (cap is None or type(batch.get("threshold")) is not int
+                        or batch["threshold"] <= 0 or not isinstance(batch.get("event"), str)
+                        or not batch["event"] or type(batch.get("reduce_to")) is not int
+                        or not 0 <= batch["reduce_to"] <= cap):
+                    raise ValueError(f"{name} 的溢出事件须有阈值、事件名及结算后上限")
+                if any(target == name or type(amount) is not int or amount <= 0
+                       for target, amount in rule.get("sustain", {}).items()):
+                    raise ValueError(f"{name} 的持续加成须指定其他状态及正整数层数")
+                status_rules[name] = rule
             turn_end_statuses.extend(pack.get("turn_end_statuses", ()))
             for name, entries in pack.get("status_entries", {}).items():
                 if name in status_entries:
@@ -25,7 +42,8 @@ def load_characters_from_packs(packs_dir=None):
             for original in pack["characters"]:
                 char = dict(original, faction=pack.get("faction", ""),
                             faction_passives=pack.get("faction_passives", []),
-                            status_entries=status_entries, turn_end_statuses=turn_end_statuses)
+                            status_entries=status_entries, status_rules=status_rules,
+                            turn_end_statuses=turn_end_statuses)
                 rank = CharacterRank[char["rank"]]
                 if char["id"] in ids:
                     raise ValueError(f"重复的角色 ID {char['id']}")

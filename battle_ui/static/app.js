@@ -1,6 +1,6 @@
 // The engine owns the match. Only the current selection and dialog belong to the page.
 const byId = id => document.getElementById(id);
-const typeNames = {slash: "斩击", pierce: "突刺", blunt: "打击", block: "招架", evade: "闪避", blank: "空白"};
+const typeNames = {slash: "斩击", pierce: "突刺", blunt: "打击", block: "招架", evade: "闪避", blank: "空白", skip: "SKIP"};
 const ranks = {NORMAL: "常人", ELITE: "精英", BOSS: "首领", EMPOWERED_BOSS: "强化首领"};
 const phases = {placement: "置卡", pre_attack: "开牌前进攻", intercept: "拦截", handoff: "交接", reveal: "开牌", combat: "交锋", turn_end: "回合结束", finished: "对局结束", timing: "行动时点", special: "特殊行动", special_handoff: "特殊行动交接"};
 const ranges = ["", "普通远程", "强化远程", "极限远程"];
@@ -64,7 +64,7 @@ function handoffMode(mode) {
 }
 
 function specialDialog() {
-    showDialog(match.queued_placement ? "选择技能追加位置" : match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
+    showDialog(match.card_choice ? "选择技能" : match.queued_placement ? "选择技能追加位置" : match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
         const field = element("label", "field", "手牌与目标");
         const select = element("select");
         let chosen = false;
@@ -208,6 +208,10 @@ function closeDialog(privateReset = false) {
 function dieRow(die, summary) {
     const row = element("span", "die-row");
     const name = typeNames[die.type] || die.type;
+    if (die.type === "skip") {
+        row.append(element("span", "die-name", "SKIP · 跳过本轮"));
+        return row;
+    }
     const range = "1–" + die.roll_max;
     row.append(icon(die.type), element("span", "die-name", name), element("span", "die-roll", range));
     if (summary) {
@@ -219,8 +223,8 @@ function dieRow(die, summary) {
 
 function cardDetails(card) {
     showDialog(card.name, body => {
-        const traits = ["费用 " + card.cost, ranges[card.range_level]];
-        if (card.ignore_range) traits.push("无视 " + card.ignore_range + " 级远程");
+        const traits = ["费用 " + card.cost, ...card.range_traits];
+        if (card.use_restricted) traits.push("限制中，当前无法使用");
         if (card.pre_reveal) traits.push("可在开牌前进攻");
         if (card.before_duel_attack) traits.push("可在交锋开始前进攻");
         if (card.resource_cost) traits.push("使用时须支付" + card.resource_cost.amount + card.resource_cost.status);
@@ -240,7 +244,7 @@ function cardDetails(card) {
         for (const die of card.dice) {
             const section = element("section", "detail-dice");
             section.append(dieRow(die, false));
-            const formula = [];
+            const formula = [...die.range_traits];
             if (die.base_value) formula.push("基础值 " + die.base_value);
             if (die.multiplier !== 1) formula.push("倍率 " + die.multiplier);
             if (die.final_bonus) formula.push("最终修正 " + die.final_bonus);
@@ -269,11 +273,15 @@ function fighterDetails(side) {
         if (lethalHeal) body.append(element("p", "dialog-copy", "当前实际回复生命会立即阵亡。"));
         body.append(element("p", "dialog-copy", `普通盾 ${shields.normal} · 强化盾 ${shields.reinforced} · 概念盾 ${shields.concept}`));
         const statusList = Object.entries(actor.statuses);
-        if (statusList.length) {
+        const overflow = Object.entries(actor.status_overflow || {});
+        if (statusList.length || overflow.length) {
             heading(body, "当前状态");
             for (const [name, count] of statusList) {
                 body.append(element("strong", "", name + " × " + count));
                 entries(body, match.catalog.statuses[name]);
+            }
+            for (const [name, counter] of overflow) {
+                body.append(element("p", "dialog-copy", name + "溢出 " + counter.amount + "/" + counter.threshold));
             }
         }
         const passives = [...(printed?.faction_passives || []), ...(printed?.passives || [])];
@@ -384,6 +392,9 @@ function updateFighter(player) {
     const statsField = field("stats");
     statsField.replaceChildren(...stats.map(label => element("span", "stat", label)));
     const statuses = Object.entries(actor.statuses).map(([name, count]) => name + " " + count);
+    for (const [name, counter] of Object.entries(actor.status_overflow || {})) {
+        statuses.push(name + "溢出 " + counter.amount + "/" + counter.threshold);
+    }
     const shieldNames = {normal: "护盾", reinforced: "强化盾", concept: "概念盾"};
     for (const [kind, amount] of Object.entries(actor.shields)) {
         if (amount > 0) statuses.push(shieldNames[kind] + " " + amount);
@@ -560,6 +571,7 @@ function renderHand(player) {
     for (const [index, card] of ownHand.entries()) {
         const owner = player.characters.find(actor => actor.id === card.character_id);
         const tile = tiles.get(card.action_key) || makeHandCard(card, owner?.name || player.name);
+        setText(tile.querySelector(".card-name"), card.name + (card.use_restricted ? "（受限）" : ""));
         if (hand.children[index] !== tile) hand.insertBefore(tile, hand.children[index] || null);
     }
     if (!ownHand.length) hand.append(element("p", "empty-state", "手中没有技能牌。"));
@@ -682,7 +694,7 @@ function render() {
         setText(byId("hand-title"), "交接对局");
         setText(byId("hand-meta"), "");
         const shared = secondSeat != null;
-        setText(byId("handoff-title"), match.queued_placement ? "请由" + player.name + "选择追加技能的位置" : match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
+        setText(byId("handoff-title"), match.card_choice ? "请由" + player.name + "选择技能" : match.queued_placement ? "请由" + player.name + "选择追加技能的位置" : match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
         setText(byId("handoff-action"), "我是" + player.name + "，查看手牌");
         byId("handoff-action").disabled = busy;
         if (shared) {

@@ -2,7 +2,8 @@
 
 from dataclasses import dataclass, replace
 
-from entry.entry import Entry, TriggerType
+from entry.entry import Entry, TriggerType, character_of
+from entry.effects import run_effect
 from models.card import Card, CardState
 from models.character import Character
 from models.opcode import OpCode
@@ -18,6 +19,24 @@ class SpecialAction:
     duel_index: int | None = None
     response_number: int | None = None
     ability_id: str | None = None
+    label: str | None = None
+
+
+@dataclass(frozen=True)
+class SkillUse:
+    card: Card
+    discount: int = 0
+
+
+@dataclass
+class CardDecision:
+    player: object
+    candidates: tuple
+    origins: dict
+    optional: bool
+    operation: object
+    invocation: object
+    event: dict
 
 
 class SpecialActions:
@@ -28,6 +47,101 @@ class SpecialActions:
         self.ability_uses = {}
         self.locked_cards = set()
         self._placement_choices = []
+        self._card_choices = []
+
+    @staticmethod
+    def own_hand_skills(actor):
+        return [card for card in actor.player.cardspace.hand.content
+                if card.character is actor and actor.is_alive and not card.destroyed
+                and not actor.skill_restricted(card)]
+
+    def board_skills(self, target):
+        if target is None:
+            return []
+        return [card for slot in self.game.board_slots() for card in slot.get_content(target.player.side)
+                if card.character is target and not card.destroyed and target.is_alive]
+
+    def choose_card(self, ctx, candidates, spec):
+        """Suspend a printed choice until its controller supplies an answer."""
+        if not ctx.executions or self.game.is_over:
+            return False
+        invocation = ctx.executions[-1]
+        actor = character_of(invocation.entry.owner)
+        chooser = ctx.event.get("target") if spec.get("chooser") == "target" else actor
+        if chooser is None or not chooser.is_alive:
+            return False
+        cards = tuple(dict.fromkeys(card for card in candidates if isinstance(card, Card) and not card.destroyed))
+        if not cards:
+            return False
+        origins = {card: (card.character, card in card.player.cardspace.hand.content) for card in cards}
+        self._card_choices.append(CardDecision(chooser.player, cards, origins, bool(spec.get("optional")),
+                                               spec["then"], invocation, ctx.event.copy()))
+        return True
+
+    def _candidate_label(self, card, viewer):
+        for group, slots in (("常规交锋", self.game.duelspace.space),
+                             ("开牌前交锋", self.game.pre_reveal.space.space), ("即时交锋", self.duels)):
+            for index, slot in enumerate(slots, 1):
+                cards = slot.get_content(card.player.side)
+                if card in cards:
+                    name = ("扣置技能" if card.state == CardState.PLACED_FACE_DOWN and card.player is not viewer
+                            else card.name)
+                    return f"{group} {index} · 第 {cards.index(card) + 1} 张 · {name}"
+        if viewer is not card.player:
+            return f"对方第 {card.player.cardspace.hand.content.index(card) + 1} 张手牌"
+        return f"{card.name}（{card.cost} 费）"
+
+    def _valid_candidates(self, decision):
+        board = {card for slot in self.game.board_slots() for cards in slot.content.values() for card in cards}
+        cards = []
+        for card in decision.candidates:
+            actor, in_hand = decision.origins[card]
+            if card.character is not actor or not actor.is_alive or card.destroyed:
+                continue
+            if in_hand:
+                if card not in card.player.cardspace.hand.content or actor.skill_restricted(card):
+                    continue
+            elif card not in board:
+                continue
+            cards.append(card)
+        return cards
+
+    @property
+    def card_decision(self):
+        while self._card_choices:
+            choice = self._card_choices[0]
+            actor = character_of(choice.invocation.entry.owner)
+            if (actor is not None and actor.is_alive and not choice.invocation.cancelled
+                    and not choice.invocation.entry.blanked and self._valid_candidates(choice)):
+                return choice
+            self._card_choices.pop(0)
+        return None
+
+    @property
+    def decision_owner(self):
+        decision = self.card_decision
+        return decision.player if decision else self.placement_owner
+
+    def _resolve_card_choice(self, action):
+        decision = self._card_choices.pop(0)
+        if action.kind == "decline_card":
+            return True
+        ctx = self.game.context
+        fields = dict(decision.event, chosen_card=action.target_card)
+        ctx.executions.append(decision.invocation)
+        try:
+            with ctx.binding(**fields):
+                run_effect(ctx, decision.invocation.entry, decision.operation)
+        finally:
+            ctx.executions.pop()
+        return True
+
+    def insert_skill(self, use, anchor, ctx):
+        if isinstance(use, Card):
+            use = SkillUse(use)
+        if not isinstance(use, SkillUse) or not isinstance(use.card, Card):
+            return False
+        return self.game.pipeline.insert_skill(use, anchor, ctx.event)
 
     @property
     def placement_owner(self):
@@ -114,6 +228,7 @@ class SpecialActions:
         self.ability_uses.clear()
         self.locked_cards.clear()
         self._placement_choices.clear()
+        self._card_choices.clear()
 
     def first_open_slot(self, side):
         space = self.game.duelspace
@@ -147,6 +262,15 @@ class SpecialActions:
         game = self.game
         if game.is_over or game.turn_number <= game.turn_count or player not in game.players:
             return []
+        decision = self.card_decision
+        if decision:
+            if player is not decision.player:
+                return []
+            choices = [SpecialAction("choose_card", target_card=card, label=self._candidate_label(card, player))
+                       for card in self._valid_candidates(decision)]
+            if decision.optional:
+                choices.append(SpecialAction("decline_card", label="放弃此次选牌"))
+            return choices
         if self.placement_owner is not None:
             card, actor, indices = self._placement_choices[0]
             return ([SpecialAction("queue_card", card=card, duel_index=i) for i in indices]
@@ -169,7 +293,7 @@ class SpecialActions:
                 choices.extend(SpecialAction("attack", card, duel_index=index)
                                for index, slot in enumerate(game.duelspace.space)
                                if index >= game.duelspace.current_duel_index and game.pipeline.can_join(slot))
-            if "custom" in modes:
+            if "custom" in modes and not card.character.skill_restricted(card):
                 choices.append(SpecialAction("custom", card))
             if (card.data.get("anytime_replace") or card.data.get("replace_targets")
                     or card.character.statuses.get("换卡机会")):
@@ -188,9 +312,13 @@ class SpecialActions:
         if action not in choices:
             raise ValueError("这个特殊置卡或换卡操作在当前时点无效。")
         game, card = self.game, action.card
+        if action.kind in ("choose_card", "decline_card"):
+            return self._resolve_card_choice(action)
         if action.kind == "queue_card":
             self._placement_choices.pop(0)
-            placed = game.place_in_duel(player.side, card, action.duel_index, queued=True)
+            slot = game.duelspace.space[action.duel_index]
+            with game.context.binding(source=card.character, side=player.side):
+                placed = game.context.eval_block([card, {"at": "slot_tail", "target": slot}, OpCode.INSERT_SKILL])
             if placed:
                 card.use_state["cost_prepaid"] = True
             return placed
@@ -264,6 +392,7 @@ class SpecialActions:
         self.game.pipeline.withdraw_skill(slot, old)
         cards = slot.get_content(player.side)
         cards[cards.index(old)] = card
+        hand.remember_play_rank(card)
         hand.content[hand.content.index(card)] = old
         card.state = old.state
         if isinstance(slot, PreRevealDuel):

@@ -70,11 +70,17 @@ class Character:
         self.used_independent_cost = 0
         self.turn_cost_adjustment = 0
         self.statuses = {}
+        self.status_overflow = {}
+        # While a status supplies stacks, keep the ordinary stacks independently
+        # so expiring the turn or removing the source only removes its own part.
+        self._ordinary_stacks = {}
+        self._sustained_stacks = {}
         self._status_listeners = {}
         self.bleed_burst = False
         self.round_triggers = set()
         if self.game:
             self.game.status_entries.update(data.get("status_entries", {}))
+            self.game.status_rules.update(data.get("status_rules", {}))
             self.game.turn_end_statuses.update(data.get("turn_end_statuses", ()))
             self.game.context.register_entries(self, self.passive_skill_data)
             player.register_faction_passives(self)
@@ -139,6 +145,9 @@ class Character:
             if label == "裂血" and self.bleed_burst:
                 label = "裂血（爆发）"
             parts.append(f"{label} {value}")
+        for name, amount in self.status_overflow.items():
+            threshold = self.status_rules[name]["overflow_batch"]["threshold"]
+            parts.append(f"{name}溢出 {amount}/{threshold}")
         return " · ".join(parts)
 
     def add_shield(self, kind, amount):
@@ -154,36 +163,85 @@ class Character:
             return self.game.context.eval_block([self, name, amount, OpCode.STATUS])
         return self.apply_status_delta(name, amount)
 
+    @property
+    def status_rules(self):
+        return self.game.status_rules if self.game else self.data.get("status_rules", {})
+
+    def status_cap(self, name):
+        global_cap = self.status_rules.get(name, {}).get("cap", STATUS_CAPS.get(name))
+        personal = self.data.get("resource_rules", {}).get("caps", {}).get(name)
+        if global_cap is None:
+            return personal
+        return min(global_cap, personal) if personal is not None else global_cap
+
+    def spendable_status(self, name):
+        return self._ordinary_stacks.get(name, self.statuses.get(name, 0))
+
+    def skill_restricted(self, card):
+        """A hand play keeps its cost rank for its pending use, including face-down placement."""
+        limit = max((self.statuses.get(name, 0) for name, rule in self.status_rules.items()
+                     if rule.get("restrict_highest_hand_cost")), default=0)
+        if not limit:
+            return False
+        hand = self.player.cardspace.hand
+        rank = hand.cost_rank(card) if card in hand.content else card.hand_cost_rank
+        return rank is not None and rank <= limit
+
     def apply_status_delta(self, name, amount):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
         if not self.is_alive:
             return 0
         name = STATUS_ALIASES.get(name, name)
+        rule = self.status_rules.get(name, {})
+        required = rule.get("requires_status")
+        if required and not self.statuses.get(required):
+            return 0
+        amount = int(amount)
+        cap = self.status_cap(name)
+        if amount > 0 and cap is not None:
+            accepted = min(amount, max(0, cap - self.statuses.get(name, 0)))
+            if accepted < amount and "overflow_batch" in rule:
+                self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
+            amount = accepted
+        return self._set_status(name, max(0, self.spendable_status(name) + amount),
+                                self._sustained_stacks.get(name, 0))
+
+    def _set_status(self, name, ordinary, sustained):
         previous = self.statuses.get(name, 0)
-        value = max(0, previous + int(amount))
-        cap = self.data.get("resource_rules", {}).get("caps", {}).get(name, STATUS_CAPS.get(name))
-        if cap is not None:
-            value = min(value, cap)
+        if sustained:
+            self._ordinary_stacks[name] = ordinary
+            self._sustained_stacks[name] = sustained
+        else:
+            self._ordinary_stacks.pop(name, None)
+            self._sustained_stacks.pop(name, None)
+        cap = self.status_cap(name)
+        value = ordinary + sustained if cap is None else min(cap, ordinary + sustained)
         if value:
             self.statuses[name] = value
             if self.game and not previous and name in self.game.status_entries:
                 specs = self.game.status_entries[name]
                 self._status_listeners[name] = self.game.context.register_entries(self, specs)
         else:
-            self.clear_status(name)
+            self.statuses.pop(name, None)
+            listeners = self._status_listeners.pop(name, ())
+            if listeners:
+                entries = self.game.context.entries
+                entries[:] = [entry for entry in entries if entry not in listeners]
         if name == "裂血":
             self.bleed_burst = value >= 6 or (self.bleed_burst and value > 0)
+        if bool(previous) != bool(value):
+            for other, count in self.status_rules.get(name, {}).get("sustain", {}).items():
+                grants = self._sustained_stacks.get(other, 0) + (count if value else -count)
+                self._set_status(other, self.spendable_status(other), grants)
+            if not value:
+                for other, rule in self.status_rules.items():
+                    if rule.get("requires_status") == name and self.statuses.get(other):
+                        self.clear_status(other)
         return value
 
     def clear_status(self, name):
-        """End a status and its listeners, including expiry after the holder dies."""
-        self.statuses.pop(name, None)
-        if name == "裂血":
-            self.bleed_burst = False
-        listeners = self._status_listeners.pop(name, None)
-        if listeners:
-            entries = self.game.context.entries
-            entries[:] = [entry for entry in entries if entry not in listeners]
+        """Expire ordinary stacks; ongoing contributions live as long as their sources."""
+        self._set_status(name, 0, self._sustained_stacks.get(name, 0))
 
     def begin_dice_round(self):
         self.round_triggers = set()

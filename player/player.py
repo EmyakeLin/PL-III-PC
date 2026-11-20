@@ -76,7 +76,7 @@ class Player:
 
     def reset_on_turn_start(self):
         rule = self.game.gamerule
-        common = rule.MAX_BASIC_COST + self.turn_common_cost_bonus
+        common = max(0, rule.MAX_BASIC_COST + self.turn_common_cost_bonus)
         self.game.context.eval_block([self, common, rule.CHAR_INDEPENDENT_COST, OpCode.RESET_COST])
 
     def calculate_speed(self):

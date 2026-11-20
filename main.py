@@ -23,7 +23,7 @@ def play_game(game, step=False):
             game.pipeline.is_finished = False
             continue
         timing = timing_label(action)
-        if (timing or game.special.placement_owner is not None) and game.special_prompt and not game.is_over:
+        if (timing or game.special.decision_owner is not None) and game.special_prompt and not game.is_over:
             if special_seats(game):
                 print(f"〔{timing}〕")
                 game.offer_special_actions()

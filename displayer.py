@@ -1,7 +1,7 @@
 """Read-only, JSON-ready views of a live match. Read between engine steps."""
 
 from game import Game
-from models.card import CardState, allows_interception, describe_entry
+from models.card import CardState, allows_interception, describe_entry, describe_range_traits
 from models.dice import Dice
 from pipeline import pipeline_steps
 
@@ -27,8 +27,9 @@ def _printed_die(spec):
     # An unbound printed die uses the engine's aliases, defaults and custom roll_max.
     die = Dice(spec)
     return {
-        "type": die.type, "printed_level": die.printed_level.value,
-        "roll_max": die.roll_max, "base_value": die.base_value,
+        "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
+        "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
+        "range_traits": describe_range_traits(spec),
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
         "entries": [describe_entry(entry) for entry in die.entries],
     }
@@ -46,6 +47,7 @@ def _printed_skill(data):
         "interceptable": allows_interception(data, pre_reveal=True),
         "instant_interceptable": allows_interception(data, pre_reveal=False),
         "range_level": data.get("range_level", 0), "ignore_range": data.get("ignore_range", 0),
+        "range_traits": describe_range_traits(data),
         "starts_out_of_combat": bool(data.get("out_of_combat")),
         "dice": [_printed_die(spec) for spec in data.get("dice", ())],
         "entries": [describe_entry(entry) for entry in data.get("entries", ())],
@@ -82,9 +84,9 @@ def hand_key(card):
 def _live_die(die):
     if die is None:
         return None
-    resolved = die._resolved_level is not None
+    resolved = die._resolved_level is not None and die.type != "skip"
     return {
-        "position": die.position, "type": die.type, "printed_level": die.printed_level.value,
+        "position": die.position, "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "level": die.level.value if resolved else None, "roll_max": die.roll_max if resolved else None,
         "base_value": die.base_value, "rolled_value": die.value or None,
         "final_score": die.final_score, "clash_score": die.clash_score,
@@ -135,8 +137,8 @@ def special_seats(game):
     if game.is_over or not game.turn_number or game.turn_number <= game.turn_count:
         return []
     pending = game.special.pending_attack
-    if game.special.placement_owner is not None:
-        return [game.special.placement_owner]
+    if game.special.decision_owner is not None:
+        return [game.special.decision_owner]
     if pending is not None:
         return sorted(game.players, key=lambda p: p.side == pending.attacking_side)
     for player in game.players:
@@ -153,6 +155,8 @@ def special_seats(game):
 
 
 def special_action_label(action):
+    if action.label is not None:
+        return action.label
     if action.kind == "ability":
         spec = next(s for s in action.character.data["actions"] if s["id"] == action.ability_id)
         label = f"{action.character.name} · {spec['name']}"
@@ -166,6 +170,8 @@ def special_action_label(action):
         return f"放行即时交锋 {action.response_number}"
     card = action.card
     skill = f"{card.name}（{card.cost} 费）"
+    if card in card.player.cardspace.hand.content and card.character.skill_restricted(card):
+        skill += "〔限制中〕"
     if action.kind == "place":
         return f"{skill}置入常规交锋 {action.duel_index + 1}"
     if action.kind == "replace":
@@ -271,6 +277,11 @@ class Displayer:
 
     def catalog(self) -> dict:
         """Public printed rules for the selected roster, independent of card locations."""
+        statuses = {name: [describe_entry(e) for e in entries]
+                    for name, entries in self._game.status_entries.items()}
+        for name, rule in self._game.status_rules.items():
+            if rule.get("description"):
+                statuses.setdefault(name, []).insert(0, rule["description"])
         return {
             "players": [{
                 "side": p.side,
@@ -281,8 +292,7 @@ class Displayer:
                     "skills": [_printed_skill(skill) for skill in c.skill_data],
                 } for c in p.characters],
             } for p in self._game.players],
-            "statuses": {name: [describe_entry(e) for e in entries]
-                         for name, entries in self._game.status_entries.items()},
+            "statuses": statuses,
         }
 
     def _player(self, player):
@@ -296,7 +306,8 @@ class Displayer:
             "draw_count": len(zones.draw.content), "hand_count": len(zones.hand.content),
             "delayed_discard_count": len(zones.delayed_discard.content),
             "out_of_combat_count": len(zones.out_of_combat.content),
-            "hand": [{**_visible_card(c), "action_key": hand_key(c)} for c in zones.hand.content] if own else None,
+            "hand": [{**_visible_card(c), "action_key": hand_key(c), "use_restricted": c.character.skill_restricted(c)}
+                     for c in zones.hand.content] if own else None,
             "delayed_discard": [_visible_card(c) for c in zones.delayed_discard.content] if own else None,
             "out_of_combat": [_visible_card(c) for c in zones.out_of_combat.content] if own else None,
         }
@@ -308,6 +319,8 @@ class Displayer:
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": dict(c.statuses), "bleed_burst": c.bleed_burst,
+            "status_overflow": {name: {"amount": n, "threshold": c.status_rules[name]["overflow_batch"]["threshold"]}
+                                for name, n in c.status_overflow.items()},
             "cost": {"available": c.available_cost, "refill": c.independent_cost, "spent": c.used_independent_cost},
             "duels": {"max": c.max_duels, "used": c.used_duels if own or self._game.cards_revealed else None},
         }

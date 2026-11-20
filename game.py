@@ -36,6 +36,8 @@ class Game:
         self._prepared_turn = -1
         self.next_turn_statuses = []
         self.status_entries = {}
+        self.status_rules = {}
+        self._overflow_settled_turn = -1
         self.turn_end_statuses = set(ONE_TURN_STATUSES)
         self.turn_end_statuses.update(("置卡机会", "换卡机会"))
         self.is_over = False
@@ -131,6 +133,8 @@ class Game:
         self._private_player = None
 
     def next_step(self):
+        if self.special.card_decision is not None and not self.is_over:
+            return "wait_card_choice"
         if self.special.placement_owner is not None and not self.is_over:
             return "wait_queued_placement"
         if self.special.pending_attack is not None and not self.is_over:
@@ -151,9 +155,9 @@ class Game:
         if self.special_prompt is None or self.is_over:
             return
         self.special_prompt(self)
-        while not self.is_over and (self.special.pending_attack is not None or self.special.placement_owner is not None
+        while not self.is_over and (self.special.pending_attack is not None or self.special.decision_owner is not None
                                     or self.pipeline.interrupt_space is not None):
-            if self.special.pending_attack is None and self.special.placement_owner is None:
+            if self.special.pending_attack is None and self.special.decision_owner is None:
                 self.next_step()
             if not self.is_over:
                 self.special_prompt(self)
@@ -355,7 +359,35 @@ class Game:
                 sides.append(f"{player.name}：{names}")
             print(f"交锋 {number}　" + "　对　".join(sides))
 
+    def resolve_status_batches(self):
+        """Freeze all eligible holders before any end-of-turn batch listener runs."""
+        if self.is_over or self._overflow_settled_turn == self.turn_count:
+            return
+        self._overflow_settled_turn = self.turn_count
+        ordered = sorted(self.players, key=lambda player: player is not self.first_player)
+        characters = [char for player in ordered for char in player.characters if char.is_alive]
+        batches = []
+        for name, rule in self.status_rules.items():
+            batch = rule.get("overflow_batch")
+            if batch:
+                targets = tuple(char for char in characters
+                                if char.status_overflow.get(name, 0) >= batch["threshold"])
+                if targets:
+                    batches.append((name, batch, targets))
+        for name, batch, targets in batches:
+            if self.is_over:
+                break
+            print(f"{batch.get('label', name)}触发，目标为{'、'.join(c.combat_name for c in targets)}。")
+            self.context.dispatch_pipeline(batch["event"], source=None, target=None, card=None, die=None,
+                                           side=None, targets=targets, status=name)
+            for char in targets:
+                char.status_overflow.pop(name, None)
+                excess = char.statuses.get(name, 0) - batch["reduce_to"]
+                if char.is_alive and excess > 0:
+                    char.add_status(name, -excess)
+
     def finish_turn(self):
+        self.resolve_status_batches()
         ordered = sorted(self.players, key=lambda player: player is not self.first_player)
         for player in ordered:
             for character in player.characters:
