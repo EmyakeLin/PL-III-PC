@@ -32,6 +32,7 @@ class Game:
         self.cards_revealed = False
         self.turn_count = 0
         self.turn_number = 0
+        self.card_serial = 0
         self._prepared_turn = -1
         self.next_turn_statuses = []
         self.status_entries = {}
@@ -51,11 +52,11 @@ class Game:
 
     def select_character(self, characters):
         pool = list(characters)
-        if len(pool) < len(self.players):
+        if len(pool) < len(self.players) and not any(c.get("mirror_allowed") for c in pool):
             raise ValueError("共享角色池至少需要两名角色，才能为双方各留一名。")
         rosters = []
         for index, player in enumerate(self.players):
-            reserve = len(self.players) - index - 1
+            reserve = 0 if any(c.get("mirror_allowed") for c in pool) else len(self.players) - index - 1
             limit = min(self.gamerule.MAX_CHAR_COUNT, len(pool) - reserve)
             roster = []
             while len(roster) < limit:
@@ -76,6 +77,7 @@ class Game:
                     print("请至少选一名角色，并输入列表中的编号。")
             print(f"{player.name} 出战：" + "、".join(data["name"] for data in roster))
             rosters.append(roster)
+            pool.extend(spec for spec in roster if spec.get("mirror_allowed"))
 
         for player, roster in zip(self.players, rosters):
             for data in roster:
@@ -127,6 +129,8 @@ class Game:
         self._private_player = None
 
     def next_step(self):
+        if self.special.placement_owner is not None and not self.is_over:
+            return "wait_queued_placement"
         if self.special.pending_attack is not None and not self.is_over:
             return "wait_special_intercept"
         # An extra placement can reopen the regular sequence after its last slot.
@@ -145,8 +149,9 @@ class Game:
         if self.special_prompt is None or self.is_over:
             return
         self.special_prompt(self)
-        while not self.is_over and (self.special.pending_attack is not None or self.pipeline.interrupt_space is not None):
-            if self.special.pending_attack is None:
+        while not self.is_over and (self.special.pending_attack is not None or self.special.placement_owner is not None
+                                    or self.pipeline.interrupt_space is not None):
+            if self.special.pending_attack is None and self.special.placement_owner is None:
                 self.next_step()
             if not self.is_over:
                 self.special_prompt(self)
@@ -163,6 +168,12 @@ class Game:
         yield from self.duelspace.space
         yield from self.pre_reveal.space.space
         yield from self.special.duels
+
+    @property
+    def resolving_duel(self):
+        if self.pipeline.in_duel_phase:
+            return self.pipeline._get_current_duel()
+        return None
 
     def duel_position(self):
         """The series and zero-based public number of the currently resolving duel."""
@@ -278,9 +289,9 @@ class Game:
             return False
         return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
 
-    def place_in_duel(self, side, content, duel_idx, *, special=False):
+    def place_in_duel(self, side, content, duel_idx, *, special=False, queued=False):
         # Once regular placement closes, only an executing rule effect may insert a card.
-        if self.pre_reveal.phase != "idle" and not special and not self.context.executions:
+        if self.pre_reveal.phase != "idle" and not special and not queued and not self.context.executions:
             return False
         player = content.player
         owner = content.character
@@ -297,8 +308,12 @@ class Game:
             return False
         if old_zone is not None and content not in old_zone.content:
             return False
-        space = self.duelspace if special else self.active_duelspace
-        with self.context.binding(special_placement=content if special else None):
+        space = self.duelspace if special or queued else self.active_duelspace
+        if queued and (content not in zones.hand.content or duel_idx >= len(space.space)
+                       or not self.pipeline.can_join(space.space[duel_idx])):
+            return False
+        with self.context.binding(special_placement=content if special else None,
+                                  queued_placement=content if queued else None):
             placed = self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
         if not placed or duel_idx >= len(space.space):
             return False
@@ -311,6 +326,8 @@ class Game:
         return True
 
     def reveal_cards(self):
+        if self.cards_revealed:
+            return
         self.cards_revealed = True
         self.close_private_view()
         if not self.duelspace.space:
@@ -322,6 +339,12 @@ class Game:
                     if card.state == CardState.PLACED_FACE_DOWN:
                         card.state = CardState.PLACED_FACE_UP
         print("双方开牌。")
+        for slot in self.duelspace.space:
+            for player in sorted(self.players, key=lambda p: p is not self.first_player):
+                for card in tuple(slot.get_content(player.side)):
+                    if card.character.is_alive and not card.destroyed:
+                        self.context.dispatch_pipeline("on_card_reveal", source=card.character, side=player.side,
+                                                       card=card, duel=slot)
         for number, slot in enumerate(self.duelspace.space, 1):
             sides = []
             for player in self.players:
@@ -343,6 +366,7 @@ class Game:
                 character.turn_duel_bonus = 0
                 for status in self.turn_end_statuses:
                     character.clear_status(status)
+                character.check_death()
             player.turn_common_cost_bonus = 0
             self.context.eval_block([player, 0, 0, OpCode.RESET_COST])
 
@@ -352,7 +376,7 @@ class Game:
         for card in [*self.used_cards, *on_board]:
             if card in remaining and card.character.is_alive:
                 remaining.remove(card)
-                card.reset_for_draw()
+                card.return_to_printed_owner()
                 card.player.cardspace.draw.add_card(card)
         for player in self.players:
             player.cardspace.delayed_discard.push_to_draw()

@@ -23,7 +23,7 @@ def play_game(game, step=False):
             game.pipeline.is_finished = False
             continue
         timing = timing_label(action)
-        if timing and game.special_prompt and not game.is_over:
+        if (timing or game.special.placement_owner is not None) and game.special_prompt and not game.is_over:
             if special_seats(game):
                 print(f"〔{timing}〕")
                 game.offer_special_actions()
@@ -43,7 +43,7 @@ def main(argv=None):
         characters = load_characters_from_packs(args.packs)
     except (ValueError, OSError) as exc:
         parser.error(str(exc))
-    if len(characters) < 2:
+    if len(characters) < 2 and not any(c.get("mirror_allowed") for c in characters):
         parser.error("双人对局至少需要两名可选角色")
     try:
         print("光点计划 III · 本地双人对局")

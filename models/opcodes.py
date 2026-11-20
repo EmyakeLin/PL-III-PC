@@ -116,6 +116,63 @@ def handle_set_skill_state(ctx):
         return value
 
 
+def handle_set_skill_form(ctx):
+    key, card = ctx.pop(), ctx.pop()
+    if card is not None and _usable_component(card):
+        card.set_form(key)
+
+
+def handle_split_clash(ctx):
+    die = ctx.pop()
+    pair = ctx.game.pipeline.current_clash_pair
+    if pair is not None and die in pair.dice_dict.values():
+        pair.split = True
+
+
+def handle_transfer_remaining_dice(ctx):
+    receiving, giving = ctx.pop(), ctx.pop()
+    if giving is not None and _usable_component(giving) and _usable_component(receiving):
+        receiving.take_remaining_dice(giving)
+
+
+def handle_take_hand_card(ctx):
+    receiver, target = ctx.pop(), ctx.pop()
+    if target is None or not target.is_alive or not receiver.is_alive:
+        return None
+    hand = target.player.cardspace.hand
+    if not hand.content or target.player is receiver.player:
+        return None
+    card = ctx.game.rng.choice(hand.content)
+    card.set_controller(receiver)
+    destination = receiver.player.cardspace.hand
+    hand.move_card_to(card, destination)
+    print(f"{receiver.combat_name} 从对方手中抽取了一张技能。")
+    return card
+
+
+def handle_queue_prepaid_card(ctx):
+    resource, card = ctx.pop(), ctx.pop()
+    if card is None or card.destroyed or not card.character.is_alive:
+        return False
+    actor = card.character
+    hand = actor.player.cardspace.hand
+    if card not in hand.content or actor.statuses.get(resource, 0) < card.cost:
+        return False
+    slots = [i for i, slot in enumerate(ctx.game.duelspace.space)
+             if ctx.game.pipeline.can_join(slot)
+             and any(skill.character is actor for skill in slot.get_content(actor.player.side))]
+    if not slots:
+        return False
+    if card.cost:
+        ctx.stack.extend((actor, resource, card.cost))
+        if not ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"):
+            return False
+    if card not in hand.content or card.character is not actor or not actor.is_alive:
+        return False
+    ctx.game.special.queue_placement(card, actor, slots)
+    return True
+
+
 def handle_next_turn_duels(ctx):
     amount, target = ctx.pop(), ctx.pop()
     if target.is_alive:
@@ -172,7 +229,7 @@ def handle_reset_cost(ctx):
 def handle_pay_cost(ctx):
     """Charge the amount left on the stack after BEFORE PAY_COST, personal funds first."""
     amount, card = ctx.pop(), ctx.pop()
-    cost = max(0, amount)
+    cost = 0 if card.use_state.pop("cost_prepaid", False) else max(0, amount)
     ctx.event.update(amount=cost, personal_spent=0, common_spent=0)
     player, character = card.player, card.character
     if (character is None or character.player is not player or not character.is_alive
@@ -182,6 +239,17 @@ def handle_pay_cost(ctx):
     common = cost - personal
     if common > player.available_cost:
         return False
+    extra = card.data.get("resource_cost")
+    if extra and card.range_deficit < 3:
+        ctx.stack.extend((character, extra["status"], extra["amount"]))
+        if not ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"):
+            return False
+        if not character.is_alive or card.destroyed or card.state == CardState.NEGATED:
+            return False
+        personal = min(cost, max(0, character.available_cost))
+        common = cost - personal
+        if common > player.available_cost:
+            return False
     character.used_independent_cost += personal
     player.used_cost += common
     ctx.event.update(personal_spent=personal, common_spent=common)
@@ -208,7 +276,8 @@ def handle_place(ctx):
                     or not game.special.may_place(card)
                     or game.special.first_open_slot(side) != idx):
         return False
-    space = game.duelspace if special else game.active_duelspace
+    queued = ctx.event.get("queued_placement") is card
+    space = game.duelspace if special or queued else game.active_duelspace
     # Opening a new numbered pre-reveal duel requires a player's attack declaration.
     if space is not game.duelspace and idx >= len(space.space):
         return False
@@ -250,7 +319,7 @@ def handle_move_card(ctx):
     zone, card = ctx.pop(), ctx.pop()
     if zone not in ("hand", "draw", "delayed_discard", "out_of_combat"):
         raise ValueError(f"未知牌区 {zone!r}")
-    if card.destroyed or not card.character.is_alive:
+    if card.destroyed or not card.character.is_alive or ctx.game.special.is_locked(card):
         return False
     zones = card.player.cardspace
     destination = getattr(zones, zone)
@@ -291,16 +360,47 @@ def handle_for_each_target(ctx):
                 ctx.eval_block(block)
 
 
+def handle_resolve_damage(ctx):
+    amount = max(0, int(ctx.pop()))
+    target = ctx.pop()
+    ctx.event.update(amount=amount, damage_amount=amount)
+    duel = ctx.game.resolving_duel
+    if duel is not None and len(ctx.op_stack) > 1 and ctx.op_stack[-2] == OpCode.DAMAGE:
+        duel.damage_taken[target] = duel.damage_taken.get(target, 0) + amount
+        ctx.event["duel"] = duel
+    return amount
+
+
+def handle_check_death(ctx):
+    target = ctx.pop()
+    if target.is_alive and target.hp == 0:
+        target._die()
+        return True
+    return False
+
+
+def handle_random_int(ctx):
+    high, low = ctx.pop(), ctx.pop()
+    roll = ctx.game.rng.randint(low, high)
+    source = ctx.event.get("source")
+    print(f"{getattr(source, 'combat_name', '效果')} 进行 {low}～{high} 判定，掷出 {roll}。")
+    ctx.push(roll)
+
+
 def handle_damage(ctx):
     attack_type, grade, amount, target = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
     if target == "target":
         target = ctx.event.get("target")
     if target is None or not target.is_alive:
-        return 0
+        ctx.current_op = None
+        return None
     source = ctx.event.get("source")
-    multiplier = target.damage_multiplier()
+    ctx.event["base_amount"] = amount
+    precomputed = ctx.event["damage_precomputed"]
+    multiplier = 1 if precomputed else target.damage_multiplier()
     fixed = 0
-    for kind, value, defense_grade in ctx.event.get("modifiers", ()):
+    modifiers = () if precomputed else ctx.event["modifiers"]
+    for kind, value, defense_grade in modifiers:
         reduction = (kind == "armor" or kind == "damage_add" and value < 0
                      or kind == "damage_multiply" and value < 1)
         if reduction and GRADE_RANK[defense_grade] < GRADE_RANK[grade]:
@@ -309,34 +409,40 @@ def handle_damage(ctx):
             multiplier *= value
         else:
             fixed += -value if kind == "armor" else value
-    final = max(0, int(amount * multiplier + fixed))
-    actual = target.take_damage(final, penetration=grade, attack_type=attack_type, modified=True)
+    proposed = max(0, int(amount * multiplier + fixed))
+    damage = ctx.eval_block([target, proposed, OpCode.RESOLVE_DAMAGE])
+    if damage is None or not target.is_alive or (ctx.executions and ctx.executions[-1].cancelled):
+        ctx.current_op = None
+        return None
+    hp_lost = target.apply_resolved_damage(damage, grade)
+    ctx.event.update(amount=damage, damage_amount=damage, hp_lost=hp_lost)
     grade_name = GRADE_NAMES[grade]
-    cause = ctx.event.get("damage_cause") or getattr(source, "name", "效果")
-    print(f"{cause} 对 {target.name} 造成 {actual} 点伤害"
+    cause = ctx.event.get("damage_cause") or getattr(source, "combat_name", "效果")
+    print(f"{cause} 对 {target.combat_name} 造成 {damage} 点伤害"
           f"（{grade_name}，剩余生命 {target.hp}/{target.max_hp}）")
     if not target.is_alive:
-        print(f"{target.name} 阵亡。")
+        print(f"{target.combat_name} 阵亡。")
     if ctx.event.get("damage_part") and target.is_alive:
         target.after_damage_part()
-    return actual
+    return damage
 
 
 def handle_heal(ctx):
     amount, target = ctx.pop(), ctx.pop()
     actual = target.heal(amount)
     if actual:
-        print(f"{target.name} 恢复 {actual} 点生命（{target.hp}/{target.max_hp}）。")
+        print(f"{target.combat_name} 恢复 {actual} 点生命（{target.hp}/{target.max_hp}）。")
     return actual
 
 
 def handle_lose_hp(ctx):
     amount, target = ctx.pop(), ctx.pop()
     lost = target.lose_hp(amount)
+    ctx.event["hp_lost"] = lost
     if lost:
-        print(f"{target.name} 失去 {lost} 点生命，剩余 {target.hp}/{target.max_hp}。")
+        print(f"{target.combat_name} 失去 {lost} 点生命，剩余 {target.hp}/{target.max_hp}。")
         if not target.is_alive:
-            print(f"{target.name} 阵亡。")
+            print(f"{target.combat_name} 阵亡。")
     return lost
 
 
@@ -350,7 +456,7 @@ def handle_shield(ctx):
     total = target.add_shield(kind, amount)
     name = {"normal": "普通护盾", "shield": "普通护盾", "reinforced": "强化护盾",
             "concept": "概念护盾"}.get(kind, kind)
-    print(f"{target.name} 的{name}变为 {total}。")
+    print(f"{target.combat_name} 的{name}变为 {total}。")
     return total
 
 
@@ -360,9 +466,9 @@ def handle_status(ctx):
     ctx.event["amount"] = amount
     total = target.apply_status_delta(name, amount)
     if amount == 0 and isinstance(proposed, (int, float)) and proposed > 0:
-        print(f"{target.name} 未能获得{name}。")
+        print(f"{target.combat_name} 未能获得{name}。")
     else:
-        print(f"{target.name} 的{name}变为 {total} 层。")
+        print(f"{target.combat_name} 的{name}变为 {total} 层。")
     return total
 
 
@@ -371,6 +477,11 @@ def handle_spend_status(ctx):
     requested, name, target = ctx.pop(), ctx.pop(), ctx.pop()
     ctx.event.update(amount=requested, paid_in_full=False)
     balance = target.statuses.get(name, 0)
+    if requested == "all" and balance and not target.is_alive:
+        target.clear_status(name)
+        ctx.event["paid_in_full"] = True
+        print(f"{target.combat_name} 清空剩余 {balance} 层{name}。")
+        return balance
     if not target.is_alive or not balance:
         return 0
     if requested == "all":
@@ -387,7 +498,7 @@ def handle_spend_status(ctx):
         spent = card.use_state.setdefault("spent_statuses", {})
         spent[name] = spent.get(name, 0) + paid
     shortfall = f"（需 {cost} 层，未付足）" if paid < cost else ""
-    print(f"{target.name} 消耗 {paid} 层{name}{shortfall}，剩余 {remaining} 层。")
+    print(f"{target.combat_name} 消耗 {paid} 层{name}{shortfall}，剩余 {remaining} 层。")
     return paid
 
 
@@ -397,6 +508,8 @@ def handle_stagger(ctx):
 
 def handle_destroy(ctx):
     target = ctx.pop()
+    if target is None:
+        return False
     if isinstance(target, EntryExecution):
         # A contradictory protection can intercept DESTROY before it executes.
         target.cancelled = True
@@ -424,6 +537,11 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.SET_SKILL_FORM: handle_set_skill_form, OpCode.SPLIT_CLASH: handle_split_clash,
+    OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
+    OpCode.TAKE_HAND_CARD: handle_take_hand_card, OpCode.QUEUE_PREPAID_CARD: handle_queue_prepaid_card,
+    OpCode.CHECK_DEATH: handle_check_death, OpCode.RANDOM_INT: handle_random_int,
+    OpCode.RESOLVE_DAMAGE: handle_resolve_damage,
     OpCode.RESOLVE_RANGE_DEFICIT: handle_range_deficit,
     OpCode.LOSE_HP: handle_lose_hp, OpCode.TURN_COST_ADD: handle_turn_cost_add,
     OpCode.TURN_DUELS_ADD: handle_turn_duels_add,
@@ -454,6 +572,11 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
+    OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
+    OpCode.TAKE_HAND_CARD: ("target", "receiver"), OpCode.QUEUE_PREPAID_CARD: ("card", "resource"),
+    OpCode.CHECK_DEATH: ("target",), OpCode.RANDOM_INT: ("low", "high"),
+    OpCode.RESOLVE_DAMAGE: ("target", "amount"),
     OpCode.RESOLVE_RANGE_DEFICIT: ("card", "value"),
     OpCode.LOSE_HP: ("target", "amount"), OpCode.TURN_DUELS_ADD: ("target", "amount"),
     OpCode.TURN_COST_ADD: ("pool", "amount"),

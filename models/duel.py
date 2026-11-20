@@ -44,6 +44,7 @@ class DuelSlot:
         self.content = {}
         self.settled = False
         self.current_card_index = {}
+        self.damage_taken = {}
 
     def add_content(self, side, content):
         self.content.setdefault(side, []).append(content)
@@ -100,9 +101,9 @@ class DuelSlot:
         removed = []
         for side, cards in self.content.items():
             index = self.current_card_index.get(side, 0)
-            self.current_card_index[side] = sum(card.character is not character for card in cards[:index])
-            removed.extend(card for card in cards if card.character is character)
-            cards[:] = [card for card in cards if card.character is not character]
+            self.current_card_index[side] = sum(not card.belongs_to(character) for card in cards[:index])
+            removed.extend(card for card in cards if card.belongs_to(character))
+            cards[:] = [card for card in cards if not card.belongs_to(character)]
         return removed
 
     def resolve_target_character(self, attacking_side, clash_pair=None, previous_opponent=None):
@@ -131,6 +132,7 @@ class ClashPair:
         if len(dice_dict) > 2:
             raise ValueError("每次拼点最多两方")
         self.dice_dict = dict(dice_dict)
+        self.split = False
 
     def clash_roll(self):
         for die in self.dice_dict.values():

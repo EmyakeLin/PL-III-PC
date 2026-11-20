@@ -32,6 +32,10 @@ def load_characters_from_packs(packs_dir=None):
                 ids.add(char["id"])
                 if char["max_hp"] <= 0:
                     raise ValueError(f"{char['name']} 的生命上限必须为正")
+                if "speed_die" in char:
+                    low, high = char["speed_die"]
+                    if type(low) is not int or type(high) is not int or not 1 <= low <= high:
+                        raise ValueError(f"{char['name']} 的速度骰需要有效的正整数范围")
                 if "base_max_duels" in char and (type(char["base_max_duels"]) is not int or char["base_max_duels"] < 1):
                     raise ValueError(f"{char['name']} 的基础交锋上限必须为正整数")
                 regular = [card for card in char["skills"] if not card.get("out_of_combat")]
@@ -43,10 +47,23 @@ def load_characters_from_packs(packs_dir=None):
                     if card["id"] in card_ids or card["cost"] < 0:
                         raise ValueError(f"{char['name']} 的技能 ID 重复或费用无效")
                     card_ids.add(card["id"])
-                    for die_data in card.get("dice", []):
-                        die = Dice(die_data)
-                        die.value = 1
-                        die.get_value()
+                    extra = card.get("resource_cost")
+                    if extra is not None and (not isinstance(extra, dict)
+                            or not isinstance(extra.get("status"), str) or not extra["status"]
+                            or type(extra.get("amount")) is not int or extra["amount"] <= 0):
+                        raise ValueError(f"{card['name']} 的附加费用须指定资源及正整数数量")
+                    forms = card.get("forms", {})
+                    if not isinstance(forms, dict) or any(not isinstance(form, dict)
+                            or not isinstance(form.get("name"), str) or not form["name"]
+                            or not isinstance(form.get("dice"), list) for form in forms.values()):
+                        raise ValueError(f"{card['name']} 的技能形态须包含名称和骰组")
+                    for form in (card, *forms.values()):
+                        for die_data in form.get("dice", []):
+                            if "requires_skill_state" in die_data and not isinstance(die_data["requires_skill_state"], str):
+                                raise ValueError("骰位启用条件须为本次技能状态名称")
+                            die = Dice(die_data)
+                            die.value = 1
+                            die.get_value()
                 characters.append(char)
         except (ValueError, KeyError, TypeError, SyntaxError) as exc:
             raise ValueError(f"卡包 {path.name} 无法载入：{exc}") from exc

@@ -4,6 +4,11 @@ Use {"trigger": "on_clash_win", "operation": "Shield: 1"} on a die, card or
 passive. "BEFORE DAMAGE" and "AFTER STATUS" listen to operation events.
 Operations may be a list in printed order or a dict, e.g.
 {"op":"place_skill","card_id":"reserve","zone":"out_of_combat"}.
+BEFORE DAMAGE accepts modifiers on the incoming base amount. AFTER RESOLVE_DAMAGE
+exposes $damage_amount after modifiers and before shields, HP loss, and death.
+AFTER DAMAGE has result/amount equal to that damage and $hp_lost equal to
+the life lost to this part. Use damage_amount_at_least or hp_lost_at_least
+to select the quantity named by the rule, including for fully shielded hits.
 BEFORE PAY_COST observes the acting card and its proposed amount. AFTER PAY_COST
 also reports result, personal_spent and common_spent. RESET_COST addresses one
 player and supplies the new common and per-character personal budgets.
@@ -82,6 +87,14 @@ def run_effect(ctx, entry, operation):
     else:
         raise ValueError(f"无效词条操作 {operation!r}")
     name = name.lower().strip().replace("-", "_")
+    if name == "reveal_lock":
+        from models.card import CardState
+        card = ctx.event["target"]
+        if ctx.game.special.window_open("placement") and card.state == CardState.PLACED_FACE_DOWN:
+            card.state = CardState.PLACED_FACE_UP
+            ctx.game.special.locked_cards.add(card)
+            print(f"「{card.name}」翻正，本置卡阶段锁定位置。")
+        return
     if name == "program":
         from entry.program import run_program
         if "damage_part" in data:

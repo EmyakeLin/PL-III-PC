@@ -52,7 +52,7 @@ function team(side) {
 
 function selectedCard() {
     const currentHand = team(match?.active_side)?.hand;
-    return currentHand?.find(card => card.id === selection);
+    return currentHand?.find(card => card.action_key === selection);
 }
 
 function choosingCard() {
@@ -64,7 +64,7 @@ function handoffMode(mode) {
 }
 
 function specialDialog() {
-    showDialog(match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
+    showDialog(match.queued_placement ? "选择技能追加位置" : match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
         const field = element("label", "field", "手牌与目标");
         const select = element("select");
         let chosen = false;
@@ -111,10 +111,10 @@ function responseDialog() {
         const cardSelect = element("select");
         const cardField = element("label", "field", "迎击手牌");
         for (const card of team(match.active_side).hand) {
-            if (!match.legal_intercept_cards.includes(card.id)) continue;
+            if (!match.legal_intercept_cards.includes(card.action_key)) continue;
             const option = element("option", "", card.name + " · " + card.cost + " 费");
-            option.value = card.id;
-            option.selected = card.id === selection;
+            option.value = card.action_key;
+            option.selected = card.action_key === selection;
             cardSelect.append(option);
         }
         const hasReplyCard = cardSelect.options.length > 0;
@@ -140,19 +140,19 @@ function targetDialog() {
         const enemy = match.frame.players.find(player => player.side !== match.active_side);
         const select = element("select");
         const field = element("label", "field", "进攻目标");
-        const targets = enemy.characters.filter(actor => actor.alive).map(actor => ({
-            label: actor.name, target: {kind: "character", id: actor.id}
-        }));
-        for (const slot of match.frame.duels) {
+        const targets = match.attack_targets[card.action_key].map(target => {
+            if (target.kind === "character") {
+                return {label: enemy.characters.find(actor => actor.id === target.id).name, target};
+            }
+            const slot = match.frame.duels[target.number - 1];
             const count = slot.sides.find(side => side.side === enemy.side).cards.length;
-            targets.push({label: "常规交锋 " + slot.number + " · 对手扣牌 " + count + " 张",
-                          target: {kind: "duel", number: slot.number}});
-        }
+            return {label: "常规交锋 " + target.number + " · 对手置牌 " + count + " 张", target};
+        });
         for (const item of targets) select.append(element("option", "", item.label));
         field.append(select);
         body.append(field);
         actions.append(button("取消", false, () => closeDialog()), button("声明进攻", true, () => {
-            send("attack", {card_id: card.id, target: targets[select.selectedIndex].target});
+            send("attack", {card_id: card.action_key, target: targets[select.selectedIndex].target});
         }));
     });
 }
@@ -222,6 +222,9 @@ function cardDetails(card) {
         const traits = ["费用 " + card.cost, ranges[card.range_level]];
         if (card.ignore_range) traits.push("无视 " + card.ignore_range + " 级远程");
         if (card.pre_reveal) traits.push("可在开牌前进攻");
+        if (card.before_duel_attack) traits.push("可在交锋开始前进攻");
+        if (card.resource_cost) traits.push("使用时须支付" + card.resource_cost.amount + card.resource_cost.status);
+        if (card.pre_reveal_target === "occupied_enemy_slot") traits.push("开牌前仅可指定已置敌牌的交锋");
         if (card.anytime_replace) traits.push("可在任意时刻换入");
         const plays = {place: "置入空交锋", attack: "发起进攻", custom: "依牌面打出"};
         for (const mode of card.anytime_play) traits.push("任意时刻可" + plays[mode]);
@@ -296,7 +299,7 @@ function rulesDialog() {
             "选择手牌后点击扣置。此后每个置卡窗口最多扣两张，首张扣好后可以提前交权。结束常规置卡后，仍可按机会或技能文字进行特殊置卡。",
             "开牌前由先手方先取得进攻权。每张进攻牌可以指定角色或常规交锋。对手考虑迎击期间，进攻方可以继续出牌。防守方可任选一场待迎击的进攻，用手牌迎击或明确放行。",
             "取得进攻权后仍可处理此前待迎击的牌。双方都结束主动进攻、每场都已就绪后，按进攻编号结算。仍指向常规交锋的进攻会牵走对手的扣牌。随后统一开牌。技能使用时先付个人费，再付通用费。",
-            "双方逐骰比拼点点数。攻击骰获胜时命中，攻击骰无对位时单方面攻击。角色生命归零即阵亡。",
+            "双方逐骰比拼点点数。攻击骰获胜时命中，攻击骰无对位时单方面攻击。生命归零时判定阵亡，具有免死效果的角色仍可行动。",
             "用置卡机会或牌面许可补入友方空常规交锋，均须有剩余常规交锋额度，置入一张占一次。场内即时进攻默认直接结算，只有牌面明示可迎击时才开放回应。",
             "换卡时换下的牌回手，原费用不退。新牌须自己付费，从第一骰重新使用。",
             "已经对位的骰子在拼点结果产生前消失，会形成空白轮。仅对方取得拼点胜利，消失骰没有拼点结果。",
@@ -339,10 +342,11 @@ function newGameDialog() {
         });
         const validate = () => {
             const duplicate = selectors[0].value === selectors[1].value;
-            start.disabled = duplicate;
+            const mirrorAllowed = value => match.choices.some(choice => choice.id === value && choice.mirror_allowed);
+            start.disabled = duplicate && !mirrorAllowed(selectors[0].value);
             for (const select of selectors) {
                 const other = selectors.find(item => item !== select);
-                for (const option of select.options) option.disabled = option.value === other.value;
+                for (const option of select.options) option.disabled = option.value === other.value && !mirrorAllowed(option.value);
             }
         };
         for (const select of selectors) select.addEventListener("change", validate);
@@ -395,7 +399,7 @@ function currentSlot() {
 function liveDieText(side, number, card, kind) {
     const combat = match.frame.combat;
     if (combat?.duel_number !== number || combat.kind !== kind) return "";
-    const active = combat.sides.find(info => info.side === side && info.card_id === card.id);
+    const active = combat.sides.find(info => info.side === side && info.card_instance_id === card.instance_id);
     const die = active?.die;
     if (!die) return "";
     const parts = ["第 " + active.die_number + " 骰", typeNames[die.type] || die.type];
@@ -522,9 +526,10 @@ function renderArena() {
 function makeHandCard(card, ownerName) {
     const tile = element("button", "skill-card");
     tile.type = "button";
-    tile.dataset.card = card.id;
+    tile.dataset.card = card.action_key;
     const head = element("span", "card-head");
     const characteristics = [ownerName, ranges[card.range_level], card.pre_reveal ? "开牌前可出" : ""];
+    if (card.borrowed) characteristics.push("取自对手");
     if (card.anytime_play.length) characteristics.push("随时可出");
     if (card.anytime_replace) characteristics.push("随时可换");
     head.append(element("span", "card-owner", characteristics.filter(Boolean).join(" · ")), element("span", "card-cost", card.cost + " 费"));
@@ -541,14 +546,14 @@ function makeHandCard(card, ownerName) {
 
 function renderHand(player) {
     const ownHand = player?.hand || [];
-    const keepIds = new Set(ownHand.map(card => card.id));
+    const keepIds = new Set(ownHand.map(card => card.action_key));
     for (const node of [...hand.children]) {
         if (!keepIds.has(node.dataset.card)) node.remove();
     }
     const tiles = new Map([...hand.children].map(node => [node.dataset.card, node]));
     for (const [index, card] of ownHand.entries()) {
         const owner = player.characters.find(actor => actor.id === card.character_id);
-        const tile = tiles.get(card.id) || makeHandCard(card, owner?.name || player.name);
+        const tile = tiles.get(card.action_key) || makeHandCard(card, owner?.name || player.name);
         if (hand.children[index] !== tile) hand.insertBefore(tile, hand.children[index] || null);
     }
     if (!ownHand.length) hand.append(element("p", "empty-state", "手中没有技能牌。"));
@@ -671,7 +676,7 @@ function render() {
         setText(byId("hand-title"), "交接对局");
         setText(byId("hand-meta"), "");
         const shared = secondSeat != null;
-        setText(byId("handoff-title"), match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
+        setText(byId("handoff-title"), match.queued_placement ? "请由" + player.name + "选择追加技能的位置" : match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
         setText(byId("handoff-action"), "我是" + player.name + "，查看手牌");
         byId("handoff-action").disabled = busy;
         if (shared) {

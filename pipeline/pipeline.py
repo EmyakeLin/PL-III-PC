@@ -107,6 +107,12 @@ class Pipeline:
     def interrupt_space(self):
         return self._frame.space if self._frames and self._frame.interrupt else None
 
+    @property
+    def before_duel_start(self):
+        return bool(self._frames and not self._frame.started and any(
+            pipe.current_node and pipe.current_node.id == "before_duel_start"
+            for pipe in self.side_pipelines.values()))
+
     def next_step(self):
         if self.in_duel_phase:
             return self.step_duel_combat()
@@ -448,11 +454,30 @@ class Pipeline:
                                            participants=actors):
                 results = self.game.context.eval_block([self.current_clash_pair, OpCode.CLASH])
             live = [p for p in participants if self._die_live(p)]
-        if len(live) == 1:
+            if results and len(live) == 2:
+                pair = self.current_clash_pair
+                difference = abs(live[0].die.clash_score - live[1].die.clash_score)
+                for p in live:
+                    if pair.split or not all(self._die_live(other) for other in live):
+                        break
+                    self.game.context.dispatch_pipeline("before_clash_result", **self._event(p),
+                                                        prospective_result=results[p.side],
+                                                        clash_difference=difference)
+                if pair.split:
+                    print("双方改为单方面攻击，按拼点点数依次命中。")
+                    # The pipes are already in initiative order, which breaks score ties.
+                    for p in sorted(live, key=lambda p: p.die.clash_score, reverse=True):
+                        if self._die_live(p):
+                            if p.card.range_deficit >= 2 and p.die.is_attack:
+                                p.die.make_blank()
+                            yield from self._hit(p)
+                    results = None
+                live = [p for p in live if self._die_live(p)]
+        if len(live) == 1 and not self.current_clash_pair.split:
             # A formed pair lost its die before a result. The vanished side has
             # no result at all, including skip. Only the survivor enters a branch.
             results = {live[0].side: "win"}
-            print(f"空白轮：对位骰消失，{live[0].card.character.name} 拼点胜利。")
+            print(f"空白轮：对位骰消失，{live[0].card.character.combat_name} 拼点胜利。")
         if results and live:
             yield from self._resolve_results(live, results)
         yield from self._run_to(participants, "after_dice_clash")
@@ -465,10 +490,10 @@ class Pipeline:
             winner.die.win_branch_skipped = True
             labels["win"] = "胜，跳过胜利分支"
             if len(live) == 1:
-                print(f"{winner.card.character.name} 受远程压制，跳过拼赢分支。")
+                print(f"{winner.card.character.combat_name} 受远程压制，跳过拼赢分支。")
         if len(live) == 2:
             print("拼点 " + " · ".join(
-                f"{p.card.character.name} {TYPE_NAMES[p.die.type]} 最终 {p.die.final_score} → "
+                f"{p.card.character.combat_name} {TYPE_NAMES[p.die.type]} 最终 {p.die.final_score} → "
                 f"拼点 {p.die.clash_score}（{labels[results[p.side]]}）"
                 for p in live))
         stops = {}
@@ -488,13 +513,15 @@ class Pipeline:
             yield from self._hit(winner)
 
     def _hit(self, pipe):
-        if not self._die_live(pipe) or not pipe.die.is_attack or pipe.card.range_deficit:
+        split = self.current_clash_pair and self.current_clash_pair.split
+        if (not self._die_live(pipe) or pipe.card.range_deficit
+                or not (pipe.die.is_attack or split and pipe.die.is_passive)):
             return
         target = pipe.die.attack_target if pipe.die.attack_redirected else self.resolve_skill_target(pipe.card)
         if target is None or not target.is_alive:
             return
         if not self.current_clash_pair:
-            print(f"单方面攻击：{pipe.card.character.name} → {target.name}")
+            print(f"单方面攻击：{pipe.card.character.combat_name} → {target.combat_name}")
         pipe.push_pack(steps.HIT)
         yield from self._run_to([pipe], "after_dice_hit")
 
@@ -528,9 +555,16 @@ class Pipeline:
         elif target is None and opponent is not None and opponent.character.is_alive:
             target = opponent.character
         duel = self._get_current_duel()
+        play_mode = duel.play_mode(pipe.card)
+        combat_window = "regular"
+        if play_mode == "active" and getattr(duel, "origin", None) == "before_duel":
+            combat_window = "before_duel"
+        elif play_mode in ("active", "passive") and self._frame.space is self.game.pre_reveal.space:
+            combat_window = "pre_reveal"
         return dict(side=pipe.side, source=pipe.card.character if pipe.card else None,
                     card=pipe.card, die=pipe.die, target=target, duel=duel,
-                    play_mode=duel.play_mode(pipe.card),
+                    play_mode=play_mode, combat_window=combat_window,
+                    simultaneous_solo=bool(self.current_clash_pair and self.current_clash_pair.split),
                     opponent_card=opponent, opponent_die=other.die, round_id=self.round_id)
 
     def _execute(self, node, pipe):
@@ -568,11 +602,11 @@ class Pipeline:
             pipe.paid = payment is True
             if pipe.paid:
                 self.game.used_cards.append(pipe.card)
-                print(f"{pipe.card.character.name} 使用「{pipe.card.name}」（牌面 {pipe.card.cost} 费）")
+                print(f"{pipe.card.character.combat_name} 使用「{pipe.card.name}」（牌面 {pipe.card.cost} 费）")
             elif payment is None:
                 print(f"「{pipe.card.name}」的支付被取消，跳过该技能。")
             else:
-                print(f"{pipe.card.character.name} 未能支付「{pipe.card.name}」的费用，跳过该技能。")
+                print(f"{pipe.card.character.combat_name} 未能支付「{pipe.card.name}」的费用，跳过该技能。")
         elif name == "logic_dice_clash":
             with self.game.context.binding(**event):
                 pipe.die.roll()

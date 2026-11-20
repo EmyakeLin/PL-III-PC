@@ -125,9 +125,11 @@ class MatchTests(unittest.TestCase):
         actor.add_shield("normal", 3)
         actor.add_shield("reinforced", 2)
         actor.add_shield("concept", 1)
-        self.assertEqual(actor.take_damage(3, "pierce"), 1)
+        self.assertEqual(actor.take_damage(3, "pierce"), 3)
+        self.assertEqual(actor.hp, actor.max_hp - 1)
         self.assertEqual((actor.shield, actor.reinforced_shield, actor.concept_shield), (0, 0, 1))
-        self.assertEqual(actor.take_damage(2, "concept"), 1)
+        self.assertEqual(actor.take_damage(2, "concept"), 2)
+        self.assertEqual(actor.hp, actor.max_hp - 2)
         actor.add_status("致命失衡", 2)
         self.assertEqual(actor.take_damage(1), 2)
         self.assertEqual(actor.take_damage(1), 2)
@@ -155,8 +157,23 @@ class MatchTests(unittest.TestCase):
         self.assertTrue(actor.trigger_stagger())
         self.assertEqual((actor.statuses["失衡"],actor.statuses["致命失衡"]), (15, 1))
 
+    def test_burn_and_fatal_stagger_consume_on_positive_damage_even_with_full_shields(self):
+        self.roster(1)
+        actor = self.game.players[0].characters[0]
+        actor.add_status("烧伤", 20)
+        actor.add_status("致命失衡", 2)
+        actor.add_shield("normal", 6)
+        actor.on_turn_end()
+        self.assertEqual((actor.hp, actor.shield), (actor.max_hp, 0))
+        self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (13, 1))
+
+        actor.begin_dice_round()
+        self.game.context.register_entries(actor, [{"trigger": "BEFORE DAMAGE", "operation": "Armor: 6"}])
+        actor.on_turn_end()
+        self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (13, 1))
+
     def test_pack_levels_formula_and_guard_alias(self):
-        self.assertEqual(len(self.pool), 12)
+        self.assertEqual(len(self.pool), 13)
         self.assertEqual({c["rank"] for c in self.pool}, {"NORMAL", "ELITE", "BOSS", "EMPOWERED_BOSS"})
         die = Dice(dict(type="guard", level=1, base_value=2, multiplier=3, final_bonus=1))
         self.assertTrue(die.is_passive)
@@ -176,12 +193,14 @@ class MatchTests(unittest.TestCase):
         actor = self.game.players[0].characters[0]
         actor.add_status("裂血", 6)
         observed = []
-        def receive(amount, **kwargs):
-            observed.append(actor.statuses["裂血"])
-            return 1
-        with patch.object(actor, "take_damage", side_effect=receive), redirect_stdout(io.StringIO()):
-            actor.after_damage_part()
+        self.game.context.register_entries(actor, [{
+            "trigger": "AFTER DAMAGE", "when": {"damage_cause": "裂血爆发"},
+            "operation": lambda ctx: observed.append(actor.statuses["裂血"]),
+        }])
+        actor.add_shield("reinforced", 1)
+        self.game.context.deal_damage(self.game.players[1].characters[0], actor, 0, damage_part=True)
         self.assertEqual(observed, [6])
+        self.assertEqual((actor.hp, actor.reinforced_shield), (actor.max_hp, 0))
         self.assertEqual(actor.statuses["裂血"], 4)
 
 

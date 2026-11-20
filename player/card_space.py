@@ -39,12 +39,13 @@ class CardList():
         self._on_size_changed(before, len(self.content))
         return card
 
-    def remove_character(self, character):
-        removed = [card for card in self.content if card.character is character]
+    def remove_character(self, character, *, notify=True):
+        removed = [card for card in self.content if card.belongs_to(character)]
         if removed:
             before = len(self.content)
-            self.content[:] = [card for card in self.content if card.character is not character]
-            self._on_size_changed(before, len(self.content))
+            self.content[:] = [card for card in self.content if not card.belongs_to(character)]
+            if notify:
+                self._on_size_changed(before, len(self.content))
         return removed
 
 
@@ -94,8 +95,10 @@ class DelayedDiscard(CardList):
         self.player = player
 
     def push_to_draw(self):
-      while len(self.content) > 0:
-          self.move_card_to(0, self.player.cardspace.draw)
+        while self.content:
+            card = self.content[0]
+            card.set_controller(card.printed_owner)
+            self.move_card_to(0, card.player.cardspace.draw)
           
 class OutOfCombat(CardList):
     def __init__(self, player: Player, all_cards = None):

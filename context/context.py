@@ -64,6 +64,9 @@ class Context:
             return self.range_blocks_target(fields.get("execution"))
         if opcode == OpCode.CLASH:
             return any(self.range_blocks_target(die) for die in fields["clash_pair"].dice_dict.values())
+        if opcode == OpCode.SPLIT_CLASH:
+            pair = self.game.pipeline.current_clash_pair
+            return pair is not None and any(self.range_blocks_target(die) for die in pair.dice_dict.values())
         if opcode in (OpCode.VALUE_CEILING, OpCode.VALUE_FLOOR):
             return self.range_blocks_target(self.event.get("die") or self.event.get("card"))
         operands = OPERANDS.get(opcode, ())
@@ -143,13 +146,13 @@ class Context:
             self.code_stream = previous
         return result
 
-    def execute_op(self, opcode, *, result_field="result"):
+    def execute_op(self, opcode, *, result_field="result", **fields):
         """Run one hooked operation and read a result field from its own event."""
         names = OPERANDS.get(opcode, ())
         if len(self.stack) < len(names):
             raise StackUnderflowError(f"{opcode.name} 参数不足")
         mark = len(self.stack) - len(names)
-        fields = dict(zip(names, self.stack[mark:]))
+        fields.update(zip(names, self.stack[mark:]))
         originating_entry = self.executions[-1] if self.executions else None
         if self._range_blocks_op(opcode, fields) or (
                 opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
@@ -194,10 +197,19 @@ class Context:
         elif opcode in (OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
             fields.setdefault("source", self.event.get("source") or fields["target"])
             fields["side"] = fields["source"].player.side
-        elif opcode == OpCode.DAMAGE:
+            if opcode == OpCode.LOSE_HP:
+                fields.update(damage_amount=None, hp_lost=None, result=None)
+        elif opcode in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE):
             if fields["target"] == "target":
                 fields["target"] = self.event.get("target")
-            fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
+            # Nested damage has its own measurements, even inside an AFTER DAMAGE listener.
+            fields.update(result=None, hp_lost=None)
+            if opcode == OpCode.DAMAGE:
+                fields.setdefault("damage_precomputed", False)
+                fields.update(base_amount=fields["amount"], damage_amount=None)
+                fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
+            else:
+                fields["damage_amount"] = fields["amount"]
         with self.binding(**fields) as event, self._pending(opcode):
             self.dispatch_opcode(opcode, "BEFORE")
             if self.current_op is None or (originating_entry is not None and originating_entry.cancelled):
@@ -208,6 +220,8 @@ class Context:
                 raise PipelineSystemError(f"未实现的操作码: {self.current_op}")
             executed_op = self.current_op
             result = handler(self)
+            if self.current_op is None:
+                return None
             event["result"] = result
             self.dispatch_opcode(executed_op, "AFTER")
             return event.get(result_field)
@@ -302,9 +316,11 @@ class Context:
                 actor = character_of(entry.owner) if key.startswith("owner") else event.get("target")
                 if actor is None or not hasattr(actor, "hp") or actor.hp > value:
                     return False
-            elif key in ("amount_at_least", "result_at_least"):
-                actual = event.get("amount" if key == "amount_at_least" else "result")
-                if key == "amount_at_least" and entry.trigger_type == TriggerType.OPCODE and entry.timing == "BEFORE":
+            elif key in ("amount_at_least", "result_at_least", "damage_amount_at_least", "hp_lost_at_least"):
+                actual = event.get(key.removesuffix("_at_least"))
+                pending_amount = key == "amount_at_least" or (key == "damage_amount_at_least"
+                                                             and entry.trigger == OpCode.RESOLVE_DAMAGE)
+                if pending_amount and entry.trigger_type == TriggerType.OPCODE and entry.timing == "BEFORE":
                     operands = OPERANDS.get(entry.trigger, ())
                     if "amount" in operands:
                         # Earlier listeners can replace a fixed price with "all" or vice versa.
@@ -330,7 +346,7 @@ class Context:
                     and event.get("player") is not None):
                 return getattr(character, "player", None) is event["player"]
             if entry.trigger_type == TriggerType.OPCODE and entry.trigger in (
-                    OpCode.DAMAGE, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.SHIELD,
+                    OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.SHIELD,
                     OpCode.DESTROY, OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
                 subject = "target"
             else:
@@ -391,6 +407,9 @@ class Context:
                 rng.shuffle(tied)
             for group in tied:
                 for entry in group:
+                    if trigger == OpCode.RESOLVE_DAMAGE and timing == "BEFORE":
+                        # Each listener sees the operand left by the preceding listener.
+                        self.event.update(amount=self.peek(0), damage_amount=self.peek(0))
                     if entry in self.entries and self._matches(entry):
                         self._invoke(entry)
 
@@ -548,17 +567,18 @@ class Context:
                 del self._lasting_entries[entry]
 
     def deal_damage(self, source, target, amount, penetration="normal", attack_type="none",
-                    damage_part=False, damage_cause=None, **fields):
-        if target is None or not target.is_alive:
+                    damage_part=False, damage_cause=None, *, result_field="result", modified=False, **fields):
+        """Return this damage part's resolved amount, or its HP loss with result_field="hp_lost"."""
+        if target is None or not target.is_alive or (self.executions and self.executions[-1].cancelled):
             return 0
         authority = self.executions[-1].entry.authority if self.executions else 0
         with self.binding(**{**fields, "source": source, "target": target,
                               "damage_part": damage_part, "damage_cause": damage_cause, "authority": authority}):
-            block = [target, amount, GRADES[penetration], attack_type, OpCode.DAMAGE]
-            return self.eval_block(block) or 0
+            self.stack.extend((target, amount, GRADES[penetration], attack_type))
+            return self.execute_op(OpCode.DAMAGE, result_field=result_field, damage_precomputed=modified) or 0
 
     def resolve_hit(self, die, target, **fields):
-        if not die.is_attack:
+        if not (die.is_attack or fields.get("simultaneous_solo") and die.is_passive):
             return
         card = die.card
         source = card.character
@@ -570,7 +590,8 @@ class Context:
         """Report whether the die landed, independently of HP lost to its damage parts."""
         card = die.card
         source = card.character
-        if not die.is_attack or not target.is_alive or not source.is_alive or die.destroyed or card.destroyed:
+        if (not (die.is_attack or self.event.get("simultaneous_solo") and die.is_passive)
+                or not target.is_alive or not source.is_alive or die.destroyed or card.destroyed):
             return False
         source.on_attack_hit(die, target)
         for text in die.entries or ():

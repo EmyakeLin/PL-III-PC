@@ -13,7 +13,7 @@ class CharacterRank(Enum):
 
 
 class SpeedDie:
-    """An unprinted d4 used only to determine initiative."""
+    """An unprinted die used only to determine initiative."""
     card = None
 
     def __init__(self, owner):
@@ -80,6 +80,13 @@ class Character:
     def max_duels(self):
         return max(0, self.base_duels(self.data) + self.turn_duel_bonus)
 
+    @property
+    def combat_name(self):
+        if self.game and any(c is not self and c.name == self.name
+                             for player in self.game.players for c in player.characters):
+            return f"{self.player.name}的{self.name}"
+        return self.name
+
     @staticmethod
     def base_duels(data):
         return data.get("base_max_duels", RANK_DUEL_MAP[CharacterRank[data["rank"]]])
@@ -97,9 +104,10 @@ class Character:
 
     def roll_speed(self):
         die = SpeedDie(self)
+        low, high = self.data.get("speed_die", (1, 4))
         with self.game.context.binding(roll_kind="speed"):
-            rolled = self.game.context.eval_block([1, 4, 0, die, OpCode.ROLL])
-        raw = min(4, max(1, die.value)) if rolled is not None else 0
+            rolled = self.game.context.eval_block([low, high, 0, die, OpCode.ROLL])
+        raw = min(high, max(low, die.value)) if rolled is not None else 0
         self.speed = raw + self.statuses.get("迅捷", 0) - self.statuses.get("束缚", 0)
         return self.speed
 
@@ -176,18 +184,13 @@ class Character:
     def damage_multiplier(self):
         return 2 if self.statuses.get("致命失衡", 0) else 1
 
-    def _status_damage(self, name, amount, penetration):
-        if self.game:
-            return self.game.context.deal_damage(self, self, amount, penetration, damage_cause=name)
-        return self.take_damage(amount, penetration)
-
     def on_duel_start(self):
         if self.is_alive and self.statuses.get("裂血", 0) >= 3:
-            self._status_damage("裂血", 1, "pierce")
+            self.take_damage(1, "pierce", damage_cause="裂血")
 
     def after_damage_part(self):
         if self.is_alive and self.bleed_burst:
-            self._status_damage("裂血爆发", 1, "pierce")
+            self.take_damage(1, "pierce", damage_cause="裂血爆发")
             self.add_status("裂血", -2)
 
     def on_attack_hit(self, die, target):
@@ -216,8 +219,8 @@ class Character:
             return
         burn = self.statuses.get("烧伤", 0) // 4
         if burn:
-            actual = self._status_damage("烧伤", min(3, burn), "normal")
-            if actual:
+            damage = self.take_damage(min(3, burn), damage_cause="烧伤")
+            if damage > 0:
                 self.add_status("烧伤", -burn - 2)
 
     def heal(self, amount):
@@ -232,15 +235,29 @@ class Character:
             return 0
         lost = min(self.hp, amount)
         self.hp -= lost
-        if not self.hp:
-            self._die()
+        self.check_death()
         return lost
 
-    def take_damage(self, amount, penetration="normal", attack_type="none", *, modified=False):
-        if not self.is_alive or amount <= 0:
+    def take_damage(self, amount, penetration="normal", attack_type="none", *,
+                    modified=False, damage_cause=None, result_field="result"):
+        """Resolve damage to this character. Request hp_lost for effects that require life loss."""
+        if result_field not in ("result", "hp_lost"):
+            raise ValueError(f"未知伤害结果字段 {result_field!r}")
+        if not self.is_alive:
             return 0
         grade = DAMAGE_GRADES[getattr(penetration, "name", str(penetration)).lower()]
-        incoming = max(0, int(amount if modified else amount * self.damage_multiplier()))
+        if self.game:
+            return self.game.context.deal_damage(self, self, amount, grade, attack_type,
+                                                 damage_cause=damage_cause, modified=modified,
+                                                 result_field=result_field)
+        damage = max(0, int(amount if modified else amount * self.damage_multiplier()))
+        hp_lost = self.apply_resolved_damage(damage, grade)
+        return hp_lost if result_field == "hp_lost" else damage
+
+    def apply_resolved_damage(self, incoming, grade):
+        """Settle a resolved damage amount against shields and return the HP lost to this hit."""
+        if not self.is_alive or incoming <= 0:
+            return 0
         remaining = incoming
         # A shield below the incident grade wears down even when it cannot absorb damage.
         if grade == "concept":
@@ -260,12 +277,19 @@ class Character:
             setattr(self, field, max(0, getattr(self, field) - incoming))
         lost = min(self.hp, remaining)
         self.hp -= lost
-        if lost and self.statuses.get("致命失衡") and "致命失衡" not in self.round_triggers:
-            self.add_status("致命失衡", -1)
+        if self.statuses.get("致命失衡") and "致命失衡" not in self.round_triggers:
             self.round_triggers.add("致命失衡")
-        if not self.hp:
-            self._die()
+            self.add_status("致命失衡", -1)
+        self.check_death()
         return lost
+
+    def check_death(self):
+        """At zero HP, allow death prevention before retiring cards and checking victory."""
+        if self.is_alive and self.hp == 0:
+            if self.game:
+                self.game.context.eval_block([self, OpCode.CHECK_DEATH])
+            else:
+                self._die()
 
     def _die(self):
         self.is_alive = False
@@ -276,12 +300,28 @@ class Character:
         self.player.retire_faction_passives(self)
         zones = self.player.cardspace
         removed = list(self.skills)
-        removed.extend(card for card in zones.hand.content if card.character is self)
-        for pile in (zones.draw, zones.delayed_discard):
-            removed.extend(pile.remove_character(self))
+        hand_changes = []
+        for player in self.game.players:
+            spaces = player.cardspace
+            hand = spaces.hand
+            before = len(hand.content)
+            taken = hand.remove_character(self, notify=False)
+            if taken:
+                hand_changes.append((hand, before, len(hand.content)))
+                removed.extend(taken)
+            for pile in (spaces.draw, spaces.delayed_discard):
+                removed.extend(pile.remove_character(self))
         for slot in self.game.board_slots():
-            removed.extend(slot.remove_character(self))
+            for card in slot.remove_character(self):
+                if card.character is not card.printed_owner:
+                    self.game.pipeline.withdraw_skill(slot, card)
+                removed.append(card)
         for card in dict.fromkeys(removed):
+            if card.printed_owner is not self:
+                card.return_to_printed_owner()
+                card.player.cardspace.draw.add_card(card)
+                continue
+            card.set_controller(self)
             card.destroyed = True
             self.game.context.unregister_entries(card)
             for die in card.instantiated_dice or ():
@@ -290,5 +330,7 @@ class Character:
                     self.game.context.unregister_entries(die)
             if card not in zones.out_of_combat.content:
                 zones.out_of_combat.add_card(card)
-        zones.hand.remove_character(self)
+        # Death relocates all affected cards as one change, including borrowed cards.
+        for hand, before, after in hand_changes:
+            hand._on_size_changed(before, after)
         self.game.check_game_over()

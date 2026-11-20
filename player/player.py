@@ -143,8 +143,12 @@ class Player:
             print(f"{player.name}（牌堆 {len(player.cardspace.draw.content)}，手牌 {len(player.cardspace.hand.content)}）：{status}")
         for number, slot in enumerate(game.duelspace.space, 1):
             own = "、".join(card.name for card in slot.content.get(self.side, ())) or "空"
-            opposing_count = len(slot.content.get(opposing.side, ()))
+            opposing_cards = slot.content.get(opposing.side, ())
+            opposing_count = len(opposing_cards)
             hidden = f"扣置 {opposing_count} 张" if opposing_count else "空"
+            public = [c.name for c in opposing_cards if c.state.name == "PLACED_FACE_UP"]
+            if public:
+                hidden = "、".join(public + ["扣置牌"] * (opposing_count - len(public)))
             print(f"交锋 {number}　己方 {own}　对方 {hidden}")
         for number, card in enumerate(hand, 1):
             char = card.character

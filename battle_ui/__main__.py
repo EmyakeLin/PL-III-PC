@@ -43,8 +43,8 @@ class BattleSession:
             if action == "new":
                 roster = request.get("roster")
                 if (not isinstance(roster, list) or len(roster) != 2
-                        or not all(isinstance(item, str) for item in roster) or roster[0] == roster[1]):
-                    raise ValueError("请为两位玩家选择不同的角色。")
+                        or not all(isinstance(item, str) for item in roster)):
+                    raise ValueError("请为两位玩家选择出战角色。")
                 self.match = BattleMatch(roster, seed=self.seed, initial_handoff=True)
                 frame = self.match.snapshot()
             else:

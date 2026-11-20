@@ -1,6 +1,7 @@
 """Translate JSON effect programs into blocks for the existing postfix VM."""
 
 from entry.entry import character_of
+from models.character import SHIELD_FIELDS
 from models.opcode import OpCode
 
 
@@ -15,6 +16,17 @@ def run_program(ctx, entry, tokens):
 
     def read(field):
         event = ctx.event
+        if field == "hp":
+            return actor.hp
+        if field == "speed_lead":
+            return actor.speed - next(other.speed for other in ctx.game.players if other is not player)
+        if field == "target_alive":
+            return bool(getattr(event.get("target"), "is_alive", False))
+        if field in ("in_duel", "duel_damage_taken"):
+            duel = ctx.game.resolving_duel
+            if field == "in_duel":
+                return duel is not None
+            return duel.damage_taken.get(actor, 0) if duel is not None else 0
         if field == "value_ref":
             return event["value_ref"]
         if field == "printed_level":
@@ -23,6 +35,12 @@ def run_program(ctx, entry, tokens):
             return event["die"].get_value()
         if field == "clash_score":
             return event["die"].clash_score
+        if field == "opponent_clash_score":
+            return event["opponent_die"].clash_score
+        if field in ("opponent_card", "opponent_die", "combat_window", "clash_difference", "prospective_result"):
+            return event.get(field)
+        if field in ("damage_amount", "base_amount", "hp_lost"):
+            return event.get(field)
         if field in ("card", "die", "target", "play_mode", "replaced_card"):
             return event.get(field)
         if field == "skill_target":
@@ -79,6 +97,10 @@ def run_program(ctx, entry, tokens):
         name, target = vm.pop(), vm.pop()
         vm.push(target.statuses.get(name, 0))
 
+    def shield_count(vm):
+        kind, target = vm.pop(), vm.pop()
+        vm.push(getattr(target, SHIELD_FIELDS[kind]))
+
     def spent_count(vm):
         name, card = vm.pop(), vm.pop()
         vm.push(card.use_state.get("spent_statuses", {}).get(name, 0))
@@ -109,6 +131,8 @@ def run_program(ctx, entry, tokens):
         vm.push(bool(vm.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full")))
 
     words = {
+        "TAKE_HAND_CARD": lambda vm: vm.push(vm.execute_op(OpCode.TAKE_HAND_CARD)),
+        "SHIELD_COUNT": shield_count,
         "STATUS_COUNT": status_count, "SPENT_STATUS_COUNT": spent_count,
         "SKILL_STATE": skill_state, "STORE": store_local, "SPEND_STATUS": spend,
         "SPEND_STATUS_IN_FULL": spend_in_full,

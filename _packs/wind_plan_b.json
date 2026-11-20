@@ -211,7 +211,7 @@
               "operation": {"op": "program", "code": [
                 "$owner", "gain_on_damage", "SKILL_STATE", ["$self", "涡流", 1, "STATUS"], "WHEN"
               ]},
-              "description": "本技能发动后，每次在本交锋实际受到伤害时获得1层涡流。"
+              "description": "本技能发动后，每次在本交锋受到伤害时获得1层涡流。"
             }
           ],
           "dice": [
