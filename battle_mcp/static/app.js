@@ -29,9 +29,12 @@ const eventFilters = {duel_kind: "duel-kind", duel_number: "duel", die_number: "
 const printed = new Map();
 let catalog = null;
 let catalogRequest = null;
+let roster = [];
 const records = new Map();
 let room = null;
 let writing = false;
+let disconnected = false;
+let clockOffset = Date.now() - performance.now();
 let guide = null;
 let ruleVersion = 0;
 
@@ -74,25 +77,41 @@ const titleOf = id => printed.get(id)?.name || id;
 async function api(method, body = {}) {
     const headers = {"Content-Type": "application/json"};
     if (token) headers.Authorization = "Bearer " + token;
-    const response = await fetch("/api/" + method, {
-        method: "POST", headers, body: JSON.stringify(body), cache: "no-store"
-    });
-    const data = await response.json();
-    if (!response.ok) {
-        const error = new Error(data.error || "房间请求失败。");
-        error.status = response.status;
+    const controller = new AbortController();
+    const deadline = setTimeout(() => controller.abort(), 18000);
+    try {
+        const response = await fetch("/api/" + method, {
+            method: "POST", headers, body: JSON.stringify(body), cache: "no-store", signal: controller.signal
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            const error = new Error(data.error || "房间请求失败。");
+            error.status = response.status;
+            throw error;
+        }
+        return data;
+    } catch (error) {
+        if (controller.signal.aborted) throw new TypeError("房间响应超时。");
         throw error;
-    }
-    return data;
+    } finally { clearTimeout(deadline); }
 }
 function notice(message) { setText(byId("notice"), message); }
+function connection(message) {
+    disconnected = Boolean(message);
+    const banner = byId("connection");
+    setText(banner, message);
+    banner.hidden = !disconnected;
+    if (room) updateControls();
+}
 
 function updateTeam(node, player) {
     node.dataset.side = player.side;
     const fighter = player.characters[0];
     const origin = [fighter.title, fighter.faction].filter(Boolean).join(" · ");
     const own = player.side === room.side ? " · 我方" : "";
-    setText(node.querySelector(".team-side"), seatName(player.side) + own);
+    const seatLabel = seatName(player.side) + own;
+    const readiness = room.ready_sides.includes(player.side) ? "已准备" : "待准备";
+    setText(node.querySelector(".team-side"), room.lobby ? seatLabel + " · " + readiness : seatLabel);
     setText(node.querySelector(".team-faction"), origin);
     setText(node.querySelector("h3"), fighter.name);
     setText(node.querySelector(".hp"), fighter.hp + " / " + fighter.max_hp);
@@ -133,7 +152,7 @@ function duelRow(node, item) {
     }
 }
 function updateClock(clock) {
-    const end = clock.dataset.to ? Number(clock.dataset.to) : Date.now();
+    const end = clock.dataset.to ? Number(clock.dataset.to) : clockOffset + performance.now();
     const seconds = Math.max(0, Math.floor((end - Number(clock.dataset.from)) / 1000));
     setText(clock, (clock.dataset.to ? "回应耗时 " : "已等 ") + seconds + " 秒");
 }
@@ -160,7 +179,8 @@ function updateBoard(frame) {
         setText(byId("clash"), battles[combat.kind] + " " + combat.duel_number + "　" + dice.join(" / "));
     }
     const owner = frame.players.find(player => player.side === room.side);
-    byId("hand-area").hidden = !owner;
+    byId("board-area").hidden = Boolean(room.lobby);
+    byId("hand-area").hidden = !owner || Boolean(room.lobby);
     const hand = owner?.hand || [];
     byId("empty-hand").hidden = !!hand.length;
     fillRows(byId("hand"), hand, card => card.id, card => {
@@ -193,15 +213,38 @@ function describePlan(plan) {
     if (plan.repeat) details.push("每次触发");
     return details.filter(Boolean).join(" · ");
 }
+function updateLobby(isReady, busy) {
+    const lobby = room.lobby;
+    const picking = Boolean(lobby && room.side);
+    byId("lobby").hidden = !picking;
+    if (!picking) return;
+    const selector = byId("fighter-pick");
+    const opponentPick = lobby.picks[3 - room.side];
+    fillRows(selector, lobby.characters, fighter => fighter.id, () => make("option"), (option, fighter) => {
+        const taken = fighter.id === opponentPick;
+        option.value = fighter.id;
+        option.disabled = taken;
+        setText(option, fighter.name + (taken ? "（对方已选）" : ""));
+    });
+    if (!writing) selector.value = lobby.picks[room.side];
+    selector.disabled = busy || isReady;
+    byId("lobby-ready").disabled = busy || isReady;
+    setText(byId("lobby-ready"), isReady ? "已准备" : "确认角色并准备");
+    const note = isReady ? "角色已锁定，等待另一席准备。" :
+        "双方各选一名不同角色。准备会锁定你的角色并预留常规置卡、进攻与迎击，特殊时机可在下方提前声明。";
+    setText(byId("lobby-note"), note);
+}
 function updateControls() {
     const ready = room.ready_sides || [];
     const mine = !!room.side, isReady = ready.includes(room.side);
     const options = room.options || [];
+    const busy = writing || disconnected;
+    updateLobby(isReady, busy);
     byId("station").hidden = !mine || room.finished;
     document.body.toggleAttribute("data-spectator", !mine || room.finished);
     byId("prepared").textContent = ready.length + " / 2 席准备";
-    byId("ready").hidden = isReady || room.started;
-    byId("ready").disabled = writing;
+    byId("ready").hidden = isReady || room.started || Boolean(room.lobby);
+    byId("ready").disabled = busy;
     setText(byId("prepare-note"), room.started ?
         "声明从登记后的新事件起生效。可以先登记下一次行动，再处理当前选择。" :
         isReady ? "已预留常规置卡、进攻与迎击，正在等对方准备。" :
@@ -212,22 +255,24 @@ function updateControls() {
         return node;
     }, (node, plan) => {
         setText(node.firstChild, describePlan(plan));
-        node.lastChild.disabled = writing;
+        node.lastChild.disabled = busy;
     });
     byId("decision").hidden = !options.length;
     setText(byId("decision-note"), room.event?.timing || "选择本次声明允许的行动。");
     fillRows(byId("options"), options, option => option.id, option =>
         button("", () => write("act", {option_id: option.id})), (node, option) => {
         setText(node, option.label || kinds[option.kind] || option.kind);
-        node.disabled = writing;
+        node.disabled = busy;
     });
-    byId("plan-form").querySelector("button").disabled = writing || room.finished;
+    byId("plan-form").querySelector("button").disabled = busy || room.finished;
 }
 function consume(data) {
     for (const event of data.events || []) if (event.text) records.set(event.id, event);
     const current = !room || data.revision >= room.revision;
     if (current) room = data;
     const frame = room.frame;
+    if (current && Number.isFinite(data.server_time_ms)) clockOffset = data.server_time_ms - performance.now();
+    syncRoster(frame.players);
     document.documentElement.dataset.side = room.side || "";
     const manualDesk = byId("manual-desk");
     if (room.side) manualDesk.href = "/desk" + location.hash;
@@ -251,16 +296,21 @@ function consume(data) {
     byId("empty-history").hidden = !!events.length;
 }
 async function write(method, fields) {
-    if (writing || !room?.side) return;
+    if (writing || disconnected || !room?.side) return;
     writing = true;
     updateControls();
-    const body = {...fields, revision: room.revision, request_id: crypto.randomUUID()};
     try {
+        // getRandomValues is also available over plain HTTP on the LAN.
+        const nonce = crypto.getRandomValues(new Uint32Array(4));
+        const body = {...fields, revision: room.revision, request_id: Array.from(nonce).join("-")};
         let data;
-        try { data = await api(method, body); }
-        catch (error) {
-            if (!(error instanceof TypeError)) throw error;
-            data = await api(method, body); // Reuse the key if the first reply was lost.
+        while (!data) {
+            try { data = await api(method, body); }
+            catch (error) {
+                if (!(error instanceof TypeError)) throw error;
+                notice("连接中断，正在核对刚才的操作。");
+                await pause(1500); // Retry the same request until the room acknowledges it.
+            }
         }
         consume(data);
         notice(method === "prepare" ? (fields.declaration.cancel ? "已撤销声明。" : "声明已登记。") : "");
@@ -301,6 +351,9 @@ byId("plan-form").addEventListener("submit", event => {
     write("prepare", {declaration});
 });
 byId("ready").addEventListener("click", () => write("ready", {}));
+byId("fighter-pick").addEventListener("change", event => write("select_character", {character_id: event.target.value}));
+byId("lobby-ready").addEventListener("click", () => write("ready", {}));
+byId("lobby-catalog").addEventListener("click", showCatalog);
 
 function bindCatalog() {
     const mine = catalog.players.find(player => player.side === room?.side);
@@ -311,18 +364,43 @@ function bindCatalog() {
     const targets = (enemy?.characters || []).map(actor => [actor.id, actor.name]);
     selectItems("target", targets, "任意");
 }
+function syncRoster(players) {
+    const picks = players.map(player => player.characters[0].id);
+    if (picks.length === roster.length && picks.every((id, index) => id === roster[index])) return;
+    if (room.side) {
+        const myIndex = room.side - 1;
+        const opponentIndex = 1 - myIndex;
+        if (picks[myIndex] !== roster[myIndex]) {
+            for (const id of ["card", "replace-card", "using-card"]) selectItems(id, [], "任意");
+        }
+        if (picks[opponentIndex] !== roster[opponentIndex]) selectItems("target", [], "任意");
+    }
+    roster = picks;
+    catalog = null;
+    catalogRequest = null;
+    printed.clear();
+    const dialog = byId("book");
+    if (dialog.open && dialog.dataset.rosterBound === "true") showCatalog();
+    else getCatalog().catch(error => notice(error.message));
+}
 async function getCatalog() {
     if (catalog) return catalog;
-    if (!catalogRequest) catalogRequest = api("rules", {topic: "catalog"});
-    try {
-        const data = await catalogRequest;
-        catalog = data.catalog;
-        for (const player of catalog.players) for (const actor of player.characters) {
-            for (const skill of actor.skills) printed.set(skill.id, skill);
-        }
-        bindCatalog();
-        return catalog;
-    } finally { catalogRequest = null; }
+    if (!catalogRequest) {
+        const requestedRoster = roster;
+        const request = api("rules", {topic: "catalog"}).then(data => {
+            if (requestedRoster !== roster) return getCatalog();
+            catalog = data.catalog;
+            for (const player of catalog.players) for (const actor of player.characters) {
+                for (const skill of actor.skills) printed.set(skill.id, skill);
+            }
+            bindCatalog();
+            return catalog;
+        }).finally(() => {
+            if (request === catalogRequest) catalogRequest = null;
+        });
+        catalogRequest = request;
+    }
+    return catalogRequest;
 }
 function showDialog() {
     const book = byId("book");
@@ -335,8 +413,9 @@ function page(title, content) {
     setText(byId("book-title"), title);
     byId("rule-content").replaceChildren(content);
 }
-function loading(title) {
+function loading(title, rosterBound = false) {
     const version = ++ruleVersion;
+    byId("book").dataset.rosterBound = String(rosterBound);
     navigation([]);
     page(title, make("p", "正在读取…"));
     showDialog();
@@ -367,7 +446,7 @@ async function showChapter(id) {
     } catch (error) { ruleError(version, error); }
 }
 async function showCatalog() {
-    const version = loading("出战图鉴");
+    const version = loading("出战图鉴", true);
     try {
         const book = await getCatalog();
         if (version !== ruleVersion) return;
@@ -394,7 +473,7 @@ async function showCatalog() {
     } catch (error) { ruleError(version, error); }
 }
 async function showCard(id) {
-    const version = loading("技能卡面");
+    const version = loading("技能卡面", true);
     try {
         await getCatalog();
         if (version !== ruleVersion) return;
@@ -420,26 +499,26 @@ byId("close").addEventListener("click", () => byId("book").close());
 byId("book").addEventListener("close", () => { ++ruleVersion; });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function followRoom() {
-    let reconnecting = false;
+    // A write receipt can arrive before the outstanding poll. Only the polling
+    // stream has received every event up to this cursor.
+    let cursor = 0;
     while (true) {
         try {
             // Players also watch public changes while they have no decision to make.
             // A long wait can finish with just a timeout receipt, without a frame.
-            const cursor = room?.cursor || 0;
-            let data = room ? await api("wait", {cursor, timeout: 5}) : await api("observe", {cursor});
+            let data = room ? await api("follow", {cursor, timeout: 5}) : await api("observe", {cursor});
             if (data.timeout) data = await api("observe", {cursor});
             consume(data);
-            if (reconnecting) notice("");
-            reconnecting = false;
+            cursor = data.cursor;
+            if (disconnected) connection("");
             if (!catalog && !catalogRequest) getCatalog().catch(error => notice(error.message));
-            if (room.finished) return;
+            if (room.finished && cursor >= room.cursor) return;
         } catch (error) {
             if (error.status === 401 || error.status === 403) {
-                notice("席位凭据无效，请打开房主提供的完整席位链接。");
+                connection("邀请已失效，请打开房主提供的本场链接。");
                 return;
             }
-            reconnecting = true;
-            notice("正在重新连接房间。 " + error.message);
+            connection("正在重新连接房间。恢复后会同步最新战况，你也可以用原邀请重新加入。");
             await pause(1500);
         }
     }

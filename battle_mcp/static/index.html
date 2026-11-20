@@ -17,10 +17,22 @@
   <main class="wrap">
     <div class="line round"><h2 id="round">对战房间</h2><span id="phase"></span></div>
     <div id="teams" class="teams" aria-label="双方战况"></div>
+    <p id="connection" role="status" hidden></p>
     <p id="notice" role="status" aria-live="polite"></p>
+    <section id="lobby" aria-labelledby="lobby-title" hidden>
+      <h2 id="lobby-title">我的出战角色</h2>
+      <div class="lobby-row">
+        <label for="fighter-pick">选择角色<select id="fighter-pick"></select></label>
+        <div class="toolbar">
+          <button id="lobby-catalog" type="button">查看双方技能</button>
+          <button id="lobby-ready" class="primary" type="button">确认角色并准备</button>
+        </div>
+      </div>
+      <p id="lobby-note" class="muted"></p>
+    </section>
     <div class="columns">
       <div class="board">
-        <section><h2>交锋区</h2>
+        <section id="board-area"><h2>交锋区</h2>
           <p id="clash" class="clash" hidden></p>
           <ul id="duels" class="rows"></ul><p id="empty-board" class="muted">尚未置卡</p>
         </section>

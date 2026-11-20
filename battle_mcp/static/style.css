@@ -69,6 +69,11 @@ summary { cursor: pointer; padding-block: 7px; color: var(--accent); }
 .history { max-height: 21rem; overflow: auto; font-size: 14px; }
 .clash { padding: 9px 12px; background: var(--wash); margin-bottom: 6px; font-size: 14px; }
 #notice { padding-block: 7px; color: var(--red); font-size: 14px; overflow-wrap: anywhere; }
+#connection { margin-top: var(--gap); padding: 8px var(--pad); background: var(--wash); color: var(--ink); }
+#lobby { margin-bottom: var(--gap); }
+.lobby-row { display: flex; align-items: end; flex-wrap: wrap; gap: 12px var(--gap); }
+.lobby-row label { flex: 1 1 14rem; min-width: 0; }
+#lobby-note { margin-top: 8px; }
 #decision { border-top: 3px solid var(--accent); }
 #decision-note { margin-bottom: 8px; font-size: 14px; }
 #plans button { min-height: 34px; padding: 3px 8px; margin-left: auto; }

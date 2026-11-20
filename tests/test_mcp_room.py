@@ -3,6 +3,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from threading import Thread
 
 from battle_mcp.room import Room, RoomConflict
@@ -39,6 +40,36 @@ class RoomTests(unittest.TestCase):
         self.act(2, "place", card_id=right_skill)
         self.act(2, "end")
         self.act(1, "end")
+
+    def test_concurrent_character_selection_preserves_ready_and_private_plans(self):
+        self.room = Room(("ember_wen_sheng", "plan_b_annolin"), 1125, selectable=True)
+        self.addCleanup(self.room.close)
+        self.prepare(1, "scores_ready", match={"kind": "special_replace"})
+        revisions = [self.room.observe(s)["revision"] for s in (1, 2)]
+
+        def pick(side):
+            try:
+                self.room.select_character(side, "waa_lake", revisions[side - 1], "pick")
+            except RoomConflict:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(pick, (1, 2)))
+        self.assertCountEqual(results, (True, False))
+        winner = results.index(True) + 1
+        self.assertEqual(self.room.observe(None)["lobby"]["picks"][winner], "waa_lake")
+        self.command(winner, "ready")
+        self.command(3 - winner, "select_character", character_id="mistport_cen_yao")
+        own = self.room.observe(1)
+        self.assertEqual(own["ready_sides"], [winner])
+        self.assertEqual(len(own["declarations"]), 1)
+        self.assertFalse(self.room.observe(2)["declarations"])
+        self.assertFalse(own["started"])
+        roster = self.room.rules("catalog")["catalog"]["players"]
+        self.assertEqual(roster[winner - 1]["characters"][0]["id"], "waa_lake")
+        self.command(3 - winner, "ready")
+        self.assertNotIn("lobby", self.room.observe(None))
 
     def test_pregame_reading_quotes_the_rulebook_and_public_printed_cards(self):
         self.create()

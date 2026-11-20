@@ -1,4 +1,4 @@
-"""A local, fixed-seat HTTP server with a stateless Streamable HTTP MCP endpoint."""
+"""One private invitation per seat, shared by the browser and Streamable HTTP MCP."""
 
 import json
 import secrets
@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 from .decision_view import decision_view
 from .declarations import EVENTS, KINDS
 from .manual import ManualDesk
+from .network import allowed_origins, http_origin, https_origin, ipv4_address
 
 
 VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -74,6 +75,8 @@ TOOLS = [
 ]
 BY_NAME = {item["name"]: item for item in TOOLS}
 READ_ONLY = {"rules", "observe", "wait"}
+SELECT_CHARACTER = object_schema({"character_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
+                                 ("character_id", "revision", "request_id"))
 
 
 class RequestError(ValueError):
@@ -83,8 +86,7 @@ class RequestError(ValueError):
         self.rpc_code = rpc_code
 
 
-def check_arguments(name, arguments):
-    schema = BY_NAME[name]["inputSchema"]
+def check_arguments(schema, arguments):
     if not isinstance(arguments, dict) or set(arguments) - schema["properties"].keys():
         raise RequestError(400, "工具参数包含未知字段。", -32602)
     if not set(schema["required"]) <= arguments.keys():
@@ -92,7 +94,7 @@ def check_arguments(name, arguments):
     for key, value in arguments.items():
         if key in ("revision", "cursor") and (type(value) is not int or value < 0):
             raise RequestError(400, f"{key} 必须是非负整数。", -32602)
-        if key in ("topic", "option_id", "request_id") and (
+        if key in ("topic", "option_id", "character_id", "request_id") and (
                 not isinstance(value, str) or not 0 < len(value) <= (128 if key == "request_id" else 1024)):
             raise RequestError(400, f"{key} 必须是有效文字。", -32602)
         if key == "timeout" and (type(value) not in (int, float) or not 0 <= value <= 60):
@@ -104,12 +106,16 @@ def check_arguments(name, arguments):
 class ArenaServer(ThreadingHTTPServer):
     """One engine and two independent seat credentials per listening socket."""
 
-    def __init__(self, room, port=8766):
+    def __init__(self, room, port=8766, *, address="127.0.0.1", public_url=None):
+        address = ipv4_address(address)
+        external = https_origin(public_url) if public_url is not None else None
         self.room = room
         self.tokens = {seat: secrets.token_urlsafe(32) for seat in (1, 2)}
         self.desk = ManualDesk(room)
         self.desk_token = secrets.token_urlsafe(32)
-        super().__init__(("127.0.0.1", port), ArenaHandler)
+        super().__init__((address, port), ArenaHandler)
+        self.invite_url = external or http_origin(address, self.server_port)
+        self.allowed_origins = allowed_origins(address, self.server_port, external)
 
     def server_close(self):
         self.room.close()
@@ -153,7 +159,7 @@ class ArenaServer(ThreadingHTTPServer):
             raise RequestError(404, "未知工具。", -32602)
         if side is None and name not in READ_ONLY:
             raise RequestError(403, "观众只能查看公开对局。")
-        check_arguments(name, arguments)
+        check_arguments(BY_NAME[name]["inputSchema"], arguments)
         if name == "rules":
             return self.room.rules(**arguments)
         return getattr(self.room, name)(side, **arguments)
@@ -197,14 +203,14 @@ class ArenaHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
     def _check_origin(self):
-        port = self.server.server_port
-        hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
-        if port == 80:
-            hosts.update(("localhost", "127.0.0.1"))
-        host = self.headers.get("Host", "").lower()
-        origin = self.headers.get("Origin")
-        if host not in hosts or (origin is not None and origin != f"http://{host}"):
-            raise RequestError(403, "请从本机房间访问。")
+        hosts = self.headers.get_all("Host", [])
+        origins = self.headers.get_all("Origin", [])
+        if len(hosts) == 1 and len(origins) <= 1:
+            host = hosts[0].lower()
+            if any(host == authority and (not origins or origins[0] == origin)
+                   for authority, origin in self.server.allowed_origins):
+                return
+        raise RequestError(403, "请从房间公布的地址访问。")
 
     def _content_length(self):
         try:
@@ -316,6 +322,16 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 value = self.server.desk_command(path.removeprefix("/api/desk/"), seats, self._json_body())
                 return self._send(200, value)
             side = self.server.side_for(authorization)
+            if path == "/api/follow":
+                args = self._json_body()
+                check_arguments(BY_NAME["wait"]["inputSchema"], args)
+                return self._send(200, self.server.room.wait(side, **args, visible_updates=True))
+            if path == "/api/select_character":
+                if side is None:
+                    raise RequestError(403, "请使用自己的席位邀请选择角色。")
+                args = self._json_body()
+                check_arguments(SELECT_CHARACTER, args)
+                return self._send(200, self.server.room.select_character(side, **args))
             if path == "/mcp":
                 version = self.headers.get("MCP-Protocol-Version", "2025-03-26")
                 if version not in VERSIONS:

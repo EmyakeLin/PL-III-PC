@@ -144,7 +144,7 @@
 | 备用复制 | `copyDialog`, `dialogStation`, `dialogPacket`, `field`, `allSelected` | 用户主动打开的对话框、目标席位、当前选中提示、只读文本域和是否完整选中；关闭时清除文本域。 |
 | 公开状态 | `single`, `deciding`, `preparing`, `phase`, `label`, `guide`, `playerLink`, `manualDesk`, `pending`, `list`, `kept`, `duel`, `item`, `number`, `hasTime`, `elapsed`, `waiting`, `summary` | 邀请可访问席数、当前决定与准备信息、回合状态、操作说明、单席战场与搬运台链接、待迎击编号及对应的已渲染行；由声明时间推得的等待秒数及文案。 |
 
-## 本地对战房间
+## 独立席位对战房间
 
 `battle_mcp/static` 的席位由私人链接决定。匿名链接共用同一块交锋区。下面的变量作用于独立房间页面。
 
@@ -152,7 +152,10 @@
 |---|---|---|
 | style.css 纸面与文字 | `--paper`, `--sheet`, `--ink`, `--muted`, `--line`, `--green`, `--red`, `--accent`, `--wash`, `--stripe` | 页面、卡面、主次文字、分隔线、两席颜色、操作强调色及浅底。队伍条纹由该队席位决定。 |
 | style.css 排版 | `--serif`, `--sans`, `--gutter`, `--pad`, `--gap`, `--tap`, `--fast` | 标题与正文字体；自适应横向页边距和卡内边距、区块间距、控件最小高度（px）、按钮状态过渡时长（ms）。 |
-| app.js 席位状态 | `token`, `room`, `writing`, `records`, `current`, `reconnecting`, `ready`, `mine`, `isReady`, `options` | 当前链接片段中的私席凭据、最新投影、写入锁、按游标合并的本席事件、快照新旧判断、断线重连标记、已就绪席位、参赛身份、己方准备状态及已预留的合法动作。 |
+| app.js 席位状态 | `token`, `room`, `writing`, `records`, `current`, `disconnected`, `ready`, `mine`, `isReady`, `options` | 当前链接片段中的私席凭据、最新投影、写入锁、按编号合并的本席事件、快照新旧判断、等待网络恢复的标记、已就绪席位、参赛身份、己方准备状态及已预留的合法动作。 |
+| 联机选人 | `lobby`, `picking`, `selector`, `opponentPick`, `taken`, `busy`, `note`, `seatLabel`, `readiness` | 赛前阵容与候选名单、本席可见的选人区、角色选择框、另一席的已选角色、选项已被占用、动作等待回执或网络恢复、准备语义说明，以及双席对照卡的身份与准备文字。 |
+| 阵容图鉴 | `roster`, `picks`, `myIndex`, `opponentIndex`, `requestedRoster`, `request`, `dialog`, `rosterBound` | 画面已接收的角色 ID 列表、本帧按席位排序的列表、双方对应的数组索引、发起图鉴请求时的阵容及该次请求、已打开的规则对话框和内容是否依赖出战阵容。 |
+| 跨设备同步 | `clockOffset`, `controller`, `deadline`, `banner`, `cursor`, `nonce` | 房主时间戳与本地单调时钟的毫秒差，用于计算等待时长；单次 HTTP 请求的中止对象与超时计时器；显示重连进度的区域；长轮询已完整接收的席位事件编号；一次玩家操作的随机标识，丢失回执时沿用。 |
 | 标签与控件 | `kinds`, `triggers`, `phaseNames`, `battles`, `scores`, `dieNames`, `results`, `actionFilters`, `eventFilters`, `actionKinds` | 动作、触发、阶段、交锋类别、比较关系、骰种、结果的显示名；动作和事件字段到表单的对应及可登记的动作列表。 |
 | 提前声明 | `plan`, `match`, `when`, `execute`, `trigger`, `timer`, `declaration`, `details`, `actors`, `fields`, `mapping`, `key`, `id`, `input`, `value` | 一条事前准备及其动作范围、时点条件、执行方式、触发种类、计时标记，提交负载、供确认的条件说明和候选角色。表单映射负责提取值，席位与编号按整数提交。 |
 | 队伍、交锋与手牌 | `side`, `player`, `fighter`, `origin`, `own`, `bar`, `stats`, `shields`, `statuses`, `statusNode`, `n`, `frame`, `sets`, `duels`, `slots`, `slot`, `cards`, `names`, `target`, `kind`, `combat`, `showClash`, `dice`, `die`, `result`, `owner`, `hand`, `outcome`, `phase` | 席位与角色公开字段、头衔、己方标识、生命条、费用与资源等；按交锋类型组织槽、牌与目标；当前掷骰或拼点结果、该席可见手牌与回合结论。 |

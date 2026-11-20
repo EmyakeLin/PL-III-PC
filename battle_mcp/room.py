@@ -53,8 +53,11 @@ def move_id(side, move):
 
 
 class Room:
-    def __init__(self, roster=None, seed=None):
+    def __init__(self, roster=None, seed=None, *, selectable=False):
         self.engine = ArenaEngine(roster, seed=seed)
+        self._seed = seed
+        self._lobby_picks = ({p.side: p.characters[0].id for p in self.engine.game.players}
+                             if selectable else None)
         self.cv = threading.Condition()
         self.seated = set()
         self._plans = {s: {} for s in SEATS}
@@ -121,11 +124,16 @@ class Room:
             if type(cursor) is not int or not 0 <= cursor <= len(log):
                 raise ValueError("cursor 不在本席位的事件范围内。")
             frame = short_frame(self.engine.state(side))
-            return dict(side=side, started=len(self.seated) == 2, ready_sides=sorted(self.seated),
+            view = dict(side=side, started=len(self.seated) == 2, ready_sides=sorted(self.seated),
                         finished=self.engine.game_over, winner_side=frame.get("winner_side"),
                         revision=self._revision[side], cursor=len(log), events=log[cursor:],
+                        server_time_ms=time.time_ns() // 1_000_000,
                         frame=frame, event=dict(self.engine.event), options=self._options(side),
                         declarations=[dict(p, id=key) for key, p in self._plans.get(side, {}).items()])
+            if self._lobby_picks is not None and not view["started"]:
+                view["lobby"] = {"characters": [dict(c) for c in self.engine.choices],
+                                 "picks": self._lobby_picks.copy()}
+            return view
 
     def _command(self, side, revision, request_id, operation, argument, run):
         self._seat(side)
@@ -153,6 +161,23 @@ class Room:
             run()
             receipts[request_id] = signature
             return self.observe(side, cursor)
+
+    def select_character(self, side, character_id, revision, request_id):
+        def commit():
+            if self._lobby_picks is None or side in self.seated:
+                raise ValueError("本席当前无法更换出战角色。")
+            picked = self._lobby_picks
+            if character_id == picked[3 - side]:
+                raise ValueError("对方已选择这名角色。")
+            character = next((c for c in self.engine.choices if c["id"] == character_id), None)
+            if character is None:
+                raise ValueError("出战角色不在本房间的卡包中。")
+            if character_id != picked[side]:
+                roster = {**picked, side: character_id}
+                self.engine = ArenaEngine([roster[s] for s in SEATS], seed=self._seed)
+                self._lobby_picks = roster
+                self._note("select_character", f"席位 {side} 选择了{character['name']}。", wake=SEATS)
+        return self._command(side, revision, request_id, "select_character", character_id, commit)
 
     def ready(self, side, revision, request_id):
         def commit():
@@ -431,7 +456,7 @@ class Room:
             automatic = self._consider({"kind": "timer", "turn": turn}, {}, timer_plan=(side, key))
             self._drive(process=False, initial_auto=[(s, m, self._window()) for s, m in automatic])
 
-    def wait(self, side, cursor, timeout=None):
+    def wait(self, side, cursor, timeout=None, *, visible_updates=False):
         with self.cv:
             if side is not None:
                 self._seat(side)
@@ -439,8 +464,11 @@ class Room:
                 raise ValueError("无效的事件游标。")
             if timeout is not None and (type(timeout) not in (int, float) or not 0 <= timeout <= 60):
                 raise ValueError("timeout 应为 0 至 60 秒。")
-            changed = self.cv.wait_for(lambda: self._wake[side] > cursor or self.engine.game_over
-                                       or self._closed, timeout=timeout)
+            def changed_since_cursor():
+                latest = len(self._journal[side]) if visible_updates else self._wake[side]
+                return latest > cursor or self.engine.game_over or self._closed
+
+            changed = self.cv.wait_for(changed_since_cursor, timeout=timeout)
             if not changed:
                 return dict(side=side, cursor=cursor, timeout=True)
             return self.observe(side, cursor)
