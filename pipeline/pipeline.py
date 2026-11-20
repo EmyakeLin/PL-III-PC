@@ -72,6 +72,7 @@ class CombatFrame:
 class Pipeline:
     def __init__(self, game=None, step_list=None):
         self.game = game
+        self.pause_on_clash_scores = False
         self.step_list = [node.bind(game) for node in (step_list or ())]
         self.current_step_index = -1
         self.is_finished = False
@@ -447,6 +448,11 @@ class Pipeline:
             with self.game.context.binding(duel=self._get_current_duel(), round_id=self.round_id,
                                            participants=actors):
                 results = self.game.context.eval_block([self.current_clash_pair, OpCode.CLASH])
+            if (self.pause_on_clash_scores and results and not self.game.is_over
+                    and all(self._die_live(p) and p.die.clash_score is not None for p in live)):
+                # Scores have settled. Leave the result branches uncommitted until
+                # the next step; a replacement during this window withdraws its die.
+                yield tuple("clash_scores_ready" for _ in self.game.players)
             live = [p for p in participants if self._die_live(p)]
         if len(live) == 1:
             # A formed pair lost its die before a result. The vanished side has

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#f5f2ea">
+  <title>光点计划 III · 对战房间</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="mast"><div class="wrap line">
+    <h1>光点计划 <small>III</small></h1>
+    <div class="toolbar"><span id="seat" class="seat">连接中</span><a id="manual-desk" hidden>复制对战台</a><button id="rules" type="button">查规则</button></div>
+  </div></header>
+  <main class="wrap">
+    <div class="line round"><h2 id="round">对战房间</h2><span id="phase"></span></div>
+    <div id="teams" class="teams" aria-label="双方战况"></div>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <div class="columns">
+      <div class="board">
+        <section><h2>交锋区</h2>
+          <p id="clash" class="clash" hidden></p>
+          <ul id="duels" class="rows"></ul><p id="empty-board" class="muted">尚未置卡</p>
+        </section>
+        <section id="hand-area" hidden><h2>我的手牌</h2><ul id="hand" class="cards"></ul><p id="empty-hand" class="muted" hidden>手中无牌</p></section>
+        <section><h2>战况记录</h2><ol id="history" class="history"></ol><p id="empty-history" class="muted">等待对局开始</p></section>
+      </div>
+      <aside id="station" hidden>
+        <section id="decision" hidden><div class="line"><h2>轮到你决定</h2></div>
+          <p id="decision-note"></p><div id="options" class="choices"></div>
+        </section>
+        <section id="preparation"><div class="line"><h2>提前声明</h2><span id="prepared" class="muted"></span></div>
+          <p id="prepare-note">先登记想操作的时机，再准备就绪。</p>
+          <ul id="plans" class="rows"></ul>
+          <form id="plan-form">
+            <label>触发时机<select id="event" required></select></label>
+            <label>到点后<select id="mode"><option value="reserve">留给我决定</option><option value="execute">自动执行动作</option></select></label>
+            <label>准备行动<select id="action-kind"></select></label>
+            <p id="auto-note" class="muted" hidden>只有一个合法动作符合条件时自动执行；有多个时，请你现场选择。</p>
+            <label id="timer-field" hidden>自该场进攻声明起等待的毫秒数<input id="delay" type="number" min="1" max="2147483647" step="1" value="3000"></label>
+            <details id="filters"><summary>限定牌、目标或触发条件</summary>
+              <div class="fields">
+                <label>使用的技能<select id="card"><option value="">任意</option></select></label>
+                <label>换下的技能<select id="replace-card"><option value="">任意</option></select></label>
+                <label>进攻目标角色<select id="target"><option value="">任意</option></select></label>
+                <label>置入或进攻的常规编号<input id="target-duel" type="number" min="1" step="1" placeholder="任意"></label>
+                <label>迎击或放行的编号<input id="response" type="number" min="1" step="1" placeholder="任意"></label>
+                <label>触发所在交锋<select id="duel-kind"><option value="">任意</option><option value="regular">常规</option><option value="pre_reveal">开牌前</option><option value="instant">即时</option></select></label>
+                <label>触发所在编号<input id="duel" type="number" min="1" step="1" placeholder="任意"></label>
+                <label>己方正在用的技能<select id="using-card"><option value="">任意</option></select></label>
+                <label>己方第几骰<input id="die" type="number" min="1" step="1" placeholder="任意"></label>
+                <label>点数条件<select id="score"><option value="">不限</option><option value="lt">己方低于对方</option><option value="eq">双方相同</option><option value="gt">己方高于对方</option></select></label>
+                <label>仍待迎击的编号<input id="pending" type="number" min="1" step="1" placeholder="任意"></label>
+                <label>第几回合<input id="turn" type="number" min="1" step="1" placeholder="任意"></label>
+                <label>指定管线时点<input id="timing" placeholder="如 on_dice_hit"></label>
+                <label>观察哪一方的行动<select id="actor"><option value="">任意</option><option value="1">席位一</option><option value="2">席位二</option></select></label>
+                <label>观察到的行动<select id="observed-kind"></select></label>
+                <label>触发次数<select id="repeat"><option value="">一次</option><option value="yes">每次</option></select></label>
+              </div>
+            </details>
+            <button class="add" type="submit">登记声明</button>
+          </form>
+          <button id="ready" class="primary" type="button">预留常规决策并准备</button>
+        </section>
+      </aside>
+    </div>
+    <noscript>请启用 JavaScript 以查看对局。</noscript>
+  </main>
+  <dialog id="book" aria-labelledby="book-title"><div class="line"><h2 id="book-title">规则与卡面</h2><button id="close" type="button">关闭</button></div>
+    <div id="rule-topics" class="toolbar"></div><article id="rule-content"></article>
+  </dialog>
+  <template id="team-template"><article class="team">
+    <div class="line"><span class="team-side"></span><span class="team-faction"></span></div>
+    <div class="line"><h3></h3><span class="hp"></span></div>
+    <progress aria-label="剩余生命" max="1" value="0"></progress>
+    <p class="team-stats"></p><p class="statuses" hidden></p>
+  </article></template>
+</body>
+</html>

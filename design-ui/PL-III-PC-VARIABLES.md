@@ -129,3 +129,34 @@
 | 特殊行动选择 | `special_options`, `move`, `index`, `select`, `option`, `chosen`, `available` | 当前接手方可执行的动作及其目标、本次遍历的动作和下标、选择框和各项、所选手牌是否已有默认项、是否至少有一项可执行。下标与本次快照版本共同提交。 |
 | 迎击许可 | `canAttackInField`, `card.interceptable`, `card.instant_interceptable`, `slot.interceptable` | 技能是否允许场内主动进攻、牌面在开牌前及独立场内进攻时的迎击许可、本场声明时已确定的许可。牌面说明分别列出两个场合，交锋列表依声明时的许可区分直接就绪和放行。 |
 | 即时交锋与牌面 | `special_duels`, `instant`, `anytime_play`, `anytime_replace`, `plays` | 已公开的即时交锋、该行是否为即时交锋、手牌可随时打出的方式、是否可随时换入、各打出方式的显示名称。 |
+
+## 复制对战台
+
+搬运者为每个模型保留一份独立回复草稿。席位更新只替换状态文字。剪贴板由整个页面共享，当前复制结束后另一席才可开始复制。两席可以各自提交回复。
+
+| 文件与作用域 | 变量 | 含义与依赖 |
+|---|---|---|
+| desk.css | `--pane-gap`, `--row-gap`, `--seat-ink` | 适应屏宽的两席面板间距（px）、同一份提示内的操作间距（px）、由席位决定的强调色。字号、纸色、边框和按钮高度复用房间样式。 |
+| desk.js 房间 | `token`, `stations`, `pollInterval`, `refreshNumber`, `requestNumber`, `clipboardOwner` | 链接片段中的邀请、席位编号到常驻面板的表、公开状态拉取间隔（ms）、最后发起的状态查询及本次查询序号、当前正在获取并写入系统剪贴板的席位。 |
+| 视图绑定 | `byId`, `id`, `part`, `selector`, `side`, `seat`, `station`, `room`, `root`, `fighter`, `state`, `intro`, `turn`, `packetTools`, `recopy`, `show`, `note`, `reply`, `submit`, `receipt` | 选择器与节点查找、席位及房间状态、常驻面板、角色名与状态、两种导出入口、复印与备用文本控件、复制反馈、该席模型回复及提交回执。 |
+| 传递状态 | `busy`, `copyPromise`, `copyDisabled`, `cursor`, `revision`, `finished`, `packet`, `packetMessage`, `packetError`, `expired`, `warning` | 该席是否在提交、尚未结束的复制请求、复制入口能否操作、上次成功复制的事件游标、已知最新席位版本、终局标记、最近一份待送模型的提示及其反馈，局面版本变化时的提示。 |
+| 操作及网络 | `method`, `body`, `headers`, `response`, `detail`, `data`, `error`, `event`, `args`, `kind`, `turnLabel`, `result`, `message`, `keepNewerPacket`, `hint`, `denied`, `node` | 房间操作名、参数、凭据头、HTTP 回执、失败原因、表单或复制事件、导出种类及文案、提交成功消息、重复提交时是否保留更新的一份提示、重试说明、权限失效及反馈节点。 |
+| 备用复制 | `copyDialog`, `dialogStation`, `dialogPacket`, `field`, `allSelected` | 用户主动打开的对话框、目标席位、当前选中提示、只读文本域和是否完整选中；关闭时清除文本域。 |
+| 公开状态 | `single`, `deciding`, `preparing`, `phase`, `label`, `guide`, `playerLink`, `manualDesk`, `pending`, `list`, `kept`, `duel`, `item`, `number`, `hasTime`, `elapsed`, `waiting`, `summary` | 邀请可访问席数、当前决定与准备信息、回合状态、操作说明、单席战场与搬运台链接、待迎击编号及对应的已渲染行；由声明时间推得的等待秒数及文案。 |
+
+## 本地对战房间
+
+`battle_mcp/static` 的席位由私人链接决定。匿名链接共用同一块交锋区。下面的变量作用于独立房间页面。
+
+| 文件与作用域 | 变量 | 用途 |
+|---|---|---|
+| style.css 纸面与文字 | `--paper`, `--sheet`, `--ink`, `--muted`, `--line`, `--green`, `--red`, `--accent`, `--wash`, `--stripe` | 页面、卡面、主次文字、分隔线、两席颜色、操作强调色及浅底。队伍条纹由该队席位决定。 |
+| style.css 排版 | `--serif`, `--sans`, `--gutter`, `--pad`, `--gap`, `--tap`, `--fast` | 标题与正文字体；自适应横向页边距和卡内边距、区块间距、控件最小高度（px）、按钮状态过渡时长（ms）。 |
+| app.js 席位状态 | `token`, `room`, `writing`, `records`, `current`, `reconnecting`, `ready`, `mine`, `isReady`, `options` | 当前链接片段中的私席凭据、最新投影、写入锁、按游标合并的本席事件、快照新旧判断、断线重连标记、已就绪席位、参赛身份、己方准备状态及已预留的合法动作。 |
+| 标签与控件 | `kinds`, `triggers`, `phaseNames`, `battles`, `scores`, `dieNames`, `results`, `actionFilters`, `eventFilters`, `actionKinds` | 动作、触发、阶段、交锋类别、比较关系、骰种、结果的显示名；动作和事件字段到表单的对应及可登记的动作列表。 |
+| 提前声明 | `plan`, `match`, `when`, `execute`, `trigger`, `timer`, `declaration`, `details`, `actors`, `fields`, `mapping`, `key`, `id`, `input`, `value` | 一条事前准备及其动作范围、时点条件、执行方式、触发种类、计时标记，提交负载、供确认的条件说明和候选角色。表单映射负责提取值，席位与编号按整数提交。 |
+| 队伍、交锋与手牌 | `side`, `player`, `fighter`, `origin`, `own`, `bar`, `stats`, `shields`, `statuses`, `statusNode`, `n`, `frame`, `sets`, `duels`, `slots`, `slot`, `cards`, `names`, `target`, `kind`, `combat`, `showClash`, `dice`, `die`, `result`, `owner`, `hand`, `outcome`, `phase` | 席位与角色公开字段、头衔、己方标识、生命条、费用与资源等；按交锋类型组织槽、牌与目标；当前掷骰或拼点结果、该席可见手牌与回合结论。 |
+| 公开回应计时 | `timing`, `clock`, `end`, `seconds`, `from`, `to` | 声明计时记录、对应 time 元素、服务器给出的起止毫秒（未回应时按当前时间）、累计的整秒。 |
+| 列表与节点 | `tag`, `label`, `node`, `list`, `items`, `item`, `index`, `identity`, `remaining`, `create`, `update`, `invoke`, `first`, `saved`, `field`, `option`, `events`, `a`, `b` | 元素标签、内容和节点；带键列表保留同一实例及焦点；创建、更新、点击回调；下拉首项及选中值、可选动作和按 ID 排序的记录。 |
+| 网络与只读规则 | `method`, `headers`, `body`, `response`, `data`, `error`, `message`, `ms`, `resolve`, `topic`, `guide`, `topics`, `catalog`, `catalogRequest`, `printed`, `ruleVersion`, `version`, `book`, `chapter`, `title`, `content` | 请求方法、席位请求头、含幂等键的操作、响应及重试；重连延迟毫秒及回调；章节索引、印刷图鉴、共享的加载请求、按牌 ID 检索的印刷牌面和浮层代次。 |
+| 图鉴内容 | `enemy`, `targets`, `entries`, `actor`, `skills`, `skill`, `card`, `sections`, `section`, `passives`, `passive`, `description`, `links`, `name`, `detail`, `traits`, `ways`, `way`, `lines`, `fn`, `event` | 候选目标与本席技能、角色与技能原文、被动、状态、导航、卡面费用与许可、骰子行及各控件的动作或提交事件。 |

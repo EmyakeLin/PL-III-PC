@@ -1,0 +1,39 @@
+.desk {
+  --pane-gap: clamp(12px, 2.5vw, 28px);
+  --row-gap: 10px;
+  padding-block-end: var(--gutter);
+}
+.subtle { color: var(--accent); text-underline-offset: 3px; }
+.guide { max-width: 48em; }
+#arrangement { margin-block-start: 4px; }
+#connection { color: var(--red); }
+#connection:not(:empty) { margin-block-start: var(--row-gap); }
+.stations {
+  margin-block-start: var(--pane-gap); display: grid; gap: var(--pane-gap);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 21rem), 1fr)); align-items: start;
+}
+.station { --seat-ink: var(--green); border-top: 4px solid var(--seat-ink); }
+.station[data-side="2"] { --seat-ink: var(--red); }
+.station { --accent: var(--seat-ink); }
+.station-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.fighter { margin-block: 4px 0; font-size: clamp(23px, 3vw, 32px); overflow-wrap: anywhere; }
+.seat-state { color: var(--muted); padding: 4px 8px; transition: background var(--fast), color var(--fast); }
+.station[data-deciding="true"] .seat-state { color: var(--seat-ink); background: var(--paper); font-weight: 650; }
+.send, .station form { border-block-start: 1px solid var(--line); padding-block-start: var(--pad); margin-block-start: var(--pad); }
+.send h4, .station label strong { font: 650 16px/1.45 var(--sans); }
+.send h4 { margin: 0 0 var(--row-gap); }
+.station label { gap: var(--row-gap); }
+.station textarea, #packet-text {
+  width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #929b8f;
+  border-radius: 2px; background: var(--sheet); color: var(--ink);
+  font: 15px/1.5 var(--sans); resize: vertical;
+}
+.feedback { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.feedback[data-error="true"] { color: var(--red); }
+.export-note:not(:empty), .packet-tools { margin-block-start: var(--row-gap); }
+.subtle { min-height: 32px; padding: 3px 0; border-color: transparent; text-decoration: underline; }
+.table-clock { margin-block-start: var(--pad); }
+#pending { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+#manual-copy { width: min(92vw, 46rem); }
+#manual-copy p { margin-block: 12px; }
+#packet-text { height: min(45vh, 22rem); margin-block-end: 8px; }

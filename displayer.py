@@ -93,6 +93,7 @@ _TIMINGS = {
 
 
 _SPECIAL_TIMINGS = {
+    "clash_scores_ready": "拼点点数已确定，尚未判胜负",
     "before_skill_choice": "技能使用前，可换卡", "near_before_reveal": "即将开牌",
     "logic_draw_cards": "回合抽牌后", "logic_resolve_speed": "速度判定后",
     "logic_skill_use": "费用结算后", "logic_dice_clash": "掷出骰面后",
