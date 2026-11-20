@@ -69,7 +69,7 @@ class Character:
         self.statuses = {}
         self._status_listeners = {}
         self.bleed_burst = False
-        self._spent_fatal_stagger = False
+        self.round_triggers = set()
         if self.game:
             self.game.status_entries.update(data.get("status_entries", {}))
             self.game.turn_end_statuses.update(data.get("turn_end_statuses", ()))
@@ -171,7 +171,7 @@ class Character:
             entries[:] = [entry for entry in entries if entry not in listeners]
 
     def begin_dice_round(self):
-        self._spent_fatal_stagger = False
+        self.round_triggers = set()
 
     def damage_multiplier(self):
         return 2 if self.statuses.get("致命失衡", 0) else 1
@@ -260,9 +260,9 @@ class Character:
             setattr(self, field, max(0, getattr(self, field) - incoming))
         lost = min(self.hp, remaining)
         self.hp -= lost
-        if lost and self.statuses.get("致命失衡") and not self._spent_fatal_stagger:
+        if lost and self.statuses.get("致命失衡") and "致命失衡" not in self.round_triggers:
             self.add_status("致命失衡", -1)
-            self._spent_fatal_stagger = True
+            self.round_triggers.add("致命失衡")
         if not self.hp:
             self._die()
         return lost

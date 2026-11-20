@@ -156,7 +156,7 @@ class MatchTests(unittest.TestCase):
         self.assertEqual((actor.statuses["失衡"],actor.statuses["致命失衡"]), (15, 1))
 
     def test_pack_levels_formula_and_guard_alias(self):
-        self.assertEqual(len(self.pool), 11)
+        self.assertEqual(len(self.pool), 12)
         self.assertEqual({c["rank"] for c in self.pool}, {"NORMAL", "ELITE", "BOSS", "EMPOWERED_BOSS"})
         die = Dice(dict(type="guard", level=1, base_value=2, multiplier=3, final_bonus=1))
         self.assertTrue(die.is_passive)

@@ -237,17 +237,19 @@ class CombatTests(unittest.TestCase):
         events = self.play()
         self.assertNotIn(("before_dice_use", "before_dice_use"), events)
         self.assertFalse(any("on_dice_clash" in pair for pair in events))
+        self.assertIn((None, "on_clash_win"), events)
         self.assertEqual((self.a.hp, self.b.hp), (48, 50))
         self.assertEqual(self.game.context.active_dice, {})
 
-    def test_defender_losing_its_opponent_before_clash_fires_skip(self):
+    def test_defender_losing_its_paired_opponent_wins_the_blank_round(self):
         negate = {"trigger": "before_dice_clash", "operation": {"op": "destroy", "target": "opponent_die"}}
         defender = self.skill(self.b, "消解", [("evade", 0, [negate])])
         attacker = self.skill(self.a, "斩", [("slash", 0, ["3"])])
         self.slot([attacker], [defender])
         with patch.object(Dice, "roll", side_effect=AssertionError("对手被摧毁后不应再拼点")):
             events = self.play()
-        self.assertIn((None, "on_clash_skip"), events)
+        self.assertIn((None, "on_clash_win"), events)
+        self.assertFalse(any("on_clash_skip" in pair or "on_clash_lose" in pair for pair in events))
         self.assertEqual((self.a.hp, self.b.hp), (50, 50))
 
     def test_duel_start_bleed_uses_initiative_and_ends_match_immediately(self):

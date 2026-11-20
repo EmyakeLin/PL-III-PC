@@ -4,7 +4,7 @@ from collections import deque
 import random
 import time
 
-from displayer import Displayer
+from displayer import Displayer, special_seats, timing_label
 from game import Game
 from loader import load_characters_from_packs
 from models.character import Character
@@ -56,6 +56,10 @@ class BattleMatch:
         self._require_handoff = initial_handoff
         self._pre_seat = None
         self._response_times = []
+        self._special_open = False
+        self._special_seat = None
+        self._interrupt_return = None
+        self._timing = ""
         self.revision = 0
         self._advance()
 
@@ -75,25 +79,44 @@ class BattleMatch:
         legal_cards = {"pre_attack": attacks, "intercept": intercepts}.get(self.mode, [])
         if self.mode == "placement":
             legal_cards = [c.id for c in self._legal_cards()]
+        mode = self.mode
+        seats = special_seats(self.game)
+        special_options = []
+        if self._special_open:
+            deciding = self._special_seat is not None
+            mode = "special" if deciding else "special_handoff"
+            side = self._special_seat.side if deciding else seats[0].side if seats else None
+            private_pre = False
+            legal_cards, attacks, intercepts = [], [], []
+            if deciding:
+                special_options = self._views[side].special_actions()
         frame = self._views[side if deciding else None].snapshot()
         return {
-            "mode": self.mode, "revision": self.revision, "active_side": side,
+            "mode": mode, "revision": self.revision, "active_side": side,
+            "special_available": bool(seats), "special_options": special_options,
+            "special_pending": self.game.special.pending_attack is not None,
+            "special_timing": self._timing,
             "frame": frame,
             "catalog": self._views[None].catalog(), "choices": [dict(c) for c in self.choices],
             "legal_cards": legal_cards, "legal_attack_cards": attacks, "legal_intercept_cards": intercepts,
             "pending_responses": early.pending_for(player) if private_pre else [],
             "can_end_attack": private_pre and early.can_attack(player),
-            "eligible_sides": frame["pre_reveal"]["eligible_sides"],
+            "eligible_sides": [p.side for p in seats] if self._special_open else frame["pre_reveal"]["eligible_sides"],
             "response_times": [dict(timing) for timing in self._response_times],
             "can_pass": self.mode == "placement" and self.game.placed_this_window > 0,
             "window_remaining": self._window_size - self.game.placed_this_window if self.mode == "placement" else 0,
             "history": list(self._history),
         }
 
-    def act(self, action, revision, *, card_id=None, target=None, side=None, duel_number=None):
+    def act(self, action, revision, *, card_id=None, target=None, side=None, duel_number=None, option=None):
         if type(revision) is not int or revision != self.revision:
             raise StaleActionError("对局已经推进，请查看当前局面。")
-        if self.mode == "handoff" and action == "ready":
+        if self._special_open:
+            self._special_action(action, side, option)
+        elif action == "open_special" and special_seats(self.game):
+            self._special_open = True
+            self._special_seat = None
+        elif self.mode == "handoff" and action == "ready":
             if self._pre_seat is not None:
                 if side is not None:
                     self._pre_seat = self._choose_seat(side, self.game.pre_reveal.eligible_players())
@@ -102,7 +125,7 @@ class BattleMatch:
                 if side is not None:
                     self._choose_seat(side, [self.game.placing])
                 self.mode = "placement"
-        elif self.mode in ("reveal", "combat", "turn_end") and action == "next":
+        elif self.mode in ("reveal", "combat", "turn_end", "timing") and action == "next":
             self._advance()
         elif self.mode == "placement" and action in ("place", "pass", "end"):
             self._place_action(action, card_id)
@@ -119,6 +142,72 @@ class BattleMatch:
             raise ValueError("当前阶段无法执行这个操作。")
         self.revision += 1
         return self.snapshot()
+
+    def _special_action(self, action, side, option):
+        game = self.game
+        seats = special_seats(game)
+        if action == "ready" and self._special_seat is None:
+            self._special_seat = self._choose_seat(side if side is not None else seats[0].side, seats)
+            return
+        if action == "leave_special" and game.special.pending_attack is None:
+            self._return_from_special()
+            return
+        if action == "switch_side" and self._special_seat is not None:
+            self._special_seat = None
+            return
+        if action != "use_special" or self._special_seat is None:
+            raise ValueError("请接手特殊行动，选择合法的操作。")
+        player = self._special_seat
+        options = game.special.options(player)
+        if type(option) is not int or not 0 <= option < len(options):
+            raise ValueError("该选项不在当前的特殊行动中。")
+        move = options[option]
+        old_space = game.pipeline.interrupt_space
+        succeeded = game.special.apply(player, move)
+        # Face-down placements and replacements must remain hidden in the public log.
+        if move.kind == "place":
+            message = "特殊置卡"
+        elif move.kind == "replace":
+            message = "替换技能"
+        elif move.kind == "pass_intercept":
+            message = f"放行即时交锋 {move.response_number}"
+        elif move.kind == "intercept":
+            message = f"用{move.card.name}迎击即时交锋 {move.response_number}"
+        else:
+            message = f"打出{move.card.name}"
+        suffix = "受阻" if succeeded is False else ""
+        self._history.append(f"{player.name}{message}{suffix}。")
+        self._record_response_times()
+        self._special_seat = None
+        if game.is_over:
+            self._finish()
+        elif game.special.pending_attack is not None:
+            self._special_open = True
+        elif game.pipeline.interrupt_space is not old_space:
+            self._special_open = False
+            if self._interrupt_return is None:
+                self._interrupt_return = self.mode, self._timing, old_space
+            self._advance()
+        else:
+            self._return_from_special()
+
+    def _return_from_special(self):
+        self._special_open = False
+        self._special_seat = None
+        if self.game.pre_reveal.actor is not None and self.game.pipeline.interrupt_space is None:
+            self._pre_seat = self.game.pre_reveal.actor
+            self.mode = "handoff"
+        elif self.mode in ("placement", "handoff") and self._pre_seat is None:
+            self._require_handoff = True
+            self._open_window()
+            if self.game.placing is None:
+                self._advance()
+        elif self.mode in ("pre_attack", "intercept", "handoff"):
+            self._pre_seat = self.game.pre_reveal.actor
+            if self._pre_seat is None:
+                self._advance()
+            else:
+                self.mode = "handoff"
 
     @staticmethod
     def _choose_seat(side, players):
@@ -245,6 +334,14 @@ class BattleMatch:
                 continue
             if game.is_over:
                 break
+            if self._interrupt_return is not None:
+                previous_mode, timing, space = self._interrupt_return
+                if game.pipeline.interrupt_space is space:
+                    self.mode, self._timing = previous_mode, timing
+                    self._interrupt_return = None
+                    self._return_from_special()
+                    return
+            self._timing = timing_label(node)
             if node == "logic_start_placement":
                 self._window_size = 1
                 self._history.append(f"第 {game.turn_number} 回合，{game.first_player.name}先手。")
@@ -269,6 +366,9 @@ class BattleMatch:
                 return
             elif isinstance(node, tuple) and self._combat_stop(node):
                 self.mode = "combat"
+                return
+            elif self._timing and special_seats(game):
+                self.mode = "timing"
                 return
         self._finish()
 
@@ -309,7 +409,10 @@ class BattleMatch:
                 result = {"win": "胜", "draw": "平", "lose": "负"}[die["result"]]
                 if die["win_branch_skipped"]:
                     result += "，跳过拼赢分支"
-                scores.append(f"{character.name} {die['clash_score']}（{result}）")
+                if len(game.pipeline.current_clash_results) == 1:
+                    scores.append(f"空白轮，{character.name}（{result}）")
+                else:
+                    scores.append(f"{character.name} {die['clash_score']}（{result}）")
                 pause = True
             elif node == "on_clash_skip" and die:
                 actions.append(f"{character.name}的{TYPE_NAMES[die['type']]}跳过拼点")
@@ -322,11 +425,13 @@ class BattleMatch:
         if scores:
             actions.append("拼点 " + " · ".join(scores))
         if actions:
-            prefix = "开牌前交锋" if combat["kind"] == "pre_reveal" else "常规交锋"
+            prefix = {"pre_reveal": "开牌前交锋", "regular": "常规交锋", "instant": "即时交锋"}[combat["kind"]]
             self._history.append(f"{prefix} {combat['duel_number']}　" + "，".join(actions) + "。")
         return pause
 
     def _finish(self):
+        self._special_open = False
+        self._special_seat = None
         self.mode = "finished"
         winner = self.game.winner
         fallen = [p.characters[0].name for p in self.game.players if not p.characters[0].is_alive]

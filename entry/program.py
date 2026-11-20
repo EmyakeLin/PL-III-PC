@@ -23,7 +23,7 @@ def run_program(ctx, entry, tokens):
             return event["die"].get_value()
         if field == "clash_score":
             return event["die"].clash_score
-        if field in ("card", "die", "target", "play_mode"):
+        if field in ("card", "die", "target", "play_mode", "replaced_card"):
             return event.get(field)
         if field == "skill_target":
             return event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
@@ -56,7 +56,7 @@ def run_program(ctx, entry, tokens):
         if field == "current_hand_count":
             return event["hand_count"]
         if field == "duel_number":
-            return ctx.game.active_duelspace.current_duel_index + 1
+            return ctx.game.duel_position()[1] + 1
         if field == "faster":
             enemy = next(p for p in ctx.game.players if p is not player)
             return player.speed > enemy.speed

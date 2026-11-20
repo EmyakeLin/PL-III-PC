@@ -49,11 +49,12 @@ class BattleSession:
                 frame = self.match.snapshot()
             else:
                 if action not in ("place", "end", "pass", "ready", "next",
-                                  "attack", "end_attack", "intercept", "let_through", "switch_side"):
+                                  "attack", "end_attack", "intercept", "let_through", "switch_side",
+                                  "open_special", "leave_special", "use_special"):
                     raise ValueError("未知的对战操作。")
                 frame = self.match.act(action, self.match.revision, card_id=request.get("card_id"),
                                        target=request.get("target"), side=request.get("side"),
-                                       duel_number=request.get("duel_number"))
+                                       duel_number=request.get("duel_number"), option=request.get("option"))
             self.revision += 1
             return HTTPStatus.OK, {**frame, "revision": self.revision}
 

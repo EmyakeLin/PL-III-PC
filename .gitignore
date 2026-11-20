@@ -14,3 +14,6 @@ Thumbs.db
 
 # AI Agent
 .mimocode
+
+# Local battle reports
+/战斗日志/

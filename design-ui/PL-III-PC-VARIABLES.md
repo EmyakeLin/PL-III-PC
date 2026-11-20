@@ -125,3 +125,7 @@
 | 迎击选择框 | `duelSelect`, `duelField`, `cardSelect`, `cardField`, `group`, `attack`, `respond`, `pass` | 待迎击编号与标签、己方手牌与标签、进攻方已公开的牌组与本场进攻牌，以及对所选编号迎击或放行的操作。 |
 | 空手回应 | `hasReplyCard` | 当前是否有可用于迎击的手牌，控制打出迎击牌按钮；空手时仍可明确放行。 |
 | 公开等待时间 | `responseTimer`, `timing`, `clock`, `start`, `end`, `now`, `seconds`, `minutes`, `remainder`, `tick` | 页面刷新计时文字的任务、该场的公开时间记录与显示元素、声明与结束或观察时的毫秒时间、当前毫秒时间、经过的整秒与分秒显示，以及更新待回应场次文字的回调。 |
+| 特殊行动入口 | `special_available`, `special_pending`, `special_timing`, `special`, `specialPanel`, `specialButton`, `opened` | 公开规则是否允许接手、即时进攻是否待迎击、当前时点文字、是否处于私有选牌或其公开交接、入口按钮及本次点击的打开状态。 |
+| 特殊行动选择 | `special_options`, `move`, `index`, `select`, `option`, `chosen`, `available` | 当前接手方可执行的动作及其目标、本次遍历的动作和下标、选择框和各项、所选手牌是否已有默认项、是否至少有一项可执行。下标与本次快照版本共同提交。 |
+| 迎击许可 | `canAttackInField`, `card.interceptable`, `card.instant_interceptable`, `slot.interceptable` | 技能是否允许场内主动进攻、牌面在开牌前及独立场内进攻时的迎击许可、本场声明时已确定的许可。牌面说明分别列出两个场合，交锋列表依声明时的许可区分直接就绪和放行。 |
+| 即时交锋与牌面 | `special_duels`, `instant`, `anytime_play`, `anytime_replace`, `plays` | 已公开的即时交锋、该行是否为即时交锋、手牌可随时打出的方式、是否可随时换入、各打出方式的显示名称。 |

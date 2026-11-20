@@ -53,6 +53,9 @@ def run_declarations(game):
     phase = game.pre_reveal
     game.close_private_view()
     while phase.actor is not None and not game.is_over:
+        game.offer_special_actions()
+        if phase.actor is None or game.is_over:
+            break
         _show_duels(phase)
         actions = list(_actions(phase))
         choice = _choose([a[0] for a in actions], "任何可行动的玩家均可接手，选择行动编号 ")

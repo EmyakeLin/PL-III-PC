@@ -10,6 +10,7 @@ from models.dice import describe_die
 from models.duel import DuelSpace
 from models.opcode import OpCode
 from models.pre_reveal import PreRevealPhase
+from models.special_actions import SpecialActions
 from pipeline.pipeline import Pipeline
 from pipeline.pipeline_steps import step_list
 
@@ -35,6 +36,7 @@ class Game:
         self.next_turn_statuses = []
         self.status_entries = {}
         self.turn_end_statuses = set(ONE_TURN_STATUSES)
+        self.turn_end_statuses.update(("置卡机会", "换卡机会"))
         self.is_over = False
         self.winner = None
         self._private_player = None
@@ -42,6 +44,9 @@ class Game:
         self.duelspace = DuelSpace(self)
         self.pre_reveal = PreRevealPhase(self)
         self.pipeline = Pipeline(self, step_list)
+        self.special = SpecialActions(self)
+        self.special_prompt = None
+        self.last_step = None
         self.tmp = SimpleNamespace()
 
     def select_character(self, characters):
@@ -122,10 +127,34 @@ class Game:
         self._private_player = None
 
     def next_step(self):
-        return self.pipeline.next_step()
+        if self.special.pending_attack is not None and not self.is_over:
+            return "wait_special_intercept"
+        # An extra placement can reopen the regular sequence after its last slot.
+        # Its cursor still points after all settled slots.
+        if (self.cards_revealed and not self.is_over and not self.pipeline.in_duel_phase
+                and self.pipeline.current_step_index >= 0
+                and self.pipeline.step_list[self.pipeline.current_step_index].id in
+                ("logic_start_duel_combat", "before_turn_end")
+                and self.duelspace.has_next_duel()):
+            self.pipeline.start_duel_combat()
+        self.last_step = self.pipeline.next_step()
+        return self.last_step
+
+    def offer_special_actions(self):
+        """Blocking decisions inside the CLI's otherwise synchronous placement loops."""
+        if self.special_prompt is None or self.is_over:
+            return
+        self.special_prompt(self)
+        while not self.is_over and (self.special.pending_attack is not None or self.pipeline.interrupt_space is not None):
+            if self.special.pending_attack is None:
+                self.next_step()
+            if not self.is_over:
+                self.special_prompt(self)
 
     @property
     def active_duelspace(self):
+        if self.pipeline.interrupt_space is not None:
+            return self.pipeline.interrupt_space
         if self.pre_reveal.phase == "resolving":
             return self.pre_reveal.space
         return self.duelspace
@@ -133,6 +162,15 @@ class Game:
     def board_slots(self):
         yield from self.duelspace.space
         yield from self.pre_reveal.space.space
+        yield from self.special.duels
+
+    def duel_position(self):
+        """The series and zero-based public number of the currently resolving duel."""
+        space = self.active_duelspace
+        index = space.current_duel_index
+        if self.pipeline.interrupt_space is not None and 0 <= index < len(space.space):
+            return self.special, self.special.duels.index(space.space[index])
+        return space, index
 
     def start_pre_reveal_declarations(self):
         self.pre_reveal.start()
@@ -170,8 +208,7 @@ class Game:
         if result == "win":
             character.won_clash_this_turn = True
         elif result == "lose":
-            space = self.active_duelspace
-            character.player.lost_duels.add((space, space.current_duel_index))
+            character.player.lost_duels.add(self.duel_position())
 
     def draw_phase(self):
         self.prepare_turn()
@@ -217,6 +254,10 @@ class Game:
             self.placed_this_window = 0
             self.begin_private_view(player)
             for _ in range(capacity):
+                self.offer_special_actions()
+                if self.is_over:
+                    return
+                self.begin_private_view(player)
                 action = player.place_card(self)
                 if action == "ended":
                     self.ended_player.append(player)
@@ -237,9 +278,9 @@ class Game:
             return False
         return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
 
-    def place_in_duel(self, side, content, duel_idx):
+    def place_in_duel(self, side, content, duel_idx, *, special=False):
         # Once regular placement closes, only an executing rule effect may insert a card.
-        if self.pre_reveal.phase != "idle" and not self.context.executions:
+        if self.pre_reveal.phase != "idle" and not special and not self.context.executions:
             return False
         player = content.player
         owner = content.character
@@ -256,10 +297,12 @@ class Game:
             return False
         if old_zone is not None and content not in old_zone.content:
             return False
-        self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
-        if duel_idx >= len(self.active_duelspace.space):
+        space = self.duelspace if special else self.active_duelspace
+        with self.context.binding(special_placement=content if special else None):
+            placed = self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
+        if not placed or duel_idx >= len(space.space):
             return False
-        slot = self.active_duelspace.space[duel_idx]
+        slot = space.space[duel_idx]
         if content not in slot.content.get(side, ()):
             return False
         event["duel"] = slot
@@ -317,6 +360,7 @@ class Game:
         self.duelspace.space.clear()
         self.duelspace.current_duel_index = 0
         self.pre_reveal = PreRevealPhase(self)
+        self.special.clear()
         self.ended_player.clear()
         self.cards_revealed = False
         self.turn_count += 1

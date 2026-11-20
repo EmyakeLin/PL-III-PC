@@ -40,8 +40,8 @@ class Player:
                     break
 
     def lost_clash_in_previous_duel(self):
-        space = self.game.active_duelspace
-        return (space, space.current_duel_index - 1) in self.lost_duels
+        series, index = self.game.duel_position()
+        return (series, index - 1) in self.lost_duels
 
     def set_default_target(self, target):
         self.default_target_character = target
@@ -75,8 +75,6 @@ class Player:
             print("请输入存活目标的编号。")
 
     def reset_on_turn_start(self):
-        for character in self.characters:
-            character.used_duels = 0
         rule = self.game.gamerule
         common = rule.MAX_BASIC_COST + self.turn_common_cost_bonus
         self.game.context.eval_block([self, common, rule.CHAR_INDEPENDENT_COST, OpCode.RESET_COST])

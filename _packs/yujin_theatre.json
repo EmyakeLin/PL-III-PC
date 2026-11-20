@@ -1,0 +1,99 @@
+{
+  "faction": "余烬剧团",
+  "characters": [
+    {
+      "id": "ember_wen_sheng",
+      "name": "闻笙",
+      "title": "替演领班",
+      "rank": "ELITE",
+      "max_hp": 12,
+      "passive_skills": [
+        {
+          "name": "候场",
+          "entries": [{
+            "trigger": "on_turn_start",
+            "operation": {"op": "program", "code": [
+              "$player", 1, "DRAW", "$self", "换卡机会", 1, "STATUS"
+            ]},
+            "description": "回合开始时，额外抽1张牌并获得1次换卡机会。"
+          }]
+        }
+      ],
+      "skills": [
+        {
+          "id": "wen_sheng_call",
+          "name": "点名上场",
+          "cost": 1,
+          "entries": [{
+            "trigger": "on_skill_use",
+            "operation": {"op": "program", "code": ["$self", "置卡机会", 1, "STATUS"]},
+            "description": "使用时获得1次置卡机会。"
+          }],
+          "dice": [
+            {"type": "blunt", "level": 2, "entries": ["1物理"]},
+            {"type": "block", "level": 2, "entries": [{
+              "trigger": "on_clash_win",
+              "operation": {"op": "program", "code": ["$self", "normal", 1, "SHIELD"]},
+              "description": "拼点胜利时获得1护盾。"
+            }]}
+          ]
+        },
+        {
+          "id": "wen_sheng_entrance",
+          "name": "飞场",
+          "cost": 1,
+          "anytime_play": ["attack", "place"],
+          "dice": [
+            {"type": "pierce", "level": 3, "entries": ["1物理"]},
+            {"type": "evade", "level": 2, "entries": [{
+              "trigger": "on_clash_win",
+              "operation": {"op": "program", "code": ["$self", "$self", "迅捷", 1, "QUEUE_STATUS"]},
+              "description": "拼点胜利时在下回合获得1迅捷。"
+            }]}
+          ]
+        },
+        {
+          "id": "wen_sheng_understudy",
+          "name": "救场",
+          "cost": 2,
+          "anytime_replace": true,
+          "entries": [{
+            "trigger": "on_skill_use",
+            "operation": {"op": "program", "code": ["$self", "normal", 1, "SHIELD"]},
+            "description": "使用时获得1护盾。"
+          }],
+          "dice": [
+            {"type": "slash", "level": 3, "entries": ["1物理"]},
+            {"type": "pierce", "level": 2, "entries": ["1物理"]}
+          ]
+        },
+        {
+          "id": "wen_sheng_duet",
+          "name": "对手戏",
+          "cost": 2,
+          "dice": [
+            {"type": "block", "level": 4, "entries": [{
+              "trigger": "on_clash_win",
+              "operation": {"op": "program", "code": ["$self", 1, "HEAL"]},
+              "description": "拼点胜利时回复1生命。"
+            }]},
+            {"type": "blunt", "level": 3, "entries": ["1物理", {
+              "trigger": "AFTER RESOLVE_HIT",
+              "operation": {"op": "program", "code": ["$self", "$target", "束缚", 1, "QUEUE_STATUS"]},
+              "description": "命中时在下回合对目标施加1束缚。"
+            }]}
+          ]
+        },
+        {
+          "id": "wen_sheng_curtain",
+          "name": "谢幕枪",
+          "cost": 3,
+          "dice": [
+            {"type": "pierce", "level": 4, "entries": ["2物理"]},
+            {"type": "blunt", "level": 3, "entries": ["2物理"]}
+          ]
+        }
+      ]
+    }
+  ]
+}

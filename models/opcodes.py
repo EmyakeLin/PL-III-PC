@@ -203,7 +203,12 @@ def handle_place(ctx):
             or not card.character.is_alive
             or any(card in placed.content.get(side, ()) for placed in game.board_slots())):
         return False
-    space = game.active_duelspace
+    special = ctx.event.get("special_placement") is card
+    if special and (card not in card.player.cardspace.hand.content
+                    or not game.special.may_place(card)
+                    or game.special.first_open_slot(side) != idx):
+        return False
+    space = game.duelspace if special else game.active_duelspace
     # Opening a new numbered pre-reveal duel requires a player's attack declaration.
     if space is not game.duelspace and idx >= len(space.space):
         return False
@@ -215,6 +220,8 @@ def handle_place(ctx):
     if (space is game.duelspace and card.character
             and not any(c.character is card.character for c in side_cards if isinstance(c, Card))):
         card.character.used_duels += 1
+    if special and "place" not in card.data.get("anytime_play", ()):
+        card.character.apply_status_delta("置卡机会", -1)
     slot.add_content(side, card)
     face_up = game.cards_revealed or space is not game.duelspace
     card.state = CardState.PLACED_FACE_UP if face_up else CardState.PLACED_FACE_DOWN
@@ -223,6 +230,11 @@ def handle_place(ctx):
             zone.remove_card(zone.content.index(card))
             break
     return True
+
+
+def handle_replace_skill(ctx):
+    old_card, card = ctx.pop(), ctx.pop()
+    return ctx.game.special.exchange(card, old_card)
 
 
 def handle_roll(ctx):
@@ -424,6 +436,7 @@ DISPATCH_TABLE = {
     OpCode.POP: lambda ctx: ctx.pop(), OpCode.SWAP: lambda ctx: ctx.swap(),
     OpCode.EVAL: lambda ctx: ctx.eval_block(ctx.pop()),
     OpCode.DRAW: handle_draw, OpCode.PLACE: handle_place, OpCode.ROLL: handle_roll,
+    OpCode.REPLACE_SKILL: handle_replace_skill,
     OpCode.MOVE_CARD: handle_move_card, OpCode.ROUTE_DIE_ATTACK: handle_route_die_attack,
     OpCode.FOR_EACH_TARGET: handle_for_each_target,
     OpCode.RESET_COST: handle_reset_cost, OpCode.PAY_COST: handle_pay_cost,
@@ -460,6 +473,7 @@ OPERANDS = {
     OpCode.REPEAT_DIE: ("die",), OpCode.NEXT_TURN_DUELS: ("target", "amount"),
     OpCode.SET_SKILL_STATE: ("card", "key", "value"), OpCode.QUEUE_STATUS: ("source", "target", "status", "amount"),
     OpCode.PLACE: ("side", "duel_index", "card"), OpCode.ROLL: ("low", "high", "bonus", "die"),
+    OpCode.REPLACE_SKILL: ("card", "target"),
     OpCode.MOVE_CARD: ("card", "zone"), OpCode.ROUTE_DIE_ATTACK: ("die", "target"),
     OpCode.FOR_EACH_TARGET: ("targets", "block"),
     OpCode.DAMAGE: ("target", "amount", "penetration", "attack_type"),

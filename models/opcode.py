@@ -31,6 +31,7 @@ class OpCode(Enum):
     DRAW = auto()
     DESTROY = auto()
     PLACE = auto()
+    REPLACE_SKILL = auto()
     MOVE_CARD = auto()
     ROUTE_DIE_ATTACK = auto()
     FOR_EACH_TARGET = auto()

@@ -4,14 +4,28 @@ from enum import Enum, auto
 RANGE_NAMES = ("近战", "普通远程", "强化远程", "极限远程")
 
 
+def allows_interception(data, *, pre_reveal):
+    """A numbered pre-reveal attack invites a response; a field play needs printed permission."""
+    return data.get("interceptable", pre_reveal)
+
+
 def validate_skill_traits(data):
     for key in ("range_level", "ignore_range"):
         value = data.get(key, 0)
         if type(value) is not int or not 0 <= value <= 3:
             raise ValueError(f"{key} 必须是 0 到 3 的整数")
-    for key in ("pre_reveal", "interceptable"):
+    for key in ("pre_reveal", "interceptable", "anytime_replace"):
         if key in data and type(data[key]) is not bool:
             raise ValueError(f"{key} 必须是布尔值")
+    modes = data.get("anytime_play", [])
+    if (not isinstance(modes, list) or any(mode not in ("attack", "place", "custom") for mode in modes)
+            or len(modes) != len(set(modes))):
+        raise ValueError("anytime_play 须为不重复的 attack、place 或 custom 方式列表")
+    if "replace_targets" in data:
+        targets = data["replace_targets"]
+        if (not data.get("anytime_replace") or not isinstance(targets, list) or not targets
+                or any(not isinstance(name, str) or not name for name in targets)):
+            raise ValueError("replace_targets 须配合 anytime_replace 列出允许替换的友方技能 ID")
 
 
 def describe_skill_traits(data):
@@ -22,8 +36,15 @@ def describe_skill_traits(data):
         traits.append(f"无视 {data['ignore_range']} 级远程")
     if data.get("pre_reveal"):
         traits.append("可在开牌前交锋打出")
-    if not data.get("interceptable", True):
+    if not allows_interception(data, pre_reveal=True):
         traits.append("不可拦截")
+    modes = {"attack": "主动进攻", "place": "置于空交锋", "custom": "依卡面执行"}
+    if data.get("anytime_play"):
+        traits.append("可在任意时刻打出（" + "、".join(modes[m] for m in data["anytime_play"]) + "）")
+    if "attack" in data.get("anytime_play", ()) and allows_interception(data, pre_reveal=True):
+        traits.append("场内进攻可迎击" if allows_interception(data, pre_reveal=False) else "场内进攻不可拦截")
+    if data.get("anytime_replace"):
+        traits.append("可在任意时刻替换指定技能" if data.get("replace_targets") else "可在任意时刻替换自身技能")
     return " · ".join(traits)
 
 

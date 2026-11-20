@@ -5,8 +5,10 @@ import random
 
 from game import Game
 from loader import load_characters_from_packs
+from displayer import special_seats, timing_label
 from pipeline.pipeline_errors import PipelineFinished
 from player.player import Player
+from special_actions_cli import offer_actions
 
 
 def play_game(game, step=False):
@@ -20,6 +22,11 @@ def play_game(game, step=False):
             game.pipeline.current_step_index = -1
             game.pipeline.is_finished = False
             continue
+        timing = timing_label(action)
+        if timing and game.special_prompt and not game.is_over:
+            if special_seats(game):
+                print(f"〔{timing}〕")
+                game.offer_special_actions()
         if step and not game.is_over:
             if input(f"{action}  [回车继续 / q 退出] ").strip().lower() == "q":
                 return
@@ -42,6 +49,7 @@ def main(argv=None):
         print("光点计划 III · 本地双人对局")
         print("每方选择 1～3 名角色。双方扣置后先处理开牌前交锋，再统一开牌。消灭对方所有角色获胜。")
         game = Game([Player(1, "玩家一"), Player(2, "玩家二")], rng=random.Random(args.seed))
+        game.special_prompt = offer_actions
         game.select_character(characters)
         play_game(game, step=args.step)
     except (EOFError, KeyboardInterrupt):

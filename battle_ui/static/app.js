@@ -2,7 +2,7 @@
 const byId = id => document.getElementById(id);
 const typeNames = {slash: "斩击", pierce: "突刺", blunt: "打击", block: "招架", evade: "闪避", blank: "空白"};
 const ranks = {NORMAL: "常人", ELITE: "精英", BOSS: "首领", EMPOWERED_BOSS: "强化首领"};
-const phases = {placement: "置卡", pre_attack: "开牌前进攻", intercept: "拦截", handoff: "交接", reveal: "开牌", combat: "交锋", turn_end: "回合结束", finished: "对局结束"};
+const phases = {placement: "置卡", pre_attack: "开牌前进攻", intercept: "拦截", handoff: "交接", reveal: "开牌", combat: "交锋", turn_end: "回合结束", finished: "对局结束", timing: "行动时点", special: "特殊行动", special_handoff: "特殊行动交接"};
 const ranges = ["", "普通远程", "强化远程", "极限远程"];
 const outcomes = {win: "胜", lose: "负", draw: "平", skip: "跳过"};
 
@@ -56,7 +56,33 @@ function selectedCard() {
 }
 
 function choosingCard() {
-    return ["placement", "pre_attack", "intercept"].includes(match?.mode);
+    return ["placement", "pre_attack", "intercept", "special"].includes(match?.mode);
+}
+
+function handoffMode(mode) {
+    return mode === "handoff" || mode === "special_handoff";
+}
+
+function specialDialog() {
+    showDialog(match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
+        const field = element("label", "field", "手牌与目标");
+        const select = element("select");
+        let chosen = false;
+        match.special_options.forEach((move, index) => {
+            const option = element("option", "", move.label);
+            option.value = index;
+            if (!chosen && selection && move.card_id === selection) {
+                option.selected = true;
+                chosen = true;
+            }
+            select.append(option);
+        });
+        field.append(select);
+        body.append(field);
+        actions.append(button("返回", false, () => closeDialog()), button("确认行动", true, () => {
+            send("use_special", {option: Number(select.value)});
+        }));
+    });
 }
 
 function targetText(target) {
@@ -196,7 +222,16 @@ function cardDetails(card) {
         const traits = ["费用 " + card.cost, ranges[card.range_level]];
         if (card.ignore_range) traits.push("无视 " + card.ignore_range + " 级远程");
         if (card.pre_reveal) traits.push("可在开牌前进攻");
-        if (!card.interceptable) traits.push("不可拦截");
+        if (card.anytime_replace) traits.push("可在任意时刻换入");
+        const plays = {place: "置入空交锋", attack: "发起进攻", custom: "依牌面打出"};
+        for (const mode of card.anytime_play) traits.push("任意时刻可" + plays[mode]);
+        const canAttackInField = card.anytime_play.includes("attack");
+        if (canAttackInField) {
+            traits.push(card.instant_interceptable ? "场内进攻可迎击" : "场内进攻不可迎击");
+        }
+        if (card.pre_reveal || canAttackInField) {
+            traits.push(card.interceptable ? "开牌前进攻可迎击" : "开牌前进攻不可迎击");
+        }
         body.append(element("p", "dialog-copy", traits.filter(Boolean).join(" · ")));
         entries(body, card.entries);
         for (const die of card.dice) {
@@ -258,10 +293,13 @@ function rulesDialog() {
     showDialog("对战规则", body => {
         entries(body, [
             "两名玩家各控制一名角色。每回合先抽牌，再比较速度，由先手先扣一张牌。",
-            "选择手牌后点击扣置。此后每个置卡窗口最多扣两张，首张扣好后可以提前交权。结束置卡会放弃本回合剩余的置卡机会。",
+            "选择手牌后点击扣置。此后每个置卡窗口最多扣两张，首张扣好后可以提前交权。结束常规置卡后，仍可按机会或技能文字进行特殊置卡。",
             "开牌前由先手方先取得进攻权。每张进攻牌可以指定角色或常规交锋。对手考虑迎击期间，进攻方可以继续出牌。防守方可任选一场待迎击的进攻，用手牌迎击或明确放行。",
             "取得进攻权后仍可处理此前待迎击的牌。双方都结束主动进攻、每场都已就绪后，按进攻编号结算。仍指向常规交锋的进攻会牵走对手的扣牌。随后统一开牌。技能使用时先付个人费，再付通用费。",
             "双方逐骰比拼点点数。攻击骰获胜时命中，攻击骰无对位时单方面攻击。角色生命归零即阵亡。",
+            "用置卡机会或牌面许可补入友方空常规交锋，均须有剩余常规交锋额度，置入一张占一次。场内即时进攻默认直接结算，只有牌面明示可迎击时才开放回应。",
+            "换卡时换下的牌回手，原费用不退。新牌须自己付费，从第一骰重新使用。",
+            "已经对位的骰子在拼点结果产生前消失，会形成空白轮。仅对方取得拼点胜利，消失骰没有拼点结果。",
         ]);
     });
 }
@@ -430,6 +468,7 @@ function renderArena() {
         slots.push({number: slots.length + 1, kind: "regular", sides: match.frame.players.map(p => ({side: p.side, cards: []}))});
     }
     for (const slot of [...match.frame.pre_reveal.duels].reverse()) slots.unshift({...slot, kind: "pre_reveal"});
+    for (const slot of [...match.frame.special_duels].reverse()) slots.unshift({...slot, kind: "instant"});
     setText(byId("arena-title"), "交锋序列");
     const resolved = match.frame.cards_revealed;
     const note = placing ? "准备第 " + pending + " 交锋" : (resolved ? "常规牌面已公开" : "常规牌面保密");
@@ -453,13 +492,14 @@ function renderArena() {
             rail.append(row);
         }
         const [left, right] = slot.sides;
-        const early = slot.kind === "pre_reveal";
-        const indexLabel = element("span", "duel-index", (early ? "前 " : "") + String(slot.number).padStart(2, "0"));
-        indexLabel.setAttribute("aria-label", (early ? "开牌前交锋 " : "常规交锋 ") + slot.number);
+        const early = slot.kind !== "regular";
+        const instant = slot.kind === "instant";
+        const indexLabel = element("span", "duel-index", (instant ? "即 " : early ? "前 " : "") + String(slot.number).padStart(2, "0"));
+        indexLabel.setAttribute("aria-label", (instant ? "即时交锋 " : early ? "开牌前交锋 " : "常规交锋 ") + slot.number);
         if (early) {
-            const response = slot.target.kind === "intercept" ? "已迎击" : "空位就绪";
+            const response = !slot.interceptable ? "直接就绪" : (slot.target.kind === "intercept" ? "已迎击" : "已放行");
             indexLabel.append(element("small", "", slot.ready ? response : "待迎击"));
-            const timing = match.response_times.find(item => item.number === slot.number);
+            const timing = !instant && match.response_times.find(item => item.number === slot.number);
             if (timing) {
                 const clock = element("small", "response-time");
                 clock.title = "从打出进攻牌到迎击或放行的经过时间";
@@ -485,6 +525,8 @@ function makeHandCard(card, ownerName) {
     tile.dataset.card = card.id;
     const head = element("span", "card-head");
     const characteristics = [ownerName, ranges[card.range_level], card.pre_reveal ? "开牌前可出" : ""];
+    if (card.anytime_play.length) characteristics.push("随时可出");
+    if (card.anytime_replace) characteristics.push("随时可换");
     head.append(element("span", "card-owner", characteristics.filter(Boolean).join(" · ")), element("span", "card-cost", card.cost + " 费"));
     const dice = element("span", "card-dice");
     for (const die of card.dice) dice.append(dieRow(die, true));
@@ -526,6 +568,13 @@ function syncSelection() {
     }
     byId("detail-btn").disabled = busy || !selected;
     byId("primary-btn").disabled = busy || !legal;
+    if (match.mode === "special") {
+        const available = match.special_options.length > 0;
+        byId("primary-btn").disabled = busy || !available;
+        const note = available ? "查看可执行的动作并选择目标。" : (match.special_pending ? "当前没有可执行的动作，可交回桌面。" : "当前没有可执行的特殊行动，可返回原阶段。");
+        setText(byId("action-note"), note);
+        return;
+    }
     if (match.mode === "pre_attack" || match.mode === "intercept") {
         const attacking = match.can_end_attack;
         const pending = match.pending_responses.length;
@@ -560,7 +609,7 @@ function renderPublic() {
     const note = match.mode === "reveal" ? "双方的扣牌现已公开。"
                : match.mode === "turn_end" ? "本回合结算完毕。"
                : finished ? "本局结算完毕。" : "查看当前交锋的结算。";
-    const message = lastMessage || note;
+    const message = match.mode === "timing" ? match.special_timing : lastMessage || note;
     let line = hand.querySelector(".empty-state");
     if (!line || hand.children.length !== 1 || hand.firstElementChild !== line) {
         line = element("p", "empty-state");
@@ -569,7 +618,7 @@ function renderPublic() {
     setText(line, message);
     setText(byId("action-note"), "");
     const primary = byId("primary-btn");
-    const labels = {reveal: "开始交锋", combat: "继续结算", turn_end: "下一回合", finished: "再来一局"};
+    const labels = {reveal: "开始交锋", combat: "继续结算", timing: "继续结算", turn_end: "下一回合", finished: "再来一局"};
     setText(primary, labels[match.mode]);
     primary.disabled = busy;
 }
@@ -577,12 +626,18 @@ function renderPublic() {
 function render() {
     const placing = match.mode === "placement";
     const deciding = choosingCard();
-    const handoff = match.mode === "handoff";
+    const handoff = handoffMode(match.mode);
+    const special = match.mode === "special";
+    const specialPanel = special || match.mode === "special_handoff";
+    const specialButton = byId("special-btn");
+    specialButton.hidden = !match.special_available || (specialPanel && match.special_pending);
+    specialButton.disabled = busy;
+    setText(specialButton, specialPanel ? "返回原阶段" : "特殊行动");
     const player = team(match.active_side);
     document.documentElement.dataset.viewer = match.frame.viewer_side ?? "public";
     setText(byId("round-number"), String(match.frame.turn).padStart(2, "0"));
     const earlyCombat = match.frame.combat?.kind === "pre_reveal" && match.mode === "combat";
-    const declaring = deciding && !placing;
+    const declaring = match.mode === "pre_attack" || match.mode === "intercept";
     const phaseName = declaring ? "开牌前置卡" : phases[match.mode];
     setText(byId("phase-name"), earlyCombat ? "开牌前结算" : phaseName);
     for (const p of match.frame.players) updateFighter(p);
@@ -595,7 +650,7 @@ function render() {
     byId("end-btn").hidden = !placing && !(declaring && match.can_end_attack);
     const secondSeat = otherSeat();
     byId("handoff-other").hidden = !handoff || secondSeat == null;
-    byId("switch-seat").hidden = !declaring || secondSeat == null;
+    byId("switch-seat").hidden = !(declaring || special) || secondSeat == null;
     byId("switch-seat").disabled = busy;
     const dualRole = declaring && match.can_end_attack && match.pending_responses.length > 0;
     byId("respond-btn").hidden = !dualRole;
@@ -605,7 +660,7 @@ function render() {
     byId("new-game").disabled = busy;
     byId("history-toggle").disabled = !match.history.length;
     if (deciding) {
-        const primary = placing ? "扣置所选牌" : (match.can_end_attack ? "指定进攻目标" : "选择待迎击交锋");
+        const primary = special ? "选择特殊行动" : placing ? "扣置所选牌" : (match.can_end_attack ? "指定进攻目标" : "选择待迎击交锋");
         setText(byId("primary-btn"), primary);
         setText(byId("end-btn"), placing ? "结束置卡" : "结束主动进攻");
         if (dualRole) setText(byId("respond-btn"), "处理待迎击（" + match.pending_responses.length + "）");
@@ -616,7 +671,7 @@ function render() {
         setText(byId("hand-title"), "交接对局");
         setText(byId("hand-meta"), "");
         const shared = secondSeat != null;
-        setText(byId("handoff-title"), shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
+        setText(byId("handoff-title"), match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
         setText(byId("handoff-action"), "我是" + player.name + "，查看手牌");
         byId("handoff-action").disabled = busy;
         if (shared) {
@@ -634,7 +689,7 @@ function notice(text) {
 
 function showState(state, newMatch = false) {
     const previous = match;
-    const wasHandoff = previous?.mode === "handoff";
+    const wasHandoff = handoffMode(previous?.mode);
     const privateSideChanged = previous?.frame.viewer_side !== state.frame.viewer_side;
     if (privateSideChanged || newMatch) {
         hand.replaceChildren();
@@ -643,7 +698,7 @@ function showState(state, newMatch = false) {
     match = state;
     selection = null;
     render();
-    if (state.mode === "handoff") {
+    if (handoffMode(state.mode)) {
         byId("handoff-action").focus({preventScroll: true});
     } else if (wasHandoff) {
         const first = hand.querySelector(".skill-card") || byId("primary-btn");
@@ -668,7 +723,7 @@ function hidePrivateData() {
     byId("handoff").hidden = true;
     byId("actions").hidden = false;
     hand.hidden = false;
-    for (const id of ["detail-btn", "pass-btn", "end-btn", "respond-btn", "switch-seat", "handoff-other"]) byId(id).hidden = true;
+    for (const id of ["detail-btn", "pass-btn", "end-btn", "respond-btn", "switch-seat", "handoff-other", "special-btn"]) byId(id).hidden = true;
     for (const id of ["new-game", "history-toggle", "fighter-1", "fighter-2"]) byId(id).disabled = true;
     setText(byId("primary-btn"), "重新连接");
     byId("primary-btn").disabled = false;
@@ -679,7 +734,7 @@ function lockControls() {
     busy = true;
     document.body.setAttribute("aria-busy", "true");
     for (const id of ["new-game", "primary-btn", "detail-btn", "end-btn", "pass-btn", "handoff-action",
-                      "handoff-other", "switch-seat", "respond-btn"]) {
+                      "handoff-other", "switch-seat", "respond-btn", "special-btn"]) {
         byId(id).disabled = true;
     }
     for (const tile of hand.querySelectorAll(".skill-card")) tile.disabled = true;
@@ -766,6 +821,8 @@ byId("primary-btn").addEventListener("click", event => {
     if (match.mode === "finished") { newGameDialog(); return; }
     if (match.mode === "placement") {
         if (match.legal_cards.includes(selection)) send("place", {card_id: selection});
+    } else if (match.mode === "special") {
+        specialDialog();
     } else if (choosingCard()) {
         if (!match.can_end_attack) responseDialog();
         else if (match.legal_attack_cards.includes(selection)) targetDialog();
@@ -774,10 +831,14 @@ byId("primary-btn").addEventListener("click", event => {
     }
 });
 byId("handoff-action").addEventListener("click", event => {
-    if (event.detail <= 1 && match?.mode === "handoff") send("ready");
+    if (event.detail <= 1 && handoffMode(match?.mode)) send("ready");
 });
 byId("handoff-other").addEventListener("click", event => {
-    if (event.detail <= 1 && match?.mode === "handoff") send("ready", {side: otherSeat()});
+    if (event.detail <= 1 && handoffMode(match?.mode)) send("ready", {side: otherSeat()});
+});
+byId("special-btn").addEventListener("click", () => {
+    const opened = match.mode === "special" || match.mode === "special_handoff";
+    send(opened ? "leave_special" : "open_special");
 });
 byId("respond-btn").addEventListener("click", responseDialog);
 byId("switch-seat").addEventListener("click", () => send("switch_side"));
@@ -785,7 +846,7 @@ byId("pass-btn").addEventListener("click", () => send("pass"));
 byId("end-btn").addEventListener("click", () => {
     if (match.can_end_attack) { send("end_attack"); return; }
     showDialog("结束本回合置卡？", (body, actions) => {
-        body.append(element("p", "dialog-copy", "已扣置的牌会保留，本回合剩余的置卡机会将放弃。"));
+        body.append(element("p", "dialog-copy", "已扣置的牌保留。你将结束本回合的常规置卡，仍可迎击或按技能执行特殊行动。"));
         actions.append(button("继续置卡", false, () => closeDialog()), button("结束置卡", true, () => send("end")));
     });
 });

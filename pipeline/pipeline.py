@@ -1,8 +1,9 @@
 from collections import deque
+from weakref import WeakSet
 
 from models.card import CardState
 from models.dice import TYPE_NAMES
-from models.duel import ClashPair
+from models.duel import ClashPair, DuelSpace
 from models.opcode import OpCode
 from models.pack_types import PackType
 from . import combat_steps as steps
@@ -20,7 +21,9 @@ class SidePipeline:
         self.blocked_at = None
         self.card = None
         self.die = None
-        self.paid = False
+        self.paid = None
+        self.withdrawn = False
+        self.used = False
         self.opposing_card = None
         self.target = None
 
@@ -48,17 +51,61 @@ class SidePipeline:
         return self.current_node
 
 
+class CombatFrame:
+    """One resumable sequence of duels, including its currently bound card and die scopes."""
+
+    def __init__(self, space, players, *, interrupt):
+        self.space = space
+        self.interrupt = interrupt
+        self.sides = {p.side: SidePipeline(p.side, space.game) for p in players}
+        self.pair = None
+        self.results = {}
+        self.started = False
+        self.round_id = 0
+        self.before_use_sides = set()
+        self.active_cards = {}
+        self.active_dice = {}
+        self.runner = None
+        self.parent_round_triggers = {}
+
+
 class Pipeline:
     def __init__(self, game=None, step_list=None):
         self.game = game
         self.step_list = [node.bind(game) for node in (step_list or ())]
         self.current_step_index = -1
         self.is_finished = False
-        self.in_duel_phase = False
-        self.side_pipelines = {}
-        self.current_clash_pair = None
-        self.current_clash_results = {}
-        self.round_id = 0
+        self._frames = []
+        self._rounds_started = 0
+        self._closed_slots = WeakSet()
+
+    @property
+    def in_duel_phase(self):
+        return bool(self._frames)
+
+    @property
+    def _frame(self):
+        return self._frames[-1]
+
+    @property
+    def side_pipelines(self):
+        return self._frame.sides if self._frames else {}
+
+    @property
+    def current_clash_pair(self):
+        return self._frame.pair if self._frames else None
+
+    @property
+    def current_clash_results(self):
+        return self._frame.results if self._frames else {}
+
+    @property
+    def round_id(self):
+        return self._frame.round_id if self._frames else self._rounds_started
+
+    @property
+    def interrupt_space(self):
+        return self._frame.space if self._frames and self._frame.interrupt else None
 
     def next_step(self):
         if self.in_duel_phase:
@@ -74,7 +121,7 @@ class Pipeline:
         return node.id
 
     def _get_current_duel(self):
-        space = self.game.active_duelspace
+        space = self._frame.space
         if 0 <= space.current_duel_index < len(space.space):
             return space.space[space.current_duel_index]
         return None
@@ -94,32 +141,114 @@ class Pipeline:
     def start_duel_combat(self):
         if self.in_duel_phase:
             raise RuntimeError("交锋已经开始")
-        self.side_pipelines = {p.side: SidePipeline(p.side, self.game) for p in self._ordered_players()}
-        self.in_duel_phase = True
-        self._combat = self._duels()
+        self._push_combat(self.game.active_duelspace, interrupt=False)
+
+    def start_special_duel(self, slot):
+        self.start_special_duels([slot])
+
+    def start_special_duels(self, slots):
+        """Suspend the current turn or duel and resolve this group in declaration order."""
+        slots = list(slots)
+        if not slots or len(set(slots)) != len(slots):
+            raise ValueError("请提供一组未重复的即时交锋。")
+        for slot in slots:
+            if not slot.ready or slot in self._closed_slots:
+                raise ValueError("即时交锋尚未就绪或已结算。")
+            if any(slot in f.space.space for f in self._frames):
+                raise ValueError("该交锋正在结算。")
+        space = DuelSpace(self.game)
+        for slot in slots:
+            space.append_new_duel(slot)
+        self._push_combat(space, interrupt=True)
+
+    def _push_combat(self, space, *, interrupt):
+        frame = CombatFrame(space, self._ordered_players(), interrupt=interrupt)
+        if interrupt:
+            for player in self.game.players:
+                for char in player.characters:
+                    frame.parent_round_triggers[char] = char.round_triggers
+                    char.begin_dice_round()
+        self._frames.append(frame)
+        self.game.context.active_cards = frame.active_cards
+        self.game.context.active_dice = frame.active_dice
+        frame.runner = self._duels()
+
+    def can_join(self, slot):
+        return slot not in self._closed_slots
+
+    def can_replace(self, slot, card):
+        side = card.player.side
+        if not self.can_join(slot) or not card.character.is_alive or card.destroyed or card.state == CardState.NEGATED:
+            return False
+        if card not in slot.get_content(side)[slot.current_card_index.get(side, 0):]:
+            return False
+        for frame in self._frames:
+            if slot not in frame.space.space:
+                continue
+            pipe = frame.sides[side]
+            if pipe.card is card and not pipe.withdrawn and pipe.current_node:
+                return pipe.paid is not False and pipe.current_node.id not in ("after_skill_use", steps.NEXT_CARD)
+        return True
+
+    def before_use(self, slot, card):
+        return (bool(self._frames) and card.player.side in self._frame.before_use_sides
+                and slot is self._get_current_duel() and slot.get_current_card(card.player.side) is card)
+
+    def in_use(self, slot, card):
+        for frame in self._frames:
+            index = frame.space.current_duel_index
+            if index < len(frame.space.space) and frame.space.space[index] is slot:
+                pipe = frame.sides[card.player.side]
+                return pipe.card is card and not pipe.withdrawn
+        return False
+
+    def withdraw_skill(self, slot, card):
+        """Invalidate this use even if the same physical card is immediately played again."""
+        side = card.player.side
+        for frame in self._frames:
+            if slot not in frame.space.space:
+                continue
+            pipe = frame.sides[side]
+            if pipe.card is not card or pipe.withdrawn:
+                continue
+            pipe.withdrawn = True
+            self.game.context.withdraw_card_use(card, slot, pipe.used)
+            self.game.context.close_cancelled_use(side, card=card, die=pipe.die)
+            if frame.active_cards.get(side) is card:
+                frame.active_cards.pop(side)
+            if frame.active_dice.get(side) is pipe.die:
+                frame.active_dice.pop(side, None)
 
     def step_duel_combat(self):
         if not self.game.is_over:
             try:
-                return next(self._combat)
+                return next(self._frame.runner)
             except StopIteration:
                 pass
-        self._combat.close()
-        self.current_clash_pair = None
-        self.current_clash_results = {}
-        self.in_duel_phase = False
-        if self.game.pre_reveal.phase == "resolving":
+        finished = self._frames.pop()
+        finished.runner.close()
+        if self.game.is_over:
+            while self._frames:
+                self._frames.pop().runner.close()
+        parent = self._frame if self._frames else None
+        self.game.context.active_cards = parent.active_cards if parent else {}
+        self.game.context.active_dice = parent.active_dice if parent else {}
+        for char, triggers in finished.parent_round_triggers.items():
+            char.round_triggers = triggers
+        if not finished.interrupt and self.game.pre_reveal.phase == "resolving":
             self.game.pre_reveal.phase = "done"
         return ("FINISHED", "FINISHED")
 
     def _duels(self):
-        space = self.game.active_duelspace
-        pre_reveal = self.game.pre_reveal.phase == "resolving"
+        space = self._frame.space
+        pre_reveal = space is self.game.pre_reveal.space or self._frame.interrupt
         while (slot := self._get_current_duel()) is not None:
             if pre_reveal:
-                print(f"\n结算开牌前交锋 {space.current_duel_index + 1}")
+                label = "即时交锋" if self._frame.interrupt else "开牌前交锋"
+                print(f"\n结算{label} {self.game.duel_position()[1] + 1}")
                 if not slot.prepare(self.game.pre_reveal):
                     print("进攻牌或目标已离场，本场交锋跳过。")
+                    self._closed_slots.add(slot)
                     space.current_duel_index += 1
                     continue
             for pipe in self.side_pipelines.values():
@@ -128,8 +257,10 @@ class Pipeline:
             if pipes:
                 if not pre_reveal:
                     print(f"\n交锋 {space.current_duel_index + 1}")
-                self._duel_started = False
+                self._frame.started = False
                 yield from self._play_slot(slot, pipes)
+                self.game.context.expire_lasting_entries(slot)
+            self._closed_slots.add(slot)
             space.current_duel_index += 1
 
     def _ordered_players(self):
@@ -151,20 +282,28 @@ class Pipeline:
                     pipe.push_pack(steps.DUEL)
                 yield from self._run_to(joiners, steps.NEXT_CARD)
                 pipes[:] = [p for p in self.side_pipelines.values() if p in pipes or p in joiners]
-            entrants = []
-            for pipe in pipes:
-                if pipe.is_blocked_at(steps.NEXT_CARD):
+            entering = [p for p in pipes if p.is_blocked_at(steps.NEXT_CARD) and slot.next_playable_card(p.side)]
+            if entering:
+                frame = self._frame
+                frame.before_use_sides = {p.side for p in entering}
+                yield tuple("before_skill_choice" if p.side in frame.before_use_sides else None
+                            for p in self.game.players)
+                frame.before_use_sides.clear()
+                entrants = []
+                for pipe in entering:
                     card = slot.next_playable_card(pipe.side)
-                    if card:
-                        pipe.card = card
-                        pipe.paid = False
-                        pipe.opposing_card = None
-                        pipe.target = (slot.resolve_target_character(pipe.side)
-                                       if self.game.pre_reveal.phase == "resolving" else None)
-                        pipe.push_pack(steps.SKILL)
-                        entrants.append(pipe)
-            if entrants:
-                yield from self._start_skills(pipes, entrants)
+                    if card is None:
+                        continue
+                    pipe.card = card
+                    pipe.paid = None
+                    pipe.withdrawn = pipe.used = False
+                    pipe.opposing_card = None
+                    pipe.target = (slot.resolve_target_character(pipe.side)
+                                   if frame.interrupt or frame.space is self.game.pre_reveal.space else None)
+                    pipe.push_pack(steps.SKILL)
+                    entrants.append(pipe)
+                if entrants:
+                    yield from self._start_skills(pipes, entrants)
                 # Skill-use effects can insert a card into an empty opposing side.
                 # Let it reach its first die before pairing this round.
                 continue
@@ -177,7 +316,8 @@ class Pipeline:
             if spent:
                 yield from self._run_to(spent, steps.NEXT_CARD)
                 for pipe in spent:
-                    slot.finish_card(pipe.side, pipe.card)
+                    if not pipe.withdrawn:
+                        slot.finish_card(pipe.side, pipe.card)
                     pipe.card = pipe.die = None
                 continue
             if not ready:
@@ -188,16 +328,17 @@ class Pipeline:
                 if self._card_live(pipe):
                     pipe.card.advance_die()
                 pipe.die = None
-            self.current_clash_pair = None
-            self.current_clash_results = {}
+            self._frame.pair = None
+            self._frame.results = {}
 
+        self._closed_slots.add(slot)
         yield from self._run_to(pipes, steps.NEXT_DUEL)
         for cards in slot.content.values():
             for card in cards:
                 card.set_range_opponent(None)
 
     def _start_skills(self, pipes, entrants):
-        current = [p for p in pipes if p.card is not None]
+        current = [p for p in pipes if self._card_live(p)]
         for pipe in current:
             pipe.card.set_range_opponent(None)
         if len(current) == 2:
@@ -207,7 +348,7 @@ class Pipeline:
                 # pre-use and fee entries. Its price hooks can still alter or cancel payment.
                 if far in entrants:
                     yield from self._run_to([far], "logic_skill_use")
-                if far.paid and self._card_live(far):
+                if far.paid and self._card_live(far) and self._card_live(near):
                     near.card.set_range_opponent(far.card)
                     if near.card.range_deficit:
                         print(f"「{far.card.name}」对「{near.card.name}」有 {near.card.range_deficit} 级远程优势。")
@@ -216,7 +357,7 @@ class Pipeline:
         yield from self._run_to(entrants, steps.NEXT_DIE)
 
     def _card_live(self, pipe):
-        return (pipe.card is not None and pipe.card.character.is_alive
+        return (pipe.card is not None and not pipe.withdrawn and pipe.card.character.is_alive
                 and not pipe.card.destroyed and pipe.card.state != CardState.NEGATED
                 and pipe.card in self._get_current_duel().get_content(pipe.side))
 
@@ -232,7 +373,8 @@ class Pipeline:
         return None
 
     def _play_round(self, ready):
-        self.round_id += 1
+        self._rounds_started += 1
+        self._frame.round_id = self._rounds_started
         for player in self._ordered_players():
             for char in player.characters:
                 if char.is_alive:
@@ -255,6 +397,8 @@ class Pipeline:
                 if pipe.card.range_deficit >= 2 and pipe.die.is_attack:
                     pipe.die.make_blank()
         can_pair = len(ready) == 2 and not routed and not all(p.die.is_passive for p in ready)
+        if can_pair:
+            self._frame.pair = ClashPair({p.side: p.die for p in ready})
         active = []
         stops = {}
         for pipe in ready:
@@ -271,11 +415,10 @@ class Pipeline:
         if not active:
             print("本轮跳过拼点。")
         yield from self._run_to(ready, stops)
-        eligible = [p for p in active if self._die_live(p)]
-        if can_pair and len(eligible) == 2:
-            yield from self._clash(eligible)
+        if can_pair:
+            yield from self._clash(active)
         else:
-            for pipe in eligible:
+            for pipe in active:
                 if self._die_live(pipe):
                     yield from self._solo(pipe)
         yield from self._run_to(active, steps.NEXT_DIE)
@@ -295,51 +438,54 @@ class Pipeline:
     def _clash(self, participants):
         for p in participants:
             p.push_pack(steps.CLASH)
-        self.current_clash_pair = ClashPair({p.side: p.die for p in participants})
         yield from self._run_to(participants, steps.RESULT)
 
-        # Triggers can destroy a die or its owner before the result is decided.
+        results = None
         live = [p for p in participants if self._die_live(p)]
         if len(live) == 2:
-            # There is one shared comparison after both sides' on_dice_clash.
-            # Cancelling it consumes the dice without issuing result or hit events.
             actors = tuple(p.card.character for p in live)
             with self.game.context.binding(duel=self._get_current_duel(), round_id=self.round_id,
                                            participants=actors):
                 results = self.game.context.eval_block([self.current_clash_pair, OpCode.CLASH])
-            if results is None:
-                yield from self._run_to(participants, "after_dice_clash")
-                return
-            self.current_clash_results = results
-            labels = {"win": "胜", "lose": "负", "draw": "平"}
-            winner = next((p for p in live if results[p.side] == "win"), None)
-            if winner and winner.card.range_deficit >= 2:
-                winner.die.win_branch_skipped = True
-                labels["win"] = "胜，跳过胜利分支"
+            live = [p for p in participants if self._die_live(p)]
+        if len(live) == 1:
+            # A formed pair lost its die before a result. The vanished side has
+            # no result at all, including skip. Only the survivor enters a branch.
+            results = {live[0].side: "win"}
+            print(f"空白轮：对位骰消失，{live[0].card.character.name} 拼点胜利。")
+        if results and live:
+            yield from self._resolve_results(live, results)
+        yield from self._run_to(participants, "after_dice_clash")
+
+    def _resolve_results(self, live, results):
+        self._frame.results = results
+        labels = {"win": "胜", "lose": "负", "draw": "平"}
+        winner = next((p for p in live if results[p.side] == "win"), None)
+        if winner and winner.card.range_deficit >= 2:
+            winner.die.win_branch_skipped = True
+            labels["win"] = "胜，跳过胜利分支"
+            if len(live) == 1:
+                print(f"{winner.card.character.name} 受远程压制，跳过拼赢分支。")
+        if len(live) == 2:
             print("拼点 " + " · ".join(
                 f"{p.card.character.name} {TYPE_NAMES[p.die.type]} 最终 {p.die.final_score} → "
                 f"拼点 {p.die.clash_score}（{labels[results[p.side]]}）"
                 for p in live))
-            stops = {}
-            result_pipes = []
-            for p in live:
-                result = results[p.side]
-                self.game.record_clash_result(p.card.character, result)
-                p.die.clash_result = result
-                if p.die.win_branch_skipped:
-                    continue
-                p.push_pack(steps.result_section(result))
-                stops[p.side] = f"on_clash_{result}"
-                result_pipes.append(p)
-            yield from self._run_to(result_pipes, stops)
-            if winner and not winner.die.win_branch_skipped:
-                # The loser remains at on_clash_lose throughout the winner's hit.
-                yield from self._run_to([winner], steps.CAN_HIT)
-                yield from self._hit(winner)
-        elif live:
-            self.current_clash_pair = None
-            yield from self._solo(live[0])
-        yield from self._run_to(participants, "after_dice_clash")
+        stops = {}
+        result_pipes = []
+        for p in live:
+            result = results[p.side]
+            self.game.record_clash_result(p.card.character, result)
+            p.die.clash_result = result
+            if p.die.win_branch_skipped:
+                continue
+            p.push_pack(steps.result_section(result))
+            stops[p.side] = f"on_clash_{result}"
+            result_pipes.append(p)
+        yield from self._run_to(result_pipes, stops)
+        if winner and not winner.die.win_branch_skipped:
+            yield from self._run_to([winner], steps.CAN_HIT)
+            yield from self._hit(winner)
 
     def _hit(self, pipe):
         if not self._die_live(pipe) or not pipe.die.is_attack or pipe.card.range_deficit:
@@ -407,9 +553,11 @@ class Pipeline:
                 return None
         event = self._event(pipe)
         if not name.startswith("logic_"):
+            if name == "on_skill_use":
+                pipe.used = True
             self.game.context.dispatch_pipeline(name, **event)
-        elif name == "logic_duel_start" and not self._duel_started:
-            self._duel_started = True
+        elif name == "logic_duel_start" and not self._frame.started:
+            self._frame.started = True
             for player in self._ordered_players():
                 for char in player.characters:
                     if char.is_alive and not self.game.is_over:

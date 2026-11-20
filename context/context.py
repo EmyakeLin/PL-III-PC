@@ -1,5 +1,6 @@
 from collections import deque
 from contextlib import contextmanager
+from copy import copy
 import random
 
 from entry.effects import GRADES, damage_part, run_effect
@@ -29,6 +30,8 @@ class Context:
         self.active_dice = {}
         self.hit_modifiers = {}
         self.roll_adjustments = {}
+        # Entries whose printed duration outlives the physical card's return to hand.
+        self._lasting_entries = {}
 
     @property
     def current_op(self):
@@ -269,6 +272,8 @@ class Context:
             return entry.next_card is not None and entry.next_card is event.get("card")
         if entry.scope == "duel" and card is not None:
             duel = event.get("duel")
+            if entry in self._lasting_entries:
+                return self._lasting_entries[entry][0] is duel
             return duel is not None and card in duel.content.get(side, ())
         if entry.scope == "turn" and card is not None:
             return entry.turn_active
@@ -280,7 +285,7 @@ class Context:
         if any(frame.entry is entry for frame in self.executions):
             return False
         if entry.turn_limit:
-            key = (entry.owner, entry.turn_limit["key"])
+            key = self._turn_limit_key(entry)
             if self.turn_entry_uses.get(key, 0) >= entry.turn_limit["count"]:
                 return False
         event = self.event
@@ -399,7 +404,7 @@ class Context:
                     if self.current_op is None or invocation.cancelled:
                         return
             if entry.turn_limit:
-                key = (entry.owner, entry.turn_limit["key"])
+                key = self._turn_limit_key(entry)
                 used = self.turn_entry_uses.get(key, 0)
                 if used >= entry.turn_limit["count"]:
                     return
@@ -471,6 +476,7 @@ class Context:
                 self.hit_modifiers.pop(die, None)
                 self.roll_adjustments.pop(die, None)
             if node_id == "after_turn_end":
+                self.expire_lasting_entries(None)
                 self.hit_modifiers.clear()
                 self.roll_adjustments.clear()
             if node_id in ("after_duel_end", "after_turn_end"):
@@ -505,6 +511,41 @@ class Context:
                 self.active_dice.pop(side, None)
             self.hit_modifiers.pop(die, None)
             self.roll_adjustments.pop(die, None)
+
+    def _turn_limit_key(self, entry):
+        original = self._lasting_entries[entry][1] if entry in self._lasting_entries else entry.owner
+        return original, entry.turn_limit["key"]
+
+    def withdraw_card_use(self, card, duel, used):
+        for execution in self.executions:
+            if execution.entry.owning_card is card:
+                execution.cancelled = True
+        if not used:
+            return
+        # The original physical card can immediately be used again. Keep this
+        # use's local values and its expiry attached to the old use alone.
+        source = copy(card)
+        source.use_state = card.use_state.copy()
+        for entry in self.entries[:]:
+            if (entry.owning_card is not card or entry.scope not in ("duel", "turn")
+                    or not entry.turn_active or entry.blanked):
+                continue
+            retained = copy(entry)
+            if entry.owner is card:
+                retained.owner = source
+            else:
+                retained.owner = copy(entry.owner)
+                retained.owner.card = source
+            expires = duel if entry.scope == "duel" else None
+            self._lasting_entries[retained] = (expires, entry.owner)
+            self.entries.append(retained)
+            entry.turn_active = False
+
+    def expire_lasting_entries(self, duel):
+        for entry, (expires, _) in list(self._lasting_entries.items()):
+            if expires is duel:
+                self.entries.remove(entry)
+                del self._lasting_entries[entry]
 
     def deal_damage(self, source, target, amount, penetration="normal", attack_type="none",
                     damage_part=False, damage_cause=None, **fields):
