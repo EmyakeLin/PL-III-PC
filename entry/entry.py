@@ -48,7 +48,7 @@ class Entry:
 
     def __init__(self, owner, trigger_type, trigger, operation, timing="AFTER", *,
                  scope="global", subject="any", target=None, authority=0, when=None,
-                 period=None, origin=None, turn_limit=None, damage_cause=None):
+                 period=None, origin=None, turn_limit=None, damage_cause=None, status_name=None):
         self.owner = owner
         self.trigger_type = trigger_type
         self.trigger = trigger
@@ -64,6 +64,7 @@ class Entry:
         self.period = period
         self.origin = origin or kind_of(owner)
         self.damage_cause = damage_cause
+        self.status_name = status_name
         self.window_open = period is None
         self.next_armed = False
         self.next_card = None
@@ -89,7 +90,7 @@ class Entry:
                    scope=scope, subject=subject, target=spec.get("target"),
                    authority=spec.get("authority", 0), when=spec.get("when"),
                    period=spec.get("period"), origin=spec.get("origin", kind), turn_limit=spec.get("turn_limit"),
-                   damage_cause=spec.get("damage_cause"))
+                   damage_cause=spec.get("damage_cause"), status_name=spec.get("status_name"))
 
 
 @dataclass(eq=False)

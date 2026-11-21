@@ -58,6 +58,7 @@ class Character:
         self.passive_skills = self.passive_skill_data
         self.skill_data = data["skills"]
         self.skills = []
+        self.conditional_cards = []
         self.hp = self.max_hp
         self.is_alive = True
         self.used_duels = 0
@@ -67,6 +68,8 @@ class Character:
         self.turn_cost_adjustment = 0
         self.statuses = {}
         self.ability_effects = {}
+        self.reserved_dice = []
+        self.rule_state = {}
         self.status_overflow = {}
         # While a status supplies stacks, keep the ordinary stacks independently
         # so expiring the turn or removing the source only removes its own part.
@@ -172,6 +175,8 @@ class Character:
             threshold = self.status_rules[name]["overflow_batch"]["threshold"]
             parts.append(f"{name}溢出 {amount}/{threshold}")
         parts.extend(f"能力 {label} {count}次" for label, count in self.ability_effects.items())
+        parts.extend(f"迎击「{reply.card.name}」第{reply.position}骰 ×{reply.remaining}"
+                     for reply in self.reserved_dice)
         return " · ".join(parts)
 
     def add_shield(self, kind, amount):
@@ -256,6 +261,8 @@ class Character:
 
     def skill_restricted(self, card):
         """A hand play keeps its cost rank for its pending use, including face-down placement."""
+        if not card.meets_use_requirements():
+            return True
         limit = max((self.statuses.get(name, 0) for name, rule in self.status_rules.items()
                      if rule.get("restrict_highest_hand_cost")), default=0)
         if not limit:
@@ -264,7 +271,7 @@ class Character:
         rank = hand.cost_rank(card) if card in hand.content else card.hand_cost_rank
         return rank is not None and rank <= limit
 
-    def apply_status_delta(self, name, amount):
+    def apply_status_delta(self, name, amount, *, notify=True):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
         if not self.is_alive or name in self.ability_rules:
             return 0
@@ -283,9 +290,9 @@ class Character:
                 self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
             amount = accepted
         return self._set_status(name, max(0, self._ordinary_status(name) + amount),
-                                self._sustained_stacks.get(name, 0))
+                                self._sustained_stacks.get(name, 0), notify=notify)
 
-    def _set_status(self, name, ordinary, sustained):
+    def _set_status(self, name, ordinary, sustained, *, notify=True):
         previous = self.statuses.get(name, 0)
         if sustained:
             self._ordinary_stacks[name] = ordinary
@@ -299,7 +306,10 @@ class Character:
             self.statuses[name] = value
             definitions = self.game.status_entries if self.game else self._standalone_status_entries
             if not previous and name in definitions:
-                self._status_listeners[name] = self._effect_context.register_entries(self, definitions[name])
+                listeners = self._effect_context.register_entries(self, definitions[name])
+                for listener in listeners:
+                    listener.origin, listener.status_name = "status", name
+                self._status_listeners[name] = listeners
         else:
             self.statuses.pop(name, None)
             listeners = self._status_listeners.pop(name, ())
@@ -317,6 +327,9 @@ class Character:
             self.hp = min(self.hp, self.max_hp)
             self.check_death()
         if bool(previous) != bool(value):
+            for card in self.conditional_cards:
+                if card.printed_data["form_when"]["status"] == name:
+                    card.refresh_status_form()
             for other, count in self.status_rules.get(name, {}).get("sustain", {}).items():
                 grants = self._sustained_stacks.get(other, 0) + (count if value else -count)
                 self._set_status(other, self._ordinary_status(other), grants)
@@ -324,7 +337,14 @@ class Character:
                 for other, rule in self.status_rules.items():
                     if rule.get("requires_status") == name and self.statuses.get(other):
                         self.clear_status(other)
+        if notify:
+            self.notify_status_change(name, previous, value)
         return value
+
+    def notify_status_change(self, name, previous, current):
+        if previous != current:
+            self._status_event("on_status_changed", status=name, previous_stacks=previous,
+                               current_stacks=current, actual_delta=current - previous)
 
     def clear_status(self, name):
         """Expire ordinary stacks; ongoing contributions live as long as their sources."""
@@ -337,10 +357,10 @@ class Character:
     def damage_multiplier(self):
         return prod(self.status_rules.get(name, {}).get("incoming_damage_multiplier", 1) for name in self.statuses)
 
-    def _status_event(self, event):
+    def _status_event(self, event, **fields):
         if self.is_alive:
             self._effect_context.dispatch_pipeline(event, source=self, target=self, side=getattr(self.player, "side", None),
-                                                   damage_part=False, hit_modifiers=())
+                                                   damage_part=False, hit_modifiers=(), **fields)
 
     def on_duel_start(self):
         self._status_event("on_character_duel_start")

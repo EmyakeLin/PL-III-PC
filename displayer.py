@@ -30,18 +30,21 @@ def _printed_die(spec):
         "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
         "range_traits": describe_range_traits(spec),
+        "resource_cost": dict(spec["resource_cost"]) if spec.get("resource_cost") else None,
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
         "entries": [describe_entry(entry) for entry in die.entries],
     }
 
 
-def _printed_skill(data):
+def _printed_skill(data, *, include_forms=False):
     return {
         "id": data["id"], "name": data["name"], "cost": data["cost"],
         "pre_reveal": data.get("pre_reveal", False),
         "before_duel_attack": data.get("before_duel_attack", False),
         "pre_reveal_target": data.get("pre_reveal_target"),
         "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
+        "requires_status": dict(data.get("requires_status", {})),
+        "forms": [_printed_skill({**data, **form}) for form in data.get("forms", {}).values()] if include_forms else [],
         "anytime_play": list(data.get("anytime_play", [])),
         "anytime_replace": data.get("anytime_replace", False),
         "interceptable": allows_interception(data, pre_reveal=True),
@@ -287,7 +290,7 @@ class Displayer:
                     "id": c.id, "name": c.name,
                     "passives": _passives(c.passive_skill_data),
                     "faction_passives": _passives(c.data.get("faction_passives", ())),
-                    "skills": [_printed_skill(skill) for skill in c.skill_data],
+                    "skills": [_printed_skill(skill, include_forms=True) for skill in c.skill_data],
                 } for c in p.characters],
             } for p in self._game.players],
             "statuses": statuses,
@@ -319,6 +322,8 @@ class Displayer:
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": dict(c.statuses), "bleed_burst": c.bleed_burst,
             "ability_effects": dict(c.ability_effects),
+            "reserved_dice": [{"skill": reserve.card.name, "position": reserve.position, "remaining": reserve.remaining}
+                              for reserve in c.reserved_dice],
             "status_overflow": {name: {"amount": n, "threshold": c.status_rules[name]["overflow_batch"]["threshold"]}
                                 for name, n in c.status_overflow.items()},
             "cost": {"available": c.available_cost, "refill": c.independent_cost, "spent": c.used_independent_cost},

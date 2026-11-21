@@ -194,8 +194,17 @@ class Context:
             # the die whose event they observed. A die entry owns its own segments.
             owner = originating_entry.entry.owner if originating_entry else None
             fields.setdefault("damage_die", owner if getattr(owner, "card", None) is not None else None)
+            fields["damage_card"] = (fields["damage_die"].card if fields["damage_die"] is not None
+                                     else originating_entry.entry.owning_card if originating_entry else None)
+            fields["damage_status"] = originating_entry.entry.status_name if originating_entry else None
             if originating_entry and fields.get("damage_cause") is None:
                 fields["damage_cause"] = originating_entry.entry.damage_cause
+        elif opcode == OpCode.ACTIVATE_STATUS:
+            # An ordinary activation belongs to the status on its holder. A printed
+            # keyword may instead credit its initiating die, skill or status.
+            fields.setdefault("activation_owner", None)
+            fields.setdefault("activation_kind", None)
+            fields.setdefault("activation_multiplier", 1)
         if self._range_blocks_op(opcode, fields) or (
                 opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
             del self.stack[mark:]
@@ -231,7 +240,7 @@ class Context:
             fields.update(source=actor, side=actor.player.side)
         elif opcode in (OpCode.SKILL_FINAL_ADD, OpCode.SKILL_LEVEL_ADD, OpCode.SET_SKILL_STATE,
                         OpCode.QUEUE_HIT, OpCode.SKIP_ROUND,
-                        OpCode.DIE_FINAL_ADD, OpCode.DIE_LEVEL_ADD, OpCode.SET_DIE_STATE,
+                        OpCode.DIE_FINAL_ADD, OpCode.DIE_BASE_ADD, OpCode.DIE_LEVEL_ADD, OpCode.SET_DIE_STATE,
                         OpCode.REPEAT_DIE, OpCode.ROUTE_DIE_ATTACK):
             part = fields.get("die") or fields["card"]
             actor = character_of(part)
@@ -252,12 +261,17 @@ class Context:
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
+                if originating_entry and originating_entry.entry.trigger == "activate_status":
+                    multiplier = self.event.get("activation_multiplier", 1)
+                    if multiplier != 1:
+                        fields["modifiers"].append(("damage_multiply", multiplier, "concept"))
             elif opcode in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE):
                 fields["damage_amount"] = fields["amount"]
                 if opcode == OpCode.FINALIZE_DAMAGE:
                     fields["value_ref"] = ValueBounds()
             else:
-                fields.update(damage_part=False, damage_die=None, penetration=None, attack_type=None, modifiers=None)
+                fields.update(damage_part=False, damage_die=None, damage_card=None, damage_status=None,
+                              penetration=None, attack_type=None, modifiers=None)
                 if opcode == OpCode.LOSE_HP:
                     fields["base_amount"] = None
                     fields.setdefault("source", self.event.get("source") or fields["target"])
@@ -375,6 +389,10 @@ class Context:
                 actor = character_of(entry.owner) if key.startswith("owner") else event.get("target")
                 statuses = getattr(actor, "statuses", {})
                 if any(statuses.get(name, 0) < minimum for name, minimum in value.items()):
+                    return False
+            elif key == "owner_status_below_status":
+                statuses = character_of(entry.owner).statuses
+                if any(statuses.get(name, 0) >= statuses.get(other, 0) for name, other in value.items()):
                     return False
             elif key in ("owner_hp_at_most", "target_hp_at_most"):
                 actor = character_of(entry.owner) if key.startswith("owner") else event.get("target")

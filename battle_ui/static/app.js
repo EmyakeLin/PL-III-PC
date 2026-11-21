@@ -224,7 +224,10 @@ function dieRow(die, summary) {
 function cardDetails(card) {
     showDialog(card.name, body => {
         const traits = ["费用 " + card.cost, ...card.range_traits];
-        if (card.use_restricted) traits.push("限制中，当前无法使用");
+        if (card.use_restricted) traits.push("当前无法使用");
+        for (const [name, amount] of Object.entries(card.requires_status || {})) {
+            traits.push("须持有" + amount + "层" + name);
+        }
         if (card.pre_reveal) traits.push("可在开牌前进攻");
         if (card.before_duel_attack) traits.push("可在交锋开始前进攻");
         if (card.resource_cost) traits.push("使用时须支付" + card.resource_cost.amount + card.resource_cost.status);
@@ -245,6 +248,7 @@ function cardDetails(card) {
             const section = element("section", "detail-dice");
             section.append(dieRow(die, false));
             const formula = [...die.range_traits];
+            if (die.resource_cost) formula.push("使用本骰须消耗" + die.resource_cost.amount + die.resource_cost.status);
             if (die.base_value) formula.push("基础值 " + die.base_value);
             if (die.multiplier !== 1) formula.push("倍率 " + die.multiplier);
             if (die.final_bonus) formula.push("最终修正 " + die.final_bonus);
@@ -254,6 +258,9 @@ function cardDetails(card) {
             if (formula.length) section.append(element("p", "dialog-copy", formula.join(" · ")));
             entries(section, die.entries);
             body.append(section);
+        }
+        for (const form of card.forms || []) {
+            body.append(button("查看「" + form.name + "」形态", false, () => cardDetails(form)));
         }
     });
 }
@@ -285,6 +292,9 @@ function fighterDetails(side) {
             }
         }
         const abilities = Object.entries(actor.ability_effects || {});
+        for (const reserve of actor.reserved_dice || []) {
+            body.append(element("p", "dialog-copy", "迎击 · " + reserve.skill + " 第" + reserve.position + "骰，剩余 " + reserve.remaining + " 次"));
+        }
         if (abilities.length) {
             heading(body, "能力效果");
             for (const [name, count] of abilities) {
@@ -554,6 +564,7 @@ function makeHandCard(card, ownerName) {
     const tile = element("button", "skill-card");
     tile.type = "button";
     tile.dataset.card = card.action_key;
+    tile.dataset.form = card.name;
     const head = element("span", "card-head");
     const characteristics = [ownerName, ranges[card.range_level], card.pre_reveal ? "开牌前可出" : ""];
     if (card.borrowed) characteristics.push("取自对手");
@@ -580,7 +591,9 @@ function renderHand(player) {
     const tiles = new Map([...hand.children].map(node => [node.dataset.card, node]));
     for (const [index, card] of ownHand.entries()) {
         const owner = player.characters.find(actor => actor.id === card.character_id);
-        const tile = tiles.get(card.action_key) || makeHandCard(card, owner?.name || player.name);
+        const old = tiles.get(card.action_key);
+        const tile = old?.dataset.form === card.name ? old : makeHandCard(card, owner?.name || player.name);
+        if (old && tile !== old) old.replaceWith(tile);
         setText(tile.querySelector(".card-name"), card.name + (card.use_restricted ? "（受限）" : ""));
         if (hand.children[index] !== tile) hand.insertBefore(tile, hand.children[index] || null);
     }

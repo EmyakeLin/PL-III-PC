@@ -105,9 +105,10 @@ class PreRevealPhase:
                 and self.phase in ("attack", "intercept"))
 
     @staticmethod
-    def playable_hand(player):
+    def playable_hand(player, *, for_use=True):
         return [c for c in player.cardspace.hand.content
-                if c.character.is_alive and not c.destroyed and c.state != CardState.NEGATED]
+                if c.character.is_alive and not c.destroyed and c.state != CardState.NEGATED
+                and (not for_use or c.meets_use_requirements())]
 
     def attack_cards(self, player):
         return ([c for c in self.playable_hand(player)

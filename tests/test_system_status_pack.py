@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from game import Game
+from models.card import Card
 from models.character import Character
 from models.dice import Dice
 from models.opcode import OpCode
@@ -13,6 +14,82 @@ def fighter(player, **rules):
 
 
 class SystemStatusPackTests(unittest.TestCase):
+    def test_concentration_checks_changes_and_refreshes_once_per_holder_per_turn(self):
+        left, right = Player(1, "甲"), Player(2, "乙")
+        game = Game([left, right])
+        a, b = fighter(left), fighter(right)
+        left.characters.append(a)
+        right.characters.append(b)
+        game.start_turn()
+        a.add_status("能源", 3)
+        a.add_status("凝聚", 3)
+        self.assertEqual(a.statuses["能源"], 3)
+        game.context.eval_block([a, "能源", 2, OpCode.SPEND_STATUS])
+        self.assertEqual(a.statuses["能源"], 2)
+        a.clear_status("凝聚")
+        a.add_status("凝聚", 5)
+        self.assertEqual(a.statuses["能源"], 2)
+        b.add_status("凝聚", 4)
+        self.assertEqual(b.statuses["能源"], 1)
+        game.finish_turn()
+        game.start_turn()
+        self.assertEqual((a.statuses["能源"], b.statuses["能源"]), (3, 2))
+        b.clear_status("能源")
+        self.assertNotIn("能源", b.statuses)
+
+    def test_ignite_credits_each_segment_and_rechecks_stacks_after_each_activation(self):
+        left, right = Player(1, "甲"), Player(2, "乙")
+        game = Game([left, right])
+        game.first_player = left
+        a, b = fighter(left), fighter(right)
+        left.characters.append(a)
+        right.characters.append(b)
+        game.start_turn()
+        b.add_status("烧伤", 12)
+        b.add_shield("normal", 10)
+        card = Card(left, dict(id="igniter", name="引燃测试", cost=0, entries=[{
+            "trigger": "AFTER ACTIVATE_STATUS", "subject": "source",
+            "when": {"status": "烧伤", "activation_kind": "ignite", "result": True},
+            "operation": {"op": "program", "code": [
+                "$card", "已追加", "SKILL_STATE", "NOT", [
+                    "$card", "已追加", 1, "SET_SKILL_STATE", {"op": "ignite"}
+                ], "WHEN"]},
+        }], dice=[
+            dict(type="pierce", level=1, entries=["1穿甲", {
+                "trigger": "AFTER RESOLVE_HIT", "when": {"result": True}, "subject": "source",
+                "operation": {"op": "ignite", "multiplier": 2},
+            }]),
+            dict(type="slash", level=1, entries=["引燃"]),
+        ]), a)
+        a.skills.append(card)
+        receipts = []
+        game.context.register_entries(b, [dict(trigger="AFTER DAMAGE", subject="target", operation=lambda ctx:
+            receipts.append(tuple(ctx.event[k] for k in
+                                  ("source", "damage_die", "damage_card", "damage_status",
+                                   "base_amount", "damage_amount"))))])
+        game.place_in_duel(1, card, 0)
+        game.reveal_cards()
+        game.pipeline.start_duel_combat()
+        for _ in range(400):
+            if not game.pipeline.in_duel_phase:
+                break
+            game.next_step()
+        self.assertFalse(game.pipeline.in_duel_phase)
+        first, second = card.instantiated_dice
+        self.assertEqual(receipts, [(a, first, card, None, 1, 1), (a, first, card, None, 3, 6),
+                                    (a, None, card, None, 1, 1), (a, second, card, None, 1, 1)])
+        self.assertEqual((b.statuses["烧伤"], b.hp), (1, 14))
+
+        # A second status can call the same keyword and retain its own identity.
+        game.status_entries["余烬"] = [dict(trigger="on_spark", operation="引燃")]
+        a.add_status("余烬", 1)
+        b.add_status("烧伤", 7)
+        game.context.dispatch_pipeline("on_spark", source=a, target=b)
+        self.assertEqual(receipts[-1], (a, None, None, "余烬", 2, 2))
+        b.on_turn_end()
+        self.assertEqual(receipts[-1], (b, None, None, "烧伤", 1, 1))
+        self.assertEqual(game.context.stack, [])
+
     def test_detached_character_resolves_stacked_statuses_through_the_same_damage_events(self):
         actor = fighter(Player(1, "甲"))
         actor.add_status("burn", 8)

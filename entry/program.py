@@ -59,6 +59,8 @@ def run_program(ctx, entry, tokens):
             return event["die"].did_deal_damage
         if field == "damage_die_is_attack":
             return bool(getattr(event.get("damage_die"), "is_attack", False))
+        if field in ("activation_kind", "activation_multiplier", "damage_card", "damage_status"):
+            return event.get(field)
         if field == "clash_result":
             return event["die"].clash_result
         if field in ("hit_index", "hit_mode", "targets", "status", "ability", "status_overflow",
@@ -111,6 +113,8 @@ def run_program(ctx, entry, tokens):
             return ctx.game.turn_number
         if field == "die_type":
             return getattr(event.get("die"), "type", None)
+        if field == "die_range":
+            return event["die"].effective_range
         if field == "die_owner":
             return character_of(event.get("die"))
         if field == "player":
@@ -170,6 +174,10 @@ def run_program(ctx, entry, tokens):
         name, card = vm.pop(), vm.pop()
         vm.push(card.use_state.get(name, 0))
 
+    def character_state(vm):
+        name, actor = vm.pop(), vm.pop()
+        vm.push(actor.rule_state.get(name, 0) if actor is not None else 0)
+
     def die_state(vm):
         name, die = vm.pop(), vm.pop()
         vm.push(die.use_state.get(name, 0) if die is not None else 0)
@@ -214,6 +222,9 @@ def run_program(ctx, entry, tokens):
         at, entity = vm.pop(), vm.pop()
         vm.push({"at": at, "target": entity})
 
+    def damage_add(vm):
+        run_effect(vm, entry, {"op": "damage_add", "amount": vm.pop()})
+
     def spend(vm):
         vm.push(vm.execute_op(OpCode.SPEND_STATUS) or 0)
 
@@ -222,6 +233,7 @@ def run_program(ctx, entry, tokens):
 
     words = {
         "DAMAGE_AMOUNT": lambda vm: vm.push(vm.execute_op(OpCode.DAMAGE) or 0),
+        "DAMAGE_ADD": damage_add,
         "ONCE_PER_ROUND": once_per_round, "STATUS_ACTIVE": status_active,
         "DIE_STATE": die_state,
         "ACTIVATE_STATUS": lambda vm: vm.push(bool(vm.execute_op(OpCode.ACTIVATE_STATUS))),
@@ -233,7 +245,8 @@ def run_program(ctx, entry, tokens):
         "SPEND_ABILITY_EFFECT": lambda vm: vm.push(vm.execute_op(OpCode.SPEND_ABILITY_EFFECT) or 0),
         "SPEND_ABILITY_EFFECT_IN_FULL": lambda vm: vm.push(bool(vm.execute_op(
             OpCode.SPEND_ABILITY_EFFECT, result_field="paid_in_full"))),
-        "SKILL_STATE": skill_state, "STORE": store_local, "SPEND_STATUS": spend,
+        "CHARACTER_STATE": character_state, "SKILL_STATE": skill_state,
+        "STORE": store_local, "SPEND_STATUS": spend,
         "USED_SKILL_THIS_TURN": used_skill_this_turn, "FIND_SKILL": find_skill,
         "SPEND_STATUS_IN_FULL": spend_in_full,
         "TEAM_STATUS": lambda vm: team_status(vm, False),

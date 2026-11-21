@@ -55,7 +55,7 @@ class ReplayPlayer(Player):
         return common <= self.available_cost
 
     def place_card(self, game):
-        hand = [c for c in self.cardspace.hand.content if c.character.is_alive]
+        hand = [c for c in self.cardspace.hand.content if c.character.is_alive and c.meets_use_requirements()]
         best, best_score = (), 0
         values = {c: card_value(c) for c in hand}
         for size in range(1, len(hand) + 1):

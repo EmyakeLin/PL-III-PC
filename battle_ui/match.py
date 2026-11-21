@@ -67,7 +67,8 @@ class BattleMatch:
     def _legal_cards(self):
         player = self.game.placing
         return [card for card in player.cardspace.hand.content
-                if card.character.is_alive and card.character.used_duels < card.character.max_duels]
+                if card.character.is_alive and card.character.used_duels < card.character.max_duels
+                and card.meets_use_requirements()]
 
     def snapshot(self):
         deciding = self.mode in ("placement", "pre_attack", "intercept")

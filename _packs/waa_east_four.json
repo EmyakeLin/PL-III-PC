@@ -489,7 +489,7 @@
               "trigger": "BEFORE DAMAGE",
               "operation": {
                 "op": "program",
-                "code": ["$damage_cause", "NOT", "$self_damage", "NOT", "AND", [{"op": "damage_add", "amount": 1}], "WHEN"]
+                "code": ["$damage_status", "NOT", "$self_damage", "NOT", "AND", [{"op": "damage_add", "amount": 1}], "WHEN"]
               },
               "description": "纯能≥3时，自身造成的伤害+1。",
               "subject": "source",

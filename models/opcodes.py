@@ -1,7 +1,7 @@
 import operator
 import random
 
-from entry.entry import Entry, EntryExecution, TriggerType
+from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.effects import GRADE_NAMES, GRADE_RANK
 from models.card import Card, CardState
 from models.duel import DuelSlot
@@ -87,6 +87,13 @@ def handle_final_add(ctx):
         return component.final_bonus
 
 
+def handle_die_base_add(ctx):
+    amount, die = ctx.pop(), ctx.pop()
+    if _usable_component(die):
+        die.base_value += amount
+        return die.base_value
+
+
 def handle_skill_level_add(ctx):
     amount, card = ctx.pop(), ctx.pop()
     if _usable_component(card):
@@ -107,6 +114,11 @@ def handle_die_level_add(ctx):
 def handle_repeat_die(ctx):
     die = ctx.pop()
     return die.card is not None and _usable_component(die) and die.request_repeat()
+
+
+def handle_reserve_die(ctx):
+    count, position, card = ctx.pop(), ctx.pop(), ctx.pop()
+    return ctx.game.pipeline.reserve_die(card, position, count)
 
 
 def handle_queue_hit(ctx):
@@ -151,6 +163,13 @@ def handle_set_component_state(ctx):
     value, key, component = ctx.pop(), ctx.pop(), ctx.pop()
     if component is not None and _usable_component(component):
         component.use_state[key] = value
+        return value
+
+
+def handle_set_character_state(ctx):
+    value, key, actor = ctx.pop(), ctx.pop(), ctx.pop()
+    if actor is not None and actor.is_alive:
+        actor.rule_state[key] = value
         return value
 
 
@@ -291,7 +310,7 @@ def handle_place(ctx):
     if idx < 0:
         raise ValueError("交锋索引不能为负")
     if (getattr(card, "destroyed", False) or card.player.side != side
-            or not card.character.is_alive
+            or not card.character.is_alive or not card.meets_use_requirements()
             or any(card in placed.content.get(side, ()) for placed in game.board_slots())):
         return False
     special = ctx.event.get("special_placement") is card
@@ -571,11 +590,28 @@ def handle_activate_status(ctx):
     if not (spec and target.is_alive and target.statuses.get(name) and name not in target.activating_statuses):
         ctx.current_op = None
         return
-    entry = Entry(target, TriggerType.PIPELINE, "activate_status", spec["operation"],
-                  origin="status", damage_cause=spec.get("label", name))
+    owner = ctx.event.get("activation_owner")
+    if owner is None:
+        owner, origin, status_name = target, "status", name
+    else:
+        caller = ctx.executions[-1].entry
+        origin = caller.origin if owner is caller.owner else kind_of(owner)
+        status_name = caller.status_name if origin == "status" else None
+    entry = Entry(owner, TriggerType.PIPELINE, "activate_status", spec["operation"],
+                  origin=origin, damage_cause=spec.get("label", name), status_name=status_name)
     target.activating_statuses.add(name)
     try:
-        with ctx.binding(source=target, target=target, side=target.player.side, damage_part=False, hit_modifiers=()):
+        source = character_of(owner)
+        if ctx.event.get("activation_kind"):
+            if origin == "die":
+                initiator = f"「{owner.card.name}」第{owner.position}骰"
+            elif origin == "card":
+                initiator = f"「{owner.name}」"
+            else:
+                initiator = f"的{status_name}" if status_name else ""
+            print(f"{source.combat_name}{initiator} 触发{entry.damage_cause}（{target.combat_name}，"
+                  f"{target.statuses[name]} 层）。")
+        with ctx.binding(source=source, target=target, side=source.player.side, damage_part=False, hit_modifiers=()):
             if not ctx._invoke(entry):
                 ctx.current_op = None
                 return
@@ -617,7 +653,7 @@ def handle_status(ctx):
     proposed = ctx.event["amount"]
     ctx.event["amount"] = amount
     old = target.statuses.get(name, 0)
-    total = target.apply_status_delta(name, amount)
+    total = target.apply_status_delta(name, amount, notify=False)
     cap = target.status_cap(name)
     overflow = max(0, old + amount - cap) if cap is not None and target.is_alive else 0
     ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=total-old,
@@ -626,6 +662,7 @@ def handle_status(ctx):
         print(f"{target.combat_name} 未能获得{name}。")
     else:
         print(f"{target.combat_name} 的{name}变为 {total} 层。")
+    target.notify_status_change(name, old, total)
     return total
 
 
@@ -648,7 +685,8 @@ def handle_spend_status(ctx):
     else:
         return 0
     paid = min(cost, balance)
-    remaining = target.apply_status_delta(name, -paid)
+    previous = target.statuses.get(name, 0)
+    remaining = target.apply_status_delta(name, -paid, notify=False)
     ctx.event["paid_in_full"] = paid == cost
     card = ctx.event.get("card")
     if card is not None and card.character is target:
@@ -656,6 +694,7 @@ def handle_spend_status(ctx):
         spent[name] = spent.get(name, 0) + paid
     shortfall = f"（需 {cost} 层，未付足）" if paid < cost else ""
     print(f"{target.combat_name} 消耗 {paid} 层{name}{shortfall}，剩余 {remaining} 层。")
+    target.notify_status_change(name, previous, remaining)
     return paid
 
 
@@ -698,7 +737,9 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.RESERVE_DIE: handle_reserve_die,
     OpCode.ACTIVATE_STATUS: handle_activate_status, OpCode.SET_DIE_STATE: handle_set_component_state,
+    OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
     OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
     OpCode.QUEUE_DIE_EFFECT: handle_queue_die_effect,
@@ -727,6 +768,7 @@ DISPATCH_TABLE = {
     OpCode.NEXT_TURN_COST: handle_next_turn_cost,
     OpCode.SKILL_FINAL_ADD: handle_final_add, OpCode.SKILL_LEVEL_ADD: handle_skill_level_add,
     OpCode.DIE_FINAL_ADD: handle_final_add, OpCode.DIE_LEVEL_ADD: handle_die_level_add,
+    OpCode.DIE_BASE_ADD: handle_die_base_add,
     OpCode.REPEAT_DIE: handle_repeat_die, OpCode.NEXT_TURN_DUELS: handle_next_turn_duels,
     OpCode.SET_SKILL_STATE: handle_set_component_state, OpCode.QUEUE_STATUS: handle_queue_status,
     OpCode.DAMAGE: handle_damage, OpCode.LIGHTCORE_DAMAGE: handle_lightcore_damage,
@@ -740,7 +782,9 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.RESERVE_DIE: ("card", "position", "count"),
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
+    OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
     OpCode.QUEUE_HIT: ("die", "mode"), OpCode.SKIP_ROUND: ("die",),
     OpCode.QUEUE_DIE_EFFECT: ("target", "block"),
@@ -766,6 +810,7 @@ OPERANDS = {
     OpCode.NEXT_TURN_COST: ("player", "amount"),
     OpCode.SKILL_FINAL_ADD: ("card", "amount"), OpCode.SKILL_LEVEL_ADD: ("card", "amount"),
     OpCode.DIE_FINAL_ADD: ("die", "amount"), OpCode.DIE_LEVEL_ADD: ("die", "amount"),
+    OpCode.DIE_BASE_ADD: ("die", "amount"),
     OpCode.REPEAT_DIE: ("die",), OpCode.NEXT_TURN_DUELS: ("target", "amount"),
     OpCode.SET_SKILL_STATE: ("card", "key", "value"), OpCode.QUEUE_STATUS: ("source", "target", "status", "amount"),
     OpCode.PLACE: ("side", "duel_index", "card"), OpCode.ROLL: ("low", "high", "bonus", "die"),

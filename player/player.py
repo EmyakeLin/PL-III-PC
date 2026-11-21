@@ -131,7 +131,8 @@ class Player:
 
     def place_card(self, game):
         hand = self.cardspace.hand.content
-        if not any(c.character.is_alive and c.character.used_duels < c.character.max_duels for c in hand):
+        if not any(c.character.is_alive and c.character.used_duels < c.character.max_duels
+                   and c.meets_use_requirements() for c in hand):
             print(f"{self.name} 没有可置入的牌，结束本轮置卡。")
             return "ended"
         slot_number = game.duelspace.locate_nearest_empty_duel(self.side) + 1
@@ -167,6 +168,9 @@ class Player:
                 print("请输入有效的手牌编号。")
                 continue
             card = hand[int(answer) - 1]
+            if not card.meets_use_requirements():
+                print("尚未满足这张技能的使用条件。")
+                continue
             if not card.character.is_alive or card.character.used_duels >= card.character.max_duels:
                 print("该角色已阵亡或已用完交锋数，请选其他牌。")
                 continue

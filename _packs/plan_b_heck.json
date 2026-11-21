@@ -1,0 +1,759 @@
+{
+  "faction": "PlanB",
+  "turn_end_statuses": ["全开"],
+  "status_rules": {
+    "全开": {
+      "cap": 1,
+      "sustain": {"强壮":2},
+      "description": "本回合决战技可用，使用决战形态，持续持有2强壮。"
+    },
+    "弹药": {"description":"使用指定的远程骰时逐发消耗；不足时跳过该骰位。"}
+  },
+  "characters": [
+    {
+      "id": "plan_b_heck",
+      "name": "赫克",
+      "title": "A级条目",
+      "rank": "ELITE",
+      "max_hp": 12,
+      "base_max_duels": 3,
+      "passive_skills": [
+        {
+          "name": "A级条目",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": ["$player", 1, "DRAW", "$self", 2, "HEAL"]
+              },
+              "description": "初始交锋上限为3；回合开始时额外抽1张手牌并回复2生命值。"
+            }
+          ]
+        },
+        {
+          "name": "PlanB 组织",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$own_skills_in_hand", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
+                ]
+              },
+              "description": "额外抽牌后，若自己的五张常规技能集满，获得1交锋并提升1通用费。"
+            }
+          ]
+        },
+        {
+          "name": "解放家·刃枪",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "when": {
+                "owner_status_at_least": {"能源":12}
+              },
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "全开", 1, "STATUS", "$player", 2, "TURN_COST_ADD", "$self", 1, "TURN_DUELS_ADD",
+                  "$self", "首次全开", "CHARACTER_STATE", "NOT",
+                  [
+                    "$self", "首次全开", true, "SET_CHARACTER_STATE", "$self", "heck_decisive_thrust",
+                    "out_of_combat", "FIND_SKILL", "hand", "MOVE_CARD", "$self", "heck_gunblade_salvo",
+                    "out_of_combat", "FIND_SKILL", "hand", "MOVE_CARD"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "回合开始时能源至少12则本回合全开：决战技可用，在全开时使用决战形态；通用费+2、交锋+1、持续提供2强壮。首次全开时两张决战技直接入手。"
+            }
+          ]
+        },
+        {
+          "name": "灼燃剑刃",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "剑刃近战命中", 0, "SET_CHARACTER_STATE"]
+              },
+              "description": "回合开始时重置灼燃剑刃的三次近战命中。"
+            },
+            {
+              "trigger": "on_dice_hit",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$is_attack",
+                  [
+                    "$self", "剑刃近战命中", "CHARACTER_STATE", 3, "LT",
+                    [
+                      "$die_range", 0, "EQ",
+                      [
+                        "$target", "烧伤", 1, "STATUS", "$self", "剑刃近战命中", "$self", "剑刃近战命中", "CHARACTER_STATE", 1,
+                        "ADD", "SET_CHARACTER_STATE"
+                      ],
+                      "WHEN"
+                    ],
+                    [{"op":"ignite","from_die":true}], "IF_ELSE"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "前三次近战进攻骰命中各施加1烧伤。从第三次之后的下一次进攻骰命中起触发引燃，伤害归该骰。"
+            }
+          ]
+        },
+        {
+          "name": "火焰信标",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "信标耗能", 0, "SET_CHARACTER_STATE"]
+              },
+              "description": "回合开始时重置全队共用的信标耗能额度。"
+            },
+            {
+              "trigger": "BEFORE RESOLVE_CLASH_SCORE",
+              "subject": "ally",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$is_attack", "$target", "烧伤", "STATUS_COUNT", 4, "GE", "AND",
+                  [
+                    "$target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "$die_owner", "$self", "EQ", [4], [2],
+                    "IF_ELSE", "MIN", "$die_range", 0, "GT", [2, "MUL"], "WHEN", "ADD", "$die", "$self", true,
+                    "SET_DIE_STATE"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "友方进攻骰拼点时，目标每4烧伤让拼点点数+1（至多+2）。远程按双倍计算；赫克自身的上限再翻倍。"
+            },
+            {
+              "trigger": "on_dice_hit",
+              "subject": "ally",
+              "when": {"clash_result":"win"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$die", "$self", "DIE_STATE", "$self", "信标耗能", "CHARACTER_STATE", 6, "LT", "AND", "$self",
+                  "能源", "STATUS_COUNT", 0, "GT", "AND",
+                  [
+                    "$self", "信标耗能", "$self", "信标耗能", "CHARACTER_STATE", "$self", "能源", 1, "SPEND_STATUS", "ADD",
+                    "SET_CHARACTER_STATE"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "受本信标影响的友方骰子拼赢并命中时由赫克消耗1能源，每回合至多消耗6。"
+            }
+          ]
+        },
+        {
+          "name": "能源聚集",
+          "entries": [
+            {
+              "trigger": "on_status_changed",
+              "subject": "target",
+              "when": {"status":"能源"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$actual_delta", 0, "LT",
+                  [
+                    "$self", "能源消耗余量", "CHARACTER_STATE", "$actual_delta", "SUB", "total", "STORE",
+                    {"local":"total"}, 8, "FLOOR_DIV", "earned", "STORE", "$self", "能源消耗余量", {"local":"total"},
+                    {"local":"earned"}, 8, "MUL", "SUB", "SET_CHARACTER_STATE", {"local":"earned"}, 0, "GT",
+                    ["$self", "凝聚", {"local":"earned"}, "STATUS"], "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "每累计实际消耗8能源，获得1凝聚。失去能源也计入累计，余数跨回合保留。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "heck_burning_slash",
+          "name": "灼燃斩",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", 1, "$self", "凝聚", "STATUS_COUNT", "RESERVE_DIE"]
+              },
+              "description": "每持有1凝聚，本回合即将被单方面攻击时可用本技能的第一枚骰子迎击一次。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "before_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$die", "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_FINAL_ADD"]
+                  },
+                  "description": "自身每持有4能源，本骰最终点数+1，至多+2。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "烧伤", 1, "STATUS"]
+                  },
+                  "description": "施加1烧伤。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heck_flame_lunge",
+          "name": "烈焰刺挑",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "能源", 4, "SPEND_STATUS_IN_FULL", ["$card", 2, "SKILL_LEVEL_ADD"], "WHEN"]
+              },
+              "description": "消耗4能源以使本技能骰子等级提升2。"
+            },
+            {
+              "trigger": "on_clash_win",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "wins", "$card", "wins", "SKILL_STATE", 1, "ADD", "SET_SKILL_STATE"]
+              },
+              "description": "记录本技能实际取得的拼点胜利。"
+            },
+            {
+              "trigger": "AFTER ACTIVATE_STATUS",
+              "subject": "source",
+              "when": {"status":"烧伤","activation_kind":"ignite","result":true},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$card", "extra_ignite", "SKILL_STATE", "NOT",
+                  [
+                    "$card", "extra_ignite", true, "SET_SKILL_STATE", {"op":"ignite"}, "$self", "能源", 2, "STATUS"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "本技能期间触发引燃时，额外引燃一次并获得2能源；每次使用技能至多一次，额外引燃归技能。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 1,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "烧伤", 2, "STATUS"]
+                  },
+                  "description": "施加2烧伤。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 1,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$target", "烧伤", 1, "STATUS", "$self", "能源", 2, "SPEND_STATUS_IN_FULL",
+                      ["$target", "烧伤", 3, "STATUS"], "WHEN"
+                    ]
+                  },
+                  "description": "施加1烧伤，消耗2能源以施加3烧伤。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "烧伤", 1, "STATUS"]
+                  },
+                  "description": "施加1烧伤。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 1,
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "before_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$card", "wins", "SKILL_STATE", 2, "GE",
+                      ["$die", 2, "DIE_LEVEL_ADD", "$die", "lunge_finish", true, "SET_DIE_STATE"], "WHEN"
+                    ]
+                  },
+                  "description": "本技能之前至少两次拼点胜利时，本骰等级提升2、伤害+1，命中时引燃并摧毁对阵技能。"
+                },
+                {
+                  "trigger": "BEFORE DAMAGE",
+                  "subject": "source",
+                  "when": {"damage_part":true},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$damage_die", "$owner", "EQ", "$die", "lunge_finish", "DIE_STATE", "AND", [1, "DAMAGE_ADD"],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "满足前两胜的末骰伤害部分+1。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$die", "lunge_finish", "DIE_STATE", [{"op":"ignite"}, "$opponent_card", "DESTROY"], "WHEN"
+                    ]
+                  },
+                  "description": "达成前两胜时，命中触发引燃并摧毁对方技能。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heck_load",
+          "name": "装填",
+          "cost": 1,
+          "form_when": {"status":"全开","form":"开火"},
+          "forms": {
+            "开火": {
+              "name": "开火",
+              "range_level": 2,
+              "requires_status": {"弹药":2},
+              "entries": [],
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "resource_cost": {"status":"弹药","amount":1},
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$target", "烧伤", 1, "STATUS"]
+                      },
+                      "description": "施加1烧伤。"
+                    }
+                  ]
+                },
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "resource_cost": {"status":"弹药","amount":1},
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$target", "烧伤", 1, "STATUS"]
+                      },
+                      "description": "施加1烧伤。"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "弹药", 2, "STATUS"]
+              },
+              "description": "获得2弹药。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "能源", "STATUS_COUNT", 12, "LE", ["$self", "能源", 4, "STATUS"], "WHEN"]
+              },
+              "description": "能源不高于12时，获得4能源。全开时必须改用「开火」。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "能源", 1, "STATUS"]
+                  },
+                  "description": "拼点胜利时获得1能源。"
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "能源", 1, "STATUS"]
+                  },
+                  "description": "拼点胜利时获得1能源。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heck_energy_analysis",
+          "name": "能源反解析",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", "$self", "凝聚", "STATUS_COUNT", 0, "GT",
+                  ["$self", "凝聚", "STATUS_COUNT", 2, "MUL", 8, "MIN"], [1], "IF_ELSE", "STATUS"
+                ]
+              },
+              "description": "每持有1凝聚获得2能源，至多8；无凝聚则获得1能源。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "能源", 3, "STATUS"]
+                  },
+                  "description": "获得3能源。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "ignore_range_per_stack": "凝聚",
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "凝聚", "STATUS_COUNT", "ADD"]
+                  },
+                  "description": "本骰等级提升等同于凝聚层数，并无视等量远程等级。"
+                },
+                {
+                  "trigger": "BEFORE DAMAGE",
+                  "subject": "source",
+                  "when": {"damage_part":true},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$damage_die", "$owner", "EQ",
+                      [
+                        "$die", "analysis_burn", 0, "SET_DIE_STATE", "$self", "凝聚", "STATUS_COUNT", "price", "STORE",
+                        {"local":"price"}, 0, "GT",
+                        [
+                          "$card", "能源", "SPENT_STATUS_COUNT", "before", "STORE", "$self", "能源", {"local":"price"},
+                          "SPEND_STATUS_IN_FULL",
+                          [
+                            "$card", "能源", "SPENT_STATUS_COUNT", {"local":"before"}, "SUB", 2, "FLOOR_DIV", "$self", "全开",
+                            "STATUS_COUNT", [2, "MUL"], "WHEN", "bonus", "STORE", "$die", "analysis_burn",
+                            {"local":"bonus"}, "SET_DIE_STATE", {"local":"bonus"}, "DAMAGE_ADD"
+                          ],
+                          "WHEN"
+                        ],
+                        "WHEN"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "命中时消耗等同于凝聚层数的能源。付足时，本段伤害增加实耗量的一半向下取整，全开时增量翻倍。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$die", "analysis_burn", "DIE_STATE", "bonus", "STORE", {"local":"bonus"}, 0, "GT",
+                      ["$target", "烧伤", {"local":"bonus"}, "STATUS"], "WHEN"
+                    ]
+                  },
+                  "description": "施加与本次增伤等量的烧伤。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heck_red_blade",
+          "name": "赤炎剑",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", "STATUS_COUNT", 16, "GT",
+                  [
+                    "$card", "base_bonus", "$self", "能源", "$self", "能源", "STATUS_COUNT", 16, "SUB",
+                    "SPEND_STATUS", 2, "FLOOR_DIV", "SET_SKILL_STATE"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "消耗能源超过16的部分，每实耗2点则本技能基础值+1。"
+            },
+            {
+              "trigger": "before_dice_use",
+              "operation": {
+                "op": "program",
+                "code": ["$die", "$card", "base_bonus", "SKILL_STATE", "DIE_BASE_ADD"]
+              },
+              "description": "以本次技能已获得的加成提升当前骰的基础值。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "能源", 2, "SPEND_STATUS_IN_FULL",
+                      [
+                        "$card", "base_bonus", "$card", "base_bonus", "SKILL_STATE", 2, "ADD", "SET_SKILL_STATE"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "拼赢时消耗2能源以使本技能后续骰子基础值+2。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": ["2物理"]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "base_value": 4,
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", 1, "DRAW", "$final_score", 4, "FLOOR_DIV", "burn", "STORE", {"local":"burn"}, 0,
+                      "GT", ["$target", "烧伤", {"local":"burn"}, "STATUS"], "WHEN", "$opponent_card", "DESTROY"
+                    ]
+                  },
+                  "description": "抽1卡，每4最终点数施加1烧伤，摧毁对方技能。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heck_decisive_thrust",
+          "name": "贯彻之刺",
+          "cost": 3,
+          "out_of_combat": true,
+          "requires_status": {"全开":1},
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "repeat_limit", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"]
+              },
+              "description": "决战技。本技能首骰的重复上限等于使用时的凝聚层数。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "base_value": 4,
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op":"ignite","multiplier":2},
+                  "description": "由本骰触发一次引燃，该次烧伤伤害翻倍。"
+                },
+                {
+                  "trigger": "AFTER DAMAGE",
+                  "subject": "source",
+                  "when": {"damage_amount_at_least":1},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$damage_die", "$owner", "EQ", ["$self", "能源", "$damage_amount", "SPEND_STATUS", "POP"],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "本骰每造成1点直伤消耗1能源，包括本骰引燃造成的伤害。"
+                },
+                {
+                  "trigger": "after_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "能源", "STATUS_COUNT", 0, "GT", "$repeat_count", "$card", "repeat_limit",
+                      "SKILL_STATE", "LT", "AND", ["$die", "REPEAT_DIE"], "WHEN"
+                    ]
+                  },
+                  "description": "攻击后若仍持有能源则重复使用，受使用技能时锁定的次数限制。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "heck_gunblade_salvo",
+          "name": "枪刃迸射",
+          "cost": 5,
+          "out_of_combat": true,
+          "requires_status": {"全开":1,"弹药":1},
+          "range_level": 2,
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 6,
+              "base_value": 3,
+              "resource_cost": {"status":"弹药","amount":1},
+              "entries": ["1穿甲","引燃","引燃"]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "resource_cost": {"status":"弹药","amount":1},
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "烧伤", 1, "STATUS"]
+                  },
+                  "description": "施加1烧伤。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "resource_cost": {"status":"弹药","amount":1},
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "烧伤", 1, "STATUS"]
+                  },
+                  "description": "施加1烧伤。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "multiplier": 2,
+              "entries": [
+                "0穿甲",
+                {
+                  "trigger": "before_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$die", "$self", "凝聚", "STATUS_COUNT", "DIE_FINAL_ADD"]
+                  },
+                  "description": "每层凝聚使本骰最终点数+1。"
+                },
+                {
+                  "trigger": "BEFORE DAMAGE",
+                  "subject": "source",
+                  "when": {"damage_part":true},
+                  "operation": {
+                    "op": "program",
+                    "code": ["$damage_die", "$owner", "EQ", ["$self", "凝聚", "STATUS_COUNT", "DAMAGE_ADD"], "WHEN"]
+                  },
+                  "description": "本骰伤害部分增加等同于当前凝聚的数值。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "凝聚", "STATUS_COUNT", 0, "GT",
+                      ["$target", "烧伤", "$self", "凝聚", "STATUS_COUNT", "STATUS"], "WHEN", "$self", "能源", "all",
+                      "SPEND_STATUS", "POP"
+                    ]
+                  },
+                  "description": "施加等于凝聚层数的烧伤，随后消耗全部能源。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

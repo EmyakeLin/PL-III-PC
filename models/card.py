@@ -17,6 +17,9 @@ def range_trait(data, key, card):
             active = card.character is not None and card.character.statuses.get(condition["status"], 0)
         if active:
             value = max(value, condition["amount"])
+    per_stack = data.get(key + "_per_stack")
+    if per_stack and card is not None and card.character is not None:
+        value = max(value, min(3, card.character.statuses.get(per_stack, 0)))
     return value
 
 
@@ -65,6 +68,8 @@ def describe_range_traits(data):
         if condition := data.get(key + "_when"):
             when = f"【{condition['status']}】" if "status" in condition else "本技能相应词条生效时"
             traits.append(when + label(condition["amount"]))
+        if per_stack := data.get(key + "_per_stack"):
+            traits.append(f"每层{per_stack}提供1级" + ("远程" if key == "range_level" else "无视远程"))
     return traits
 
 
@@ -78,6 +83,10 @@ def describe_skill_traits(data):
         traits.append("开牌前仅可指定已有敌方置牌的交锋")
     if extra := data.get("resource_cost"):
         traits.append(f"使用时须支付{extra['amount']}{extra['status']}")
+    if requirements := data.get("requires_status"):
+        traits.extend(f"须持有{count}层{name}" for name, count in requirements.items())
+    if condition := data.get("form_when"):
+        traits.append(f"持有{condition['status']}时使用「{condition['form']}」形态")
     if not allows_interception(data, pre_reveal=True):
         traits.append("不可拦截")
     modes = {"attack": "主动进攻", "place": "置于空交锋", "custom": "依卡面执行"}
@@ -107,7 +116,9 @@ class Card:
         self.player = player
         self.character = character
         self.printed_owner = character
+        self.printed_data = data
         self.data = data
+        self._form = None
         self.id = data["id"]
         self.name = data["name"]
         self.cost = data["cost"]
@@ -127,13 +138,19 @@ class Card:
         self.level_bonus = 0
         self.use_state = {}
         self.destroyed = False
-        if player is not None and getattr(player, "game", None) is not None:
-            player.game.context.register_entries(self, self.entries)
+        self._printed_listeners = game.context.register_entries(self, self.entries) if game else []
+        if character is not None and "form_when" in data:
+            character.conditional_cards.append(self)
+            self.refresh_status_form()
+
+    def meets_use_requirements(self):
+        return all(self.character is not None and self.character.statuses.get(name, 0) >= minimum
+                   for name, minimum in self.data.get("requires_status", {}).items())
 
     def has_next_die(self):
         return not self.destroyed and self.current_dice_index < len(self._dice_order)
 
-    def get_current_die(self, game):
+    def get_current_die(self, game, *, register=True):
         while self.has_next_die():
             printed_index, _ = self._dice_order[self.current_dice_index]
             spec = self.dice[printed_index]
@@ -144,9 +161,8 @@ class Card:
         if not self.has_next_die():
             return None
         die = self._materialize_die(game, self.current_dice_index)
-        if not die.destroyed and not die.entries_registered:
-            game.context.register_entries(die, die.entries)
-            die.entries_registered = True
+        if register:
+            die.register_entries()
         return die
 
     def _materialize_die(self, game, index):
@@ -174,16 +190,36 @@ class Card:
             if spec["type"] == "skip" or gate and not self.use_state.get(gate):
                 continue
             die = self._materialize_die(game, index)
-            if not die.destroyed:
+            if not die.destroyed and die.can_afford_use():
                 yield die
 
     def set_form(self, key):
-        form = self.data["forms"][key]
+        form = self.printed_data["forms"][key] if key is not None else {}
+        self._form = key
+        self.data = {**self.printed_data, **form} if form else self.printed_data
         self._release_dice()
-        self.name = form["name"]
-        self.dice = form["dice"]
+        self.name = self.data["name"]
+        self.cost = self.data["cost"]
+        self.dice = self.data.get("dice", [])
+        self.range_level = self.data.get("range_level", 0)
+        self.ignore_range = self.data.get("ignore_range", 0)
+        entries = self.data.get("entries", [])
+        if entries != self.entries:
+            self.entries = entries
+            if game := getattr(self.player, "game", None):
+                for listener in self._printed_listeners:
+                    if listener in game.context.entries:
+                        game.context.entries.remove(listener)
+                self._printed_listeners = game.context.register_entries(self, entries)
         self._dice_order = [(index, False) for index in range(len(self.dice))]
         self.current_dice_index = 0
+
+    def refresh_status_form(self):
+        condition = self.printed_data.get("form_when")
+        if condition:
+            key = condition["form"] if self.character.statuses.get(condition["status"], 0) else None
+            if key != self._form:
+                self.set_form(key)
 
     def take_remaining_dice(self, other):
         """Move the remaining uses, including queued repeats, without editing either printed skill."""
@@ -215,8 +251,13 @@ class Card:
                 self.use_state[gate] = other.use_state[gate]
 
     def set_controller(self, character):
+        if self.character is not character and "form_when" in self.printed_data:
+            if self.character is not None:
+                self.character.conditional_cards.remove(self)
+            character.conditional_cards.append(self)
         self.character = character
         self.player = character.player
+        self.refresh_status_form()
 
     def belongs_to(self, character):
         """Both current use and printed ownership matter when a character leaves battle."""
@@ -270,6 +311,14 @@ class Card:
         self._sync_requested_repeat()
         self.current_dice_index += 1
 
+    def skip_unpaid_die(self):
+        index = self.current_dice_index
+        die = self.instantiated_dice[index]
+        if die.entries_registered:
+            self.player.game.context.unregister_entries(die)
+        self.instantiated_dice[index] = None
+        self.current_dice_index += 1
+
     def _release_dice(self):
         if self.instantiated_dice:
             for die in self.instantiated_dice:
@@ -279,11 +328,7 @@ class Card:
 
     def reset_for_draw(self):
         self.hand_cost_rank = None
-        self._release_dice()
-        self.dice = self.data.get("dice", [])
-        self.name = self.data["name"]
-        self.current_dice_index = 0
-        self._dice_order = [(index, False) for index in range(len(self.dice))]
+        self.set_form(self._form if "form_when" in self.printed_data else None)
         self.final_bonus = self.level_bonus = 0
         self.range_opponent = None
         self.range_deficit = 0
@@ -312,7 +357,7 @@ class Card:
         actions = " → ".join(describe_die(die) for die in self.dice)
         effects = "；".join(describe_entry(entry) for entry in self.entries)
         in_hand = self.player and self in self.player.cardspace.hand.content
-        restriction = "限制中，当前无法使用" if in_hand and self.character.skill_restricted(self) else ""
+        restriction = "当前无法使用" if in_hand and self.character.skill_restricted(self) else ""
         return " · ".join(part for part in [str(self), restriction, describe_skill_traits(self.data), actions, effects] if part)
 
 

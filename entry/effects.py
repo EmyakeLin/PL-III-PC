@@ -203,6 +203,21 @@ def run_effect(ctx, entry, operation):
     elif name == "destroy":
         block = [target, OpCode.DESTROY]
     else:
+        # Status packs can publish keywords that invoke their existing settlement
+        # rule on a target, with credit for the damage going to the caller.
+        for status, rule in getattr(target, "status_rules", {}).items():
+            keywords = rule.get("activation", {}).get("keywords", ())
+            if name in keywords:
+                owner = entry.owner
+                if data.get("from_die"):
+                    owner = ctx.event.get("die")
+                    if (owner is None or character_of(owner) is not source
+                            or ctx.range_blocks_target(target, card=owner.card)):
+                        return
+                ctx.stack.extend((target, status))
+                return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
+                                      activation_owner=owner, activation_kind=keywords[0],
+                                      activation_multiplier=data.get("multiplier", 1))
         raise ValueError(f"未知词条操作 {name!r}")
     with ctx.binding(source=source, target=target, authority=entry.authority):
         ctx.eval_block(block)

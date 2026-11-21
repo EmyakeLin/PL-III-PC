@@ -9,7 +9,8 @@
     "束缚": {"per_stack": {"speed": -1}, "description": "每层使持有角色的速度−1。"},
     "骰子等级提升": {},
     "骰子等级降低": {},
-    "限制": {"restrict_highest_hand_cost": true, "description": "本回合无法使用自己手牌中费用最高的X张技能，同费按手牌顺序。"}
+    "限制": {"restrict_highest_hand_cost": true, "description": "本回合无法使用自己手牌中费用最高的X张技能，同费按手牌顺序。"},
+    "凝聚": {"description": "自身能源低于凝聚层数时，获得1能源，每回合至多触发1次。"}
   },
   "status_entries": {
     "骰子等级提升": [{
@@ -21,6 +22,22 @@
       "trigger": "BEFORE RESOLVE_DIE_LEVEL",
       "description": "每层使持有者本回合的骰子等级降低1级。",
       "operation": {"op": "program", "code": ["$self", "骰子等级降低", "STATUS_COUNT", "SUB"]}
-    }]
+    }],
+    "凝聚": [
+      {
+        "trigger": "on_status_changed",
+        "when": {"owner_status_below_status": {"能源": "凝聚"}},
+        "turn_limit": {"key": "凝聚", "count": 1},
+        "description": "层数变动后检查能源，低于凝聚时获得1能源。",
+        "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS"]}
+      },
+      {
+        "trigger": "on_turn_limits_reset",
+        "when": {"owner_status_below_status": {"能源": "凝聚"}},
+        "turn_limit": {"key": "凝聚", "count": 1},
+        "description": "新回合开始时刷新次数并立即检查一次。",
+        "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS"]}
+      }
+    ]
   }
 }

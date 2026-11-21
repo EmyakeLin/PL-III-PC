@@ -115,12 +115,18 @@ class Game:
                     entries = [passive["description"]]
                 for entry in entries:
                     print("  " + " · ".join(part for part in (label, name, describe_entry(entry)) if part))
-        for skill in data["skills"]:
-            dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
-            entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
-            zone = "战斗外" if skill.get("out_of_combat") else ""
-            print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
-                                                  describe_skill_traits(skill), dice, entries, zone) if s))
+        for printed in data["skills"]:
+            Game.show_skill(printed)
+            for form in printed.get("forms", {}).values():
+                Game.show_skill({**printed, **form})
+
+    @staticmethod
+    def show_skill(skill):
+        dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
+        entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
+        zone = "战斗外" if skill.get("out_of_combat") else ""
+        print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
+                                              describe_skill_traits(skill), dice, entries, zone) if s))
 
     def begin_private_view(self, player):
         """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
@@ -209,6 +215,7 @@ class Game:
             self.turn_ending = False
             self.context.turn_entry_uses.clear()
             self.used_skill_ids.clear()
+            self.context.dispatch_pipeline("on_turn_limits_reset", source=None, target=None, side=None)
 
     def prepare_turn(self):
         self.open_turn()
@@ -405,6 +412,7 @@ class Game:
         for player in ordered:
             for character in player.characters:
                 character.reset_shields()
+                character.reserved_dice.clear()
                 character.used_duels = 0
                 character.turn_duel_bonus = 0
                 for status in self.turn_end_statuses:

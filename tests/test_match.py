@@ -24,10 +24,12 @@ class MatchTests(unittest.TestCase):
         self.game = Game([Player(1, "甲"), Player(2, "乙")], rng=random.Random(18))
 
     def roster(self, size):
+        ids = ("char_iron_vanguard", "char_crimson_duelist", "drill_scout",
+               "drill_medic", "drill_captain", "drill_engine")
+        catalog = {spec["id"]: spec for spec in self.pool}
         for side, player in enumerate(self.game.players):
-            choices = self.pool[side * size:(side + 1) * size]
-            for data in choices:
-                char = Character(data, player)
+            for key in ids[side * size:(side + 1) * size]:
+                char = Character(catalog[key], player)
                 player.characters.append(char)
                 char.init_cards()
                 char.setup_deck()
@@ -80,8 +82,12 @@ class MatchTests(unittest.TestCase):
 
     def test_cli_from_another_directory_finishes_with_victory(self):
         main = Path(__file__).resolve().parents[1] / "main.py"
-        # Take the first character on each side, then commit one card per turn.
-        moves = ["1", "", "1", ""] + ["1", "end"] * 100
+        # Select the two original fighters by their current menu positions.
+        ids = [spec["id"] for spec in load_characters_from_packs()]
+        left = ids.index("char_iron_vanguard") + 1
+        ids.remove("char_iron_vanguard")
+        right = ids.index("char_crimson_duelist") + 1
+        moves = [str(left), "", str(right), ""] + ["1", "end"] * 100
         result = subprocess.run(
             [sys.executable, "-B", "-X", "utf8", str(main), "--seed", "37"],
             input="\n".join(moves) + "\n", capture_output=True, encoding="utf-8",

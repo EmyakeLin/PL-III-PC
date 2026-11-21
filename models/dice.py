@@ -76,6 +76,7 @@ class Dice:
         self.repeat_requested = False
         self.repeat_materialized = False
         self.entries_registered = False
+        self.resource_paid = False
         self.is_repeat = False
         self.queued_hits = deque()
         self.hit_mode = None
@@ -102,6 +103,28 @@ class Dice:
     @property
     def is_passive(self):
         return self.type in ("block", "evade")
+
+    def pay_use_cost(self):
+        """Pay once, after insertions have resolved and before this use is paired."""
+        cost = self.data.get("resource_cost")
+        if not cost or self.resource_paid or self.card.range_deficit >= 3:
+            return True
+        actor = self.card.character
+        ctx = self.game.context
+        with ctx.binding(source=actor, side=actor.player.side, card=self.card, die=self):
+            ctx.stack.extend((actor, cost["status"], cost["amount"]))
+            self.resource_paid = bool(ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"))
+        return self.resource_paid
+
+    def can_afford_use(self):
+        cost = self.data.get("resource_cost")
+        return (not cost or self.resource_paid or self.card.range_deficit >= 3
+                or self.card.character.spendable_status(cost["status"]) >= cost["amount"])
+
+    def register_entries(self):
+        if not self.destroyed and not self.entries_registered:
+            self.game.context.register_entries(self, self.entries)
+            self.entries_registered = True
 
     @property
     def is_attack(self):
@@ -230,5 +253,8 @@ def describe_die(data):
     first = die.get_value()
     die.value = die.roll_max
     last = die.get_value()
-    effects = "；".join([*describe_range_traits(data), *(describe_entry(entry) for entry in die.entries)])
+    traits = describe_range_traits(data)
+    if cost := data.get("resource_cost"):
+        traits.append(f"使用本骰须消耗{cost['amount']}{cost['status']}")
+    effects = "；".join([*traits, *(describe_entry(entry) for entry in die.entries)])
     return f"{name} {die.level.name.lower()}（{first}～{last}）" + (f"〔{effects}〕" if effects else "")

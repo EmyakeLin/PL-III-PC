@@ -40,11 +40,17 @@ python main.py
 
 | 效果包 | 定义 |
 |---|---|
-| [基础状态效果包](./_packs/effects/base_statuses.json) | 强壮、虚弱、迅捷、束缚、骰子等级提升、骰子等级降低、限制 |
+| [基础状态效果包](./_packs/effects/base_statuses.json) | 强壮、虚弱、迅捷、束缚、骰子等级提升、骰子等级降低、限制、凝聚 |
 | [基础体系状态效果包](./_packs/effects/system_statuses.json) | 烧伤、裂血、呼吸、失衡，以及由失衡产生的致命失衡 |
 | [基础能力效果包](./_packs/effects/base_abilities.json) | 置卡机会、换卡机会 |
 
 状态效果用 `STATUS`、`SPEND_STATUS`、`STATUS_COUNT` 获得、消耗和读取层数。能力效果用 `ABILITY_EFFECT`、`SPEND_ABILITY_EFFECT`、`ABILITY_COUNT` 管理可用次数。角色包可在 `ability_rules` 中声明一项能力的操作和持续时间。例如，空白的「智脑」抽牌一次，同时花 1 次抽卡资格和 1 层能源，分别结算能力支付和状态消耗。[空白卡包](./_packs/void_boss.json)
+
+骰面写 `"引燃"` 即可立即结算目标当前的烧伤。技能、状态等来源可用 `{"op":"ignite"}`；需要翻倍本次烧伤伤害时，用 `{"op":"ignite","multiplier":2}`。每次引燃按当时的层数结算，伤害归触发它的实体。[烧伤与引燃定义](./_packs/effects/system_statuses.json)
+
+### PlanB 精英 · 赫克
+
+赫克以 12 生命、3 个基础常规交锋和 5 张常规技能入场。回合开始时有至少 12 能源，就在该回合全开，首次全开将两张决战技直接加入手牌。「装填」随即切换为强化远程的「开火」。能源影响下一回合能否全开，弹药在每颗有要求的骰子使用时支付。运行 `python -m tests.test_heck_match --replay 1` 可复盘赫克从零能源入场、第三回合全开对战安诺琳的整局。[赫克卡包](./_packs/plan_b_heck.json)
 
 ### 新星组织首领 · 林秋
 

@@ -243,7 +243,8 @@ class SpecialActions:
                 if spec["target"] == "self":
                     choices.append(choice)
                 elif spec["target"] == "own_hand":
-                    choices.extend(replace(choice, target_card=c) for c in self.game.pre_reveal.playable_hand(player))
+                    choices.extend(replace(choice, target_card=c)
+                                   for c in self.game.pre_reveal.playable_hand(player, for_use=False))
                 elif spec["target"] == "enemy_facedown":
                     enemy = self.game.pre_reveal.opponent(player)
                     choices.extend(replace(choice, duel_index=i, target_card=c)
@@ -307,7 +308,7 @@ class SpecialActions:
         return card.data.get("anytime_replace", False) and card.character is target.character
 
     def may_replace(self, card, slot, target):
-        if (self.is_locked(target) or target.destroyed or not target.character.is_alive
+        if (not card.meets_use_requirements() or self.is_locked(target) or target.destroyed or not target.character.is_alive
                 or not self.game.pipeline.can_replace(slot, target)):
             return False
         return (self.printed_replace(card, target)

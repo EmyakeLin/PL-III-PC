@@ -2,7 +2,20 @@
   "pack_type": "status_effects",
   "name": "基础体系状态效果包",
   "status_rules": {
-    "烧伤": {"aliases": ["burn"]},
+    "烧伤": {
+      "aliases": ["burn"],
+      "activation": {
+        "label": "烧伤", "keywords": ["ignite", "引燃"],
+        "operation": {"op": "program", "code": [
+          "$target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "units", "STORE",
+          {"local": "units"}, 0, "GT", [
+            "$target", {"local": "units"}, 3, "MIN",
+            "normal", "none", "DAMAGE_AMOUNT", 0, "GT",
+            ["$target", "烧伤", 0, {"local": "units"}, 2, "ADD", "SUB", "STATUS"], "WHEN"
+          ], "WHEN"
+        ]}
+      }
+    },
     "裂血": {"aliases": ["bleed"], "cap": 9, "active_from": 6, "active_label": "裂血（爆发）"},
     "呼吸": {
       "aliases": ["breath", "呼吸法"], "cap": 6, "check": {"event": "critical", "sides": 6},
@@ -24,11 +37,7 @@
       "trigger": "on_character_turn_end", "damage_cause": "烧伤",
       "description": "回合结束时，若烧伤至少 4 层，每满 4 层算一组。自身承受一次普通伤害，原始伤害等于组数，至多 3 点。若入盾前的伤害量大于 0，烧伤减少「组数 + 2」层，即使护盾挡下全部伤害也照常减少。",
       "when": {"owner_status_at_least": {"烧伤": 4}},
-      "operation": {"op": "program", "code": [
-        "$self", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "units", "STORE",
-        "$self", {"local": "units"}, 3, "MIN", "normal", "none", "DAMAGE_AMOUNT", 0, "GT",
-        ["$self", "烧伤", 0, {"local": "units"}, 2, "ADD", "SUB", "STATUS"], "WHEN"
-      ]}
+      "operation": {"op": "program", "code": ["$self", "烧伤", "ACTIVATE_STATUS", "POP"]}
     }],
     "裂血": [
       {
