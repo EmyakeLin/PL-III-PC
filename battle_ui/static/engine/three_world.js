@@ -2,10 +2,12 @@
  * Three.js WebGL 3D & Custom GLSL Shader Engine for 《光点计划 III》.
  * Strictly BRIGHT palette — ZERO black, ZERO blue-purple!
  * Frontal low-FOV pixel-calibrated 3D camera (z = 0 aligns 1:1 with screen pixels):
- *  - Custom GLSL bright sunlit arena shader with Left(P1)/Right(P2) territory light, dynamic combat spotlight & impact ripples
+ *  - Custom GLSL bright sunlit arena shader with Left(P1)/Right(P2) territory light,
+ *    intent-driven spotlight aura, 4-slot independent shockwave pool & ambient impact ripples
  *  - True 3D polyhedral dice (d4, d6, d8, d12, d16, d20) bound 1:1 to Matter.js colliding clash bodies
  *  - True 3D double-sided card flips & parabolic arcs (place, pull, reveal, swap, recycle)
- *  - True 3D combat choreography: slash crescents, pierce lances, blunt shock-hammers, block hex-walls, evade wind-streaks, shield dome pulses & parabolic passive/cost energy beams
+ *  - Layered tapered 3D combat choreography: razor slash crescents, aerodynamic pierce lances,
+ *    fractured blunt shock-hammers, crystalline hex block walls, shield dome pulses & tapered comet energy beams
  *  - Single-draw-call InstancedMesh 3D sparks & shockwave rings
  */
 
@@ -22,6 +24,35 @@ const DIE_PALETTES = {
   breath: { body: 0x45ba9c, edge: 0x176b56, hex: '#238c72' },
 };
 
+const SHOCKWAVE_POOL_SIZE = 4;
+const SHOCKWAVE_DURATION = 0.72;
+const DEFAULT_WARM_GOLD = 0xd99426;
+
+function applySafeColor(target, colorHex, fallback = DEFAULT_WARM_GOLD) {
+  if (colorHex instanceof THREE.Color) {
+    target.copy(colorHex);
+    return target;
+  }
+  if (Array.isArray(colorHex) && colorHex.length >= 3) {
+    target.setRGB(colorHex[0], colorHex[1], colorHex[2]);
+    return target;
+  }
+  if (typeof colorHex === 'number' && Number.isFinite(colorHex)) {
+    target.setHex(colorHex);
+    return target;
+  }
+  if (typeof colorHex === 'string' && colorHex.trim()) {
+    try {
+      target.set(colorHex);
+      return target;
+    } catch (_) {
+      // fall through to fallback
+    }
+  }
+  target.setHex(fallback);
+  return target;
+}
+
 const BG_VERTEX = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -37,6 +68,11 @@ const BG_FRAGMENT = /* glsl */ `
   uniform vec2 uResolution;
   uniform vec4 uRipples[4];
   uniform vec3 uRippleColors[4];
+  uniform vec4 uShockwaves[4];
+  uniform vec3 uShockwaveColors[4];
+  uniform vec2 uIntentUv;
+  uniform vec3 uIntentColor;
+  uniform float uIntentMix;
   uniform vec3 uPhaseTint;
   uniform float uCombatFocus;
 
@@ -92,6 +128,17 @@ const BG_FRAGMENT = /* glsl */ `
       col = mix(col, vec3(0.91, 0.87, 0.80), (1.0 - spot) * uCombatFocus * 0.22);
     }
 
+    // Subtle intent-driven warm sunlit spotlight aura around hovered card / fighter
+    if (uIntentMix > 0.003) {
+      float intentDist = length((vUv - uIntentUv) * aspect);
+      float intentAura = exp(-intentDist * intentDist * 10.5) * 0.21 * uIntentMix;
+      float intentSun = exp(-intentDist * intentDist * 24.0) * 0.14 * uIntentMix;
+      float haloR = 0.105 + 0.006 * sin(uTime * 3.1);
+      float intentHalo = exp(-pow((intentDist - haloR) * 78.0, 2.0)) * 0.13 * uIntentMix;
+      col = mix(col, vec3(1.0, 0.990, 0.954), clamp(intentSun, 0.0, 0.22));
+      col = mix(col, uIntentColor, clamp(intentAura + intentHalo, 0.0, 0.32));
+    }
+
     // Subtle warm phase glow
     col = mix(col, uPhaseTint, (1.0 - smoothstep(0.0, 0.76, radial)) * 0.08);
 
@@ -99,7 +146,7 @@ const BG_FRAGMENT = /* glsl */ `
     float grain = (hash(gl_FragCoord.xy * 0.5) - 0.5) * 0.012;
     col += grain;
 
-    // Real-time interactive impact ripples
+    // Ambient impact ripples (triggerRipple)
     for (int i = 0; i < 4; i++) {
       if (uRipples[i].w > 0.5) {
         float age = uRipples[i].z;
@@ -107,6 +154,23 @@ const BG_FRAGMENT = /* glsl */ `
         float radius = age * 0.65;
         float ring = exp(-pow((dist - radius) * 22.0, 2.0)) * max(0.0, 1.0 - age / 1.15);
         col = mix(col, uRippleColors[i], ring * 0.36);
+      }
+    }
+
+    // 4-slot independent shockwave pool (emitShockwave — never truncates earlier ripples!)
+    for (int i = 0; i < 4; i++) {
+      vec4 sw = uShockwaves[i];
+      if (sw.w > 0.5) {
+        float normAge = clamp(sw.z, 0.0, 1.0);
+        float dist = length((vUv - sw.xy) * aspect);
+        float easeR = 1.0 - pow(1.0 - normAge, 2.2);
+        float radius = easeR * 0.54;
+        float fade = (1.0 - normAge) * (1.0 - normAge);
+        float crest = exp(-pow((dist - radius) * 34.0, 2.0)) * fade * 0.42;
+        float innerEcho = exp(-pow((dist - radius * 0.78) * 24.0, 2.0)) * fade * 0.16;
+        float sunRim = exp(-pow((dist - radius) * 62.0, 2.0)) * fade * 0.24;
+        col = mix(col, uShockwaveColors[i], clamp(crest + innerEcho, 0.0, 0.46));
+        col = mix(col, vec3(1.0, 0.988, 0.945), clamp(sunRim, 0.0, 0.28));
       }
     }
 
@@ -143,6 +207,119 @@ function makePolyGeo(sides, radius) {
   if (sides <= 12) return new THREE.DodecahedronGeometry(radius * 1.04);
   if (sides <= 16) return createD16Geometry(radius * 1.04);
   return new THREE.IcosahedronGeometry(radius * 1.04);
+}
+
+/**
+ * Custom razor-tapered crescent blade arc geometry (zero blunt flat ring ends!).
+ */
+function makeTaperedCrescentGeo(innerR, outerR, arcSpan, segments = 32, leadingBias = 0.64) {
+  const positions = [];
+  const indices = [];
+  const baseThick = (outerR - innerR) * 0.5;
+  const baseMid = (innerR + outerR) * 0.5;
+
+  for (let i = 0; i <= segments; i++) {
+    const u = i / segments;
+    const angle = -arcSpan * 0.5 + u * arcSpan;
+    const sinEnv = Math.sin(u * Math.PI);
+    const taper = Math.pow(Math.max(0, sinEnv), 0.72);
+    // Asymmetric weight toward leading edge of slash
+    const skew = 0.62 + 0.54 * Math.exp(-Math.pow((u - leadingBias) / 0.34, 2));
+    const halfW = baseThick * taper * skew;
+    const midR = baseMid + (1 - taper) * baseThick * 0.32;
+    const rIn = Math.max(2, midR - halfW);
+    const rOut = midR + halfW;
+    const ca = Math.cos(angle);
+    const sa = Math.sin(angle);
+    positions.push(ca * rIn, sa * rIn, 0);
+    positions.push(ca * rOut, sa * rOut, 0);
+  }
+
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2;
+    const b = a + 1;
+    const c = a + 2;
+    const d = a + 3;
+    indices.push(a, b, c, b, d, c);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Elongated 4-point tapered diamond flash/spike geometry centered along +X.
+ */
+function makeDiamondSpikeGeo(length, halfWidth, offsetX = 0) {
+  const tipX = offsetX + length;
+  const shoulderX = offsetX + length * 0.24;
+  const positions = new Float32Array([
+    offsetX, 0, 0,
+    shoulderX, halfWidth, 0,
+    tipX, 0, 0,
+    offsetX, 0, 0,
+    tipX, 0, 0,
+    shoulderX, -halfWidth, 0,
+  ]);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Dynamic parabolic comet ribbon trail geometry (updated smoothly per frame).
+ */
+function makeCometRibbonGeo(segments = 14) {
+  const vertCount = (segments + 1) * 2;
+  const positions = new Float32Array(vertCount * 3);
+  const indices = [];
+  for (let i = 0; i < segments; i++) {
+    const a = i * 2;
+    const b = a + 1;
+    const c = a + 2;
+    const d = a + 3;
+    indices.push(a, b, c, b, d, c);
+  }
+  const geo = new THREE.BufferGeometry();
+  const attr = new THREE.BufferAttribute(positions, 3);
+  attr.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', attr);
+  geo.setIndex(indices);
+  return geo;
+}
+
+function updateCometRibbonGeo(geo, p0, mid, p1, tHead, tailSpan, maxHalfWidth, segments) {
+  const attr = geo.getAttribute('position');
+  const tStart = Math.max(0, tHead - tailSpan);
+  const span = Math.max(0.0001, tHead - tStart);
+
+  for (let i = 0; i <= segments; i++) {
+    const frac = i / segments; // 0 = tail tip, 1 = comet head
+    const s = tStart + frac * span;
+    const u = 1 - s;
+    const x = u * u * p0.x + 2 * u * s * mid.x + s * s * p1.x;
+    const y = u * u * p0.y + 2 * u * s * mid.y + s * s * p1.y;
+    const z = u * u * p0.z + 2 * u * s * mid.z + s * s * p1.z;
+
+    // Curve tangent in XY for perpendicular ribbon expansion
+    const tx = 2 * u * (mid.x - p0.x) + 2 * s * (p1.x - mid.x);
+    const ty = 2 * u * (mid.y - p0.y) + 2 * s * (p1.y - mid.y);
+    const tLen = Math.hypot(tx, ty) || 1;
+    const nx = -ty / tLen;
+    const ny = tx / tLen;
+
+    // Smooth teardrop taper: razor point at tail -> plump just behind head -> pinches at core
+    const widthProfile = Math.pow(frac, 1.35) * (1 - Math.pow(frac, 6) * 0.25);
+    const hw = maxHalfWidth * widthProfile;
+
+    attr.setXYZ(i * 2, x + nx * hw, y + ny * hw, z);
+    attr.setXYZ(i * 2 + 1, x - nx * hw, y - ny * hw, z);
+  }
+  attr.needsUpdate = true;
 }
 
 function makeDieReadoutTexture(value, sub, accentHex) {
@@ -273,6 +450,8 @@ export class ThreeWorld {
     // Background GLSL Shader scene
     this.bgScene = new THREE.Scene();
     this.bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    // Ambient impact ripples (backward-compatible triggerRipple pool)
     this.ripples = Array.from({ length: 4 }, () => ({
       uv: new THREE.Vector2(0.5, 0.5),
       age: 99,
@@ -280,11 +459,39 @@ export class ThreeWorld {
       color: new THREE.Color(0xe6aa42),
     }));
     this._rippleCursor = 0;
+
+    // 4-slot independent shockwave pool (emitShockwave — rapid bursts never truncate earlier rings!)
+    this.shockwaves = Array.from({ length: SHOCKWAVE_POOL_SIZE }, () => ({
+      uv: new THREE.Vector2(0.5, 0.5),
+      age: 1,
+      duration: SHOCKWAVE_DURATION,
+      active: 0,
+      color: new THREE.Color(DEFAULT_WARM_GOLD),
+    }));
+    this._shockwaveCursor = 0;
+
+    // Continuous intent-driven sunlit spotlight aura state
+    this.intentTarget = {
+      active: 0,
+      uv: new THREE.Vector2(0.5, 0.5),
+      color: new THREE.Color(0xd99a38),
+    };
+    this.intentState = {
+      mix: 0,
+      uv: new THREE.Vector2(0.5, 0.5),
+      color: new THREE.Color(0xd99a38),
+    };
+
     this.bgUniforms = {
       uTime: { value: 0 },
       uResolution: { value: new THREE.Vector2(this.width, this.height) },
       uRipples: { value: this.ripples.map(() => new THREE.Vector4(0.5, 0.5, 99, 0)) },
       uRippleColors: { value: this.ripples.map((r) => r.color.clone()) },
+      uShockwaves: { value: this.shockwaves.map(() => new THREE.Vector4(0.5, 0.5, 1, 0)) },
+      uShockwaveColors: { value: this.shockwaves.map((s) => s.color.clone()) },
+      uIntentUv: { value: new THREE.Vector2(0.5, 0.5) },
+      uIntentColor: { value: new THREE.Color(0xd99a38) },
+      uIntentMix: { value: 0 },
       uPhaseTint: { value: new THREE.Color(0xfaecc8) },
       uCombatFocus: { value: 0 },
     };
@@ -353,7 +560,7 @@ export class ThreeWorld {
     this.activeDice = [];
     this.flippingCards = [];
     this.rings = [];
-    this.vfxEffects = []; // Kinetic 3D weapon slashes, pierce lances, blunt impacts, block walls, energy beams, shield pulses
+    this.vfxEffects = [];
   }
 
   _syncCamera() {
@@ -378,11 +585,49 @@ export class ThreeWorld {
   }
 
   setPhaseTint(hex) {
-    this.bgUniforms.uPhaseTint.value.setHex(hex);
+    applySafeColor(this.bgUniforms.uPhaseTint.value, hex, 0xfaecc8);
   }
 
   setCombatFocus(active) {
     this.targetCombatFocus = active ? 1 : 0;
+  }
+
+  /**
+   * 4-slot independent shockwave pool: rapid cost-merges, card drops & clashes never truncate earlier waves.
+   */
+  emitShockwave(screenX, screenY, colorHex = DEFAULT_WARM_GOLD, duration = SHOCKWAVE_DURATION) {
+    const idx = this._shockwaveCursor;
+    this._shockwaveCursor = (this._shockwaveCursor + 1) % SHOCKWAVE_POOL_SIZE;
+    const slot = this.shockwaves[idx];
+    slot.uv.set(
+      Math.max(0, Math.min(1, screenX / Math.max(1, this.width))),
+      Math.max(0, Math.min(1, 1 - screenY / Math.max(1, this.height)))
+    );
+    slot.age = 0;
+    slot.duration = Math.max(0.24, duration);
+    slot.active = 1;
+    applySafeColor(slot.color, colorHex, DEFAULT_WARM_GOLD);
+  }
+
+  /**
+   * Subtle continuous intent-driven warm spotlight aura around hovered card / fighter.
+   */
+  setIntentFocus({ active = false, x = null, y = null, colorHex = null } = {}) {
+    this.intentTarget.active = active ? 1 : 0;
+    if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+      const uvX = Math.max(0, Math.min(1, x / Math.max(1, this.width)));
+      const uvY = Math.max(0, Math.min(1, 1 - y / Math.max(1, this.height)));
+      if (this.intentState.mix < 0.02) {
+        this.intentState.uv.set(uvX, uvY);
+      }
+      this.intentTarget.uv.set(uvX, uvY);
+    }
+    if (colorHex !== null && colorHex !== undefined) {
+      applySafeColor(this.intentTarget.color, colorHex, 0xd99a38);
+      if (this.intentState.mix < 0.02) {
+        this.intentState.color.copy(this.intentTarget.color);
+      }
+    }
   }
 
   triggerRipple(sx, sy, hex = 0xe8a63c) {
@@ -390,7 +635,7 @@ export class ThreeWorld {
     this.ripples[idx].uv.set(sx / Math.max(1, this.width), 1 - sy / Math.max(1, this.height));
     this.ripples[idx].age = 0;
     this.ripples[idx].active = 1;
-    this.ripples[idx].color.setHex(hex);
+    applySafeColor(this.ripples[idx].color, hex, 0xe8a63c);
   }
 
   _buildLightMotes() {
@@ -503,17 +748,19 @@ export class ThreeWorld {
   }
 
   /**
-   * 3D Sweeping Luminous Slash Crescent cutting across the target!
+   * 3D Tapered Sweeping Razor Slash Crescent with gilded edge glint & cross-cut flash!
    */
   spawnSlashArc({ fromX, fromY, toX, toY, colorHex = 0xcf4330 }) {
-    const target = this.screenToWorld(toX, toY, 52);
-    const origin = this.screenToWorld(fromX, fromY, 52);
+    const target = this.screenToWorld(toX, toY, 54);
+    const origin = this.screenToWorld(fromX, fromY, 54);
     const dir = Math.atan2(target.y - origin.y, target.x - origin.x);
+    const forwardSign = target.x >= origin.x ? 1 : -1;
 
     const group = new THREE.Group();
     group.position.copy(target);
 
-    const outerGeo = new THREE.RingGeometry(42, 74, 28, 1, -Math.PI * 0.45, Math.PI * 0.9);
+    // Layer 1: Wide razor-tapered crimson/colored blade sweep
+    const outerGeo = makeTaperedCrescentGeo(34, 82, Math.PI * 1.04, 36, 0.66);
     const outerMat = new THREE.MeshBasicMaterial({
       color: colorHex,
       transparent: true,
@@ -521,162 +768,325 @@ export class ThreeWorld {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    const innerGeo = new THREE.RingGeometry(56, 68, 28, 1, -Math.PI * 0.36, Math.PI * 0.72);
-    const innerMat = new THREE.MeshBasicMaterial({
-      color: 0xfff8e6,
+    // Layer 2: Warm gilded metallic rim glint
+    const glintGeo = makeTaperedCrescentGeo(54, 78, Math.PI * 0.88, 32, 0.72);
+    const glintMat = new THREE.MeshBasicMaterial({
+      color: 0xf4c25e,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.88,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
+    // Layer 3: Blazing ivory inner cutting edge
+    const coreGeo = makeTaperedCrescentGeo(62, 74, Math.PI * 0.72, 28, 0.74);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xfffaf0,
+      transparent: true,
+      opacity: 0.98,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    // Layer 4: Sharp impact cross-cut flash streak
+    const flashGeo = makeDiamondSpikeGeo(132, 7.5, -66);
+    const flashMat = new THREE.MeshBasicMaterial({
+      color: 0xfff8e6,
+      transparent: true,
+      opacity: 0.96,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
     const outerMesh = new THREE.Mesh(outerGeo, outerMat);
-    const innerMesh = new THREE.Mesh(innerGeo, innerMat);
-    innerMesh.position.z = 4;
-    group.add(outerMesh, innerMesh);
-    group.rotation.z = dir - 0.9;
-    group.rotation.y = (target.x >= origin.x ? 0.25 : -0.25);
+    const glintMesh = new THREE.Mesh(glintGeo, glintMat);
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    const flashMesh = new THREE.Mesh(flashGeo, flashMat);
+    glintMesh.position.z = 2.5;
+    coreMesh.position.z = 5.0;
+    flashMesh.position.z = 7.0;
+    flashMesh.rotation.z = dir + 0.55 * forwardSign;
+
+    const arcPivot = new THREE.Group();
+    arcPivot.add(outerMesh, glintMesh, coreMesh);
+    arcPivot.rotation.z = dir - 1.05 * forwardSign;
+    arcPivot.rotation.y = 0.28 * forwardSign;
+    arcPivot.rotation.x = -0.14;
+
+    group.add(arcPivot, flashMesh);
     this.scene.add(group);
 
-    this.triggerRipple(toX, toY, colorHex);
-    this.spawnImpactBurst(toX, toY, colorHex, 24, true);
+    this.emitShockwave(toX, toY, colorHex, 0.58);
+    this.spawnImpactBurst(toX, toY, colorHex, 26, true);
 
     this.vfxEffects.push({
       kind: 'slash',
       group,
-      geometries: [outerGeo, innerGeo],
-      materials: [outerMat, innerMat],
-      baseRotZ: dir - 0.95,
-      sweep: target.x >= origin.x ? 1.85 : -1.85,
+      arcPivot,
+      flashMesh,
+      geometries: [outerGeo, glintGeo, coreGeo, flashGeo],
+      materials: [outerMat, glintMat, coreMat, flashMat],
+      baseRotZ: dir - 1.05 * forwardSign,
+      sweep: 2.08 * forwardSign,
       age: 0,
       life: 0.44,
     });
   }
 
   /**
-   * 3D High-Velocity Piercing Lance Beam streaking straight from attacker to target!
+   * 3D Aerodynamic Piercing Lance with tapered diamond spearhead, needle wake & sonic rings!
    */
   spawnPierceLance({ fromX, fromY, toX, toY, colorHex = 0xcc7b14 }) {
-    const p0 = this.screenToWorld(fromX, fromY, 54);
-    const p1 = this.screenToWorld(toX, toY, 54);
+    const p0 = this.screenToWorld(fromX, fromY, 56);
+    const p1 = this.screenToWorld(toX, toY, 56);
     const delta = p1.clone().sub(p0);
-    const dist = Math.max(40, delta.length());
+    const dist = Math.max(48, delta.length());
     const angle = Math.atan2(delta.y, delta.x);
+    const shaftLen = Math.min(dist * 0.74, 320);
 
     const group = new THREE.Group();
-    const beamGeo = new THREE.CylinderGeometry(3.2, 7.5, dist * 0.72, 10);
-    const beamMat = new THREE.MeshBasicMaterial({
+
+    // Layer 1: Tapered energy shaft (wide at front, razor point at tail)
+    const shaftGeo = new THREE.CylinderGeometry(7.2, 0.8, shaftLen, 10);
+    const shaftMat = new THREE.MeshBasicMaterial({
       color: colorHex,
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
     });
-    const coreGeo = new THREE.CylinderGeometry(1.5, 3.2, dist * 0.76, 8);
+    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+    shaft.rotation.z = -Math.PI / 2;
+    shaft.position.x = -shaftLen * 0.5;
+
+    // Layer 2: Blazing ivory inner lance needle
+    const coreGeo = new THREE.CylinderGeometry(3.1, 0.4, shaftLen * 1.06, 8);
     const coreMat = new THREE.MeshBasicMaterial({
       color: 0xfff9e8,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.98,
       depthWrite: false,
     });
-    const beam = new THREE.Mesh(beamGeo, beamMat);
     const core = new THREE.Mesh(coreGeo, coreMat);
-    beam.rotation.z = -Math.PI / 2;
     core.rotation.z = -Math.PI / 2;
-    group.add(beam, core);
+    core.position.x = -shaftLen * 0.48;
+    core.position.z = 2;
+
+    // Layer 3: Sharp 4-sided faceted diamond spearhead cone leading the thrust
+    const tipGeo = new THREE.ConeGeometry(11.5, 42, 4);
+    const tipMat = new THREE.MeshBasicMaterial({
+      color: 0xfff7df,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: false,
+    });
+    const tip = new THREE.Mesh(tipGeo, tipMat);
+    tip.rotation.z = -Math.PI / 2;
+    tip.position.x = 18;
+    tip.position.z = 3;
+
+    // Layer 4: Twin sonic-boom chevron shock rings sliding back along the lance
+    const sonic1Geo = new THREE.RingGeometry(10, 15.5, 16);
+    const sonic1Mat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.86,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const sonic1 = new THREE.Mesh(sonic1Geo, sonic1Mat);
+    sonic1.rotation.y = Math.PI * 0.44;
+    sonic1.position.x = -12;
+
+    const sonic2Geo = new THREE.RingGeometry(14, 18.5, 16);
+    const sonic2Mat = new THREE.MeshBasicMaterial({
+      color: 0xfff6dc,
+      transparent: true,
+      opacity: 0.82,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const sonic2 = new THREE.Mesh(sonic2Geo, sonic2Mat);
+    sonic2.rotation.y = Math.PI * 0.44;
+    sonic2.position.x = -46;
+
+    group.add(shaft, core, tip, sonic1, sonic2);
     group.rotation.z = angle;
     group.position.copy(p0);
     this.scene.add(group);
 
-    this.triggerRipple(toX, toY, colorHex);
-    this.spawnImpactBurst(toX, toY, colorHex, 20, false);
+    this.emitShockwave(toX, toY, colorHex, 0.56);
+    this.spawnImpactBurst(toX, toY, colorHex, 22, false);
 
     this.vfxEffects.push({
       kind: 'pierce',
       group,
-      geometries: [beamGeo, coreGeo],
-      materials: [beamMat, coreMat],
+      sonic1,
+      sonic2,
+      geometries: [shaftGeo, coreGeo, tipGeo, sonic1Geo, sonic2Geo],
+      materials: [shaftMat, coreMat, tipMat, sonic1Mat, sonic2Mat],
       p0, p1,
       age: 0,
-      life: 0.4,
+      life: 0.42,
     });
   }
 
   /**
-   * 3D Heavy Blunt Shockwave slamming onto target!
+   * 3D Heavy Blunt Shock-Hammer Impact with double faceted shock-rings & radial fracture spikes!
    */
   spawnBluntImpact({ toX, toY, colorHex = 0xb33443 }) {
-    const center = this.screenToWorld(toX, toY, 44);
+    const center = this.screenToWorld(toX, toY, 46);
     const group = new THREE.Group();
     group.position.copy(center);
 
-    const octGeo = new THREE.RingGeometry(16, 44, 8);
+    // Layer 1: Primary heavy beveled octagonal shockwave ring
+    const octGeo = new THREE.RingGeometry(18, 46, 8);
     const octMat = new THREE.MeshBasicMaterial({
       color: colorHex,
       transparent: true,
-      opacity: 0.85,
+      opacity: 0.9,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    const coreGeo = new THREE.CircleGeometry(24, 8);
-    const coreMat = new THREE.MeshBasicMaterial({
-      color: 0xfff5e0,
+    const octMesh = new THREE.Mesh(octGeo, octMat);
+
+    // Layer 2: Fast expanding outer hairline pressure ring
+    const rimGeo = new THREE.RingGeometry(36, 42, 16);
+    const rimMat = new THREE.MeshBasicMaterial({
+      color: 0xe6a13a,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.84,
+      side: THREE.DoubleSide,
       depthWrite: false,
     });
-    group.add(new THREE.Mesh(octGeo, octMat), new THREE.Mesh(coreGeo, coreMat));
+    const rimMesh = new THREE.Mesh(rimGeo, rimMat);
+
+    // Layer 3: Blazing ivory-gold core concussion flash
+    const coreGeo = new THREE.CircleGeometry(28, 8);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xfff6e0,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+    });
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    coreMesh.position.z = 3;
+
+    // Layer 4: 6 tapered radial impact fracture spikes bursting outward
+    const spikeGeo = makeDiamondSpikeGeo(46, 5.2, 14);
+    const spikeMat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.9,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const spikesGroup = new THREE.Group();
+    spikesGroup.position.z = 2;
+    const baseSpin = Math.random() * Math.PI;
+    for (let k = 0; k < 6; k++) {
+      const sp = new THREE.Mesh(spikeGeo, spikeMat);
+      sp.rotation.z = baseSpin + (k * Math.PI * 2) / 6;
+      spikesGroup.add(sp);
+    }
+
+    group.add(octMesh, rimMesh, coreMesh, spikesGroup);
     this.scene.add(group);
 
-    this.triggerRipple(toX, toY, colorHex);
-    this.spawnImpactBurst(toX, toY, colorHex, 30, true);
+    this.emitShockwave(toX, toY, colorHex, 0.72);
+    this.spawnImpactBurst(toX, toY, colorHex, 32, true);
 
     this.vfxEffects.push({
       kind: 'blunt',
       group,
-      geometries: [octGeo, coreGeo],
-      materials: [octMat, coreMat],
+      octMesh,
+      rimMesh,
+      coreMesh,
+      spikesGroup,
+      geometries: [octGeo, rimGeo, coreGeo, spikeGeo],
+      materials: [octMat, rimMat, coreMat, spikeMat],
       age: 0,
-      life: 0.46,
+      life: 0.48,
     });
   }
 
   /**
-   * 3D Jade Hexagonal Block Wall flashing at the clash / defender point!
+   * 3D Crystalline Hexagonal Block Ward with inner lattice & planar snap-in!
    */
   spawnBlockBarrier({ x, y, colorHex = 0x1a8775 }) {
     const center = this.screenToWorld(x, y, 56);
     const group = new THREE.Group();
     group.position.copy(center);
 
-    const plateGeo = new THREE.CircleGeometry(46, 6);
+    // Layer 1: Translucent jade/ward hexagonal plate
+    const plateGeo = new THREE.CircleGeometry(48, 6);
     const plateMat = new THREE.MeshBasicMaterial({
       color: colorHex,
       transparent: true,
-      opacity: 0.34,
+      opacity: 0.30,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
+    const plateMesh = new THREE.Mesh(plateGeo, plateMat);
+
+    // Layer 2: Crisp outer hex bevel edges
     const edgeGeo = new THREE.EdgesGeometry(plateGeo);
-    const edgeMat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.95 });
-    const ringGeo = new THREE.RingGeometry(48, 55, 6);
+    const edgeMat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.96 });
+    const edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
+    edgeLines.position.z = 1;
+
+    // Layer 3: Luminous ivory outer chamfer ring
+    const ringGeo = new THREE.RingGeometry(49, 56, 6);
     const ringMat = new THREE.MeshBasicMaterial({
       color: 0xfffbf0,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.94,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.position.z = 2;
 
-    group.add(new THREE.Mesh(plateGeo, plateMat), new THREE.LineSegments(edgeGeo, edgeMat), new THREE.Mesh(ringGeo, ringMat));
+    // Layer 4: Inner crystalline lattice hex + 3 faceted prism struts
+    const innerGeo = new THREE.RingGeometry(24, 28, 6);
+    const innerMat = new THREE.MeshBasicMaterial({
+      color: 0xfff8e4,
+      transparent: true,
+      opacity: 0.84,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const innerMesh = new THREE.Mesh(innerGeo, innerMat);
+    innerMesh.rotation.z = Math.PI / 6;
+    innerMesh.position.z = 3;
+
+    const strutPts = [];
+    for (let i = 0; i < 3; i++) {
+      const a = (i * Math.PI) / 3;
+      strutPts.push(
+        Math.cos(a) * -46, Math.sin(a) * -46, 2.5,
+        Math.cos(a) * 46, Math.sin(a) * 46, 2.5
+      );
+    }
+    const strutGeo = new THREE.BufferGeometry();
+    strutGeo.setAttribute('position', new THREE.Float32BufferAttribute(strutPts, 3));
+    const strutMat = new THREE.LineBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.56,
+    });
+    const strutLines = new THREE.LineSegments(strutGeo, strutMat);
+
+    group.add(plateMesh, edgeLines, ringMesh, innerMesh, strutLines);
     this.scene.add(group);
-    this.triggerRipple(x, y, colorHex);
+    this.emitShockwave(x, y, colorHex, 0.62);
 
     this.vfxEffects.push({
       kind: 'block',
       group,
-      geometries: [plateGeo, edgeGeo, ringGeo],
-      materials: [plateMat, edgeMat, ringMat],
+      ringMesh,
+      innerMesh,
+      geometries: [plateGeo, edgeGeo, ringGeo, innerGeo, strutGeo],
+      materials: [plateMat, edgeMat, ringMat, innerMat, strutMat],
       age: 0,
-      life: 0.56,
+      life: 0.58,
     });
   }
 
@@ -715,19 +1125,24 @@ export class ThreeWorld {
   }
 
   /**
-   * 3D Luminous Parabolic Energy Comet flying from Passive -> Fighter or Cost -> Card!
+   * 3D Luminous Parabolic Energy Comet with tapered curved ribbon tail!
    */
   spawnEnergyBeam({ fromX, fromY, toX, toY, colorHex = 0xd48e1a, duration = 0.48 }) {
     const p0 = this.screenToWorld(fromX, fromY, 44);
     const p1 = this.screenToWorld(toX, toY, 44);
     const mid = p0.clone().lerp(p1, 0.5);
-    mid.y += 42;
-    mid.z += 72;
+    mid.y += 46;
+    mid.z += 76;
 
     const group = new THREE.Group();
-    const orbGeo = new THREE.OctahedronGeometry(9);
-    const orbMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.95 });
-    const haloGeo = new THREE.RingGeometry(11, 16, 16);
+
+    // Comet crystal head
+    const headGroup = new THREE.Group();
+    const orbGeo = new THREE.OctahedronGeometry(9.2);
+    const orbMat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.96 });
+    const coreGeo = new THREE.OctahedronGeometry(5.2);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0xfffaf0, transparent: true, opacity: 0.98 });
+    const haloGeo = new THREE.RingGeometry(11.5, 16.5, 16);
     const haloMat = new THREE.MeshBasicMaterial({
       color: 0xfff8df,
       transparent: true,
@@ -735,15 +1150,46 @@ export class ThreeWorld {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    group.add(new THREE.Mesh(orbGeo, orbMat), new THREE.Mesh(haloGeo, haloMat));
-    group.position.copy(p0);
+    headGroup.add(new THREE.Mesh(orbGeo, orbMat), new THREE.Mesh(coreGeo, coreMat), new THREE.Mesh(haloGeo, haloMat));
+    headGroup.position.copy(p0);
+
+    // Tapered curved comet ribbon trail (outer colored + inner ivory core)
+    const ribbonSegments = 16;
+    const ribbonGeo = makeCometRibbonGeo(ribbonSegments);
+    const ribbonMat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ribbonCoreGeo = makeCometRibbonGeo(ribbonSegments);
+    const ribbonCoreMat = new THREE.MeshBasicMaterial({
+      color: 0xfff8e2,
+      transparent: true,
+      opacity: 0.88,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ribbonMesh = new THREE.Mesh(ribbonGeo, ribbonMat);
+    const ribbonCoreMesh = new THREE.Mesh(ribbonCoreGeo, ribbonCoreMat);
+    ribbonCoreMesh.position.z = 1.5;
+
+    updateCometRibbonGeo(ribbonGeo, p0, mid, p1, 0.01, 0.34, 8.5, ribbonSegments);
+    updateCometRibbonGeo(ribbonCoreGeo, p0, mid, p1, 0.01, 0.28, 3.6, ribbonSegments);
+
+    group.add(ribbonMesh, ribbonCoreMesh, headGroup);
     this.scene.add(group);
 
     this.vfxEffects.push({
       kind: 'beam',
       group,
-      geometries: [orbGeo, haloGeo],
-      materials: [orbMat, haloMat],
+      headGroup,
+      ribbonGeo,
+      ribbonCoreGeo,
+      ribbonSegments,
+      geometries: [orbGeo, coreGeo, haloGeo, ribbonGeo, ribbonCoreGeo],
+      materials: [orbMat, coreMat, haloMat, ribbonMat, ribbonCoreMat],
       p0, mid, p1,
       toX, toY, colorHex,
       age: 0,
@@ -754,7 +1200,7 @@ export class ThreeWorld {
   spawnImpactBurst(sx, sy, colorHex = 0xe89b32, count = 28, heavy = false) {
     this.triggerRipple(sx, sy, colorHex);
     const origin = this.screenToWorld(sx, sy, 36);
-    const baseColor = new THREE.Color(colorHex);
+    const baseColor = applySafeColor(new THREE.Color(), colorHex, 0xe89b32);
     const brightColor = new THREE.Color(0xfff7df);
 
     for (let i = 0; i < count; i++) {
@@ -780,7 +1226,7 @@ export class ThreeWorld {
 
     const rGeo = new THREE.RingGeometry(14, 22, 32);
     const rMat = new THREE.MeshBasicMaterial({
-      color: colorHex,
+      color: baseColor,
       transparent: true,
       opacity: 0.72,
       side: THREE.DoubleSide,
@@ -820,6 +1266,16 @@ export class ThreeWorld {
     this.combatFocus += (this.targetCombatFocus - this.combatFocus) * Math.min(1, dtSec * 6.5);
     this.bgUniforms.uCombatFocus.value = this.combatFocus;
 
+    // Smoothly interpolate continuous intent spotlight aura
+    const mixRate = this.intentTarget.active > 0.5 ? 9.5 : 6.2;
+    this.intentState.mix += (this.intentTarget.active - this.intentState.mix) * Math.min(1, dtSec * mixRate);
+    this.intentState.uv.lerp(this.intentTarget.uv, Math.min(1, dtSec * 12.5));
+    this.intentState.color.lerp(this.intentTarget.color, Math.min(1, dtSec * 9.0));
+    this.bgUniforms.uIntentUv.value.copy(this.intentState.uv);
+    this.bgUniforms.uIntentColor.value.copy(this.intentState.color);
+    this.bgUniforms.uIntentMix.value = this.intentState.mix;
+
+    // Step ambient ripples
     for (let i = 0; i < 4; i++) {
       const r = this.ripples[i];
       if (r.active) {
@@ -828,6 +1284,20 @@ export class ThreeWorld {
       }
       this.bgUniforms.uRipples.value[i].set(r.uv.x, r.uv.y, r.age, r.active);
       this.bgUniforms.uRippleColors.value[i].copy(r.color);
+    }
+
+    // Step 4-slot independent shockwave pool
+    for (let i = 0; i < SHOCKWAVE_POOL_SIZE; i++) {
+      const sw = this.shockwaves[i];
+      if (sw.active) {
+        sw.age += dtSec / Math.max(0.1, sw.duration);
+        if (sw.age >= 1.0) {
+          sw.age = 1.0;
+          sw.active = 0;
+        }
+      }
+      this.bgUniforms.uShockwaves.value[i].set(sw.uv.x, sw.uv.y, sw.age, sw.active);
+      this.bgUniforms.uShockwaveColors.value[i].copy(sw.color);
     }
 
     this._motes.t += dtSec;
@@ -928,33 +1398,60 @@ export class ThreeWorld {
       v.age += dtSec;
       const t = Math.min(1, v.age / v.life);
       if (v.kind === 'slash') {
-        const ease = 1 - Math.pow(1 - t, 3);
-        v.group.rotation.z = v.baseRotZ + ease * v.sweep;
-        v.group.scale.setScalar(0.75 + ease * 0.72);
-        const fade = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8;
+        const ease = 1 - Math.pow(1 - t, 3.2);
+        v.arcPivot.rotation.z = v.baseRotZ + ease * v.sweep;
+        v.arcPivot.scale.setScalar(0.72 + ease * 0.78);
+        const fade = t < 0.14 ? t / 0.14 : Math.pow(1 - (t - 0.14) / 0.86, 1.35);
         v.materials[0].opacity = fade * 0.92;
-        v.materials[1].opacity = fade * 0.96;
+        v.materials[1].opacity = fade * 0.88;
+        v.materials[2].opacity = fade * 0.98;
+        // Crisp cross-cut glint snaps open & closes cleanly
+        const flashT = Math.min(1, t / 0.36);
+        v.flashMesh.scale.set(0.45 + flashT * 1.15, Math.max(0.05, 1 - flashT * 0.92), 1);
+        v.materials[3].opacity = Math.max(0, (1 - flashT) * 0.96);
       } else if (v.kind === 'pierce') {
-        const ease = 1 - Math.pow(1 - t, 2.5);
+        const ease = 1 - Math.pow(1 - t, 2.8);
         v.group.position.lerpVectors(v.p0, v.p1, ease);
-        v.group.scale.set(0.4 + ease * 0.8, 1 - t * 0.45, 1);
-        const fade = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
-        v.materials[0].opacity = fade * 0.92;
-        v.materials[1].opacity = fade * 0.96;
+        const widthTaper = Math.max(0.12, 1 - Math.pow(t, 1.4) * 0.82);
+        v.group.scale.set(0.55 + ease * 0.65, widthTaper, 1);
+        v.sonic1.position.x = -10 - t * 62;
+        v.sonic1.scale.setScalar(0.75 + t * 1.45);
+        v.sonic2.position.x = -38 - t * 88;
+        v.sonic2.scale.setScalar(0.65 + t * 1.75);
+        const fade = t < 0.12 ? t / 0.12 : Math.pow(1 - (t - 0.12) / 0.88, 1.25);
+        v.materials[0].opacity = fade * 0.9;
+        v.materials[1].opacity = fade * 0.98;
+        v.materials[2].opacity = fade * 0.96;
+        v.materials[3].opacity = fade * 0.82;
+        v.materials[4].opacity = fade * 0.74;
       } else if (v.kind === 'blunt') {
-        const ease = 1 - Math.pow(1 - t, 3);
-        v.group.scale.setScalar(0.55 + ease * 1.85);
-        v.group.rotation.z += dtSec * 3.5;
-        v.materials[0].opacity = (1 - t) * 0.86;
-        v.materials[1].opacity = Math.max(0, 1 - t * 1.4) * 0.8;
+        const ease = 1 - Math.pow(1 - t, 3.0);
+        const fastEase = 1 - Math.pow(1 - t, 2.0);
+        v.octMesh.scale.setScalar(0.52 + ease * 1.92);
+        v.octMesh.rotation.z += dtSec * 2.8;
+        v.rimMesh.scale.setScalar(0.6 + fastEase * 2.45);
+        const coreFade = Math.max(0, 1 - t * 2.1);
+        v.coreMesh.scale.setScalar(0.7 + ease * 0.95);
+        v.spikesGroup.scale.setScalar(0.5 + ease * 1.65);
+        v.spikesGroup.rotation.z -= dtSec * 0.85;
+        v.materials[0].opacity = Math.pow(1 - t, 1.2) * 0.9;
+        v.materials[1].opacity = Math.pow(1 - t, 1.6) * 0.82;
+        v.materials[2].opacity = coreFade * 0.92;
+        v.materials[3].opacity = Math.pow(1 - t, 1.5) * 0.88;
       } else if (v.kind === 'block') {
-        const pop = t < 0.22 ? 0.6 + (t / 0.22) * 0.55 : 1.15 - (t - 0.22) * 0.15;
+        const snapT = Math.min(1, t / 0.18);
+        const snapEase = 1 - Math.pow(1 - snapT, 3);
+        const pop = t < 0.2 ? 0.56 + snapEase * 0.58 : 1.14 - (t - 0.2) * 0.14;
         v.group.scale.setScalar(pop);
-        v.group.rotation.z = Math.sin(t * Math.PI) * 0.14;
-        const fade = t < 0.6 ? 1 : 1 - (t - 0.6) / 0.4;
-        v.materials[0].opacity = fade * 0.34;
-        v.materials[1].opacity = fade * 0.95;
-        v.materials[2].opacity = fade * 0.9;
+        v.group.rotation.y = (1 - snapEase) * 0.52;
+        v.innerMesh.rotation.z = Math.PI / 6 + t * 0.55;
+        v.ringMesh.scale.setScalar(1 + t * 0.16);
+        const fade = t < 0.58 ? 1 : Math.pow(1 - (t - 0.58) / 0.42, 1.2);
+        v.materials[0].opacity = fade * 0.30;
+        v.materials[1].opacity = fade * 0.96;
+        v.materials[2].opacity = fade * 0.92;
+        v.materials[3].opacity = fade * 0.84;
+        v.materials[4].opacity = fade * 0.56;
       } else if (v.kind === 'dome') {
         const ease = 1 - Math.pow(1 - t, 3);
         v.group.scale.setScalar(0.75 + ease * 0.55);
@@ -967,11 +1464,16 @@ export class ThreeWorld {
         const x = u * u * v.p0.x + 2 * u * t * v.mid.x + t * t * v.p1.x;
         const y = u * u * v.p0.y + 2 * u * t * v.mid.y + t * t * v.p1.y;
         const z = u * u * v.p0.z + 2 * u * t * v.mid.z + t * t * v.p1.z;
-        v.group.position.set(x, y, z);
-        v.group.rotation.z += dtSec * 11;
-        v.group.scale.setScalar(0.7 + Math.sin(t * Math.PI) * 0.55);
+        v.headGroup.position.set(x, y, z);
+        v.headGroup.rotation.z += dtSec * 12;
+        v.headGroup.rotation.y += dtSec * 7;
+        const pulse = 0.72 + Math.sin(t * Math.PI) * 0.52;
+        v.headGroup.scale.setScalar(pulse);
+        updateCometRibbonGeo(v.ribbonGeo, v.p0, v.mid, v.p1, t, 0.36, 9.2 * pulse, v.ribbonSegments);
+        updateCometRibbonGeo(v.ribbonCoreGeo, v.p0, v.mid, v.p1, t, 0.28, 3.8 * pulse, v.ribbonSegments);
         if (t >= 1) {
-          this.spawnImpactBurst(v.toX, v.toY, v.colorHex, 12, false);
+          this.emitShockwave(v.toX, v.toY, v.colorHex, 0.52);
+          this.spawnImpactBurst(v.toX, v.toY, v.colorHex, 14, false);
         }
       }
 
