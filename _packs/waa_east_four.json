@@ -5,12 +5,14 @@
       {
         "trigger": "BEFORE SPEND_STATUS",
         "when": {"status": "充能"},
-        "operation": {"op": "program", "code": ["POP", 0]}
+        "operation": {"op": "program", "code": ["POP", 0]},
+        "description": "持有能源封印时，无法消耗充能。"
       },
       {
         "trigger": "BEFORE SPEND_STATUS",
         "when": {"status": "纯能"},
-        "operation": {"op": "program", "code": ["POP", 0]}
+        "operation": {"op": "program", "code": ["POP", 0]},
+        "description": "持有能源封印时，无法消耗纯能。"
       },
       {
         "trigger": "AFTER STATUS",
@@ -18,7 +20,8 @@
         "operation": {
           "op": "program",
           "code": ["$self", "能源封印", 0, "$self", "能源封印", "STATUS_COUNT", "SUB", "STATUS"]
-        }
+        },
+        "description": "获得充能后，若达到至少8层，解除自身能源封印。"
       }
     ]
   },

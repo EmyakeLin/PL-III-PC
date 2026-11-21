@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>复制对战台 · 光点计划 III</title>
+  <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/desk.css">
+  <script src="/desk.js" defer></script>
+</head>
+<body>
+  <header class="mast"><div class="wrap line">
+    <h1>光点计划 <small>III</small></h1>
+    <nav class="toolbar"><a id="player-link" hidden>本席战场</a>
+      <a href="/" target="_blank" rel="noreferrer noopener">公开观战</a></nav>
+  </div></header>
+  <main class="wrap desk">
+    <div class="line round"><h2>复制对战台</h2><span id="phase" role="status">正在连接房间</span></div>
+    <p class="guide">每个 AI 使用一个独立聊天。首次复制赛前提示，之后复制当前局面，再把模型的整段回复贴回同一席位。</p>
+    <p id="arrangement" class="muted"></p>
+    <p id="connection" role="status"></p>
+    <div id="stations" class="stations"></div>
+    <div class="table-clock">
+      <p class="muted">复制与粘贴期间，开牌前迎击的等待时间继续累计。</p>
+      <ul id="pending" class="rows" aria-label="仍待迎击的交锋"></ul>
+    </div>
+    <noscript>请启用 JavaScript 以使用复制对战台。</noscript>
+  </main>
+  <template id="station-template">
+    <section class="station">
+      <header class="station-heading">
+        <div><span class="seat-label muted"></span><h3 class="fighter"></h3></div>
+        <span class="seat-state" role="status"></span>
+      </header>
+      <div class="send">
+        <h4>发给模型</h4>
+        <div class="toolbar">
+          <button type="button" class="copy-intro">复制赛前提示</button>
+          <button type="button" class="copy-turn">复制当前局面</button>
+        </div>
+        <p class="export-note feedback" role="status"></p>
+        <div class="toolbar packet-tools" hidden>
+          <button type="button" class="recopy subtle">重新复制</button>
+          <button type="button" class="show-packet subtle">显示文本以手动复制</button>
+        </div>
+      </div>
+      <form>
+        <label><strong>贴回模型回复</strong>
+          <textarea class="reply" rows="4" spellcheck="false" autocomplete="off" placeholder="粘贴整段回答，包括 JSON 代码块"></textarea>
+        </label>
+        <div class="toolbar"><button class="submit primary" type="submit" disabled>执行回复</button></div>
+        <p class="receipt feedback" role="status"></p>
+      </form>
+    </section>
+  </template>
+  <dialog id="manual-copy" aria-labelledby="copy-title">
+    <div class="line"><h2 id="copy-title">手动复制</h2><button id="close-copy" type="button">关闭</button></div>
+    <p class="muted">以下是本席发给模型的文本，可能含有手牌。选中文本后使用系统复制。</p>
+    <textarea id="packet-text" readonly spellcheck="false" aria-label="待复制文本"></textarea>
+    <button id="select-all" type="button">全选文本</button>
+  </dialog>
+</body>
+</html>

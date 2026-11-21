@@ -392,10 +392,13 @@ class BattleMatch:
             elif isinstance(node, tuple) and self._combat_stop(node):
                 self.mode = "combat"
                 return
-            elif self._timing and special_seats(game):
+            elif self._timing and self._pause_at_timing():
                 self.mode = "timing"
                 return
         self._finish()
+
+    def _pause_at_timing(self):
+        return bool(special_seats(self.game))
 
     def _combat_stop(self, nodes):
         # next_step returns one executed node per side, even when the other side
