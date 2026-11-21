@@ -18,6 +18,10 @@ def run_program(ctx, entry, tokens):
         event = ctx.event
         if field == "hp":
             return actor.hp
+        if field == "original_max_hp":
+            return actor.original_max_hp
+        if field == "in_turn_end":
+            return ctx.game.turn_ending
         if field in ("lightcore_hp", "max_lightcore_hp"):
             return getattr(actor, field)
         if field in ("target_lightcore_hp", "target_max_lightcore_hp"):
@@ -32,10 +36,13 @@ def run_program(ctx, entry, tokens):
             return ctx.game.pipeline.next_planned_die(event.get("target"))
         if field == "own_hand_skills":
             return ctx.game.special.own_hand_skills(actor)
+        if field == "own_regular_duels":
+            return [slot for slot in ctx.game.duelspace.space if ctx.game.pipeline.can_join(slot)
+                    and any(card.character is actor for card in slot.get_content(player.side))]
         if field == "target_board_skills":
             return ctx.game.special.board_skills(event.get("target"))
-        if field == "chosen_card":
-            return event.get("chosen_card")
+        if field in ("chosen_card", "chosen_slot", "choice_subject"):
+            return event.get(field)
         if field == "allies":
             return [member for member in player.characters if member.is_alive]
         if field == "roll_value":
@@ -48,9 +55,13 @@ def run_program(ctx, entry, tokens):
             return event["die"].is_repeat
         if field == "has_damage_part":
             return event["die"].has_damage_part
+        if field == "did_deal_damage":
+            return event["die"].did_deal_damage
+        if field == "damage_die_is_attack":
+            return bool(getattr(event.get("damage_die"), "is_attack", False))
         if field == "clash_result":
             return event["die"].clash_result
-        if field in ("hit_index", "hit_mode", "targets", "status_overflow",
+        if field in ("hit_index", "hit_mode", "targets", "status", "ability", "status_overflow",
                      "previous_stacks", "current_stacks", "actual_delta"):
             return event.get(field)
         if field in ("in_duel", "duel_damage_taken"):
@@ -70,7 +81,8 @@ def run_program(ctx, entry, tokens):
             return event["opponent_die"].clash_score
         if field in ("opponent_card", "opponent_die", "combat_window", "clash_difference", "prospective_result"):
             return event.get(field)
-        if field in ("amount", "result", "damage_amount", "base_amount", "hp_lost",
+        if field in ("amount", "result", "damage_amount", "damage_dealt", "damage_received", "damage_die",
+                     "base_amount", "hp_lost",
                      "lightcore_lost", "lightcore_collapsed"):
             return event.get(field)
         if field in ("card", "die", "duel", "target", "play_mode", "replaced_card"):
@@ -79,6 +91,8 @@ def run_program(ctx, entry, tokens):
             return event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
         if field == "next_duel_target":
             return ctx.game.active_duelspace.next_duel_target(player.side)
+        if field == "next_duel_enemy_skills":
+            return ctx.game.active_duelspace.next_duel_enemy_skills(player.side)
         if field == "is_primary_target":
             return event.get("target") is event.get("primary_target", event.get("target"))
         if field == "enemies":
@@ -97,6 +111,8 @@ def run_program(ctx, entry, tokens):
             return ctx.game.turn_number
         if field == "die_type":
             return getattr(event.get("die"), "type", None)
+        if field == "die_owner":
+            return character_of(event.get("die"))
         if field == "player":
             return player
         if field == "hand_count":
@@ -127,7 +143,20 @@ def run_program(ctx, entry, tokens):
 
     def status_count(vm):
         name, target = vm.pop(), vm.pop()
-        vm.push(target.statuses.get(name, 0) if target is not None else 0)
+        vm.push(target.statuses.get(target.canonical_status_name(name), 0) if target is not None else 0)
+
+    def status_active(vm):
+        name, target = vm.pop(), vm.pop()
+        vm.push(target is not None and target.canonical_status_name(name) in target.active_statuses)
+
+    def once_per_round(vm):
+        key = vm.pop()
+        vm.push(key not in actor.round_triggers)
+        actor.round_triggers.add(key)
+
+    def ability_count(vm):
+        name, target = vm.pop(), vm.pop()
+        vm.push(target.ability_effects.get(name, 0) if target is not None else 0)
 
     def shield_count(vm):
         kind, target = vm.pop(), vm.pop()
@@ -140,6 +169,22 @@ def run_program(ctx, entry, tokens):
     def skill_state(vm):
         name, card = vm.pop(), vm.pop()
         vm.push(card.use_state.get(name, 0))
+
+    def die_state(vm):
+        name, die = vm.pop(), vm.pop()
+        vm.push(die.use_state.get(name, 0) if die is not None else 0)
+
+    def used_skill_this_turn(vm):
+        skill_id, character = vm.pop(), vm.pop()
+        vm.push((character, skill_id) in vm.game.used_skill_ids)
+
+    def find_skill(vm):
+        zone, skill_id, character = vm.pop(), vm.pop(), vm.pop()
+        if zone not in ("hand", "draw", "delayed_discard", "out_of_combat"):
+            raise ValueError(f"未知牌区 {zone!r}")
+        cards = getattr(character.player.cardspace, zone).content if character is not None else ()
+        vm.push(next((card for card in cards if card.id == skill_id
+                      and card.character is character and not card.destroyed), None))
 
     def team_status(vm, delayed):
         amount, name, source = vm.pop(), vm.pop(), vm.pop()
@@ -158,8 +203,12 @@ def run_program(ctx, entry, tokens):
 
     def skill_use(vm):
         from models.special_actions import SkillUse
-        discount, card = vm.pop(), vm.pop()
-        vm.push(SkillUse(card, discount))
+        terms, card = vm.pop(), vm.pop()
+        vm.push(SkillUse(card, **terms) if isinstance(terms, dict) else SkillUse(card, discount=terms))
+
+    def contains(vm):
+        element, collection = vm.pop(), vm.pop()
+        vm.push(element in collection)
 
     def insert_at(vm):
         at, entity = vm.pop(), vm.pop()
@@ -172,11 +221,20 @@ def run_program(ctx, entry, tokens):
         vm.push(bool(vm.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full")))
 
     words = {
+        "DAMAGE_AMOUNT": lambda vm: vm.push(vm.execute_op(OpCode.DAMAGE) or 0),
+        "ONCE_PER_ROUND": once_per_round, "STATUS_ACTIVE": status_active,
+        "DIE_STATE": die_state,
+        "ACTIVATE_STATUS": lambda vm: vm.push(bool(vm.execute_op(OpCode.ACTIVATE_STATUS))),
         "SKILL_USE": skill_use, "INSERT_AT": insert_at,
+        "CARD_COST": lambda vm: vm.push(vm.pop().cost), "CONTAINS": contains,
         "TAKE_HAND_CARD": lambda vm: vm.push(vm.execute_op(OpCode.TAKE_HAND_CARD)),
         "SHIELD_COUNT": shield_count,
-        "STATUS_COUNT": status_count, "SPENT_STATUS_COUNT": spent_count,
+        "STATUS_COUNT": status_count, "ABILITY_COUNT": ability_count, "SPENT_STATUS_COUNT": spent_count,
+        "SPEND_ABILITY_EFFECT": lambda vm: vm.push(vm.execute_op(OpCode.SPEND_ABILITY_EFFECT) or 0),
+        "SPEND_ABILITY_EFFECT_IN_FULL": lambda vm: vm.push(bool(vm.execute_op(
+            OpCode.SPEND_ABILITY_EFFECT, result_field="paid_in_full"))),
         "SKILL_STATE": skill_state, "STORE": store_local, "SPEND_STATUS": spend,
+        "USED_SKILL_THIS_TURN": used_skill_this_turn, "FIND_SKILL": find_skill,
         "SPEND_STATUS_IN_FULL": spend_in_full,
         "TEAM_STATUS": lambda vm: team_status(vm, False),
         "NEXT_TEAM_STATUS": lambda vm: team_status(vm, True),
@@ -201,17 +259,21 @@ def run_program(ctx, entry, tokens):
                 block.append(token)
         return block
 
-    # A BEFORE listener may replace a pending operand (e.g. the skill price).
-    # Each program has private locals and returns the stack at its original depth.
+    with ctx.binding(source=actor, authority=entry.authority):
+        return execute_program_block(ctx, compile_block(tokens))
+
+
+def execute_program_block(ctx, block):
+    """Execute a compiled program or its deferred branch at the current stack depth."""
     previous_stack = ctx.stack.copy()
     try:
-        with ctx.binding(source=actor, authority=entry.authority):
-            ctx.eval_block(compile_block(tokens))
-            if ctx.executions and ctx.executions[-1].cancelled:
-                ctx.stack[:] = previous_stack
-                return
-            if len(ctx.stack) != len(previous_stack):
-                raise ValueError("词条程序结束时操作栈深度发生变化")
+        result = ctx.eval_block(block)
+        if ctx.executions and ctx.executions[-1].cancelled:
+            ctx.stack[:] = previous_stack
+            return False
+        if len(ctx.stack) != len(previous_stack):
+            raise ValueError("词条程序结束时操作栈深度发生变化")
+        return result
     except Exception:
         ctx.stack[:] = previous_stack
         raise

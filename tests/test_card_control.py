@@ -3,7 +3,9 @@ import random
 import unittest
 from contextlib import redirect_stdout
 
+from entry.entry import Entry
 from game import Game
+from loader import load_characters_from_packs
 from models.card import Card, CardState
 from models.character import Character
 from models.duel import DuelSlot
@@ -45,6 +47,14 @@ class CardControlTests(unittest.TestCase):
         for card in cards:
             card.state = CardState.PLACED_FACE_DOWN
             self.slot.add_content(card.player.side, card)
+
+    def resolve_read(self, window="before_duel"):
+        boss = next(c for c in load_characters_from_packs() if c["id"] == "blank_boss")
+        read = next(card for card in boss["skills"] if card["id"] == "blank_read")
+        hit = next(e for e in read["dice"][0]["entries"] if e["trigger"] == "AFTER RESOLVE_HIT")
+        with self.ctx.binding(source=self.a, target=self.b, result=True, combat_window=window):
+            self.ctx._invoke(Entry.from_spec(self.a, hit))
+        self.assertEqual(self.ctx.stack, [])
 
     def battle(self):
         self.game.reveal_cards()
@@ -149,9 +159,7 @@ class CardControlTests(unittest.TestCase):
         later.add_content(1, second)
         self.game.duelspace.append_new_duel(later)
         self.a.add_status("能源", 7)
-        stolen = self.ctx.eval_block([self.b, self.a, OpCode.TAKE_HAND_CARD])
-        self.assertIs(stolen, card)
-        self.assertTrue(self.ctx.eval_block([stolen, "能源", OpCode.QUEUE_PREPAID_CARD]))
+        self.resolve_read()
         choices = self.game.special.options(self.a.player)
         self.assertEqual([a.duel_index for a in choices], [0, 1])
         self.assertEqual(self.a.statuses["能源"], 2)
@@ -170,15 +178,57 @@ class CardControlTests(unittest.TestCase):
         self.b.player.cardspace.hand.add_card(card)
         self.place(self.skill(self.a, "常规一", [die(1)]))
         self.a.add_status("能源", 3)
-        stolen = self.ctx.eval_block([self.b, self.a, OpCode.TAKE_HAND_CARD])
-        self.assertIs(stolen, card)
-        self.assertFalse(self.ctx.eval_block([stolen, "能源", OpCode.QUEUE_PREPAID_CARD]))
+        self.resolve_read()
         self.assertIsNone(self.game.special.placement_owner)
         self.assertEqual(self.a.player.cardspace.hand.content, [card])
         self.assertEqual(self.a.statuses["能源"], 3)
         self.ctx.eval_block([self.a, self.b, OpCode.TAKE_HAND_CARD])
         self.assertEqual(self.b.player.cardspace.hand.content, [card])
         self.assertIs(card.printed_owner, card.character)
+
+    def test_free_stolen_card_can_be_queued_with_no_energy(self):
+        card = self.skill(self.b, "零费", [die(1)])
+        self.b.player.cardspace.hand.add_card(card)
+        self.place(self.skill(self.a, "常规", [die(1)]))
+        self.resolve_read()
+        choice, = self.game.special.options(self.a.player)
+        self.assertTrue(self.game.special.apply(self.a.player, choice))
+        self.assertIs(self.slot.get_content(1)[-1], card)
+        self.assertTrue(card.use_state["cost_prepaid"])
+
+    def test_no_own_slot_leaves_stolen_card_in_hand_without_spending_energy(self):
+        card = self.skill(self.b, "不能追加", [die(1)], cost=2)
+        self.b.player.cardspace.hand.add_card(card)
+        self.a.add_status("能源", 4)
+        self.resolve_read()
+        self.assertIsNone(self.game.special.placement_owner)
+        self.assertIn(card, self.a.player.cardspace.hand.content)
+        self.assertEqual(self.a.statuses["能源"], 4)
+
+    def test_losing_borrowed_card_clears_prompt_without_prepaid_credit(self):
+        card = self.skill(self.b, "被取回", [die(1)], cost=2)
+        self.b.player.cardspace.hand.add_card(card)
+        self.place(self.skill(self.a, "常规", [die(1)]))
+        self.a.add_status("能源", 3)
+        self.resolve_read()
+        self.assertIs(self.game.special.placement_owner, self.a.player)
+        self.ctx.eval_block([self.a, self.b, OpCode.TAKE_HAND_CARD])
+        self.assertIsNone(self.game.special.placement_owner)
+        self.assertNotIn("cost_prepaid", card.use_state)
+        self.assertIn(card, self.b.player.cardspace.hand.content)
+        self.assertEqual(self.a.statuses["能源"], 1)
+
+    def test_slot_choice_resumes_a_non_card_effect_with_its_program_locals(self):
+        self.place(self.skill(self.a, "常规", [die(1)]))
+        trigger = entry("test_slot", 2, "amount", "STORE", "$self", "$own_regular_duels",
+                        ["$choice_subject", "标记", {"local": "amount"}, "STATUS"], "CHOOSE_SLOT")
+        self.ctx._invoke(Entry.from_spec(self.a, trigger))
+        choice, = self.game.special.options(self.a.player)
+        self.assertIsNone(choice.card)
+        self.assertNotIn("标记", self.a.statuses)
+        self.assertTrue(self.game.special.apply(self.a.player, choice))
+        self.assertEqual(self.a.statuses["标记"], 2)
+        self.assertEqual(self.ctx.stack, [])
 
     def test_borrowers_death_returns_cards_and_printed_owners_death_retires_them(self):
         borrowed = self.skill(self.b, "借来的牌", [die(1)])

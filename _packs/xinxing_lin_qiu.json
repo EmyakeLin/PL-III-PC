@@ -1,6 +1,6 @@
 {
   "faction": "新星组织",
-  "turn_end_statuses": ["限制", "本回合羽流判定成功"],
+  "turn_end_statuses": ["本回合羽流判定成功"],
   "status_rules": {
     "隧道": {"description": "新星组织资源。林秋在回合开始时持有至少8层即可开启隧道。"},
     "星结": {
@@ -12,8 +12,7 @@
     "隧道开启": {
       "requires_status": "隧道", "sustain": {"强壮": 2},
       "description": "持续至隧道归零。林秋获得2强壮，骰子等级+1，每次获得隧道的数量−1，并激活带有开启条件的词条。"
-    },
-    "限制": {"restrict_highest_hand_cost": true, "description": "当回合无法使用自己手牌中费用最高的X张技能，同费依现有手牌顺序。"}
+    }
   },
   "characters": [
     {

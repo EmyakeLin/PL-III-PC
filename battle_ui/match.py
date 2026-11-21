@@ -169,6 +169,8 @@ class BattleMatch:
         if type(option) is not int or not 0 <= option < len(options):
             raise ValueError("该选项不在当前的特殊行动中。")
         move = options[option]
+        if move.kind == "ability":
+            ability_name = next(s["name"] for s in move.character.action_specs() if s["id"] == move.ability_id)
         old_space = game.pipeline.interrupt_space
         succeeded = game.special.apply(player, move)
         # Face-down placements and replacements must remain hidden in the public log.
@@ -181,12 +183,11 @@ class BattleMatch:
         elif move.kind == "intercept":
             message = f"用{move.card.name}迎击即时交锋 {move.response_number}"
         elif move.kind == "ability":
-            spec = next(s for s in move.character.data["actions"] if s["id"] == move.ability_id)
-            message = f"使用{spec['name']}"
+            message = f"使用{ability_name}"
             if move.duel_index is not None and move.target_card.state.name == "PLACED_FACE_UP":
                 message += f"，翻正常规交锋 {move.duel_index + 1} 的{move.target_card.name}"
-        elif move.kind == "queue_card":
-            message = f"向常规交锋 {move.duel_index + 1} 追加技能"
+        elif move.kind == "choose_slot":
+            message = "依词条选择交锋"
         elif move.kind in ("choose_card", "decline_card"):
             message = "依词条选择技能" if move.kind == "choose_card" else "放弃此次选牌"
         else:
@@ -354,7 +355,7 @@ class BattleMatch:
             if game.special.decision_owner is not None:
                 self._special_open = True
                 self._special_seat = None
-                self._timing = "选择技能" if game.special.card_decision else "选择追加技能的交锋"
+                self._timing = "选择技能" if game.special.card_decision else "选择交锋"
                 self.mode = "combat"
                 return
             if self._interrupt_return is not None:

@@ -49,9 +49,10 @@ class Context:
                 and (authority is None or authority >= self._op_events[frame].get("authority", 0))):
             self.op_stack[frame] = None
 
-    def range_blocks_target(self, target):
+    def range_blocks_target(self, target, *, card=None):
         """Use the actual originating skill; character and status passives remain independent."""
-        card = self.executions[-1].entry.owning_card if self.executions else None
+        if card is None and self.executions:
+            card = self.executions[-1].entry.owning_card
         if card is None or not card.range_deficit or card.range_opponent is None:
             return False
         if isinstance(target, EntryExecution):
@@ -60,6 +61,10 @@ class Context:
         return character_of(target) is protected or target is protected.player
 
     def _range_blocks_op(self, opcode, fields):
+        if opcode == OpCode.DAMAGE and fields.get("damage_die") is not None:
+            target = self.event.get("target") if fields["target"] == "target" else fields["target"]
+            if self.range_blocks_target(target, card=fields["damage_die"].card):
+                return True
         if not self.executions:
             return False
         if opcode == OpCode.ENTRY:
@@ -169,6 +174,28 @@ class Context:
         mark = len(self.stack) - len(names)
         fields.update(zip(names, self.stack[mark:]))
         originating_entry = self.executions[-1] if self.executions else None
+        if opcode in (OpCode.ABILITY_EFFECT, OpCode.SPEND_ABILITY_EFFECT):
+            holder = fields["target"]
+            if holder is None or not holder.is_alive or fields["ability"] not in holder.ability_rules:
+                del self.stack[mark:]
+                return None
+            fields["status"] = None
+        elif opcode in (OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.QUEUE_STATUS, OpCode.ACTIVATE_STATUS):
+            holder = fields["target"]
+            if holder is not None:
+                name = holder.canonical_status_name(fields["status"])
+                if name in holder.ability_rules:
+                    del self.stack[mark:]
+                    return None
+                fields["status"] = self.stack[mark + names.index("status")] = name
+            fields["ability"] = None
+        if opcode == OpCode.DAMAGE:
+            # Nested status and character effects own their damage independently of
+            # the die whose event they observed. A die entry owns its own segments.
+            owner = originating_entry.entry.owner if originating_entry else None
+            fields.setdefault("damage_die", owner if getattr(owner, "card", None) is not None else None)
+            if originating_entry and fields.get("damage_cause") is None:
+                fields["damage_cause"] = originating_entry.entry.damage_cause
         if self._range_blocks_op(opcode, fields) or (
                 opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
             del self.stack[mark:]
@@ -199,12 +226,13 @@ class Context:
             pool = fields["pool"]
             player = getattr(pool, "player", pool)
             fields.update(player=player, source=None if pool is player else pool, side=player.side)
-        elif opcode == OpCode.SPEND_STATUS:
+        elif opcode in (OpCode.SPEND_STATUS, OpCode.SPEND_ABILITY_EFFECT):
             actor = fields["target"]
             fields.update(source=actor, side=actor.player.side)
         elif opcode in (OpCode.SKILL_FINAL_ADD, OpCode.SKILL_LEVEL_ADD, OpCode.SET_SKILL_STATE,
                         OpCode.QUEUE_HIT, OpCode.SKIP_ROUND,
-                        OpCode.DIE_FINAL_ADD, OpCode.DIE_LEVEL_ADD, OpCode.REPEAT_DIE, OpCode.ROUTE_DIE_ATTACK):
+                        OpCode.DIE_FINAL_ADD, OpCode.DIE_LEVEL_ADD, OpCode.SET_DIE_STATE,
+                        OpCode.REPEAT_DIE, OpCode.ROUTE_DIE_ATTACK):
             part = fields.get("die") or fields["card"]
             actor = character_of(part)
             fields.update(source=actor, side=actor.player.side if actor else None)
@@ -213,21 +241,23 @@ class Context:
         elif opcode in (OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD):
             fields.setdefault("source", self.event.get("source") or fields["target"])
             fields["side"] = fields["source"].player.side
-        elif opcode in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.LOSE_HP,
+        elif opcode in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.LOSE_HP,
                         OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE):
             if fields["target"] == "target":
                 fields["target"] = self.event.get("target")
             # A follow-up segment owns its measurements even inside another channel's listener.
-            fields.update(result=None, hp_lost=None, damage_amount=None,
+            fields.update(result=None, hp_lost=None, damage_amount=None, damage_dealt=False, damage_received=False,
                           lightcore_lost=None, lightcore_collapsed=False)
             fields.setdefault("base_amount", fields["amount"])
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
-            elif opcode == OpCode.RESOLVE_DAMAGE:
+            elif opcode in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE):
                 fields["damage_amount"] = fields["amount"]
+                if opcode == OpCode.FINALIZE_DAMAGE:
+                    fields["value_ref"] = ValueBounds()
             else:
-                fields.update(damage_part=False, penetration=None, attack_type=None, modifiers=None)
+                fields.update(damage_part=False, damage_die=None, penetration=None, attack_type=None, modifiers=None)
                 if opcode == OpCode.LOSE_HP:
                     fields["base_amount"] = None
                     fields.setdefault("source", self.event.get("source") or fields["target"])
@@ -380,8 +410,9 @@ class Context:
                     and event.get("player") is not None):
                 return getattr(character, "player", None) is event["player"]
             if entry.trigger_type == TriggerType.OPCODE and entry.trigger in (
-                    OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE,
-                    OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.SHIELD,
+                    OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE,
+                    OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.ACTIVATE_STATUS, OpCode.SHIELD,
+                    OpCode.ABILITY_EFFECT, OpCode.SPEND_ABILITY_EFFECT,
                     OpCode.DESTROY, OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
                 subject = "target"
             else:
@@ -476,6 +507,7 @@ class Context:
             if entry.trigger != OpCode.ENTRY and not invocation.cancelled:
                 with self.binding(execution=invocation, entry_trigger=entry.trigger):
                     self.dispatch_opcode(OpCode.ENTRY, "AFTER")
+            return True
         finally:
             self.executions.pop()
 
@@ -486,6 +518,7 @@ class Context:
     def dispatch_pipeline(self, node_id, **fields):
         side, card, die = fields.get("side"), fields.get("card"), fields.get("die")
         if node_id == "before_turn_end":
+            self.game.turn_ending = True
             self.game.resolve_status_batches()
         if node_id == "before_turn_start":
             self.game.open_turn()
@@ -572,7 +605,7 @@ class Context:
         original = self._lasting_entries[entry][1] if entry in self._lasting_entries else entry.owner
         return original, entry.turn_limit["key"]
 
-    def withdraw_card_use(self, card, duel, used):
+    def withdraw_card_use(self, card, duel, used, *, scopes=("duel", "turn")):
         for execution in self.executions:
             if execution.entry.owning_card is card:
                 execution.cancelled = True
@@ -583,7 +616,7 @@ class Context:
         source = copy(card)
         source.use_state = card.use_state.copy()
         for entry in self.entries[:]:
-            if (entry.owning_card is not card or entry.scope not in ("duel", "turn")
+            if (entry.owning_card is not card or entry.scope not in scopes
                     or not entry.turn_active or entry.blanked):
                 continue
             retained = copy(entry)
@@ -605,14 +638,17 @@ class Context:
 
     def deal_damage(self, source, target, amount, penetration="normal", attack_type="none",
                     damage_part=False, damage_cause=None, *, result_field="result", modified=False, **fields):
-        """Return this damage part's resolved amount, or its HP loss with result_field="hp_lost"."""
+        """Read the amount, HP loss, or a success flag from this direct damage segment."""
+        no_result = False if result_field in ("damage_dealt", "damage_received") else 0
         if target is None or not target.is_alive or (self.executions and self.executions[-1].cancelled):
-            return 0
+            return no_result
         authority = self.executions[-1].entry.authority if self.executions else 0
-        with self.binding(**{**fields, "source": source, "target": target,
-                              "damage_part": damage_part, "damage_cause": damage_cause, "authority": authority}):
+        with self.binding(source=source, target=target, damage_part=damage_part,
+                          damage_cause=damage_cause, authority=authority):
             self.stack.extend((target, amount, GRADES[penetration], attack_type))
-            return self.execute_op(OpCode.DAMAGE, result_field=result_field, damage_precomputed=modified) or 0
+            result = self.execute_op(OpCode.DAMAGE, result_field=result_field, damage_precomputed=modified,
+                                     damage_cause=damage_cause, **fields)
+            return no_result if result is None else result
 
     def resolve_hit(self, die, target, **fields):
         if not (die.is_attack or fields.get("simultaneous_solo") and die.is_passive):

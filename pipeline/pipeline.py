@@ -285,6 +285,8 @@ class Pipeline:
         if not self.game.place_in_duel(side, card, space.space.index(slot), queued=regular):
             return False
         card.use_state["use_discount"] = max(0, use.discount)
+        if use.prepaid:
+            card.use_state["cost_prepaid"] = True
         if at == "slot_tail":
             return True
         cards = slot.get_content(side)
@@ -382,6 +384,15 @@ class Pipeline:
                 frame.active_cards.pop(side)
             if frame.active_dice.get(side) is pipe.die:
                 frame.active_dice.pop(side, None)
+
+    def retire_moved_skill(self, slot, card):
+        """Keep a departing use's lasting entries bound to their original slot or turn."""
+        if self.in_use(slot, card):
+            self.withdraw_skill(slot, card)
+        elif card in self.game.used_cards:
+            self.game.context.withdraw_card_use(card, slot, used=True)
+            if slot in self._closed_slots:
+                self.game.context.expire_lasting_entries(slot)
 
     def step_duel_combat(self):
         if not self.game.is_over:
@@ -846,6 +857,7 @@ class Pipeline:
         if not name.startswith("logic_"):
             if name == "on_skill_use":
                 pipe.used = True
+                self.game.used_skill_ids.add((pipe.card.character, pipe.card.id))
             self.game.context.dispatch_pipeline(name, **event)
         elif name == "logic_duel_start" and not self._frame.started:
             self._frame.started = True

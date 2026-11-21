@@ -26,6 +26,7 @@ class SpecialAction:
 class SkillUse:
     card: Card
     discount: int = 0
+    prepaid: bool = False
 
 
 @dataclass
@@ -39,6 +40,16 @@ class CardDecision:
     event: dict
 
 
+@dataclass
+class SlotDecision:
+    actor: Character
+    subject: object
+    candidates: tuple
+    continuation: list
+    invocation: object
+    event: dict
+
+
 class SpecialActions:
     def __init__(self, game):
         self.game = game
@@ -46,7 +57,7 @@ class SpecialActions:
         self._declarations = []
         self.ability_uses = {}
         self.locked_cards = set()
-        self._placement_choices = []
+        self._slot_choices = []
         self._card_choices = []
 
     @staticmethod
@@ -145,18 +156,58 @@ class SpecialActions:
 
     @property
     def placement_owner(self):
-        # Another effect in the triggering node may already have removed the card.
-        while self._placement_choices:
-            card, actor, _ = self._placement_choices[0]
-            if actor.is_alive and card in actor.player.cardspace.hand.content and not card.destroyed:
-                return actor.player
-            self._placement_choices.pop(0)
+        while self._slot_choices:
+            choice = self._slot_choices[0]
+            if self._slot_options(choice):
+                return choice.actor.player
+            self._slot_choices.pop(0)
         return None
 
-    def queue_placement(self, card, owner, slot_indices):
-        indices = tuple(slot_indices)
-        if indices:
-            self._placement_choices.append((card, owner, indices))
+    def choose_slot(self, ctx, subject, candidates, continuation):
+        """Suspend a program and resume its captured block with the chosen duel."""
+        if not ctx.executions or self.game.is_over:
+            return False
+        invocation = ctx.executions[-1]
+        actor = character_of(invocation.entry.owner)
+        if actor is None:
+            return False
+        choice = SlotDecision(actor, subject, tuple(dict.fromkeys(candidates)), continuation, invocation, ctx.event.copy())
+        if not self._slot_options(choice):
+            return False
+        self._slot_choices.append(choice)
+        return True
+
+    def _slot_options(self, choice):
+        if (not choice.actor.is_alive or choice.invocation.cancelled or choice.invocation.entry.blanked):
+            return {}
+        use = choice.subject if isinstance(choice.subject, SkillUse) else None
+        if use and use.card not in self.own_hand_skills(choice.actor):
+            return {}
+        options = {}
+        for group, slots in (("常规交锋", self.game.duelspace.space), ("开牌前交锋", self.game.pre_reveal.space.space),
+                             ("即时交锋", self.duels)):
+            for index, slot in enumerate(slots):
+                if slot in choice.candidates and self.game.pipeline.can_join(slot):
+                    label = f"{group} {index + 1}"
+                    if use:
+                        label = f"{use.card.name} · {label}"
+                    options[SpecialAction("choose_slot", card=use.card if use else None,
+                                          duel_index=index, label=label)] = slot
+        return options
+
+    def _resolve_slot_choice(self, action):
+        from entry.program import execute_program_block
+
+        choice = self._slot_choices.pop(0)
+        slot = self._slot_options(choice)[action]
+        ctx = self.game.context
+        fields = dict(choice.event, choice_subject=choice.subject, chosen_slot=slot)
+        ctx.executions.append(choice.invocation)
+        try:
+            with ctx.binding(**fields):
+                return execute_program_block(ctx, choice.continuation) is not False
+        finally:
+            ctx.executions.pop()
 
     def is_locked(self, card):
         return self.window_open("placement") and card in self.locked_cards
@@ -178,11 +229,13 @@ class SpecialActions:
         for actor in player.characters:
             if not actor.is_alive:
                 continue
-            for spec in actor.data.get("actions", ()):
+            for spec in actor.action_specs():
                 key = actor, spec["id"]
                 if not self.window_open(spec["window"]) or self.ability_uses.get(key, 0) >= spec.get("per_turn", float("inf")):
                     continue
                 if any(actor.statuses.get(name, 0) < count for name, count in spec.get("cost", {}).items()):
+                    continue
+                if any(actor.ability_effects.get(name, 0) < count for name, count in spec.get("ability_cost", {}).items()):
                     continue
                 if spec.get("requires_draw_pile") and not player.cardspace.draw.content:
                     continue
@@ -200,10 +253,13 @@ class SpecialActions:
 
     def _use_ability(self, action):
         actor = action.character
-        spec = next(s for s in actor.data["actions"] if s["id"] == action.ability_id)
+        spec = next(s for s in actor.action_specs() if s["id"] == action.ability_id)
         ctx = self.game.context
         target = action.target_card or actor
         with ctx.binding(source=actor, side=actor.player.side, target=target):
+            for name, count in spec.get("ability_cost", {}).items():
+                if not actor.spend_ability_effect(name, count):
+                    return False
             for status, count in spec.get("cost", {}).items():
                 ctx.stack.extend((actor, status, count))
                 if not ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"):
@@ -227,7 +283,7 @@ class SpecialActions:
         self._declarations.clear()
         self.ability_uses.clear()
         self.locked_cards.clear()
-        self._placement_choices.clear()
+        self._slot_choices.clear()
         self._card_choices.clear()
 
     def first_open_slot(self, side):
@@ -241,7 +297,7 @@ class SpecialActions:
     def may_place(self, card):
         owner = card.character
         return owner.used_duels < owner.max_duels and (
-            "place" in card.data.get("anytime_play", ()) or owner.statuses.get("置卡机会", 0) > 0)
+            "place" in card.data.get("anytime_play", ()) or owner.ability_permission("place") is not None)
 
     @staticmethod
     def printed_replace(card, target):
@@ -255,7 +311,7 @@ class SpecialActions:
                 or not self.game.pipeline.can_replace(slot, target)):
             return False
         return (self.printed_replace(card, target)
-                or card.character is target.character and card.character.statuses.get("换卡机会", 0) > 0
+                or card.character is target.character and card.character.ability_permission("replace") is not None
                 and self.game.pipeline.before_use(slot, target))
 
     def options(self, player):
@@ -272,9 +328,8 @@ class SpecialActions:
                 choices.append(SpecialAction("decline_card", label="放弃此次选牌"))
             return choices
         if self.placement_owner is not None:
-            card, actor, indices = self._placement_choices[0]
-            return ([SpecialAction("queue_card", card=card, duel_index=i) for i in indices]
-                    if player is actor.player else [])
+            choice = self._slot_choices[0]
+            return list(self._slot_options(choice)) if player is choice.actor.player else []
         phase = game.pre_reveal
         cards = phase.playable_hand(player)
         enemy = phase.opponent(player)
@@ -296,7 +351,7 @@ class SpecialActions:
             if "custom" in modes and not card.character.skill_restricted(card):
                 choices.append(SpecialAction("custom", card))
             if (card.data.get("anytime_replace") or card.data.get("replace_targets")
-                    or card.character.statuses.get("换卡机会")):
+                    or card.character.ability_permission("replace") is not None):
                 for slot in game.board_slots():
                     for target in slot.get_content(player.side):
                         if self.may_replace(card, slot, target):
@@ -314,14 +369,8 @@ class SpecialActions:
         game, card = self.game, action.card
         if action.kind in ("choose_card", "decline_card"):
             return self._resolve_card_choice(action)
-        if action.kind == "queue_card":
-            self._placement_choices.pop(0)
-            slot = game.duelspace.space[action.duel_index]
-            with game.context.binding(source=card.character, side=player.side):
-                placed = game.context.eval_block([card, {"at": "slot_tail", "target": slot}, OpCode.INSERT_SKILL])
-            if placed:
-                card.use_state["cost_prepaid"] = True
-            return placed
+        if action.kind == "choose_slot":
+            return self._resolve_slot_choice(action)
         if action.kind == "ability":
             return self._use_ability(action)
         if action.kind == "place":
@@ -388,7 +437,13 @@ class SpecialActions:
         if slot is None or not self.may_replace(card, slot, old):
             return False
         if not self.printed_replace(card, old):
-            old.character.apply_status_delta("换卡机会", -1)
+            owner = old.character
+            if not owner.spend_ability_effect(owner.ability_permission("replace")):
+                return False
+            if (not owner.is_alive or card.destroyed or old.destroyed or card not in hand.content
+                    or old not in slot.get_content(player.side) or self.is_locked(old)
+                    or not self.game.pipeline.before_use(slot, old)):
+                return False
         self.game.pipeline.withdraw_skill(slot, old)
         cards = slot.get_content(player.side)
         cards[cards.index(old)] = card

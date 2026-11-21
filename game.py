@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 from context.context import Context
 from gamerule import GameRule
+from loader import base_effects
 from models.card import CardState, describe_entry, describe_skill_traits
-from models.character import Character, CharacterRank, ONE_TURN_STATUSES
+from models.character import Character, CharacterRank
 from models.dice import describe_die
 from models.duel import DuelSpace
 from models.opcode import OpCode
@@ -29,17 +30,20 @@ class Game:
         self.ended_player = []
         self.placed_this_window = 0
         self.used_cards = []
+        self.used_skill_ids = set()
         self.cards_revealed = False
         self.turn_count = 0
         self.turn_number = 0
+        self.turn_ending = False
         self.card_serial = 0
         self._prepared_turn = -1
         self.next_turn_statuses = []
-        self.status_entries = {}
-        self.status_rules = {}
+        effects = base_effects()
+        self.status_entries = dict(effects.status_entries)
+        self.status_rules = dict(effects.status_rules)
+        self.ability_rules = dict(effects.ability_rules)
         self._overflow_settled_turn = -1
-        self.turn_end_statuses = set(ONE_TURN_STATUSES)
-        self.turn_end_statuses.update(("置卡机会", "换卡机会"))
+        self.turn_end_statuses = set(effects.turn_end_statuses)
         self.is_over = False
         self.winner = None
         self._private_player = None
@@ -202,7 +206,9 @@ class Game:
         number = self.turn_count + 1
         if self.turn_number != number:
             self.turn_number = number
+            self.turn_ending = False
             self.context.turn_entry_uses.clear()
+            self.used_skill_ids.clear()
 
     def prepare_turn(self):
         self.open_turn()
@@ -387,7 +393,10 @@ class Game:
                     char.add_status(name, -excess)
 
     def finish_turn(self):
-        self.resolve_status_batches()
+        if not self.turn_ending:
+            self.context.dispatch_pipeline("before_turn_end")
+        if self.is_over:
+            return
         ordered = sorted(self.players, key=lambda player: player is not self.first_player)
         for player in ordered:
             for character in player.characters:
@@ -400,6 +409,7 @@ class Game:
                 character.turn_duel_bonus = 0
                 for status in self.turn_end_statuses:
                     character.clear_status(status)
+                character.expire_turn_abilities()
                 character.check_death()
             player.turn_common_cost_bonus = 0
             self.context.eval_block([player, 0, 0, OpCode.RESET_COST])
@@ -407,9 +417,14 @@ class Game:
         on_board = [card for slot in self.board_slots() for cards in slot.content.values()
                     for card in cards]
         remaining = set(on_board)
+        used = set(self.used_cards)
         for card in [*self.used_cards, *on_board]:
             if card in remaining and card.character.is_alive:
                 remaining.remove(card)
+                if card in used:
+                    # Turn-end entries run after recycling; keep this use's caster
+                    # and local state even if the physical card is returned to its owner.
+                    self.context.withdraw_card_use(card, None, used=True, scopes=("turn",))
                 card.return_to_printed_owner()
                 card.player.cardspace.draw.add_card(card)
         for player in self.players:

@@ -34,6 +34,18 @@ python main.py
 
 ## 卡包与规则
 
+### 共享效果包
+
+对局启动时会载入以下三个包。即使用 `--packs` 只选一个角色包，角色也能使用这些效果。自定义目录下的 `effects/*.json` 可以提供额外的共享定义。
+
+| 效果包 | 定义 |
+|---|---|
+| [基础状态效果包](./_packs/effects/base_statuses.json) | 强壮、虚弱、迅捷、束缚、骰子等级提升、骰子等级降低、限制 |
+| [基础体系状态效果包](./_packs/effects/system_statuses.json) | 烧伤、裂血、呼吸、失衡，以及由失衡产生的致命失衡 |
+| [基础能力效果包](./_packs/effects/base_abilities.json) | 置卡机会、换卡机会 |
+
+状态效果用 `STATUS`、`SPEND_STATUS`、`STATUS_COUNT` 获得、消耗和读取层数。能力效果用 `ABILITY_EFFECT`、`SPEND_ABILITY_EFFECT`、`ABILITY_COUNT` 管理可用次数。角色包可在 `ability_rules` 中声明一项能力的操作和持续时间。例如，空白的「智脑」抽牌一次，同时花 1 次抽卡资格和 1 层能源，分别结算能力支付和状态消耗。[空白卡包](./_packs/void_boss.json)
+
 ### 新星组织首领 · 林秋
 
 林秋以隧道开启强化技能，凭羽流追加命中，以星结标定目标。命令行和浏览器均可选用他的七张技能。运行 `python -m tests.test_lin_qiu --replay 50` 可重放他与安诺琳、莱克的完整对局。[角色卡包](./_packs/xinxing_lin_qiu.json) · [正式规则书](./docs/正式规则书.md#appendix)
@@ -50,13 +62,15 @@ python main.py
 
 两名玩家可各选一名「空白」，使用各自的七张技能。置卡时可用洞察翻正敌方一张扣牌，开牌前可用「智脑」抽牌或弃牌。「看破」取得的牌按实体区分，用完回到原印刷角色的牌堆。运行 `python -m tests.test_blank_mirror --replay` 可以查看固定种子的完整镜像战报。
 
+「看破」在交锋开始前命中时，用 `TAKE_HAND_CARD` 取得对方的实体牌。卡包读取牌费、手牌和可追加的交锋，按牌费支付能源并用 `SKILL_USE` 记录本次技能费已代付。`CHOOSE_SLOT` 让玩家选择交锋，选定后的词条用 `INSERT_AT` 指定队尾，再用 `INSERT_SKILL` 追加该牌。其他词条可复用选交锋操作，并自行决定选定后的效果。没有合适交锋或能源不足时，「看破」把牌留在手中。[「看破」词条](./_packs/void_boss.json)
+
 ### 特殊置卡、换卡与闻笙
 
 「置卡机会」让持有者从手里向第一个友方空常规交锋补一张技能。使用机会或牌面许可补牌时，都要有剩余常规交锋额度，成功补牌占用 1 个额度。「换卡机会」在自己一张技能即将使用时生效。牌上明写可在任意时刻打出或替换时，还可以在已经使用技能、用骰或命中后行动。换下的牌回手，已付费用保留。换入牌重新付费，从第一骰开始。若已配对的骰子在判胜负前消失，本轮只给对面的骰子记胜。[正式规则书](./docs/正式规则书.md)
 
 余烬剧团的精英「替演领班」闻笙有 12 生命、2 个基础常规交锋。「候场」每回合额外抽 1 张并提供 1 次换卡机会。「点名上场」提供置卡机会，「飞场」可以即时进攻或补位，「救场」可以随时换下自己的在场技能。运行 `python -m tests.test_special_elite --replay` 可复现闻笙对安诺琳的完整战报。[闻笙卡包](./_packs/yujin_theatre.json)
 
-卡包可用现有 `STATUS` 指令授予「置卡机会」「换卡机会」。`anytime_play` 列出允许的 `attack`（主动进攻）、`place`（置入空交锋）或 `custom`（按卡面处理）。`custom` 的牌先从手牌移入延迟弃牌区，再触发 `on_anytime_play`，由牌上的词条规定费用、效果与去向。`anytime_replace: true` 默认允许替换同角色的技能，附上 `replace_targets` 可以按技能 ID 指定允许替换的友方技能。调换走 `REPLACE_SKILL`，成功后产生 `on_skill_replaced`。
+卡包用 `["$self", "置卡机会", 1, "ABILITY_EFFECT"]` 授予一次置卡机会。牌面自带的 `anytime_play` 列出允许的 `attack`（主动进攻）、`place`（置入空交锋）或 `custom`（按卡面处理）。`custom` 的牌先从手牌移入延迟弃牌区，再触发 `on_anytime_play`，由牌上的词条规定费用、效果与去向。`anytime_replace: true` 默认允许替换同角色的技能，附上 `replace_targets` 可以按技能 ID 指定允许替换的友方技能。调换走 `REPLACE_SKILL`，成功后产生 `on_skill_replaced`。
 
 ### 开牌前交锋
 

@@ -1,5 +1,80 @@
 import json
+from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+
+
+PACKS = Path(__file__).parent / "_packs"
+
+
+@dataclass
+class EffectDefinitions:
+    status_rules: dict = field(default_factory=dict)
+    status_entries: dict = field(default_factory=dict)
+    ability_rules: dict = field(default_factory=dict)
+    turn_end_statuses: list = field(default_factory=list)
+
+
+def _add_effects(definitions, pack):
+    for name, rule in pack.get("status_rules", {}).items():
+        if name in definitions.status_rules:
+            raise ValueError(f"重复的状态规则 {name}")
+        cap = rule.get("cap")
+        if "cap" in rule and (type(cap) is not int or cap < 0):
+            raise ValueError(f"{name} 的上限须为非负整数")
+        batch = rule.get("overflow_batch")
+        if batch is not None and (cap is None or type(batch.get("threshold")) is not int
+                or batch["threshold"] <= 0 or not isinstance(batch.get("event"), str)
+                or not batch["event"] or type(batch.get("reduce_to")) is not int
+                or not 0 <= batch["reduce_to"] <= cap):
+            raise ValueError(f"{name} 的溢出事件须有阈值、事件名及结算后上限")
+        if any(target == name or type(amount) is not int or amount <= 0
+               for target, amount in rule.get("sustain", {}).items()):
+            raise ValueError(f"{name} 的持续加成须指定其他状态及正整数层数")
+        if type(rule.get("max_hp_per_stack", 0)) is not int or type(rule.get("permanent", False)) is not bool:
+            raise ValueError(f"{name} 的每层生命上限修正须为整数，永久标记须为布尔值")
+        activation = rule.get("activation")
+        if activation is not None and (not isinstance(activation, dict)
+                or not isinstance(activation.get("operation"), (str, dict, list))
+                or not isinstance(activation.get("label", name), str)
+                or type(activation.get("remove_after", False)) is not bool):
+            raise ValueError(f"{name} 的发动规则须指定有效的操作、名称与移除标记")
+        definitions.status_rules[name] = rule
+    definitions.turn_end_statuses.extend(pack.get("turn_end_statuses", ()))
+    for name, entries in pack.get("status_entries", {}).items():
+        if name in definitions.status_entries:
+            raise ValueError(f"重复的状态定义 {name}")
+        definitions.status_entries[name] = [dict(entry, origin="status") for entry in entries]
+    for name, rule in pack.get("ability_rules", {}).items():
+        if name in definitions.ability_rules:
+            raise ValueError(f"重复的能力效果 {name}")
+        definitions.ability_rules[name] = rule
+
+
+def _read_pack(path, definitions):
+    try:
+        pack = json.loads(path.read_text(encoding="utf-8-sig"))
+        _add_effects(definitions, pack)
+        return pack
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"卡包 {path.name} 无法载入：{exc}") from exc
+
+
+def _shared_effects(directory):
+    # A custom roster inherits the shared packs. A complete copied pack directory
+    # can supply the same filenames locally without registering each effect twice.
+    paths = {p.name: p for p in (PACKS / "effects").glob("*.json")}
+    paths.update({p.name: p for p in (directory / "effects").glob("*.json")})
+    definitions = EffectDefinitions()
+    for _, path in sorted(paths.items()):
+        _read_pack(path, definitions)
+    return definitions
+
+
+@lru_cache(maxsize=1)
+def base_effects():
+    """Built-in definitions for games and model objects created without a roster loader."""
+    return _shared_effects(PACKS)
 
 
 def load_characters_from_packs(packs_dir=None):
@@ -7,43 +82,20 @@ def load_characters_from_packs(packs_dir=None):
     from models.character import CharacterRank, RANK_SKILL_COUNT
     from models.dice import Dice
 
-    directory = Path(packs_dir) if packs_dir is not None else Path(__file__).parent / "_packs"
+    directory = Path(packs_dir) if packs_dir is not None else PACKS
     if not directory.is_dir():
         raise ValueError(f"找不到卡包目录 {directory}")
     characters = []
     ids = set()
-    status_entries = {}
-    status_rules = {}
-    turn_end_statuses = []
+    definitions = _shared_effects(directory)
     for path in sorted(directory.glob("*.json")):
+        pack = _read_pack(path, definitions)
         try:
-            pack = json.loads(path.read_text(encoding="utf-8-sig"))
-            for name, rule in pack.get("status_rules", {}).items():
-                if name in status_rules:
-                    raise ValueError(f"重复的状态规则 {name}")
-                cap = rule.get("cap")
-                if "cap" in rule and (type(cap) is not int or cap < 0):
-                    raise ValueError(f"{name} 的上限须为非负整数")
-                batch = rule.get("overflow_batch")
-                if batch is not None and (cap is None or type(batch.get("threshold")) is not int
-                        or batch["threshold"] <= 0 or not isinstance(batch.get("event"), str)
-                        or not batch["event"] or type(batch.get("reduce_to")) is not int
-                        or not 0 <= batch["reduce_to"] <= cap):
-                    raise ValueError(f"{name} 的溢出事件须有阈值、事件名及结算后上限")
-                if any(target == name or type(amount) is not int or amount <= 0
-                       for target, amount in rule.get("sustain", {}).items()):
-                    raise ValueError(f"{name} 的持续加成须指定其他状态及正整数层数")
-                status_rules[name] = rule
-            turn_end_statuses.extend(pack.get("turn_end_statuses", ()))
-            for name, entries in pack.get("status_entries", {}).items():
-                if name in status_entries:
-                    raise ValueError(f"重复的状态定义 {name}")
-                status_entries[name] = [dict(entry, origin="status") for entry in entries]
-            for original in pack["characters"]:
+            for original in pack.get("characters", ()):
                 char = dict(original, faction=pack.get("faction", ""),
                             faction_passives=pack.get("faction_passives", []),
-                            status_entries=status_entries, status_rules=status_rules,
-                            turn_end_statuses=turn_end_statuses)
+                            status_entries=definitions.status_entries, status_rules=definitions.status_rules,
+                            ability_rules=definitions.ability_rules, turn_end_statuses=definitions.turn_end_statuses)
                 rank = CharacterRank[char["rank"]]
                 if char["id"] in ids:
                     raise ValueError(f"重复的角色 ID {char['id']}")

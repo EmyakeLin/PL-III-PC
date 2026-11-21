@@ -64,7 +64,7 @@ function handoffMode(mode) {
 }
 
 function specialDialog() {
-    showDialog(match.card_choice ? "选择技能" : match.queued_placement ? "选择技能追加位置" : match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
+    showDialog(match.card_choice ? "选择技能" : match.queued_placement ? "选择交锋" : match.special_pending ? "回应即时进攻" : "选择特殊行动", (body, actions) => {
         const field = element("label", "field", "手牌与目标");
         const select = element("select");
         let chosen = false;
@@ -284,6 +284,14 @@ function fighterDetails(side) {
                 body.append(element("p", "dialog-copy", name + "溢出 " + counter.amount + "/" + counter.threshold));
             }
         }
+        const abilities = Object.entries(actor.ability_effects || {});
+        if (abilities.length) {
+            heading(body, "能力效果");
+            for (const [name, count] of abilities) {
+                body.append(element("strong", "", name + " × " + count));
+                entries(body, [match.catalog.ability_effects[name]]);
+            }
+        }
         const passives = [...(printed?.faction_passives || []), ...(printed?.passives || [])];
         if (passives.length) {
             heading(body, "被动技能");
@@ -400,7 +408,9 @@ function updateFighter(player) {
         if (amount > 0) statuses.push(shieldNames[kind] + " " + amount);
     }
     const statusesField = field("statuses");
-    statusesField.replaceChildren(...statuses.map(label => element("span", "status", label)));
+    const abilities = Object.entries(actor.ability_effects || {}).map(([name, count]) =>
+        element("span", "status", `能力 · ${name} ${count}次`));
+    statusesField.replaceChildren(...statuses.map(label => element("span", "status", label)), ...abilities);
     node.dataset.active = String(choosingCard() && match.active_side === player.side);
     node.disabled = false;
     node.setAttribute("aria-label", "查看" + actor.name + "的角色详情");
@@ -694,7 +704,7 @@ function render() {
         setText(byId("hand-title"), "交接对局");
         setText(byId("hand-meta"), "");
         const shared = secondSeat != null;
-        setText(byId("handoff-title"), match.card_choice ? "请由" + player.name + "选择技能" : match.queued_placement ? "请由" + player.name + "选择追加技能的位置" : match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
+        setText(byId("handoff-title"), match.card_choice ? "请由" + player.name + "选择技能" : match.queued_placement ? "请由" + player.name + "选择交锋" : match.special_pending ? "即时进攻待迎击，由要行动的玩家接手" : shared ? "由要出牌的玩家接手" : "请将屏幕交给" + player.name);
         setText(byId("handoff-action"), "我是" + player.name + "，查看手牌");
         byId("handoff-action").disabled = busy;
         if (shared) {

@@ -82,6 +82,8 @@ class Dice:
         self.hit_target = None
         self.hit_index = 0
         self.landed_hits = 0
+        self.did_deal_damage = False
+        self.use_state = {}
         self.attack_redirected = False
         self.attack_target = None
         self.base_value = data.get("base_value", 0)
@@ -205,8 +207,7 @@ class Dice:
         if self.card is not None:
             value += self.card.final_bonus
             if self.card.character is not None and self.type != "blank":
-                statuses = self.card.character.statuses
-                value += statuses.get("强壮", 0) - statuses.get("虚弱", 0)
+                value += self.card.character.status_modifier("final_score")
         return value
 
     def roll(self):

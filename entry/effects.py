@@ -6,9 +6,11 @@ Operations may be a list in printed order or a dict, e.g.
 {"op":"place_skill","card_id":"reserve","zone":"out_of_combat"}.
 BEFORE DAMAGE accepts modifiers on the incoming base amount. AFTER RESOLVE_DAMAGE
 exposes $damage_amount after modifiers and before shields, HP loss, and death.
-AFTER DAMAGE has result/amount equal to that damage and $hp_lost equal to
-the life lost to this part. Use damage_amount_at_least or hp_lost_at_least
-to select the quantity named by the rule, including for fully shielded hits.
+AFTER DAMAGE exposes $damage_dealt (including a settled zero), $damage_received
+(positive damage before shields), $damage_amount and $hp_lost. $damage_die is
+the originating die, if any. At after_dice_use, $did_deal_damage reports whether
+any direct damage from this use settled. A character entry can attribute its own
+follow-up to the current die with {"op":"damage","from_die":true}.
 BEFORE PAY_COST observes the acting card and its proposed amount. AFTER PAY_COST
 also reports result, personal_spent and common_spent. RESET_COST addresses one
 player and supplies the new common and per-character personal budgets.
@@ -173,8 +175,13 @@ def run_effect(ctx, entry, operation):
         grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
         die = ctx.event.get("die")
         attack_type = data.get("attack_type", getattr(die, "type", "none"))
+        fields = {}
+        if data.get("from_die"):
+            if die is None or character_of(die) is not source:
+                return
+            fields["damage_die"] = die
         ctx.deal_damage(source, target, amount, grade, attack_type,
-                        damage_part=data.get("damage_part", False))
+                        damage_part=data.get("damage_part", False), **fields)
         return
     if name in ("lightcore_damage", "real_damage"):
         block = [target, amount, OpCode[name.upper()]]

@@ -50,14 +50,14 @@ def mirror_match(seed=40):
             actor = player.characters[0]
             for action in options:
                 if action.kind == "ability":
-                    spec = next(s for s in data["actions"] if s["id"] == action.ability_id)
+                    spec = next(s for s in actor.action_specs() if s["id"] == action.ability_id)
                     if spec["target"] == "own_hand" and (len(player.cardspace.hand.content) < 2
                             or actor.statuses.get("能源", 0) >= 6 or action.target_card.cost > 2):
                         continue
                 elif action.kind == "attack":
                     if not action.character or action.card.cost > player.cost_left(game):
                         continue
-                elif action.kind != "queue_card":
+                elif action.kind != "choose_slot":
                     continue
                 if not game.special.apply(player, action):
                     raise AssertionError(f"合法行动未能执行 {action}")

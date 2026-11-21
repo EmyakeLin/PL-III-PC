@@ -1,4 +1,5 @@
 from enum import Enum, auto
+from math import prod
 import random
 
 from models.card import Card
@@ -23,12 +24,6 @@ class SpeedDie:
 
 RANK_DUEL_MAP = dict(zip(CharacterRank, (1, 2, 3, 4)))
 RANK_SKILL_COUNT = dict(zip(CharacterRank, (3, 5, 7, 11)))
-STATUS_ALIASES = {
-    "burn": "烧伤", "bleed": "裂血", "energy": "能源", "breath": "呼吸",
-    "呼吸法": "呼吸", "stagger": "失衡", "fatal_stagger": "致命失衡",
-}
-STATUS_CAPS = {"裂血": 9, "呼吸": 6, "失衡": 20}
-ONE_TURN_STATUSES = ("强壮", "虚弱", "迅捷", "束缚")
 SHIELD_FIELDS = {
     "normal": "shield", "shield": "shield", "护盾": "shield", "普通护盾": "shield",
     "reinforced": "reinforced_shield", "强化护盾": "reinforced_shield",
@@ -55,7 +50,8 @@ class Character:
         self.won_clash_this_turn = False
         self.speed = 0
         self.original_max_hp = data["max_hp"]
-        self.max_hp = self.original_max_hp
+        self._base_max_hp = self.original_max_hp
+        self._status_max_hp_delta = 0
         self.max_lightcore_hp = self.initial_lightcore_max(self.original_max_hp)
         self.lightcore_hp = self.max_lightcore_hp
         self.passive_skill_data = data.get("passive_skills", [])
@@ -70,20 +66,41 @@ class Character:
         self.used_independent_cost = 0
         self.turn_cost_adjustment = 0
         self.statuses = {}
+        self.ability_effects = {}
         self.status_overflow = {}
         # While a status supplies stacks, keep the ordinary stacks independently
         # so expiring the turn or removing the source only removes its own part.
         self._ordinary_stacks = {}
         self._sustained_stacks = {}
         self._status_listeners = {}
-        self.bleed_burst = False
+        self.activating_statuses = set()
+        self.active_statuses = set()
         self.round_triggers = set()
         if self.game:
+            self._effect_context = self.game.context
             self.game.status_entries.update(data.get("status_entries", {}))
             self.game.status_rules.update(data.get("status_rules", {}))
+            self.game.ability_rules.update(data.get("ability_rules", {}))
             self.game.turn_end_statuses.update(data.get("turn_end_statuses", ()))
             self.game.context.register_entries(self, self.passive_skill_data)
             player.register_faction_passives(self)
+        else:
+            from context.context import Context
+            from loader import base_effects
+
+            shared = base_effects()
+            self._effect_context = Context()
+            self._standalone_status_rules = {**shared.status_rules, **data.get("status_rules", {})}
+            self._standalone_status_entries = {**shared.status_entries, **data.get("status_entries", {})}
+            self._standalone_ability_rules = {**shared.ability_rules, **data.get("ability_rules", {})}
+
+    @property
+    def max_hp(self):
+        return max(0, self._base_max_hp + self._status_max_hp_delta)
+
+    @max_hp.setter
+    def max_hp(self, value):
+        self._base_max_hp = value - self._status_max_hp_delta
 
     @property
     def max_duels(self):
@@ -110,7 +127,7 @@ class Character:
 
     def queue_status(self, name, amount, source=None):
         """Apply an already scheduled status before next turn's draw and speed roll."""
-        if self.is_alive:
+        if self.is_alive and name not in self.ability_rules:
             source = self if source is None else source
             authority = self.game.context.event.get("authority", 0)
             self.game.next_turn_statuses.append((source, self, name, amount, authority))
@@ -121,8 +138,14 @@ class Character:
         with self.game.context.binding(roll_kind="speed"):
             rolled = self.game.context.eval_block([low, high, 0, die, OpCode.ROLL])
         raw = min(high, max(low, die.value)) if rolled is not None else 0
-        self.speed = raw + self.statuses.get("迅捷", 0) - self.statuses.get("束缚", 0)
+        self.speed = raw + self.status_modifier("speed")
         return self.speed
+
+    def status_modifier(self, value):
+        """Read continuous per-stack adjustments without triggering effects in a preview."""
+        rules = self.status_rules
+        return sum(count * rules.get(name, {}).get("per_stack", {}).get(value, 0)
+                   for name, count in self.statuses.items())
 
     def init_cards(self):
         self.skills = [Card(self.player, skill, self) for skill in self.skill_data]
@@ -142,12 +165,13 @@ class Character:
             if value:
                 parts.append(f"{label} {value}")
         for label, value in self.statuses.items():
-            if label == "裂血" and self.bleed_burst:
-                label = "裂血（爆发）"
+            if label in self.active_statuses:
+                label = self.status_rules[label].get("active_label", label)
             parts.append(f"{label} {value}")
         for name, amount in self.status_overflow.items():
             threshold = self.status_rules[name]["overflow_batch"]["threshold"]
             parts.append(f"{name}溢出 {amount}/{threshold}")
+        parts.extend(f"能力 {label} {count}次" for label, count in self.ability_effects.items())
         return " · ".join(parts)
 
     def add_shield(self, kind, amount):
@@ -156,26 +180,79 @@ class Character:
         setattr(self, field, value)
         return value
 
+    @property
+    def ability_rules(self):
+        return self.game.ability_rules if self.game else self._standalone_ability_rules
+
+    def add_ability_effect(self, name, amount):
+        return self._effect_context.eval_block([self, name, amount, OpCode.ABILITY_EFFECT])
+
+    def apply_ability_delta(self, name, amount):
+        if name not in self.ability_rules or not self.is_alive:
+            return 0
+        remaining = max(0, self.ability_effects.get(name, 0) + amount)
+        if remaining:
+            self.ability_effects[name] = remaining
+        else:
+            self.ability_effects.pop(name, None)
+        return remaining
+
+    def ability_permission(self, permission):
+        return next((name for name in self.ability_effects
+                     if self.ability_rules[name].get("permission") == permission), None)
+
+    def spend_ability_effect(self, name, amount=1):
+        ctx = self._effect_context
+        ctx.stack.extend((self, name, amount))
+        return bool(ctx.execute_op(OpCode.SPEND_ABILITY_EFFECT, result_field="paid_in_full"))
+
+    def expire_turn_abilities(self):
+        for name in tuple(self.ability_effects):
+            if name in self.ability_effects and self.ability_rules[name].get("turn_end"):
+                count = self.ability_effects.pop(name)
+                self._effect_context.dispatch_pipeline("on_ability_expired", source=self, target=self,
+                                                       side=self.player.side, ability=name, status=None, amount=count)
+
+    def action_specs(self):
+        yield from self.data.get("actions", ())
+        for name in self.ability_effects:
+            action = self.ability_rules[name].get("action")
+            if action:
+                yield action
+
     def add_status(self, name, amount):
         """Apply a status through the same listeners as a card or delayed effect."""
-        name = STATUS_ALIASES.get(name, name)
-        if self.game:
-            return self.game.context.eval_block([self, name, amount, OpCode.STATUS])
-        return self.apply_status_delta(name, amount)
+        name = self.canonical_status_name(name)
+        return self._effect_context.eval_block([self, name, amount, OpCode.STATUS])
 
     @property
     def status_rules(self):
-        return self.game.status_rules if self.game else self.data.get("status_rules", {})
+        return self.game.status_rules if self.game else self._standalone_status_rules
+
+    def canonical_status_name(self, name):
+        if name == "energy":
+            return "能源"
+        if name in self.status_rules:
+            return name
+        return next((label for label, rule in self.status_rules.items() if name in rule.get("aliases", ())), name)
+
+    @property
+    def bleed_burst(self):
+        """Compatibility field for the original public battle snapshot."""
+        return self.canonical_status_name("bleed") in self.active_statuses
 
     def status_cap(self, name):
-        global_cap = self.status_rules.get(name, {}).get("cap", STATUS_CAPS.get(name))
+        global_cap = self.status_rules.get(name, {}).get("cap")
         personal = self.data.get("resource_rules", {}).get("caps", {}).get(name)
         if global_cap is None:
             return personal
         return min(global_cap, personal) if personal is not None else global_cap
 
-    def spendable_status(self, name):
+    def _ordinary_status(self, name):
         return self._ordinary_stacks.get(name, self.statuses.get(name, 0))
+
+    def spendable_status(self, name):
+        return 0 if self.status_rules.get(name, {}).get("permanent") else self._ordinary_status(name)
 
     def skill_restricted(self, card):
         """A hand play keeps its cost rank for its pending use, including face-down placement."""
@@ -189,21 +266,23 @@ class Character:
 
     def apply_status_delta(self, name, amount):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
-        if not self.is_alive:
+        if not self.is_alive or name in self.ability_rules:
             return 0
-        name = STATUS_ALIASES.get(name, name)
+        name = self.canonical_status_name(name)
         rule = self.status_rules.get(name, {})
         required = rule.get("requires_status")
         if required and not self.statuses.get(required):
             return 0
         amount = int(amount)
+        if amount < 0 and rule.get("permanent"):
+            return self.statuses.get(name, 0)
         cap = self.status_cap(name)
         if amount > 0 and cap is not None:
             accepted = min(amount, max(0, cap - self.statuses.get(name, 0)))
             if accepted < amount and "overflow_batch" in rule:
                 self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
             amount = accepted
-        return self._set_status(name, max(0, self.spendable_status(name) + amount),
+        return self._set_status(name, max(0, self._ordinary_status(name) + amount),
                                 self._sustained_stacks.get(name, 0))
 
     def _set_status(self, name, ordinary, sustained):
@@ -218,21 +297,29 @@ class Character:
         value = ordinary + sustained if cap is None else min(cap, ordinary + sustained)
         if value:
             self.statuses[name] = value
-            if self.game and not previous and name in self.game.status_entries:
-                specs = self.game.status_entries[name]
-                self._status_listeners[name] = self.game.context.register_entries(self, specs)
+            definitions = self.game.status_entries if self.game else self._standalone_status_entries
+            if not previous and name in definitions:
+                self._status_listeners[name] = self._effect_context.register_entries(self, definitions[name])
         else:
             self.statuses.pop(name, None)
             listeners = self._status_listeners.pop(name, ())
             if listeners:
-                entries = self.game.context.entries
+                entries = self._effect_context.entries
                 entries[:] = [entry for entry in entries if entry not in listeners]
-        if name == "裂血":
-            self.bleed_burst = value >= 6 or (self.bleed_burst and value > 0)
+        threshold = self.status_rules.get(name, {}).get("active_from")
+        if threshold is not None and value >= threshold:
+            self.active_statuses.add(name)
+        elif not value:
+            self.active_statuses.discard(name)
+        cap_delta = (value - previous) * self.status_rules.get(name, {}).get("max_hp_per_stack", 0)
+        if cap_delta:
+            self._status_max_hp_delta += cap_delta
+            self.hp = min(self.hp, self.max_hp)
+            self.check_death()
         if bool(previous) != bool(value):
             for other, count in self.status_rules.get(name, {}).get("sustain", {}).items():
                 grants = self._sustained_stacks.get(other, 0) + (count if value else -count)
-                self._set_status(other, self.spendable_status(other), grants)
+                self._set_status(other, self._ordinary_status(other), grants)
             if not value:
                 for other, rule in self.status_rules.items():
                     if rule.get("requires_status") == name and self.statuses.get(other):
@@ -241,27 +328,51 @@ class Character:
 
     def clear_status(self, name):
         """Expire ordinary stacks; ongoing contributions live as long as their sources."""
-        self._set_status(name, 0, self._sustained_stacks.get(name, 0))
+        if not self.status_rules.get(name, {}).get("permanent"):
+            self._set_status(name, 0, self._sustained_stacks.get(name, 0))
 
     def begin_dice_round(self):
         self.round_triggers = set()
 
     def damage_multiplier(self):
-        return 2 if self.statuses.get("致命失衡", 0) else 1
+        return prod(self.status_rules.get(name, {}).get("incoming_damage_multiplier", 1) for name in self.statuses)
+
+    def _status_event(self, event):
+        if self.is_alive:
+            self._effect_context.dispatch_pipeline(event, source=self, target=self, side=getattr(self.player, "side", None),
+                                                   damage_part=False, hit_modifiers=())
 
     def on_duel_start(self):
-        if self.is_alive and self.statuses.get("裂血", 0) >= 3:
-            self.take_damage(1, "pierce", damage_cause="裂血")
+        self._status_event("on_character_duel_start")
 
     def after_damage_part(self):
-        if self.is_alive and self.bleed_burst:
-            self.take_damage(1, "pierce", damage_cause="裂血爆发")
-            self.add_status("裂血", -2)
+        self._status_event("after_damage_part")
+
+    def _roll_status_check(self, event):
+        """A status pack defines the die and the consequences of checking its stacks."""
+        from entry.entry import Entry
+
+        if not self.is_alive:
+            return False
+        for name, rule in self.status_rules.items():
+            check = rule.get("check")
+            if not check or check["event"] != event:
+                continue
+            stacks = self.statuses.get(name, 0)
+            if not stacks and "failure" not in check:
+                continue
+            passed = getattr(self.game, "rng", random).randint(1, check["sides"]) <= stacks
+            outcome = check.get("success" if passed else "failure")
+            if outcome:
+                entry = Entry.from_spec(self, {"trigger": event, "operation": outcome, "origin": "status"})
+                with self._effect_context.binding(source=self, target=self, damage_part=False):
+                    self._effect_context._invoke(entry)
+            if passed:
+                return True
+        return False
 
     def on_attack_hit(self, die, target):
-        stacks = self.statuses.get("呼吸", 0)
-        rng = getattr(self.game, "rng", random)
-        die.critical = stacks > 0 and rng.randint(1, 6) <= stacks
+        die.critical = self._roll_status_check("critical")
         if die.critical and self.game:
             print(f"{self.name} 触发暴击。")
             self.game.context.dispatch_pipeline("on_critical", source=self, target=target,
@@ -269,24 +380,10 @@ class Character:
         return die.critical
 
     def trigger_stagger(self):
-        if not self.is_alive:
-            return False
-        rng = getattr(self.game, "rng", random)
-        if rng.randint(1, 20) <= self.statuses.get("失衡", 0):
-            self.add_status("致命失衡", 1)
-            self.add_status("失衡", -5)
-            return True
-        self.add_status("失衡", 2)
-        return False
+        return self._roll_status_check("stagger")
 
     def on_turn_end(self):
-        if not self.is_alive:
-            return
-        burn = self.statuses.get("烧伤", 0) // 4
-        if burn:
-            damage = self.take_damage(min(3, burn), damage_cause="烧伤")
-            if damage > 0:
-                self.add_status("烧伤", -burn - 2)
+        self._status_event("on_character_turn_end")
 
     def heal(self, amount):
         if not self.is_alive or amount <= 0:
@@ -312,19 +409,15 @@ class Character:
 
     def take_damage(self, amount, penetration="normal", attack_type="none", *,
                     modified=False, damage_cause=None, result_field="result"):
-        """Resolve damage to this character. Request hp_lost for effects that require life loss."""
-        if result_field not in ("result", "hp_lost"):
+        """Resolve independent damage and return the requested measurement."""
+        if result_field not in ("result", "hp_lost", "damage_dealt", "damage_received"):
             raise ValueError(f"未知伤害结果字段 {result_field!r}")
         if not self.is_alive:
-            return 0
+            return False if result_field in ("damage_dealt", "damage_received") else 0
         grade = DAMAGE_GRADES[getattr(penetration, "name", str(penetration)).lower()]
-        if self.game:
-            return self.game.context.deal_damage(self, self, amount, grade, attack_type,
-                                                 damage_cause=damage_cause, modified=modified,
-                                                 result_field=result_field)
-        damage = max(0, int(amount if modified else amount * self.damage_multiplier()))
-        hp_lost = self.apply_resolved_damage(damage, grade)
-        return hp_lost if result_field == "hp_lost" else damage
+        return self._effect_context.deal_damage(self, self, amount, grade, attack_type,
+                                                damage_cause=damage_cause, damage_die=None, modified=modified,
+                                                result_field=result_field)
 
     def apply_resolved_damage(self, incoming, grade):
         """Settle a resolved damage amount against shields and return the HP lost to this hit."""
@@ -349,9 +442,7 @@ class Character:
             setattr(self, field, max(0, getattr(self, field) - incoming))
         lost = min(self.hp, remaining)
         self.hp -= lost
-        if self.statuses.get("致命失衡") and "致命失衡" not in self.round_triggers:
-            self.round_triggers.add("致命失衡")
-            self.add_status("致命失衡", -1)
+        self._status_event("on_direct_damage_applied")
         self.check_death()
         return lost
 

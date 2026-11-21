@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from battle_ui.match import BattleMatch
 from displayer import Displayer
+from entry.entry import Entry
 from game import Game
 from loader import load_characters_from_packs
 from models.card import CardState
@@ -38,7 +39,7 @@ class BlankDecisionTests(unittest.TestCase):
         first, second = (self.take(self.b, name) for name in ("斩·突·闪", "看破"))
         self.game.place_in_duel(2, first, 0)
         self.game.place_in_duel(2, second, 1)
-        self.a.add_status("洞察", 1)
+        self.a.add_ability_effect("洞察", 1)
         private = Displayer(self.game, viewer_side=1).special_actions()
         inspections = [o for o in private if o["ability_id"] == "insight"]
         self.assertEqual(len(inspections), 2)
@@ -50,14 +51,14 @@ class BlankDecisionTests(unittest.TestCase):
         self.assertFalse(self.game.context.eval_block([second, "hand", OpCode.MOVE_CARD]))
         self.game.placing = None
         self.assertTrue(self.game.context.eval_block([second, "hand", OpCode.MOVE_CARD]))
-        self.assertNotIn("洞察", self.a.statuses)
+        self.assertNotIn("洞察", self.a.ability_effects)
 
     def test_draw_then_attack_while_no_eligible_attack_card_was_in_hand(self):
         first, second = (self.take(self.a, name) for name in ("斩·突·闪", "趁机攻势"))
         for card in (first, second):
             self.game.special.apply(self.left, self.ability(self.a, "deduce_discard", card))
         self.assertEqual(self.a.statuses["能源"], 6)
-        self.assertEqual(self.a.statuses["抽卡资格"], 1)
+        self.assertEqual(self.a.ability_effects["抽卡资格"], 1)
         self.assertFalse(any(o.ability_id == "deduce_discard" for o in self.game.special.options(self.left)))
         draw = self.left.cardspace.draw.content
         seen = next(c for c in draw if c.name == "看破")
@@ -67,7 +68,7 @@ class BlankDecisionTests(unittest.TestCase):
         self.assertIs(phase.attacker, self.left)
         self.game.special.apply(self.left, self.ability(self.a, "deduce_draw"))
         self.assertEqual(self.left.cardspace.hand.content, [seen])
-        self.assertNotIn("抽卡资格", self.a.statuses)
+        self.assertNotIn("抽卡资格", self.a.ability_effects)
         self.assertEqual(self.a.statuses["能源"], 5)
         self.assertTrue(phase.declare_attack(seen, character=self.b).interceptable)
 
@@ -86,18 +87,23 @@ class BlankDecisionTests(unittest.TestCase):
         self.assertTrue(slot.prepare(phase))
         self.assertIs(slot.pulled_card, target)
 
-    def test_explicit_queued_card_is_placed_by_its_controller_in_chosen_slot(self):
+    def test_controller_chooses_slot_for_normally_priced_insertion(self):
         first, second, extra = (self.take(self.a, name) for name in ("看破", "斩·突·闪", "趁机攻势"))
         self.game.place_in_duel(1, first, 0)
         self.game.place_in_duel(1, second, 1)
-        self.game.special.queue_placement(extra, self.a, [0, 1])
+        code = ["$self", extra.id, "hand", "FIND_SKILL", 0, "SKILL_USE",
+                "$own_regular_duels",
+                ["$choice_subject", "$chosen_slot", "slot_tail", "INSERT_AT", "INSERT_SKILL"],
+                "CHOOSE_SLOT"]
+        self.game.context._invoke(Entry.from_spec(
+            self.a, {"trigger": "test_slot", "operation": {"op": "program", "code": code}}))
         self.assertEqual(self.game.next_step(), "wait_queued_placement")
         self.assertFalse(self.game.special.options(self.right))
         choices = self.game.special.options(self.left)
         self.assertEqual([move.duel_index for move in choices], [0, 1])
         self.assertTrue(self.game.special.apply(self.left, choices[1]))
         self.assertEqual(self.game.duelspace.space[1].get_content(1), [second, extra])
-        self.assertTrue(extra.use_state["cost_prepaid"])
+        self.assertNotIn("cost_prepaid", extra.use_state)
 
     def test_look_through_opens_before_regular_duel_and_resumes_from_interrupt(self):
         early = self.take(self.a, "看破")

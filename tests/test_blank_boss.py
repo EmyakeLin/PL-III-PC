@@ -66,22 +66,22 @@ class BlankBossTests(unittest.TestCase):
         self.assertEqual([c.cost for c in self.actor.skills], [1, 2, 3, 2, 2, 3, 4])
         self.actor.hp = 15
         self.actor.add_status("能源", 7)
-        self.assertEqual((self.actor.statuses["能源"], self.actor.statuses["抽卡资格"]), (8, 2))
-        self.actor.add_status("抽卡资格", -1)
+        self.assertEqual((self.actor.statuses["能源"], self.actor.ability_effects["抽卡资格"]), (8, 2))
+        self.actor.add_ability_effect("抽卡资格", -1)
         self.actor.add_status("能源", -1)
         self.actor.hp = 10
         self.actor.speed, self.right.speed = 5, 3
         cost = self.left.available_cost
         self.game.context.dispatch_pipeline("on_turn_start")
-        self.assertEqual((self.actor.statuses["能源"], self.actor.statuses["抽卡资格"]), (8, 1))
-        self.assertEqual((self.left.available_cost, self.actor.shield, self.actor.statuses["洞察"]), (cost + 1, 2, 1))
+        self.assertEqual((self.actor.statuses["能源"], self.actor.ability_effects["抽卡资格"]), (8, 1))
+        self.assertEqual((self.left.available_cost, self.actor.shield, self.actor.ability_effects["洞察"]), (cost + 1, 2, 1))
         self.actor.add_status("能源", 4)
-        self.assertEqual(self.actor.statuses["抽卡资格"], 2)
+        self.assertEqual(self.actor.ability_effects["抽卡资格"], 2)
         self.game.finish_turn()
-        self.assertNotIn("抽卡资格", self.actor.statuses)
+        self.assertNotIn("抽卡资格", self.actor.ability_effects)
         self.game.start_turn()
         self.game.context.dispatch_pipeline("on_turn_start")
-        self.assertEqual(self.actor.statuses["抽卡资格"], 3)
+        self.assertEqual(self.actor.ability_effects["抽卡资格"], 3)
 
     def test_low_hp_verdict_uses_own_hp(self):
         self.actor.hp = 6

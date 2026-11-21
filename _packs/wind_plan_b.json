@@ -1,6 +1,6 @@
 {
   "faction": "PlanB",
-  "turn_end_statuses": ["骰子等级降低", "骰级免疫"],
+  "turn_end_statuses": ["骰级免疫"],
   "status_entries": {
     "涡流": [
       {
@@ -17,13 +17,6 @@
           "$self", "$self", "骰子等级降低", 1, "QUEUE_STATUS"
         ]},
         "description": "回合结束时消耗2层涡流，并在下回合获得1层骰子等级降低。"
-      }
-    ],
-    "骰子等级降低": [
-      {
-        "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-        "operation": {"op": "program", "code": ["$self", "骰子等级降低", "STATUS_COUNT", "SUB"]},
-        "description": "本回合每层使持有者的骰子等级降低1级。"
       }
     ],
     "骰级免疫": [

@@ -1,5 +1,20 @@
 {
-  "turn_end_statuses": ["洞察", "抽卡资格", "本回合已领取档数", "本回合无法死亡"],
+  "turn_end_statuses": ["本回合已领取档数", "本回合无法死亡"],
+  "ability_rules": {
+    "抽卡资格": {"turn_end": true, "description": "本回合可用于智脑额外抽牌。"},
+    "洞察": {
+      "turn_end": true,
+      "description": "置卡阶段消耗1次，将敌方指定的扣牌翻正并锁定到置卡结束。",
+      "action": {
+        "id": "insight",
+        "name": "洞察",
+        "window": "placement",
+        "target": "enemy_facedown",
+        "ability_cost": {"洞察": 1},
+        "operation": {"op": "reveal_lock"}
+      }
+    }
+  },
   "status_entries": {
     "本回合无法死亡": [
       {
@@ -68,7 +83,7 @@
                 "op": "program",
                 "code": [
                   "$speed_lead", 2, "GE",
-                  ["$self", "洞察", 1, "STATUS", "$player", 1, "TURN_COST_ADD", "$self", "normal", 2, "SHIELD"],
+                  ["$self", "洞察", 1, "ABILITY_EFFECT", "$player", 1, "TURN_COST_ADD", "$self", "normal", 2, "SHIELD"],
                   "WHEN"
                 ]
               },
@@ -90,7 +105,7 @@
                   {"local": "new_tiers"}, 0, "GT",
                   [
                     "$self", "本回合已领取档数", {"local": "new_tiers"}, "STATUS",
-                    "$self", "抽卡资格", {"local": "new_tiers"}, "STATUS"
+                    "$self", "抽卡资格", {"local": "new_tiers"}, "ABILITY_EFFECT"
                   ],
                   "WHEN"
                 ]
@@ -108,7 +123,7 @@
                   {"local": "new_tiers"}, 0, "GT",
                   [
                     "$self", "本回合已领取档数", {"local": "new_tiers"}, "STATUS",
-                    "$self", "抽卡资格", {"local": "new_tiers"}, "STATUS"
+                    "$self", "抽卡资格", {"local": "new_tiers"}, "ABILITY_EFFECT"
                   ],
                   "WHEN"
                 ]
@@ -148,7 +163,8 @@
           "name": "智脑·抽牌",
           "window": "before_reveal",
           "target": "self",
-          "cost": {"抽卡资格": 1, "能源": 1},
+          "ability_cost": {"抽卡资格": 1},
+          "cost": {"能源": 1},
           "requires_draw_pile": true,
           "operation": {"op": "program", "code": ["$player", 1, "DRAW"]}
         },
@@ -159,14 +175,6 @@
           "target": "own_hand",
           "per_turn": 2,
           "operation": {"op": "program", "code": ["$target", "delayed_discard", "MOVE_CARD", "$self", "能源", 2, "STATUS"]}
-        },
-        {
-          "id": "insight",
-          "name": "洞察",
-          "window": "placement",
-          "target": "enemy_facedown",
-          "cost": {"洞察": 1},
-          "operation": {"op": "reveal_lock"}
         }
       ],
       "skills": [
@@ -392,9 +400,22 @@
                         "WHEN"
                       ],
                       [
-                        "$target", "$self", "TAKE_HAND_CARD",
-                        "$combat_window", "before_duel", "EQ",
-                        ["能源", "QUEUE_PREPAID_CARD"], ["POP"], "IF_ELSE"
+                        "$target", "$self", "TAKE_HAND_CARD", "stolen", "STORE",
+                        "$combat_window", "before_duel", "EQ", {"local": "stolen"}, "AND",
+                        [
+                          "$own_regular_duels", "slots", "STORE",
+                          "$own_hand_skills", {"local": "stolen"}, "CONTAINS", {"local": "slots"}, "AND",
+                          {"local": "stolen"}, "CARD_COST", "price", "STORE",
+                          "$self", "能源", "STATUS_COUNT", {"local": "price"}, "GE", "AND",
+                          [
+                            {"local": "price"}, 0, "EQ", [true],
+                            ["$self", "能源", {"local": "price"}, "SPEND_STATUS_IN_FULL"], "IF_ELSE",
+                            [
+                              {"local": "stolen"}, {"literal": {"prepaid": true}}, "SKILL_USE", {"local": "slots"},
+                              ["$choice_subject", "$chosen_slot", "slot_tail", "INSERT_AT", "INSERT_SKILL"], "CHOOSE_SLOT"
+                            ], "WHEN"
+                          ], "WHEN"
+                        ], "WHEN"
                       ],
                       "IF_ELSE"
                     ]

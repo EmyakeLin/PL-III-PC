@@ -145,8 +145,8 @@ def special_seats(game):
         for actor in player.characters:
             if not actor.is_alive:
                 continue
-            if (actor.statuses.get("置卡机会") or actor.statuses.get("换卡机会")
-                    or any(game.special.window_open(a["window"]) for a in actor.data.get("actions", ()))
+            if (actor.ability_permission("place") or actor.ability_permission("replace")
+                    or any(game.special.window_open(a["window"]) for a in actor.action_specs())
                     or any(s.get("anytime_play") or s.get("anytime_replace")
                            or s.get("before_duel_attack") and game.special.window_open("before_duel")
                            for s in actor.skill_data)):
@@ -158,14 +158,12 @@ def special_action_label(action):
     if action.label is not None:
         return action.label
     if action.kind == "ability":
-        spec = next(s for s in action.character.data["actions"] if s["id"] == action.ability_id)
+        spec = next(s for s in action.character.action_specs() if s["id"] == action.ability_id)
         label = f"{action.character.name} · {spec['name']}"
         if action.duel_index is not None:
             cards = action.target_card.player.game.duelspace.space[action.duel_index].get_content(action.target_card.player.side)
             return f"{label} · 常规交锋 {action.duel_index + 1} 的第 {cards.index(action.target_card) + 1} 张扣牌"
         return f"{label} · {action.target_card.name}" if action.target_card else label
-    if action.kind == "queue_card":
-        return f"将{action.card.name}追加到常规交锋 {action.duel_index + 1}"
     if action.kind == "pass_intercept":
         return f"放行即时交锋 {action.response_number}"
     card = action.card
@@ -293,6 +291,7 @@ class Displayer:
                 } for c in p.characters],
             } for p in self._game.players],
             "statuses": statuses,
+            "ability_effects": {name: rule.get("description", "") for name, rule in self._game.ability_rules.items()},
         }
 
     def _player(self, player):
@@ -319,6 +318,7 @@ class Displayer:
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": dict(c.statuses), "bleed_burst": c.bleed_burst,
+            "ability_effects": dict(c.ability_effects),
             "status_overflow": {name: {"amount": n, "threshold": c.status_rules[name]["overflow_batch"]["threshold"]}
                                 for name, n in c.status_overflow.items()},
             "cost": {"available": c.available_cost, "refill": c.independent_cost, "spent": c.used_independent_cost},

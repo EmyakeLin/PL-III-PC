@@ -1,0 +1,26 @@
+{
+  "name": "基础状态效果包",
+  "pack_type": "status_effects",
+  "turn_end_statuses": ["强壮", "虚弱", "迅捷", "束缚", "骰子等级提升", "骰子等级降低", "限制"],
+  "status_rules": {
+    "强壮": {"per_stack": {"final_score": 1}, "description": "每层使自身非空白骰最终点数+1。"},
+    "虚弱": {"per_stack": {"final_score": -1}, "description": "每层使自身非空白骰最终点数−1。"},
+    "迅捷": {"per_stack": {"speed": 1}, "description": "每层使持有角色的速度+1。"},
+    "束缚": {"per_stack": {"speed": -1}, "description": "每层使持有角色的速度−1。"},
+    "骰子等级提升": {},
+    "骰子等级降低": {},
+    "限制": {"restrict_highest_hand_cost": true, "description": "本回合无法使用自己手牌中费用最高的X张技能，同费按手牌顺序。"}
+  },
+  "status_entries": {
+    "骰子等级提升": [{
+      "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+      "description": "每层使持有者本回合的骰子等级提升1级。",
+      "operation": {"op": "program", "code": ["$self", "骰子等级提升", "STATUS_COUNT", "ADD"]}
+    }],
+    "骰子等级降低": [{
+      "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+      "description": "每层使持有者本回合的骰子等级降低1级。",
+      "operation": {"op": "program", "code": ["$self", "骰子等级降低", "STATUS_COUNT", "SUB"]}
+    }]
+  }
+}
