@@ -37,6 +37,11 @@ const WARM_CHAR_SWATCHES = [
 
 const UNAFFORDABLE_CRIMSON = 0xc93e2b;
 const UNAFFORDABLE_WASH = 0xfdece9;
+const SPEND_AMBER = 0xc95a2b;
+const SPEND_AMBER_DEEP = 0xa83b18;
+const SPEND_WASH = 0xfcebd9;
+const FREE_JADE = 0x1a825e;
+const FREE_WASH = 0xe8f6ef;
 const CARD_EDGE_LIGHT = 0xe3dac9;
 const CARD_EDGE_DEEP = 0xd4c7b0;
 const SLOT_RECESSED = 0xefe7d8;
@@ -112,16 +117,21 @@ function stepScalarSpring(sp, dt) {
 }
 
 function calculateSpendBreakdown(sharedCost, personalCost, cardCost) {
-  const safeShared = Math.max(0, Number(sharedCost) || 0);
-  const safePersonal = Math.max(0, Number(personalCost) || 0);
-  const safeCost = Math.max(0, Number(cardCost) || 0);
+  const rawShared = Math.round(Number(sharedCost) || 0); // Can be negative during placement preview!
+  const safePersonal = Math.max(0, Math.round(Number(personalCost) || 0));
+  const safeCost = Math.max(0, Math.round(Number(cardCost) || 0));
   const personalUsed = Math.min(safePersonal, safeCost);
-  const remaining = Math.max(0, safeCost - personalUsed);
-  const sharedUsed = Math.min(safeShared, remaining);
+  const sharedDeduct = safeCost - personalUsed;
+  const sharedUsed = Math.max(0, Math.min(Math.max(0, rawShared), sharedDeduct));
+  const afterTotal = rawShared + safePersonal - safeCost;
+  const afterShared = rawShared - sharedDeduct;
   return {
     personalUsed,
     sharedUsed,
-    affordable: personalUsed + sharedUsed >= safeCost,
+    sharedDeduct,
+    afterTotal,
+    afterShared,
+    affordable: afterTotal >= 0,
   };
 }
 
@@ -146,10 +156,26 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
   const root = new PIXI.Container();
   root.container = root;
 
+  const spendRibbon = new PIXI.Container();
+  const spendRibbonBg = new PIXI.Graphics();
+  const spendRibbonText = new PIXI.Text({
+    text: '',
+    style: {
+      fontFamily: FONT_UI,
+      fontSize: 10.6,
+      fontWeight: '800',
+      fill: INK.strong,
+    },
+  });
+  spendRibbonText.anchor.set(dir === 1 ? 0 : 1, 0.5);
+  spendRibbon.addChild(spendRibbonBg, spendRibbonText);
+  spendRibbon.visible = false;
+  spendRibbon.eventMode = 'none';
+
   const tabsLayer = new PIXI.Container();
   const mainCapsule = new PIXI.Container();
   const fxLayer = new PIXI.Container();
-  root.addChild(tabsLayer, mainCapsule, fxLayer);
+  root.addChild(spendRibbon, tabsLayer, mainCapsule, fxLayer);
 
   // Main Capsule persistent visual primitives (ZERO destruction on update)
   const capAura = new PIXI.Graphics();
@@ -161,6 +187,7 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
   const capPips = new PIXI.Graphics();
   const capBorder = new PIXI.Graphics();
   const capCrystal = new PIXI.Graphics();
+  const capSpendPill = new PIXI.Graphics();
 
   const costValueText = new PIXI.Text({
     text: '0',
@@ -184,6 +211,18 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
   });
   costMaxText.anchor.set(0, 0.5);
 
+  const spendDeltaText = new PIXI.Text({
+    text: '',
+    style: {
+      fontFamily: FONT_NUM,
+      fontSize: 12.2,
+      fontWeight: '900',
+      fill: SPEND_AMBER_DEEP,
+    },
+  });
+  spendDeltaText.anchor.set(0.5, 0.5);
+  spendDeltaText.visible = false;
+
   mainCapsule.addChild(
     capAura,
     capShadow,
@@ -193,8 +232,10 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     capPips,
     capBorder,
     capCrystal,
+    capSpendPill,
     costValueText,
-    costMaxText
+    costMaxText,
+    spendDeltaText
   );
 
   // Overflow "+N" summary tab (persistent, shown only when characters.length > 5)
@@ -257,10 +298,15 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
   const capRotSpring = createScalarSpring(0, 260, 18);
   const capSquashSpring = createScalarSpring(0, 320, 20);
   const valuePopSpring = createScalarSpring(1, 380, 19);
+  const spendPopSpring = createScalarSpring(0, 360, 22);
+  const ribbonSlideSpring = createScalarSpring(0, 300, 24);
 
-  // State model
+  // State model (sharedCost can go NEGATIVE during placement preview!)
   let sharedCost = 0;
+  let realSharedCost = 0;
   let maxShared = 5;
+  let isPreviewMode = false;
+  let committedCost = 0;
   let characters = []; // normalized [{ id, name, personalCost, color }]
   const tabById = new Map(); // id -> persistent tab entity
   let hasSyncedOnce = false;
@@ -385,7 +431,7 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
   }
 
   function commitDisplayedCost(newCost, pop = true) {
-    const val = Math.max(0, Math.round(newCost));
+    const val = Math.round(Number(newCost) || 0); // Intentionally allows negative preview values!
     if (capAnim.displayedCost !== val) {
       capAnim.displayedCost = val;
       costValueText.text = String(val);
@@ -397,16 +443,86 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     }
   }
 
+  let lastRibbonSig = '';
+
+  function formatSpendRibbonText(pCost, cardCost, bd) {
+    const afterVal = bd.afterTotal ?? (sharedCost + pCost - cardCost);
+    if (cardCost <= 0) {
+      return afterVal < 0 ? `耗 0 · 负费 ${afterVal}` : `耗 0 · 余 ${afterVal}`;
+    }
+    const parts = [];
+    if (bd.personalUsed > 0) parts.push(`个人${bd.personalUsed}`);
+    if ((bd.sharedDeduct ?? bd.sharedUsed) > 0) parts.push(`共享${bd.sharedDeduct ?? bd.sharedUsed}`);
+    const split = parts.length ? `（${parts.join('+')}）` : '';
+    if (afterVal < 0) {
+      return `耗 ${cardCost}${split} → 负费 ${afterVal}`;
+    }
+    return `耗 ${cardCost}${split} → 余 ${afterVal}`;
+  }
+
+  function redrawSpendRibbon(slideVal) {
+    const k = clamp(slideVal, 0, 1);
+    if (k <= 0.02) {
+      spendRibbon.visible = false;
+      return;
+    }
+    spendRibbon.visible = true;
+    const activeTab = activeIntentCharId !== null ? tabById.get(activeIntentCharId) : null;
+    const pCost = activeTab ? activeTab.char.personalCost : 0;
+    const isNegative = (lastBreakdown.afterTotal ?? (sharedCost + pCost - activeCardCost)) < 0;
+    const isFree = activeCardCost <= 0 && !isNegative;
+    const accent = isNegative
+      ? UNAFFORDABLE_CRIMSON
+      : isFree
+        ? FREE_JADE
+        : SPEND_AMBER;
+    const bgFill = isNegative ? UNAFFORDABLE_WASH : isFree ? FREE_WASH : INK.paper;
+    const textFill = isNegative ? UNAFFORDABLE_CRIMSON : isFree ? FREE_JADE : SPEND_AMBER_DEEP;
+    const label = formatSpendRibbonText(pCost, activeCardCost, lastBreakdown);
+
+    const sig = `${label}|${accent}|${bgFill}`;
+    if (sig !== lastRibbonSig) {
+      lastRibbonSig = sig;
+      spendRibbonText.text = label;
+      spendRibbonText.style.fill = textFill;
+      const padX = 9;
+      const rw = Math.max(92, Math.ceil(spendRibbonText.width) + padX * 2 + 12);
+      const rh = 20;
+      const rx = dir === 1 ? 2 : -rw - 2;
+      const ry = -rh * 0.5;
+      spendRibbonBg.clear();
+      spendRibbonBg.roundRect(rx, ry + 2, rw, rh, 6).fill({ color: INK.shadow, alpha: 0.16 });
+      spendRibbonBg.roundRect(rx, ry, rw, rh, 6)
+        .fill({ color: bgFill, alpha: 0.97 })
+        .stroke({ width: 1.25, color: accent, alpha: 0.85 });
+      // Mini faceted cost crystal marker on leading edge of ribbon
+      const dotX = dir === 1 ? rx + 9 : rx + rw - 9;
+      drawCostCrystal(spendRibbonBg, dotX, 0, 4.4, accent, INK.paper);
+      spendRibbonText.position.set(dir === 1 ? rx + 17 : rx + rw - 17, 0.5);
+    }
+
+    spendRibbon.position.set(0, capBaseY + CAPSULE_H * 0.5 + 11 * k);
+    spendRibbon.alpha = clamp(k * 1.15, 0, 1);
+  }
+
   function recomputeBreakdown() {
     const activeTab = activeIntentCharId !== null ? tabById.get(activeIntentCharId) : null;
     const pCost = activeTab ? activeTab.char.personalCost : 0;
     const prevAffordable = lastBreakdown.affordable;
-    lastBreakdown = calculateSpendBreakdown(sharedCost, pCost, activeCardCost);
+    const prevCost = lastBreakdown._cardCost;
+    lastBreakdown = {
+      ...calculateSpendBreakdown(sharedCost, pCost, activeCardCost),
+      _cardCost: activeCardCost,
+    };
+    if (activeIntentCharId !== null && prevCost !== activeCardCost) {
+      spendPopSpring.vel += 4.2;
+    }
     if (activeCardCost > 0 && !lastBreakdown.affordable && prevAffordable) {
       // Tactile micro-tremor when transitioning into unaffordable intent
       capPosX.vel += dir * 90;
       capRotSpring.vel += dir * 1.4;
     }
+    lastRibbonSig = '';
     capAnim.dirty = true;
   }
 
@@ -517,6 +633,10 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
       if (activeCardCost !== safeCardCost) {
         activeCardCost = safeCardCost;
         recomputeBreakdown();
+        if (dockedCharId !== null && tabById.has(dockedCharId)) {
+          const docked = tabById.get(dockedCharId);
+          commitDisplayedCost(sharedCost + docked.char.personalCost - activeCardCost, true);
+        }
       }
       return;
     }
@@ -688,27 +808,59 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
         .fill({ color: activeCol, alpha: 0.88 * hMix });
     }
 
-    // 5. Micro shared-cost pips along bottom rim (diegetic capacity & spend preview)
+    // 5. Dual-pool pips along bottom rim (shared gold + merged personal color; spent/booked pips show clearly!)
     capPips.clear();
-    const pipCount = clamp(Math.max(maxShared, sharedCost), 1, 8);
-    const pipTotalW = Math.min(54, pipCount * 8 - 2);
-    const pipW = (pipTotalW - (pipCount - 1) * 2.5) / pipCount;
-    const pipStartX = dir === 1 ? -hw + 36 : hw - 36 - pipTotalW;
-    const pipY = hh - 6.5;
-    for (let i = 0; i < pipCount; i++) {
+    const activeTab = activeIntentCharId !== null ? tabById.get(activeIntentCharId) : null;
+    const activePersonal = (activeTab && hMix > 0.15) ? activeTab.char.personalCost : 0;
+    const showIntentPips = activeIntentCharId !== null || hMix > 0.12;
+    const posShared = Math.max(0, sharedCost);
+    const posRealShared = Math.max(posShared, realSharedCost);
+    const sharedSlots = clamp(Math.max(maxShared, posRealShared), 1, 8);
+    const totalSlots = showIntentPips ? clamp(sharedSlots + activePersonal, 1, 10) : sharedSlots;
+    const pipTotalW = Math.min(64, totalSlots * 7.5 - 2);
+    const pipW = Math.max(3.2, (pipTotalW - (totalSlots - 1) * 2.2) / totalSlots);
+    const pipStartX = dir === 1 ? -hw + 33 : hw - 33 - pipTotalW;
+    const pipY = hh - 6.8;
+    const sharedKeep = Math.max(0, posShared - (showIntentPips ? lastBreakdown.sharedUsed : 0));
+    const personalKeep = Math.max(0, activePersonal - (showIntentPips ? lastBreakdown.personalUsed : 0));
+
+    for (let i = 0; i < totalSlots; i++) {
       const px = dir === 1
-        ? pipStartX + i * (pipW + 2.5)
-        : pipStartX + (pipCount - 1 - i) * (pipW + 2.5);
-      const isFilled = i < sharedCost;
-      const isSpentPreview = hasCostCheck && isFilled && i >= Math.max(0, sharedCost - lastBreakdown.sharedUsed);
-      let pipCol = isFilled ? INK.gold : INK.line;
-      let pipAlpha = isFilled ? 0.9 : 0.6;
-      if (isSpentPreview) {
-        pipCol = lastBreakdown.affordable ? activeCol : UNAFFORDABLE_CRIMSON;
-        pipAlpha = 0.52 + pulse * 0.42;
+        ? pipStartX + i * (pipW + 2.2)
+        : pipStartX + (totalSlots - 1 - i) * (pipW + 2.2);
+      const isPersonalPip = showIntentPips && i >= sharedSlots;
+      if (isPersonalPip) {
+        const pIdx = i - sharedSlots;
+        const isSpent = hasCostCheck && pIdx >= personalKeep;
+        if (isSpent) {
+          const sCol = lastBreakdown.affordable ? SPEND_AMBER : UNAFFORDABLE_CRIMSON;
+          capPips.roundRect(px, pipY - 0.4, pipW, 3.8, 1.5)
+            .fill({ color: sCol, alpha: 0.25 + pulse * 0.32 })
+            .stroke({ width: 0.9, color: sCol, alpha: 0.85 + pulse * 0.15 });
+        } else {
+          capPips.roundRect(px, pipY, pipW, 3.2, 1.5)
+            .fill({ color: activeCol, alpha: 0.95 });
+        }
+      } else {
+        const isFilled = i < posShared;
+        const isAlreadyBooked = !isFilled && isPreviewMode && i < posRealShared;
+        const isSpent = hasCostCheck && isFilled && i >= sharedKeep;
+        if (isSpent) {
+          const sCol = lastBreakdown.affordable ? SPEND_AMBER : UNAFFORDABLE_CRIMSON;
+          capPips.roundRect(px, pipY - 0.4, pipW, 3.8, 1.5)
+            .fill({ color: sCol, alpha: 0.24 + pulse * 0.34 })
+            .stroke({ width: 0.9, color: sCol, alpha: 0.88 });
+        } else if (isAlreadyBooked) {
+          // Softly outlined slot representing shared cost already pre-deducted by placed face-down cards
+          const bCol = sharedCost < 0 ? UNAFFORDABLE_CRIMSON : SPEND_AMBER;
+          capPips.roundRect(px, pipY, pipW, 3.2, 1.5)
+            .fill({ color: bCol, alpha: 0.16 })
+            .stroke({ width: 0.8, color: bCol, alpha: 0.62 });
+        } else {
+          capPips.roundRect(px, pipY, pipW, 3.2, 1.5)
+            .fill({ color: isFilled ? INK.gold : INK.line, alpha: isFilled ? 0.92 : 0.55 });
+        }
       }
-      capPips.roundRect(px, pipY, pipW, 3.0, 1.5)
-        .fill({ color: pipCol, alpha: pipAlpha });
     }
 
     // 6. Outer border stroke
@@ -731,9 +883,11 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
       : lerpColorHex(INK.gold, activeCol, hMix);
     drawCostCrystal(capCrystal, crysX, 0, crysR, crysCol, INK.paper);
 
-    // 8. Numeric readout positioning & color (balanced for both left and mirrored right alignment)
-    const valX = dir === 1 ? 6 : -14;
-    costValueText.position.set(valX, -2);
+    // 8. Numeric readout + Inline Spend Delta Pill (`1  -5` / `-3  -5`)!
+    const restValX = dir === 1 ? 6 : -14;
+    const intentValX = dir === 1 ? -6 : 6;
+    const valX = lerp(restValX, intentValX, hMix);
+    costValueText.position.set(valX, -2.5);
     const targetValFill = unaffordableMix > 0.45
       ? UNAFFORDABLE_CRIMSON
       : lerpColorHex(INK.strong, activeCol, hMix * 0.92);
@@ -742,16 +896,51 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
       costValueText.style.fill = targetValFill;
     }
 
-    // Show muted `/maxShared` only at rest; hide cleanly during personal+shared merge pop
+    // Show `/maxShared` (or `预` tag during placement pre-deduction) at rest; morph into inline `-N` pill during card intent!
     const showMax = hMix < 0.35;
     if (showMax !== capAnim.lastMaxVisible) {
       capAnim.lastMaxVisible = showMax;
       costMaxText.visible = showMax;
     }
     if (showMax) {
-      costMaxText.text = `/${maxShared}`;
+      const restSuffix = isPreviewMode
+        ? (sharedCost < 0 ? ' 预' : `/${maxShared}预`)
+        : `/${maxShared}`;
+      if (costMaxText.text !== restSuffix) costMaxText.text = restSuffix;
+      costMaxText.style.fill = isPreviewMode
+        ? (sharedCost < 0 ? UNAFFORDABLE_CRIMSON : SPEND_AMBER)
+        : INK.muted;
       costMaxText.alpha = clamp(1 - hMix * 3, 0, 1);
       costMaxText.position.set(valX + Math.max(9, costValueText.width * 0.52) + 1.5, 1.5);
+    }
+
+    capSpendPill.clear();
+    const spendAlpha = clamp((hMix - 0.18) / 0.55, 0, 1);
+    if (spendAlpha > 0.02) {
+      const isNegative = (lastBreakdown.afterTotal ?? 0) < 0;
+      const isFree = activeCardCost <= 0 && !isNegative;
+      const pillFill = isNegative ? UNAFFORDABLE_WASH : isFree ? FREE_WASH : SPEND_WASH;
+      const pillStroke = isNegative ? UNAFFORDABLE_CRIMSON : isFree ? FREE_JADE : SPEND_AMBER;
+      const pillTextCol = isNegative ? UNAFFORDABLE_CRIMSON : isFree ? FREE_JADE : SPEND_AMBER_DEEP;
+      const spendStr = `-${activeCardCost}`;
+      if (spendDeltaText.text !== spendStr) spendDeltaText.text = spendStr;
+      spendDeltaText.style.fill = pillTextCol;
+      const popScale = clamp(0.85 + spendPopSpring.value * 0.15, 0.72, 1.24);
+      const pw = activeCardCost >= 10 ? 36 : 30;
+      const ph = 18;
+      const pillCx = dir === 1 ? 29 : -29;
+      const pillCy = -2;
+      const sw = pw * popScale;
+      const sh = ph * popScale;
+      capSpendPill.roundRect(pillCx - sw * 0.5, pillCy - sh * 0.5, sw, sh, 6)
+        .fill({ color: pillFill, alpha: spendAlpha * (isNegative ? 0.85 + pulse * 0.15 : 0.96) })
+        .stroke({ width: isNegative ? 1.5 : 1.25, color: pillStroke, alpha: spendAlpha * 0.92 });
+      spendDeltaText.visible = true;
+      spendDeltaText.alpha = spendAlpha;
+      spendDeltaText.position.set(pillCx, pillCy + 0.5);
+      spendDeltaText.scale.set(popScale);
+    } else {
+      spendDeltaText.visible = false;
     }
   }
 
@@ -760,10 +949,22 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
   redrawMainCapsule();
 
   // Public API
-  root.sync = ({ sharedCost: nextShared = 0, maxShared: nextMax = 5, characters: nextChars = [] } = {}) => {
+  root.sync = ({
+    sharedCost: nextShared = 0,
+    realShared: nextRealShared = null,
+    maxShared: nextMax = 5,
+    isPreview: nextIsPreview = false,
+    committedCost: nextCommitted = 0,
+    characters: nextChars = [],
+  } = {}) => {
     const prevShared = sharedCost;
-    sharedCost = Math.max(0, Math.round(Number(nextShared) || 0));
+    sharedCost = Math.round(Number(nextShared) || 0); // Allows negative placement preview!
+    realSharedCost = nextRealShared !== null && nextRealShared !== undefined
+      ? Math.max(0, Math.round(Number(nextRealShared) || 0))
+      : Math.max(0, sharedCost);
     maxShared = Math.max(1, Math.round(Number(nextMax) || 5));
+    isPreviewMode = Boolean(nextIsPreview);
+    committedCost = Math.max(0, Math.round(Number(nextCommitted) || 0));
 
     const normalized = (nextChars || []).map((ch, idx) => ({
       id: ch?.id ?? `char_${idx}`,
@@ -812,7 +1013,7 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
 
     if (dockedCharId !== null && tabById.has(dockedCharId)) {
       const docked = tabById.get(dockedCharId);
-      commitDisplayedCost(sharedCost + docked.char.personalCost, hasSyncedOnce);
+      commitDisplayedCost(sharedCost + docked.char.personalCost - activeCardCost, hasSyncedOnce);
     } else {
       const changed = hasSyncedOnce && prevShared !== sharedCost;
       commitDisplayedCost(sharedCost, changed);
@@ -916,7 +1117,8 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
           tab.phase = 'MERGED';
           dockedCharId = tab.id;
 
-          commitDisplayedCost(sharedCost + tab.char.personalCost, true);
+          // Directly deduct activeCardCost in the faction cost capsule (can go negative in placement preview!)
+          commitDisplayedCost(sharedCost + tab.char.personalCost - activeCardCost, true);
 
           // Tactile impact impulse on main capsule
           capPosX.vel -= dir * 135;
@@ -955,11 +1157,15 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     }
 
     // 4. Step Main Capsule springs & visual channels
+    spendPopSpring.target = isAnyActive ? 1 : 0;
+    ribbonSlideSpring.target = isAnyActive ? 1 : 0;
     stepScalarSpring(capPosX, dt);
     stepScalarSpring(capPosY, dt);
     stepScalarSpring(capRotSpring, dt);
     stepScalarSpring(capSquashSpring, dt);
     stepScalarSpring(valuePopSpring, dt);
+    stepScalarSpring(spendPopSpring, dt);
+    stepScalarSpring(ribbonSlideSpring, dt);
 
     const targetMix = isAnyActive ? 1 : 0;
     capAnim.hoverMix = lerp(capAnim.hoverMix, targetMix, expMix(10, dt));
@@ -967,7 +1173,8 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     capAnim.currentColorHex = lerpColorHex(capAnim.currentColorHex, capAnim.targetColorHex, expMix(11, dt));
 
     const hasCostCheck = activeCardCost > 0 && isAnyActive;
-    const targetUnaff = hasCostCheck && !lastBreakdown.affordable ? 1 : 0;
+    const isNegativeNow = isAnyActive ? !lastBreakdown.affordable : sharedCost < 0;
+    const targetUnaff = isNegativeNow ? 1 : 0;
     const targetAff = hasCostCheck && lastBreakdown.affordable ? 1 : 0;
     unaffordableMix = lerp(unaffordableMix, targetUnaff, expMix(12, dt));
     affordableMix = lerp(affordableMix, targetAff, expMix(12, dt));
@@ -981,6 +1188,7 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     costValueText.scale.set(valuePopSpring.value);
 
     redrawMainCapsule();
+    redrawSpendRibbon(ribbonSlideSpring.value);
 
     // 5. Step homing energy orbs (smooth spring-guided flight into capsule -> arrival flash)
     const orbTargetX = capPosX.value + dir * 10;

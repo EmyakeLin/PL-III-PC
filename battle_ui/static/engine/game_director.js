@@ -142,6 +142,7 @@ export class GameDirector {
     this.selectedHandCardId = null;
     this.focusedCharId = null;
     this.focusedDuelNumber = null;
+    this._ignoreNextStageTapUntil = 0;
     this._fighterFloorDrawers = new Map();
 
     // Single-Focus Side Hero Inspector + Independent Dual-Scroll Passive Drawer
@@ -300,17 +301,33 @@ export class GameDirector {
       this.deckPiles[2]
     );
 
+    // Persistent floating drag-cost tag (tracks dragged hand card at 60fps with ZERO per-frame allocations!)
+    this.dragCostTag = new PIXI.Container();
+    this.dragCostTag.visible = false;
+    this.dragCostTag.eventMode = 'none';
+    this._dragCostBg = new PIXI.Graphics();
+    this._dragCostTxt = new PIXI.Text({
+      text: '',
+      style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '900', fill: 0xa83b18 },
+    });
+    this._dragCostTxt.anchor.set(0.5, 0.5);
+    this._dragCostLastSig = '';
+    this.dragCostTag.addChild(this._dragCostBg, this._dragCostTxt);
+    this.fxTextLayer.addChild(this.dragCostTag);
+
     app.stage.eventMode = 'static';
     app.stage.hitArea = app.screen;
     app.stage.on('pointermove', (e) => this._onPointerMove(e));
     app.stage.on('pointerup', (e) => this._onPointerUp(e));
     app.stage.on('pointerupoutside', (e) => this._onPointerUp(e));
     app.stage.on('pointertap', () => {
+      if (performance.now() < this._ignoreNextStageTapUntil) return;
       if ((this.activeHeroPanel || this.passiveDrawer) && !this.dragState) {
         this._closeStageSheets();
       }
       if (this.selectedHandCardId && !this.dragState) {
         this.selectedHandCardId = null;
+        this._clearCardIntent();
         this._rebuildDynamicBoard();
       }
     });
@@ -401,6 +418,21 @@ export class GameDirector {
       this.costHuds[2]?.setIntent({ charId: null, cardCost: 0 });
     }
     this.three.setIntentFocus({ active: false });
+  }
+
+  _syncSelectedCardIntent() {
+    if (!this.selectedHandCardId || !this.state?.frame) {
+      this._clearCardIntent();
+      return;
+    }
+    const viewerSide = this.state.frame.viewer_side;
+    const player = viewerSide ? (this.state.frame.players || []).find((p) => p.side === viewerSide) : null;
+    const selected = player?.hand?.find((c) => c.id === this.selectedHandCardId) || null;
+    if (selected) {
+      this._setCardIntent(viewerSide, selected);
+    } else {
+      this._clearCardIntent(viewerSide);
+    }
   }
 
   _hasLiveHand() {
@@ -1083,6 +1115,76 @@ export class GameDirector {
     }
   }
 
+  _computeCostDisplayPool(player) {
+    const frame = this.state?.frame;
+    const mode = this.state?.mode;
+    const realShared = Math.round(Number(player.cost?.available ?? 0));
+    const maxShared = Math.max(1, Math.round(Number(player.cost?.refill || 5)));
+    const chars = player.characters || [];
+    const realPersonal = new Map();
+    for (const ch of chars) {
+      realPersonal.set(ch.id, Math.max(0, Math.round(Number(ch.cost?.available ?? 0))));
+    }
+
+    // Placement / Pre-Reveal preview mode: directly deduct already-placed unrevealed cards
+    // (personal cost first down to 0, then faction shared cost — CAN GO NEGATIVE!).
+    // On Reveal (`cards_revealed === true`) / Combat / Turn End, immediately restore real remaining cost!
+    const isPreviewPhase = Boolean(
+      frame
+      && !frame.cards_revealed
+      && !frame.combat
+      && (mode === 'placement' || mode === 'pre_attack' || mode === 'intercept')
+      && frame.viewer_side === player.side
+    );
+
+    if (!isPreviewPhase) {
+      return {
+        sharedCost: realShared,
+        realShared,
+        maxShared,
+        personalByChar: realPersonal,
+        isPreview: false,
+        committedCost: 0,
+      };
+    }
+
+    const queuedCards = [];
+    for (const d of frame.duels || []) {
+      const se = (d.sides || []).find((s) => s.side === player.side);
+      for (const c of se?.cards || []) {
+        if (c && !c.hidden && c.state === 'placed_face_down') queuedCards.push(c);
+      }
+    }
+    for (const d of frame.pre_reveal?.duels || []) {
+      const se = (d.sides || []).find((s) => s.side === player.side);
+      for (const c of se?.cards || []) {
+        if (c && !c.hidden && c.state !== 'resolved' && c.state !== 'discarded') queuedCards.push(c);
+      }
+    }
+
+    let previewShared = realShared;
+    const previewPersonal = new Map(realPersonal);
+    let committedCost = 0;
+    for (const c of queuedCards) {
+      const cost = Math.max(0, Math.round(Number(c.cost) || 0));
+      committedCost += cost;
+      const cid = c.character_id;
+      const pAvail = cid && previewPersonal.has(cid) ? previewPersonal.get(cid) : 0;
+      const pUsed = Math.min(pAvail, cost);
+      if (cid && previewPersonal.has(cid)) previewPersonal.set(cid, pAvail - pUsed);
+      previewShared -= (cost - pUsed); // Intentionally allows negative preview cost!
+    }
+
+    return {
+      sharedCost: previewShared,
+      realShared,
+      maxShared,
+      personalByChar: previewPersonal,
+      isPreview: committedCost > 0,
+      committedCost,
+    };
+  }
+
   _buildPlayerWing(player, wx, wingW, h) {
     const side = player.side;
     const theme = SIDE_THEME[side];
@@ -1103,15 +1205,19 @@ export class GameDirector {
     this.wingsLayer.addChild(headTxt);
 
     // 2. Sync Persistent Spring-Physical Cost HUD & 2.5D Diegetic Deck Piles (ZERO destroy/rebuild!)
+    const costPool = this._computeCostDisplayPool(player);
     const costHud = this.costHuds[side];
     if (costHud) {
       costHud.sync({
-        sharedCost: player.cost?.available ?? 0,
-        maxShared: Math.max(1, player.cost?.refill || 5),
+        sharedCost: costPool.sharedCost,
+        realShared: costPool.realShared,
+        maxShared: costPool.maxShared,
+        isPreview: costPool.isPreview,
+        committedCost: costPool.committedCost,
         characters: chars.map((ch) => ({
           id: ch.id,
           name: ch.name,
-          personalCost: ch.cost?.available ?? 0,
+          personalCost: costPool.personalByChar.get(ch.id) ?? (ch.cost?.available ?? 0),
           color: this._resolveCharColor(ch.id, side),
         })),
       });
@@ -1134,8 +1240,8 @@ export class GameDirector {
     }
 
     // 3. 10v10+ Multi-Rank Battlefield Formation Layout (`computeFormationLayout`)
-    // Full-height sunlit battlefield wing — deck piles sit cleanly below in the corners!
-    const zoneTop = 106;
+    // Full-height sunlit battlefield wing — clears both Cost HUD spend ribbon above and deck piles below!
+    const zoneTop = 124;
     const zoneBottom = Math.max(zoneTop + 160, this.layout.stageBottom - 12);
 
     const formation = computeFormationLayout({
@@ -2647,7 +2753,11 @@ export class GameDirector {
         if (this.hoveredHandKey === cardKey) {
           this._applyHandFanHoverLayout(null);
         }
-        this._clearCardIntent(viewerSide);
+        if (this.selectedHandCardId) {
+          this._syncSelectedCardIntent();
+        } else {
+          this._clearCardIntent(viewerSide);
+        }
       });
 
       // Prevent stage.pointertap from instantly deselecting a hand card on the same click!
@@ -3188,18 +3298,22 @@ export class GameDirector {
     const y = e.global.y;
 
     if (!d.moved && this.state.mode === 'placement') {
+      this._ignoreNextStageTapUntil = performance.now() + 90;
       if (this.selectedHandCardId === d.card.id) this._placeCard(d.card.id);
       else {
         this.selectedHandCardId = d.card.id;
         this._rebuildDynamicBoard();
+        this._syncSelectedCardIntent();
       }
       return;
     }
 
     if (!d.moved && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')) {
+      this._ignoreNextStageTapUntil = performance.now() + 90;
       this.selectedHandCardId = this.selectedHandCardId === d.card.id ? null : d.card.id;
       this._rebuildConfrontationWings();
       this._rebuildDynamicBoard();
+      this._syncSelectedCardIntent();
       return;
     }
 
@@ -3592,6 +3706,55 @@ export class GameDirector {
       view.container.position.set(b.position.x, b.position.y);
       view.container.rotation = b.angle;
       view.container.scale.set(view.bodyEntry.scale);
+    }
+
+    // 4b. Persistent floating spend tag tracking dragged hand card on the battlefield
+    if (this.dragState && this.dragState.moved && this.dragCostTag) {
+      const ds = this.dragState;
+      const hud = this.costHuds[ds.side];
+      const bd = hud ? hud.getSpendBreakdown() : null;
+      const cardCost = Math.max(0, Number(ds.card?.cost) || 0);
+      const afterVal = bd ? (bd.afterTotal ?? (bd.sharedCost + bd.personalCost - cardCost)) : 0;
+      const isNegative = afterVal < 0;
+      let label = `耗 ${cardCost}`;
+      if (cardCost === 0) {
+        label = isNegative ? `耗 0 → 负费 ${afterVal}` : `耗 0 → 余 ${afterVal}`;
+      } else if (bd) {
+        const parts = [];
+        if (bd.personalUsed > 0) parts.push(`个人${bd.personalUsed}`);
+        const sDed = bd.sharedDeduct ?? bd.sharedUsed;
+        if (sDed > 0) parts.push(`共享${sDed}`);
+        const split = parts.length ? `（${parts.join('+')}）` : '';
+        label = isNegative
+          ? `耗 ${cardCost}${split} → 负费 ${afterVal}`
+          : `耗 ${cardCost}${split} → 余 ${afterVal}`;
+      }
+      const sig = `${label}|${isNegative}|${cardCost === 0}`;
+      if (sig !== this._dragCostLastSig) {
+        this._dragCostLastSig = sig;
+        const accent = isNegative ? 0xc93e2b : cardCost === 0 ? 0x1a825e : 0xc95a2b;
+        const fill = isNegative ? 0xfdece9 : cardCost === 0 ? 0xe8f6ef : 0xfffdf8;
+        const txtCol = isNegative ? 0xc93e2b : cardCost === 0 ? 0x1a825e : 0xa83b18;
+        this._dragCostTxt.text = label;
+        this._dragCostTxt.style.fill = txtCol;
+        const pw = Math.max(66, Math.ceil(this._dragCostTxt.width) + 28);
+        const ph = 24;
+        this._dragCostBg.clear();
+        this._dragCostBg.roundRect(-pw / 2 + 1.5, -ph / 2 + 3, pw, ph, 8).fill({ color: INK.shadow, alpha: 0.24 });
+        this._dragCostBg.roundRect(-pw / 2, -ph / 2, pw, ph, 8)
+          .fill({ color: fill, alpha: 0.98 })
+          .stroke({ width: 1.5, color: accent });
+        drawCostCrystal(this._dragCostBg, -pw / 2 + 12, 0, 5, accent, INK.paper);
+        this._dragCostTxt.position.set(6, 0.5);
+      }
+      const view = this.handCardViews.get(ds.cardKey);
+      const cardHalfH = (view?.container?._boxHeight || this.layout.cardH || 260) * 0.52;
+      const tx = Math.max(88, Math.min(this.w - 88, ds.x));
+      const ty = Math.max(54, ds.y - cardHalfH - 16);
+      this.dragCostTag.position.set(tx, ty);
+      this.dragCostTag.visible = true;
+    } else if (this.dragCostTag && this.dragCostTag.visible) {
+      this.dragCostTag.visible = false;
     }
 
     // 5. Render Matter.js tumbling Shield Wear / Shatter Shards
