@@ -34,6 +34,9 @@ class CanvasBattleEngineTests(unittest.TestCase):
             "/engine/three_world.js",
             "/engine/design_system.js",
             "/engine/card_print.js",
+            "/engine/cost_hud.js",
+            "/engine/formation.js",
+            "/engine/combat_choreography.js",
             "/engine/stage_actors.js",
             "/engine/table_overlays.js",
             "/engine/game_director.js",
@@ -67,11 +70,48 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 )
 
     def test_no_paraphrasing_die_level_labels_or_filler_text(self):
-        for name in ("design_system.js", "card_print.js", "stage_actors.js", "table_overlays.js", "game_director.js", "three_world.js"):
+        for name in (
+            "design_system.js",
+            "card_print.js",
+            "cost_hud.js",
+            "formation.js",
+            "combat_choreography.js",
+            "stage_actors.js",
+            "table_overlays.js",
+            "game_director.js",
+            "three_world.js",
+        ):
             raw = (STATIC_DIR / "engine" / name).read_text(encoding="utf-8")
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", raw, flags=re.S)
             for forbidden in ("Lv.", "无附加词条", "compactDieBadges", "compactSkillTag", "拖入扣置或双击", "被动 (", "placeLeft"):
                 self.assertNotIn(forbidden, code, f"Forbidden text {forbidden!r} found in {name}")
+
+    def test_director_wires_all_wave1_modules_and_scalable_10v10_roster(self):
+        director_src = (STATIC_DIR / "engine" / "game_director.js").read_text(encoding="utf-8")
+        for symbol in (
+            "createDiegeticTopBar",
+            "createFactionCostHud",
+            "createDiegeticDeckPiles",
+            "computeFormationLayout",
+            "createDelayedHpBar",
+            "renderFocusSightlines",
+            "buildScalableDuelRail",
+            "buildHitstopBanner",
+            "setIntent(",
+            "setIntentFocus(",
+            "emitShockwave(",
+            "costMerge(",
+            "passiveChime(",
+            "cardFlick(",
+            "pulsePile(",
+            "setGalleryScroll(",
+            "setInspectScroll(",
+            "setScrollX(",
+            "onSetMaxPerSide",
+        ):
+            self.assertIn(symbol, director_src, f"Expected Wave-1 integration symbol {symbol!r} in game_director.js")
+        self.assertNotIn("每方最多选 3 名角色", director_src)
+        self.assertNotIn("clearContainer(this.cornerHudLayer)", director_src)
 
     def test_multi_character_roster_draw_peek_bottom_and_speed_rolls(self):
         session = BattleSession(seed=37)
