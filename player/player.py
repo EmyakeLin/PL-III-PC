@@ -60,7 +60,7 @@ class Player:
         default = self.get_default_target(enemy_player)
         print(f"{self.name} 选择单方面攻击的目标：")
         for number, character in enumerate(alive, 1):
-            print(f"  [{number}] {character.name}　生命 {character.hp}/{character.max_hp}")
+            print(f"  [{number}] {character.combat_summary()}")
         while True:
             answer = input(f"输入编号，回车选 {default.name}，set 编号可更改默认目标 ").strip()
             if not answer:
@@ -76,7 +76,7 @@ class Player:
 
     def reset_on_turn_start(self):
         rule = self.game.gamerule
-        common = rule.MAX_BASIC_COST + self.turn_common_cost_bonus
+        common = max(0, rule.MAX_BASIC_COST + self.turn_common_cost_bonus)
         self.game.context.eval_block([self, common, rule.CHAR_INDEPENDENT_COST, OpCode.RESET_COST])
 
     def calculate_speed(self):
@@ -131,7 +131,8 @@ class Player:
 
     def place_card(self, game):
         hand = self.cardspace.hand.content
-        if not any(c.character.is_alive and c.character.used_duels < c.character.max_duels for c in hand):
+        if not any(c.character.is_alive and c.character.used_duels < c.character.max_duels
+                   and c.meets_use_requirements() for c in hand):
             print(f"{self.name} 没有可置入的牌，结束本轮置卡。")
             return "ended"
         slot_number = game.duelspace.locate_nearest_empty_duel(self.side) + 1
@@ -143,8 +144,12 @@ class Player:
             print(f"{player.name}（牌堆 {len(player.cardspace.draw.content)}，手牌 {len(player.cardspace.hand.content)}）：{status}")
         for number, slot in enumerate(game.duelspace.space, 1):
             own = "、".join(card.name for card in slot.content.get(self.side, ())) or "空"
-            opposing_count = len(slot.content.get(opposing.side, ()))
+            opposing_cards = slot.content.get(opposing.side, ())
+            opposing_count = len(opposing_cards)
             hidden = f"扣置 {opposing_count} 张" if opposing_count else "空"
+            public = [c.name for c in opposing_cards if c.state.name == "PLACED_FACE_UP"]
+            if public:
+                hidden = "、".join(public + ["扣置牌"] * (opposing_count - len(public)))
             print(f"交锋 {number}　己方 {own}　对方 {hidden}")
         for number, card in enumerate(hand, 1):
             char = card.character
@@ -163,6 +168,9 @@ class Player:
                 print("请输入有效的手牌编号。")
                 continue
             card = hand[int(answer) - 1]
+            if not card.meets_use_requirements():
+                print("尚未满足这张技能的使用条件。")
+                continue
             if not card.character.is_alive or card.character.used_duels >= card.character.max_duels:
                 print("该角色已阵亡或已用完交锋数，请选其他牌。")
                 continue

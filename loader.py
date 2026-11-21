@@ -1,5 +1,80 @@
 import json
+from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
+
+
+PACKS = Path(__file__).parent / "_packs"
+
+
+@dataclass
+class EffectDefinitions:
+    status_rules: dict = field(default_factory=dict)
+    status_entries: dict = field(default_factory=dict)
+    ability_rules: dict = field(default_factory=dict)
+    turn_end_statuses: list = field(default_factory=list)
+
+
+def _add_effects(definitions, pack):
+    for name, rule in pack.get("status_rules", {}).items():
+        if name in definitions.status_rules:
+            raise ValueError(f"重复的状态规则 {name}")
+        cap = rule.get("cap")
+        if "cap" in rule and (type(cap) is not int or cap < 0):
+            raise ValueError(f"{name} 的上限须为非负整数")
+        batch = rule.get("overflow_batch")
+        if batch is not None and (cap is None or type(batch.get("threshold")) is not int
+                or batch["threshold"] <= 0 or not isinstance(batch.get("event"), str)
+                or not batch["event"] or type(batch.get("reduce_to")) is not int
+                or not 0 <= batch["reduce_to"] <= cap):
+            raise ValueError(f"{name} 的溢出事件须有阈值、事件名及结算后上限")
+        if any(target == name or type(amount) is not int or amount <= 0
+               for target, amount in rule.get("sustain", {}).items()):
+            raise ValueError(f"{name} 的持续加成须指定其他状态及正整数层数")
+        if type(rule.get("max_hp_per_stack", 0)) is not int or type(rule.get("permanent", False)) is not bool:
+            raise ValueError(f"{name} 的每层生命上限修正须为整数，永久标记须为布尔值")
+        activation = rule.get("activation")
+        if activation is not None and (not isinstance(activation, dict)
+                or not isinstance(activation.get("operation"), (str, dict, list))
+                or not isinstance(activation.get("label", name), str)
+                or type(activation.get("remove_after", False)) is not bool):
+            raise ValueError(f"{name} 的发动规则须指定有效的操作、名称与移除标记")
+        definitions.status_rules[name] = rule
+    definitions.turn_end_statuses.extend(pack.get("turn_end_statuses", ()))
+    for name, entries in pack.get("status_entries", {}).items():
+        if name in definitions.status_entries:
+            raise ValueError(f"重复的状态定义 {name}")
+        definitions.status_entries[name] = [dict(entry, origin="status") for entry in entries]
+    for name, rule in pack.get("ability_rules", {}).items():
+        if name in definitions.ability_rules:
+            raise ValueError(f"重复的能力效果 {name}")
+        definitions.ability_rules[name] = rule
+
+
+def _read_pack(path, definitions):
+    try:
+        pack = json.loads(path.read_text(encoding="utf-8-sig"))
+        _add_effects(definitions, pack)
+        return pack
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"卡包 {path.name} 无法载入：{exc}") from exc
+
+
+def _shared_effects(directory):
+    # A custom roster inherits the shared packs. A complete copied pack directory
+    # can supply the same filenames locally without registering each effect twice.
+    paths = {p.name: p for p in (PACKS / "effects").glob("*.json")}
+    paths.update({p.name: p for p in (directory / "effects").glob("*.json")})
+    definitions = EffectDefinitions()
+    for _, path in sorted(paths.items()):
+        _read_pack(path, definitions)
+    return definitions
+
+
+@lru_cache(maxsize=1)
+def base_effects():
+    """Built-in definitions for games and model objects created without a roster loader."""
+    return _shared_effects(PACKS)
 
 
 def load_characters_from_packs(packs_dir=None):
@@ -7,31 +82,30 @@ def load_characters_from_packs(packs_dir=None):
     from models.character import CharacterRank, RANK_SKILL_COUNT
     from models.dice import Dice
 
-    directory = Path(packs_dir) if packs_dir is not None else Path(__file__).parent / "_packs"
+    directory = Path(packs_dir) if packs_dir is not None else PACKS
     if not directory.is_dir():
         raise ValueError(f"找不到卡包目录 {directory}")
     characters = []
     ids = set()
-    status_entries = {}
-    turn_end_statuses = []
+    definitions = _shared_effects(directory)
     for path in sorted(directory.glob("*.json")):
+        pack = _read_pack(path, definitions)
         try:
-            pack = json.loads(path.read_text(encoding="utf-8-sig"))
-            turn_end_statuses.extend(pack.get("turn_end_statuses", ()))
-            for name, entries in pack.get("status_entries", {}).items():
-                if name in status_entries:
-                    raise ValueError(f"重复的状态定义 {name}")
-                status_entries[name] = [dict(entry, origin="status") for entry in entries]
-            for original in pack["characters"]:
+            for original in pack.get("characters", ()):
                 char = dict(original, faction=pack.get("faction", ""),
                             faction_passives=pack.get("faction_passives", []),
-                            status_entries=status_entries, turn_end_statuses=turn_end_statuses)
+                            status_entries=definitions.status_entries, status_rules=definitions.status_rules,
+                            ability_rules=definitions.ability_rules, turn_end_statuses=definitions.turn_end_statuses)
                 rank = CharacterRank[char["rank"]]
                 if char["id"] in ids:
                     raise ValueError(f"重复的角色 ID {char['id']}")
                 ids.add(char["id"])
                 if char["max_hp"] <= 0:
                     raise ValueError(f"{char['name']} 的生命上限必须为正")
+                if "speed_die" in char:
+                    low, high = char["speed_die"]
+                    if type(low) is not int or type(high) is not int or not 1 <= low <= high:
+                        raise ValueError(f"{char['name']} 的速度骰需要有效的正整数范围")
                 if "base_max_duels" in char and (type(char["base_max_duels"]) is not int or char["base_max_duels"] < 1):
                     raise ValueError(f"{char['name']} 的基础交锋上限必须为正整数")
                 regular = [card for card in char["skills"] if not card.get("out_of_combat")]
@@ -43,10 +117,23 @@ def load_characters_from_packs(packs_dir=None):
                     if card["id"] in card_ids or card["cost"] < 0:
                         raise ValueError(f"{char['name']} 的技能 ID 重复或费用无效")
                     card_ids.add(card["id"])
-                    for die_data in card.get("dice", []):
-                        die = Dice(die_data)
-                        die.value = 1
-                        die.get_value()
+                    extra = card.get("resource_cost")
+                    if extra is not None and (not isinstance(extra, dict)
+                            or not isinstance(extra.get("status"), str) or not extra["status"]
+                            or type(extra.get("amount")) is not int or extra["amount"] <= 0):
+                        raise ValueError(f"{card['name']} 的附加费用须指定资源及正整数数量")
+                    forms = card.get("forms", {})
+                    if not isinstance(forms, dict) or any(not isinstance(form, dict)
+                            or not isinstance(form.get("name"), str) or not form["name"]
+                            or not isinstance(form.get("dice"), list) for form in forms.values()):
+                        raise ValueError(f"{card['name']} 的技能形态须包含名称和骰组")
+                    for form in (card, *forms.values()):
+                        for die_data in form.get("dice", []):
+                            if "requires_skill_state" in die_data and not isinstance(die_data["requires_skill_state"], str):
+                                raise ValueError("骰位启用条件须为本次技能状态名称")
+                            die = Dice(die_data)
+                            die.value = 1
+                            die.get_value()
                 characters.append(char)
         except (ValueError, KeyError, TypeError, SyntaxError) as exc:
             raise ValueError(f"卡包 {path.name} 无法载入：{exc}") from exc

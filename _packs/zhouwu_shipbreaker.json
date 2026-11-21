@@ -1,0 +1,121 @@
+{
+  "faction": "旧湾船坞",
+  "characters": [{
+    "id": "shipbreaker_shen_li",
+    "name": "沈砾",
+    "title": "拆船师",
+    "rank": "BOSS",
+    "max_hp": 16,
+    "passive_skills": [
+      {
+        "name": "开工清点",
+        "entries": [{
+          "trigger": "on_turn_start",
+          "operation": {"op": "program", "code": ["$player", 1, "DRAW", "$self", "normal", 2, "SHIELD"]},
+          "description": "回合开始时额外抽1张牌，并获得2普通护盾。"
+        }]
+      },
+      {
+        "name": "循线下凿",
+        "entries": [{
+          "trigger": "AFTER DAMAGE", "subject": "source",
+          "when": {"damage_part": true, "result_at_least": 1, "target_status_at_least": {"粉线": 1}},
+          "operation": {"op": "program", "code": [
+            "$target_alive", [
+              "$target", "粉线", 1, "SPEND_STATUS_IN_FULL", ["$target", 2, "LIGHTCORE_DAMAGE", "$self", "normal", 1, "SHIELD"], "WHEN"
+            ], "WHEN"
+          ]},
+          "description": "自身骰面的每段直伤造成至少1点伤害后，若目标存活，消耗其1粉线以追加2光点伤害并获得1普通护盾。粉线记录在被标记的角色上，跨回合保留。"
+        }]
+      }
+    ],
+    "skills": [
+      {
+        "id": "shipbreaker_chalk", "name": "弹粉线", "cost": 1,
+        "dice": [
+          {"type": "pierce", "level": 3, "entries": ["3光点伤害", {
+            "trigger": "AFTER RESOLVE_HIT", "when": {"result": true},
+            "operation": {"op": "status", "target": "target", "name": "粉线", "amount": 2},
+            "description": "命中时对目标施加2粉线。"
+          }]},
+          {"type": "block", "level": 2, "entries": [{
+            "trigger": "on_clash_win", "operation": {"op": "shield", "kind": "reinforced", "amount": 1},
+            "description": "拼点胜利时获得1强化护盾。"
+          }]}
+        ]
+      },
+      {
+        "id": "shipbreaker_scraper", "name": "剥漆刀", "cost": 1,
+        "dice": [
+          {"type": "slash", "level": 3, "entries": ["1物理"]},
+          {"type": "slash", "level": 2, "entries": ["2光点伤害", {
+            "trigger": "AFTER RESOLVE_HIT", "when": {"result": true},
+            "operation": {"op": "status", "target": "target", "name": "粉线", "amount": 1},
+            "description": "命中时对目标施加1粉线。"
+          }]}
+        ]
+      },
+      {
+        "id": "shipbreaker_sound", "name": "验龙骨", "cost": 2,
+        "dice": [
+          {"type": "blunt", "level": 4, "entries": [{
+            "trigger": "AFTER RESOLVE_HIT", "when": {"result": true},
+            "operation": {"op": "program", "damage_part": true, "code": [
+              "$target_lightcore_hp", 0, "GT", "$target_lightcore_hp", 4, "LE", "AND",
+              ["$target", 4, "LIGHTCORE_DAMAGE"], ["$target", 2, "pierce", "blunt", "DAMAGE"], "IF_ELSE"
+            ]},
+            "description": "命中时，若目标当前光点生命为1～4，造成4光点伤害；否则造成2穿甲直伤。"
+          }]},
+          {"type": "block", "level": 2, "entries": [{
+            "trigger": "on_clash_win", "operation": "Shield: 2",
+            "description": "拼点胜利时获得2普通护盾。"
+          }]}
+        ]
+      },
+      {
+        "id": "shipbreaker_wedge", "name": "破水楔", "cost": 2,
+        "dice": [
+          {"type": "pierce", "level": 3, "entries": ["2穿甲"]},
+          {"type": "blunt", "level": 3, "entries": ["3光点伤害", {
+            "trigger": "AFTER RESOLVE_HIT", "when": {"result": true},
+            "operation": {"op": "status", "target": "target", "name": "粉线", "amount": 1},
+            "description": "命中时对目标施加1粉线。"
+          }]}
+        ]
+      },
+      {
+        "id": "shipbreaker_counterbar", "name": "反撬", "cost": 2,
+        "dice": [
+          {"type": "block", "level": 4, "entries": [{
+            "trigger": "on_clash_win",
+            "operation": {"op": "program", "code": ["$self", "normal", 2, "SHIELD"]},
+            "description": "拼点胜利时获得2普通护盾。"
+          }]},
+          {"type": "slash", "level": 3, "entries": ["2穿甲", {
+            "trigger": "AFTER RESOLVE_HIT", "when": {"result": true},
+            "operation": {"op": "status", "target": "target", "name": "粉线", "amount": 2},
+            "description": "命中时对目标施加2粉线。"
+          }]}
+        ]
+      },
+      {
+        "id": "shipbreaker_pincers", "name": "拔铆钳", "cost": 3,
+        "dice": [
+          {"type": "pierce", "level": 4, "base_value": 1, "entries": ["2物理"]},
+          {"type": "pierce", "level": 3, "base_value": 1, "entries": ["2物理"]}
+        ]
+      },
+      {
+        "id": "shipbreaker_strip", "name": "整舷剥离", "cost": 4,
+        "dice": [
+          {"type": "slash", "level": 5, "entries": ["5光点伤害", {
+            "trigger": "AFTER RESOLVE_HIT", "when": {"result": true},
+            "operation": {"op": "status", "target": "target", "name": "粉线", "amount": 2},
+            "description": "命中时对目标施加2粉线。"
+          }]},
+          {"type": "blunt", "level": 4, "base_value": 2, "entries": ["3穿甲"]}
+        ]
+      }
+    ]
+  }]
+}

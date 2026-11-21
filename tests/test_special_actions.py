@@ -35,12 +35,12 @@ class SpecialActionsTests(unittest.TestCase):
         other = self.hand(self.b, "敌方扣牌")
         self.game.place_in_duel(2, other, 0)
         new = self.hand(self.a, "补位")
-        self.a.add_status("置卡机会", 1)
+        self.a.add_ability_effect("置卡机会", 1)
         choice = SpecialAction("place", new, duel_index=0)
         self.assertIn(choice, self.actions.options(self.left))
         guard, = self.game.context.register_entries(self.a, [dict(trigger="BEFORE PLACE", operation="Cancel")])
         self.assertFalse(self.actions.apply(self.left, choice))
-        self.assertEqual(self.a.statuses["置卡机会"], 1)
+        self.assertEqual(self.a.ability_effects["置卡机会"], 1)
         self.assertEqual(self.a.used_duels, 0)
         self.assertIn(new, self.left.cardspace.hand.content)
         self.game.context.entries.remove(guard)
@@ -48,7 +48,7 @@ class SpecialActionsTests(unittest.TestCase):
         self.assertEqual(self.game.duelspace.space[0].get_content(1), [new])
         self.assertEqual(self.game.duelspace.space[0].get_content(2), [other])
         self.assertIs(new.state, CardState.PLACED_FACE_DOWN)
-        self.assertNotIn("置卡机会", self.a.statuses)
+        self.assertNotIn("置卡机会", self.a.ability_effects)
         self.assertEqual(self.a.used_duels, self.a.max_duels)
         with self.assertRaises(ValueError):
             self.actions.apply(self.left, choice)
@@ -57,7 +57,7 @@ class SpecialActionsTests(unittest.TestCase):
         ordinary = self.hand(self.a, "常规置卡")
         granted = self.hand(self.a, "机会补位")
         printed = self.hand(self.a, "两种打出方式", anytime_play=["place", "attack"])
-        self.a.add_status("置卡机会", 1)
+        self.a.add_ability_effect("置卡机会", 1)
         self.assertTrue(self.game.auto_place_in_duel(1, ordinary))
         ally = self.actor(self.left, "队友")
         ally_card = self.hand(ally, "队友补位", anytime_play=["place"])
@@ -68,19 +68,19 @@ class SpecialActionsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.actions.apply(self.left, SpecialAction("place", card, duel_index=1))
             self.assertFalse(self.game.place_in_duel(1, card, 1, special=True))
-        self.assertEqual(self.a.statuses["置卡机会"], 1)
+        self.assertEqual(self.a.ability_effects["置卡机会"], 1)
         self.assertEqual(self.left.cardspace.hand.content, [granted, printed, ally_card])
         self.assertEqual(len(self.game.duelspace.space), 1)
         self.assertEqual(self.a.used_duels, self.a.max_duels)
         self.assertEqual(ally.used_duels, 0)
 
-    def test_printed_special_placement_uses_quota_without_spending_the_optional_status(self):
+    def test_printed_special_placement_uses_quota_without_spending_the_opportunity(self):
         printed = self.hand(self.a, "随时补位", anytime_play=["place"])
         ordinary = self.hand(self.a, "常规置卡")
-        self.a.add_status("置卡机会", 1)
+        self.a.add_ability_effect("置卡机会", 1)
         self.assertTrue(self.actions.apply(self.left, SpecialAction("place", printed, duel_index=0)))
         self.assertEqual(self.a.used_duels, self.a.max_duels)
-        self.assertEqual(self.a.statuses["置卡机会"], 1)
+        self.assertEqual(self.a.ability_effects["置卡机会"], 1)
         self.assertFalse(self.game.auto_place_in_duel(1, ordinary))
 
     def test_placement_before_initiative_stays_charged_after_turn_start(self):

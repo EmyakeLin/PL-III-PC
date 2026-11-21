@@ -8,7 +8,8 @@ def offer_actions(game):
     seats = special_seats(game)
     if not seats:
         return
-    if game.pipeline.interrupt_space is not None and game.special.pending_attack is None:
+    if (game.pipeline.interrupt_space is not None and game.special.pending_attack is None
+            and game.special.decision_owner is None):
         timing = timing_label(game.last_step)
         if not timing:
             return
@@ -18,7 +19,9 @@ def offer_actions(game):
     try:
         while seats and not game.is_over:
             pending = game.special.pending_attack
-            if pending is not None:
+            if game.special.decision_owner is not None:
+                player = game.special.decision_owner
+            elif pending is not None:
                 for number, slot in enumerate(game.special.duels, 1):
                     if slot.ready:
                         continue

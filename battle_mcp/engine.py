@@ -1,6 +1,15 @@
 """Fixed-seat adapter around the game table. The room owns all scheduling."""
 
+from secrets import token_hex
+
 from battle_ui.match import BattleMatch
+from displayer import hand_key, seat_action_view
+
+
+def hand_card_label(card):
+    if card.printed_owner is not card.character:
+        return f"{card.name}（取自对手）"
+    return card.name
 
 
 class ArenaEngine(BattleMatch):
@@ -8,6 +17,7 @@ class ArenaEngine(BattleMatch):
         super().__init__(roster=roster, seed=seed)
         self.game.pipeline.pause_on_clash_scores = True
         self.event = {"kind": "setup", "turn": 0}
+        self._hidden_ability_targets = {player.side: {} for player in self.game.players}
 
     def _advance(self):
         # BattleMatch normally moves to the next window immediately after an
@@ -24,6 +34,8 @@ class ArenaEngine(BattleMatch):
     def _mode(self):
         if self.game_over:
             return "finished"
+        if self.game.special.decision_owner is not None:
+            return "skill_choice"
         if self.game.special.pending_attack is not None:
             return "instant_response"
         if self.mode == "handoff":
@@ -35,6 +47,8 @@ class ArenaEngine(BattleMatch):
     def required_sides(self):
         """Seats with outstanding decisions. Other seats may still have actions."""
         mode = self._mode()
+        if mode == "skill_choice":
+            return [self.game.special.decision_owner.side]
         if mode == "placement":
             return [self.game.placing.side]
         if mode == "pre_reveal":
@@ -61,7 +75,7 @@ class ArenaEngine(BattleMatch):
         mode = self._mode()
         choices = []
         if mode == "placement" and player is self.game.placing:
-            choices.extend({"kind": "place", "card_id": c.id, "label": f"扣置{c.name}"}
+            choices.extend({"kind": "place", "card_id": hand_key(c), "label": f"扣置{hand_card_label(c)}"}
                            for c in self._legal_cards())
             if self.game.placed_this_window:
                 choices.append({"kind": "pass", "label": "交出本次置卡权"})
@@ -69,19 +83,20 @@ class ArenaEngine(BattleMatch):
         if mode == "pre_reveal":
             phase = self.game.pre_reveal
             for card in phase.attack_cards(player):
-                for target in phase.opponent(player).characters:
-                    if target.is_alive:
-                        choices.append({"kind": "attack", "card_id": card.id, "character_id": target.id,
-                                        "label": f"用{card.name}进攻{target.name}"})
-                for number in range(1, len(self.game.duelspace.space) + 1):
-                    choices.append({"kind": "attack", "card_id": card.id, "duel_number": number,
-                                    "label": f"用{card.name}进攻常规交锋 {number}"})
+                key, name = hand_key(card), hand_card_label(card)
+                for target, index in phase.attack_targets(card):
+                    if target is not None:
+                        choices.append({"kind": "attack", "card_id": key, "character_id": target.id,
+                                        "label": f"用{name}进攻{target.name}"})
+                    else:
+                        choices.append({"kind": "attack", "card_id": key, "duel_number": index + 1,
+                                        "label": f"用{name}进攻常规交锋 {index + 1}"})
             if phase.can_attack(player):
                 choices.append({"kind": "end_attack", "label": "结束主动进攻"})
             for number in phase.pending_for(player):
                 for card in phase.intercept_cards(player):
-                    choices.append({"kind": "intercept", "card_id": card.id, "response_number": number,
-                                    "label": f"用{card.name}迎击开牌前交锋 {number}"})
+                    choices.append({"kind": "intercept", "card_id": hand_key(card), "response_number": number,
+                                    "label": f"用{hand_card_label(card)}迎击开牌前交锋 {number}"})
                 choices.append({"kind": "let_through", "response_number": number,
                                 "label": f"放行开牌前交锋 {number}"})
         special = self._special_options(side)
@@ -93,9 +108,26 @@ class ArenaEngine(BattleMatch):
         return choices
 
     def _special_options(self, side):
-        options = self._views[side].special_actions()
-        return [{**{k: v for k, v in move.items() if v is not None}, "kind": "special_" + move["kind"]}
-                for move in options]
+        options = []
+        player = self._choose_seat(side, self.game.players)
+        hidden_targets = {}
+        for index, action in enumerate(self.game.special.options(player)):
+            move = seat_action_view(action, player)
+            option = {k: v for k, v in move.items() if v is not None}
+            kind = action.kind
+            if kind in ("choose_card", "decline_card", "choose_slot"):
+                # Only the chooser can act; a new prompt must invalidate the previous positions.
+                option["choice_key"] = f"{self.revision}.{index}"
+            elif kind == "ability" and action.target_card and action.target_card.player is not player:
+                # Two seats may reserve abilities concurrently. Keep a concealed candidate's token
+                # while that exact target stays eligible, even if a different seat has acted.
+                key = (self.game.turn_number, action)
+                hidden_targets[key] = self._hidden_ability_targets[side].get(key) or token_hex(8)
+                option["choice_key"] = hidden_targets[key]
+            option["kind"] = "special_" + kind
+            options.append(option)
+        self._hidden_ability_targets[side] = hidden_targets
+        return options
 
     def _event(self, kind):
         event = {"kind": kind, "turn": self.game.turn_number, "timing": self._timing}
@@ -143,12 +175,23 @@ class ArenaEngine(BattleMatch):
         if legal is None:
             raise ValueError("动作不在本席当前的合法选项中。")
         kind = legal["kind"]
+        public_fields = {}
+        if kind in ("attack", "intercept", "let_through", "special_intercept", "special_pass_intercept",
+                    "special_attack", "special_custom"):
+            public_fields = {key: legal[key] for key in ("character_id", "duel_number", "response_number")
+                             if key in legal}
+            if "card_id" in legal:
+                # The hand key can reveal another copy. Resolve it before the played card leaves the hand.
+                card = next(c for c in player.cardspace.hand.content if hand_key(c) == legal["card_id"])
+                public_fields["card_id"] = card.id
         if kind.startswith("special_"):
             index = self._special_options(side).index(legal)
             self._special_seat = player
             self._special_action("use_special", side, index)
+            public_text = self._history[-1]
         elif kind in ("end", "pass", "place"):
             self._place_action(kind, legal.get("card_id"))
+            public_text = f"{player.name}{'扣置常规技能' if kind == 'place' else legal['label']}。"
         else:
             self._pre_seat = player
             target = None
@@ -157,12 +200,9 @@ class ArenaEngine(BattleMatch):
             elif "duel_number" in legal:
                 target = {"kind": "duel", "number": legal["duel_number"]}
             self._pre_action(kind, legal.get("card_id"), target, legal.get("response_number"))
+            public_text = f"{player.name}{legal['label']}。"
         self.revision += 1
         self.event = self._event("finished" if self.game_over else "action")
-        hidden_labels = {"place": "扣置常规技能", "special_place": "特殊置卡", "special_replace": "替换技能"}
-        self.event.update(actor_side=side, action_kind=kind,
-                          text=f"{player.name}{hidden_labels.get(kind, legal['label'])}。")
-        if kind in ("attack", "intercept", "let_through", "special_intercept", "special_pass_intercept",
-                    "special_attack", "special_custom"):
-            self.event.update({k: v for k, v in requested.items() if k != "kind"})
+        self.event.update(actor_side=side, action_kind=kind, text=public_text)
+        self.event.update(public_fields)
         return self.event

@@ -27,15 +27,19 @@ class DuelSpace:
     def has_next_duel(self):
         return any(any(slot.content.values()) for slot in self.space[self.current_duel_index:])
 
-    def next_duel_target(self, attacking_side):
+    def next_duel_enemy_skills(self, attacking_side):
         index = self.current_duel_index + 1
         if index >= len(self.space):
-            return None
+            return []
         slot = self.space[index]
         side = next(p.side for p in self.game.players if p.side != attacking_side)
         cards = slot.get_content(side)[slot.current_card_index.get(side, 0):]
-        return next((card.character for card in cards if card.character.is_alive
-                     and not card.destroyed and card.state != CardState.NEGATED), None)
+        return [card for card in cards if card.character.is_alive
+                and not card.destroyed and card.state != CardState.NEGATED]
+
+    def next_duel_target(self, attacking_side):
+        cards = self.next_duel_enemy_skills(attacking_side)
+        return cards[0].character if cards else None
 
 
 class DuelSlot:
@@ -44,6 +48,7 @@ class DuelSlot:
         self.content = {}
         self.settled = False
         self.current_card_index = {}
+        self.damage_taken = {}
 
     def add_content(self, side, content):
         self.content.setdefault(side, []).append(content)
@@ -100,9 +105,9 @@ class DuelSlot:
         removed = []
         for side, cards in self.content.items():
             index = self.current_card_index.get(side, 0)
-            self.current_card_index[side] = sum(card.character is not character for card in cards[:index])
-            removed.extend(card for card in cards if card.character is character)
-            cards[:] = [card for card in cards if card.character is not character]
+            self.current_card_index[side] = sum(not card.belongs_to(character) for card in cards[:index])
+            removed.extend(card for card in cards if card.belongs_to(character))
+            cards[:] = [card for card in cards if not card.belongs_to(character)]
         return removed
 
     def resolve_target_character(self, attacking_side, clash_pair=None, previous_opponent=None):
@@ -131,6 +136,8 @@ class ClashPair:
         if len(dice_dict) > 2:
             raise ValueError("每次拼点最多两方")
         self.dice_dict = dict(dice_dict)
+        self.split = False
+        self.skipped = False
 
     def clash_roll(self):
         for die in self.dice_dict.values():

@@ -24,10 +24,12 @@ class MatchTests(unittest.TestCase):
         self.game = Game([Player(1, "甲"), Player(2, "乙")], rng=random.Random(18))
 
     def roster(self, size):
+        ids = ("char_iron_vanguard", "char_crimson_duelist", "drill_scout",
+               "drill_medic", "drill_captain", "drill_engine")
+        catalog = {spec["id"]: spec for spec in self.pool}
         for side, player in enumerate(self.game.players):
-            choices = self.pool[side * size:(side + 1) * size]
-            for data in choices:
-                char = Character(data, player)
+            for key in ids[side * size:(side + 1) * size]:
+                char = Character(catalog[key], player)
                 player.characters.append(char)
                 char.init_cards()
                 char.setup_deck()
@@ -80,8 +82,12 @@ class MatchTests(unittest.TestCase):
 
     def test_cli_from_another_directory_finishes_with_victory(self):
         main = Path(__file__).resolve().parents[1] / "main.py"
-        # Take the first character on each side, then commit one card per turn.
-        moves = ["1", "", "1", ""] + ["1", "end"] * 100
+        # Select the two original fighters by their current menu positions.
+        ids = [spec["id"] for spec in load_characters_from_packs()]
+        left = ids.index("char_iron_vanguard") + 1
+        ids.remove("char_iron_vanguard")
+        right = ids.index("char_crimson_duelist") + 1
+        moves = [str(left), "", str(right), ""] + ["1", "end"] * 100
         result = subprocess.run(
             [sys.executable, "-B", "-X", "utf8", str(main), "--seed", "37"],
             input="\n".join(moves) + "\n", capture_output=True, encoding="utf-8",
@@ -125,9 +131,11 @@ class MatchTests(unittest.TestCase):
         actor.add_shield("normal", 3)
         actor.add_shield("reinforced", 2)
         actor.add_shield("concept", 1)
-        self.assertEqual(actor.take_damage(3, "pierce"), 1)
+        self.assertEqual(actor.take_damage(3, "pierce"), 3)
+        self.assertEqual(actor.hp, actor.max_hp - 1)
         self.assertEqual((actor.shield, actor.reinforced_shield, actor.concept_shield), (0, 0, 1))
-        self.assertEqual(actor.take_damage(2, "concept"), 1)
+        self.assertEqual(actor.take_damage(2, "concept"), 2)
+        self.assertEqual(actor.hp, actor.max_hp - 2)
         actor.add_status("致命失衡", 2)
         self.assertEqual(actor.take_damage(1), 2)
         self.assertEqual(actor.take_damage(1), 2)
@@ -155,8 +163,25 @@ class MatchTests(unittest.TestCase):
         self.assertTrue(actor.trigger_stagger())
         self.assertEqual((actor.statuses["失衡"],actor.statuses["致命失衡"]), (15, 1))
 
+    def test_burn_and_fatal_stagger_consume_on_positive_damage_even_with_full_shields(self):
+        self.roster(1)
+        actor = self.game.players[0].characters[0]
+        actor.add_status("烧伤", 20)
+        actor.add_status("致命失衡", 2)
+        actor.add_shield("normal", 6)
+        actor.on_turn_end()
+        self.assertEqual((actor.hp, actor.shield), (actor.max_hp, 0))
+        self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (13, 1))
+
+        actor.begin_dice_round()
+        self.game.context.register_entries(actor, [{"trigger": "BEFORE DAMAGE", "operation": "Armor: 6"}])
+        actor.on_turn_end()
+        self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (13, 1))
+
     def test_pack_levels_formula_and_guard_alias(self):
-        self.assertEqual(len(self.pool), 12)
+        known_roster = {"铁壁先锋", "绯红决斗者", "演练斥候", "演练医护", "演练队长", "演练重装机",
+                        "莱克", "格罗琳娜", "厄尔克斯", "安诺琳", "岑遥", "闻笙", "空白", "阙鸣", "沈砾"}
+        self.assertTrue(known_roster.issubset({character["name"] for character in self.pool}))
         self.assertEqual({c["rank"] for c in self.pool}, {"NORMAL", "ELITE", "BOSS", "EMPOWERED_BOSS"})
         die = Dice(dict(type="guard", level=1, base_value=2, multiplier=3, final_bonus=1))
         self.assertTrue(die.is_passive)
@@ -176,12 +201,14 @@ class MatchTests(unittest.TestCase):
         actor = self.game.players[0].characters[0]
         actor.add_status("裂血", 6)
         observed = []
-        def receive(amount, **kwargs):
-            observed.append(actor.statuses["裂血"])
-            return 1
-        with patch.object(actor, "take_damage", side_effect=receive), redirect_stdout(io.StringIO()):
-            actor.after_damage_part()
+        self.game.context.register_entries(actor, [{
+            "trigger": "AFTER DAMAGE", "when": {"damage_cause": "裂血爆发"},
+            "operation": lambda ctx: observed.append(actor.statuses["裂血"]),
+        }])
+        actor.add_shield("reinforced", 1)
+        self.game.context.deal_damage(self.game.players[1].characters[0], actor, 0, damage_part=True)
         self.assertEqual(observed, [6])
+        self.assertEqual((actor.hp, actor.reinforced_shield), (actor.max_hp, 0))
         self.assertEqual(actor.statuses["裂血"], 4)
 
 

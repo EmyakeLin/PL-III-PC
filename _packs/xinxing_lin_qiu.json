@@ -1,0 +1,672 @@
+{
+  "faction": "新星组织",
+  "turn_end_statuses": ["本回合羽流判定成功"],
+  "status_rules": {
+    "隧道": {"description": "新星组织资源。林秋在回合开始时持有至少8层即可开启隧道。"},
+    "星结": {
+      "cap": 12,
+      "overflow_batch": {"threshold": 6, "event": "on_star_lock", "label": "星结锁定", "reduce_to": 6},
+      "description": "上限12。累计溢出跨回合保留。达到6点溢出的角色在回合结束前一同成为锁定目标，结算完毕清零累计，各目标星结至多保留6层。"
+    },
+    "羽流·林秋": {"cap": 12, "description": "上限12。拼赢即将命中时，d12不高于层数则追加一次命中。本回合判定至少成功三次，回合末清空。"},
+    "隧道开启": {
+      "requires_status": "隧道", "sustain": {"强壮": 2},
+      "description": "持续至隧道归零。林秋获得2强壮，骰子等级+1，每次获得隧道的数量−1，并激活带有开启条件的词条。"
+    }
+  },
+  "characters": [
+    {
+      "id": "nova_lin_qiu",
+      "name": "林秋",
+      "rank": "BOSS",
+      "max_hp": 15,
+      "passive_skills": [
+        {
+          "name": "新星组织 D-VII",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "隧道", 1, "$own_skills_in_hand", [1, "ADD"], "WHEN", "STATUS"]
+              },
+              "description": "回合开始时获得1隧道，自己的七张牌集满时本次获得量+1。"
+            }
+          ]
+        },
+        {
+          "name": "新星隧道节点 D-VII型",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "隧道", "STATUS_COUNT", 8, "GE", "$self", "隧道开启", "STATUS_COUNT", 0, "EQ", "AND",
+                  ["$self", "隧道开启", 1, "STATUS"], "WHEN"
+                ]
+              },
+              "description": "回合开始时，隧道至少8层即开启，持续至隧道解除。"
+            },
+            {
+              "trigger": "BEFORE STATUS",
+              "when": {"owner_status_at_least": {"隧道开启": 1}, "status": "隧道", "amount_at_least": 1},
+              "operation": {
+                "op": "program",
+                "code": [1, "SUB"]
+              },
+              "description": "隧道开启期间，每次隧道获得量−1。"
+            }
+          ]
+        },
+        {
+          "name": "隧道附刃",
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+              "when": {"owner_status_at_least": {"隧道开启": 1}},
+              "operation": {
+                "op": "program",
+                "code": [1, "ADD"]
+              },
+              "description": "隧道开启期间，骰级+1，持续提供2强壮。"
+            },
+            {
+              "trigger": "before_dice_hit",
+              "when": {"owner_status_at_least": {"隧道开启": 1}},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$has_damage_part", ["$self", "隧道", 1, "SPEND_STATUS_IN_FULL", [{"op": "damage_add", "amount": 1}], "WHEN"],
+                  "WHEN"
+                ]
+              },
+              "description": "开启时，命中有伤害部分的骰消耗1隧道，以使本次命中的伤害部分+1。"
+            }
+          ]
+        },
+        {
+          "name": "羽流·林秋",
+          "entries": [
+            {
+              "trigger": "on_dice_clash",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "羽流·林秋", 1, "STATUS"]
+              },
+              "description": "每实际参与一次拼点，获得1羽流·林秋（至多12）。"
+            },
+            {
+              "trigger": "before_dice_hit",
+              "when": {"owner_status_at_least": {"羽流·林秋": 1}},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$hit_index", 1, "EQ", "$clash_result", "win", "EQ", "AND",
+                  [
+                    1, 12, "RANDOM_INT", "$self", "羽流·林秋", "STATUS_COUNT", "LE",
+                    ["$die", "full", "QUEUE_HIT", "$self", "本回合羽流判定成功", 1, "STATUS"], "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "拼赢且即将命中时，d12不高于羽流层数则额外命中一次，每次用骰限一次。"
+            },
+            {
+              "trigger": "before_turn_end",
+              "when": {"owner_status_at_least": {"本回合羽流判定成功": 3}},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "羽流·林秋", "all", "SPEND_STATUS", "POP"]
+              },
+              "description": "本回合判定至少成功三次，回合结束时清空羽流。"
+            }
+          ]
+        },
+        {
+          "name": "星结标定剑柄",
+          "entries": [
+            {
+              "trigger": "on_dice_clash",
+              "when": {"target_status_at_least": {"星结": 8}},
+              "operation": {"op": "base_add", "amount": 1},
+              "description": "与至少8星结的目标拼点时，基础值+1。"
+            },
+            {
+              "trigger": "before_clash_result",
+              "when": {"target_status_at_least": {"星结": 8}},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$is_attack", "$roll_value", 2, "MUL", "$roll_max", "GT", "AND",
+                  ["$card", "resident_die", "$die", "SET_SKILL_STATE"], "WHEN"
+                ]
+              },
+              "description": "目标至少8星结，且进攻骰本次变动点数超过当次上限的一半，成为驻留骰。"
+            },
+            {
+              "trigger": "on_clash_lose",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "resident_die", "SKILL_STATE", "$die", "EQ", ["$die", "damage_only", "QUEUE_HIT"], "WHEN"]
+              },
+              "description": "驻留骰拼输仍命中，只结算伤害部分，伤害−1。"
+            },
+            {
+              "trigger": "before_dice_hit",
+              "when": {"hit_mode": "damage_only"},
+              "operation": {
+                "op": "program",
+                "code": [{"op": "damage_add", "amount": -1, "grade": "concept"}]
+              },
+              "description": "驻留败方的伤害部分−1。"
+            }
+          ]
+        },
+        {
+          "name": "星结锁定·补给",
+          "entries": [
+            {
+              "trigger": "on_star_lock",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$targets", ["$target", "星结", 2, "STATUS"], "FOR_EACH_TARGET", "$allies", ["$target", 1, "HEAL"],
+                  "FOR_EACH_TARGET", "$self", "隧道", 3, "STATUS"
+                ]
+              },
+              "description": "星结锁定时，对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "lin_qiu_draw_blade",
+          "name": "拔剑相向",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "隧道", 1, "STATUS", "$player", 1, "DRAW", "$skill_target", "星结", 1, "STATUS"]
+              },
+              "description": "获得1隧道，抽1卡，施加1星结。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "隧道", 1, "STATUS", "$target", "星结", 1, "STATUS"]
+                  },
+                  "description": "获得1隧道，施加1星结。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$player", 1, "DRAW", "$self", "隧道", 1, "STATUS", "$die", "REPEAT_DIE"]
+                  },
+                  "description": "抽1卡，获得1隧道，重复使用本骰。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lin_qiu_maneuver",
+          "name": "机动申请",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "隧道", 2, "STATUS"]
+              },
+              "description": "获得2隧道。"
+            }
+          ],
+          "dice": [
+            {"type": "skip"},
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "隧道", 2, "STATUS"]
+                  },
+                  "description": "获得2隧道。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", 1, "HEAL", "$target", "星结", 1, "STATUS"]
+                  },
+                  "description": "回复1生命，施加1星结。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lin_qiu_counterflow",
+          "name": "铭刻逆流",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "$skill_target", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN", "SKILL_LEVEL_ADD"]
+              },
+              "description": "目标每有6星结，本技能骰级+1，至多+2。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "when": {"owner_status_at_least": {"隧道开启": 1}},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "隧道", 2, "SPEND_STATUS_IN_FULL", ["$card", "ranged_repeat", 1, "SET_SKILL_STATE"], "WHEN"]
+              },
+              "description": "开启时消耗2隧道，以使末骰成为普通远程骰并额外使用一次。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "base_value": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "星结", 2, "STATUS", "$target", ["$die", -4, "DIE_FINAL_ADD"], "QUEUE_DIE_EFFECT"]
+                  },
+                  "description": "施加2星结，使目标下一实际用骰最终点数−4。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "range_level_when": {"skill_state": "ranged_repeat", "amount": 1},
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "on_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$is_repeat", ["$die", 4, "DIE_FINAL_ADD"],
+                      ["$card", "ranged_repeat", "SKILL_STATE", ["$die", "REPEAT_DIE"], "WHEN"], "IF_ELSE"
+                    ]
+                  },
+                  "description": "已激活的末骰额外使用一次；重复使用时最终点数+4。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {"op": "discard", "target": "target", "amount": 1}, "$target", "星结", 1, "STATUS", "$is_repeat",
+                      [
+                        "$target", "星结", "STATUS_COUNT", 4, "FLOOR_DIV", 3, "MIN", "extra", "STORE", {"local": "extra"}, 0,
+                        "GT", ["$target", {"local": "extra"}, "concept", "pierce", "DAMAGE"], "WHEN"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "令目标弃1卡，施加1星结；重复骰命中时，每4星结追加1超穿甲，至多3。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lin_qiu_plume_sword",
+          "name": "羽流剑术",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "$skill_target", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN", "SKILL_LEVEL_ADD"]
+              },
+              "description": "目标每有6星结，本技能骰级+1，至多+2。"
+            },
+            {
+              "trigger": "on_skill_use",
+              "when": {"owner_status_at_least": {"隧道开启": 1}},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "隧道", 3, "SPEND_STATUS_IN_FULL", ["$card", "first_hit_bonus", 1, "SET_SKILL_STATE"], "WHEN"]
+              },
+              "description": "开启时消耗3隧道，以使各骰首次命中时伤害+1。"
+            },
+            {
+              "trigger": "BEFORE DAMAGE",
+              "subject": "source",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$hit_index", 1, "EQ", "$card", "first_hit_bonus", "SKILL_STATE", "AND",
+                  [{"op": "damage_add", "amount": 1}], "WHEN"
+                ]
+              },
+              "description": "各骰第一次命中造成的伤害+1。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "星结", 2, "STATUS", "$self", "隧道", 1, "STATUS"]
+                  },
+                  "description": "施加2星结，获得1隧道。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$target", "虚弱", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "下回合施加1虚弱。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$target_player", -1, "NEXT_TURN_COST", "$target", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN",
+                      "extra", "STORE", {"local": "extra"}, 0, "GT",
+                      ["$target", {"local": "extra"}, "concept", "slash", "DAMAGE"], "WHEN"
+                    ]
+                  },
+                  "description": "目标阵营下回合回补费用−1；每6星结追加1超穿甲，至多2。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lin_qiu_surprise",
+          "name": "出其不意",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$skill_target", "星结", "STATUS_COUNT", 6, "GE", ["$card", 1, "SKILL_LEVEL_ADD"], "WHEN"]
+              },
+              "description": "目标至少6星结时，技能骰级+1。"
+            },
+            {
+              "trigger": "before_clash_result",
+              "when": {"owner_status_at_least": {"隧道开启": 1}, "prospective_result": "lose"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$card", "round_skipped", "SKILL_STATE", "NOT",
+                  [
+                    "$card", "round_skipped", 1, "SET_SKILL_STATE", "$die", "SKIP_ROUND", "$self", "隧道", 3,
+                    "SPEND_STATUS", "POP"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "开启时即将拼输，跳过整轮并减少3隧道，本技能至多一次。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", ["$die", 2, "DIE_FINAL_ADD"], "QUEUE_DIE_EFFECT"]
+                  },
+                  "description": "下骰最终点数+2。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", 2, "HEAL", "$player", 1, "DRAW", "$self", ["$die", 4, "DIE_FINAL_ADD"], "QUEUE_DIE_EFFECT"]
+                  },
+                  "description": "回复2生命，抽1卡，下骰最终点数+4。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "range_level": 1,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target_next_die", "DESTROY"]
+                  },
+                  "description": "立即摧毁目标下一颗待用骰，然后按剩余骰序配对。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$hit_index", 1, "EQ",
+                      [
+                        "$own_hand_skills",
+                        {
+                          "literal": {
+                            "optional": true,
+                            "then": {
+                              "op": "program",
+                              "code": ["$chosen_card", 2, "SKILL_USE", {"literal": {"at": "after_die"}}, "INSERT_SKILL"]
+                            }
+                          }
+                        },
+                        "CHOOSE_CARD"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "首次命中可立即选一张自身手牌，以通常费用减2插入本骰之后。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "when": {"target_status_at_least": {"星结": 10}},
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", 1, "concept", "pierce", "DAMAGE"]
+                  },
+                  "description": "目标至少10星结，追加1超穿甲伤害。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lin_qiu_void_cut",
+          "name": "空断",
+          "cost": 4,
+          "range_level": 1,
+          "range_level_when": {"status": "隧道开启", "amount": 3},
+          "resource_cost": {"status": "隧道", "amount": 2},
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 6,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "when": {"owner_status_at_least": {"隧道开启": 1}},
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$target", "限制", 2, "QUEUE_STATUS"]
+                  },
+                  "description": "隧道开启时，下回合施加2限制。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "multiplier": 2,
+              "entries": [
+                "1超穿甲",
+                {
+                  "trigger": "on_dice_use",
+                  "when": {"owner_status_at_least": {"隧道开启": 1}},
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "隧道", 2, "SPEND_STATUS", "POP", "$card", "sever_die", "$die", "SET_SKILL_STATE"]
+                  },
+                  "description": "隧道开启时，用骰时消耗2隧道，激活本骰拼点、命中效果。"
+                },
+                {
+                  "trigger": "on_dice_clash",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$card", "sever_die", "SKILL_STATE", "$die", "EQ",
+                      ["$opponent_die", 0, "$target", "星结", "STATUS_COUNT", "SUB", "DIE_FINAL_ADD"], "WHEN"
+                    ]
+                  },
+                  "description": "激活时，拼点中目标每1星结使其最终点数−1。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$card", "sever_die", "SKILL_STATE", "$die", "EQ", "$card", "duel_penalties", "SKILL_STATE", 2, "LT",
+                      "AND", "$target", "星结", "STATUS_COUNT", 5, "GE", "AND",
+                      [
+                        "$target", 0, "$target", "星结", "STATUS_COUNT", 5, "FLOOR_DIV", "SUB", "NEXT_TURN_DUELS", "$card",
+                        "duel_penalties", "$card", "duel_penalties", "SKILL_STATE", 1, "ADD", "SET_SKILL_STATE"
+                      ],
+                      "WHEN", "$target", "星结", -2, "STATUS"
+                    ]
+                  },
+                  "description": "激活时，目标每5星结，下回合减少1交锋。本技能至多触发两次。随后目标减少2星结。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lin_qiu_boundary",
+          "name": "分界",
+          "cost": 4,
+          "pre_reveal": true,
+          "ignore_range_when": {"status": "隧道开启", "amount": 3},
+          "resource_cost": {"status": "隧道", "amount": 2},
+          "entries": [
+            {
+              "trigger": "BEFORE DESTROY",
+              "when": {"owner_status_at_least": {"隧道开启": 1}},
+              "subject": "target",
+              "operation": {
+                "op": "program",
+                "code": ["$target", "$owner", "EQ", [{"op": "cancel"}], "WHEN"]
+              },
+              "description": "开启期间本技能具有常规话语权的防摧毁。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 6,
+              "multiplier": 2,
+              "entries": [
+                "3超穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "status", "name": "星结", "amount": -3},
+                  "description": "使目标减少3星结。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "authority": "较高话语权",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$card", "destroy_chosen", "SKILL_STATE", "NOT", "$target_board_skills", "AND",
+                      [
+                        "$card", "destroy_chosen", 1, "SET_SKILL_STATE", "$target_board_skills",
+                        {"literal": {"optional": false, "then": {"op": "program", "code": ["$chosen_card", "DESTROY"]}}},
+                        "CHOOSE_CARD"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "本次技能至多一次，以较高话语权指定并摧毁目标本回合仍在场的一张技能。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

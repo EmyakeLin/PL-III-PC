@@ -77,6 +77,24 @@ class PlayerMatchTests(WireClient, unittest.TestCase):
         self.command(2, "select_character", character_id="plan_b_annolin")
         self.assertTrue(self.command(2, "ready")["started"])
 
+    def test_mirror_allowed_picks_start_with_private_hands_and_separate_slots(self):
+        for side in (1, 2):
+            self.command(side, "select_character", character_id="blank_boss")
+            self.command(side, "ready")
+        public = self.observe()
+        self.assertTrue(public["started"])
+        self.assertEqual([p["characters"][0]["id"] for p in public["frame"]["players"]],
+                         ["blank_boss", "blank_boss"])
+        for side in (1, 2):
+            players = self.observe(side)["frame"]["players"]
+            self.assertTrue(players[side - 1]["hand"])
+            self.assertIsNone(players[2 - side]["hand"])
+        active = public["frame"]["placing_side"]
+        own = self.play(active, "place")
+        self.assertTrue(own["frame"]["duels"][0]["sides"][active - 1]["cards"][0]["id"])
+        enemy = self.observe(3 - active)
+        self.assertEqual(enemy["frame"]["duels"][0]["sides"][active - 1]["cards"], [{"hidden": True}])
+
     def test_two_browsers_reconnect_with_pending_intercepts_and_finish(self):
         self.command(1, "select_character", character_id="mistport_cen_yao")
         self.command(2, "select_character", character_id="plan_b_annolin")

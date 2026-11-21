@@ -226,7 +226,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
         target.add_shield("normal", 3)
         target.add_shield("reinforced", 2)
         target.add_shield("concept", 1)
-        lost = target.take_damage(3, penetration="pierce")
+        lost = target.take_damage(3, penetration="pierce", result_field="hp_lost")
         self.assertEqual(lost, 1)
         self.assertEqual((target.shield, target.reinforced_shield, target.concept_shield), (0, 0, 1))
         dmg_ev = next(ev for ev in reversed(session.state()["fx_events"]) if ev["kind"] == "damage")

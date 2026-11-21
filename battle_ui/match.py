@@ -5,7 +5,7 @@ import random
 import time
 
 from context.context import Context
-from displayer import Displayer, _passives, _printed_skill, special_seats, timing_label
+from displayer import Displayer, _passives, _printed_skill, hand_key, special_seats, timing_label
 from entry.entry import Entry, character_of
 from game import Game
 from loader import load_characters_from_packs
@@ -21,14 +21,12 @@ class StaleActionError(ValueError):
 
 
 class _TableCharacter(Character):
-    def take_damage(self, amount, penetration="normal", attack_type="none", *, modified=False):
-        if not self.is_alive or amount <= 0:
+    def apply_resolved_damage(self, incoming, grade):
+        if not self.is_alive or incoming <= 0:
             return 0
-        grade = DAMAGE_GRADES[getattr(penetration, "name", str(penetration)).lower()]
-        multiplier = 1 if modified else self.damage_multiplier()
-        incoming = max(0, int(amount if modified else amount * multiplier))
+        multiplier = self.damage_multiplier()
         before = (self.shield, self.reinforced_shield, self.concept_shield, self.hp)
-        lost = super().take_damage(amount, penetration=penetration, attack_type=attack_type, modified=modified)
+        lost = super().apply_resolved_damage(incoming, grade)
         after = (self.shield, self.reinforced_shield, self.concept_shield, self.hp)
         d_norm = before[0] - after[0]
         d_reinf = before[1] - after[1]
@@ -43,7 +41,7 @@ class _TableCharacter(Character):
             absorbed = {"normal": d_norm, "reinforced": d_reinf, "concept": 0}
             eroded = {"normal": 0, "reinforced": 0}
         if self.game and hasattr(self.game, "emit_fx"):
-            cause = self.game.context.event.get("damage_cause") or attack_type or "attack"
+            cause = self.game.context.event.get("damage_cause") or "attack"
             self.game.emit_fx(
                 "damage",
                 target_side=self.player.side,
@@ -137,9 +135,9 @@ class _TableCharacter(Character):
                     )
         return val
 
-    def apply_status_delta(self, name, amount):
+    def apply_status_delta(self, name, amount, *, notify=True):
         before = dict(self.statuses)
-        val = super().apply_status_delta(name, amount)
+        val = super().apply_status_delta(name, amount, notify=notify)
         if self.game and hasattr(self.game, "emit_fx"):
             # Resolve canonical key that changed
             changed = None
@@ -422,9 +420,12 @@ def _normalize_roster(roster, pool):
     for team in teams:
         if not 1 <= len(team) <= 3:
             raise ValueError("每方须选择 1 至 3 名出战角色。")
+        team_seen = set()
         for key in team:
-            if not isinstance(key, str) or key not in pool or key in seen:
+            if (not isinstance(key, str) or key not in pool or key in team_seen
+                    or (key in seen and not pool[key].get("mirror_allowed"))):
                 raise ValueError("请为双方选择不同的有效出战角色。")
+            team_seen.add(key)
             seen.add(key)
     return teams
 
@@ -506,7 +507,8 @@ class BattleMatch:
         self._character_colors = _assign_character_colors(pool)
         self.choices = [
             {
-                **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction")},
+                **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")},
+                "max_lightcore_hp": Character.initial_lightcore_max(spec["max_hp"]),
                 "color": self._character_colors.get(spec["id"]),
             }
             for spec in pool.values()
@@ -541,7 +543,8 @@ class BattleMatch:
     def _legal_cards(self):
         player = self.game.placing
         return [card for card in player.cardspace.hand.content
-                if card.character.is_alive and card.character.used_duels < card.character.max_duels]
+                if card.character.is_alive and card.character.used_duels < card.character.max_duels
+                and card.meets_use_requirements()]
 
     def _current_draw_prompt(self):
         if not self.game._pending_draws:
@@ -570,11 +573,12 @@ class BattleMatch:
         player = self._draw_seat or self._pre_seat or self.game.placing
         side = player.side if player and (deciding or self.mode == "handoff") else None
         private_pre = self.mode in ("pre_attack", "intercept") and self._pre_seat is not None
-        attacks = [c.id for c in early.attack_cards(player)] if private_pre else []
-        intercepts = [c.id for c in early.intercept_cards(player)] if private_pre else []
+        attack_cards = early.attack_cards(player) if private_pre else []
+        attacks = [hand_key(c) for c in attack_cards]
+        intercepts = [hand_key(c) for c in early.intercept_cards(player)] if private_pre else []
         legal_cards = {"pre_attack": attacks, "intercept": intercepts}.get(self.mode, [])
         if self.mode == "placement":
-            legal_cards = [c.id for c in self._legal_cards()]
+            legal_cards = [hand_key(c) for c in self._legal_cards()]
         mode = self.mode
         seats = special_seats(self.game)
         special_options = []
@@ -617,7 +621,9 @@ class BattleMatch:
             "mode": mode, "revision": self.revision, "active_side": side,
             "special_available": bool(seats) and self.mode != "draw_select",
             "special_options": special_options,
-            "special_pending": self.game.special.pending_attack is not None,
+            "special_pending": self.game.special.pending_attack is not None or self.game.special.decision_owner is not None,
+            "card_choice": self.game.special.card_decision is not None,
+            "queued_placement": self.game.special.placement_owner is not None,
             "special_timing": self._timing,
             "draw_select": self._current_draw_prompt(),
             "speed_rolls": list(self.game.last_speed_rolls),
@@ -634,6 +640,9 @@ class BattleMatch:
             "roster_catalog": self._roster_catalog,
             "choices": [dict(c) for c in self.choices],
             "legal_cards": legal_cards, "legal_attack_cards": attacks, "legal_intercept_cards": intercepts,
+            "attack_targets": {hand_key(c): [{"kind": "character", "id": actor.id} if actor is not None
+                              else {"kind": "duel", "number": i + 1} for actor, i in early.attack_targets(c)]
+                               for c in attack_cards} if private_pre else {},
             "pending_responses": early.pending_for(player) if private_pre else [],
             "can_end_attack": private_pre and early.can_attack(player),
             "eligible_sides": [p.side for p in seats] if self._special_open else frame["pre_reveal"]["eligible_sides"],
@@ -731,7 +740,7 @@ class BattleMatch:
         if action == "ready" and self._special_seat is None:
             self._special_seat = self._choose_seat(side if side is not None else seats[0].side, seats)
             return
-        if action == "leave_special" and game.special.pending_attack is None:
+        if action == "leave_special" and game.special.pending_attack is None and game.special.decision_owner is None:
             self._return_from_special()
             return
         if action == "switch_side" and self._special_seat is not None:
@@ -744,6 +753,8 @@ class BattleMatch:
         if type(option) is not int or not 0 <= option < len(options):
             raise ValueError("该选项不在当前的特殊行动中。")
         move = options[option]
+        if move.kind == "ability":
+            ability_name = next(s["name"] for s in move.character.action_specs() if s["id"] == move.ability_id)
         old_space = game.pipeline.interrupt_space
         succeeded = game.special.apply(player, move)
         # Face-down placements and replacements must remain hidden in the public log.
@@ -762,6 +773,14 @@ class BattleMatch:
             message = f"放行即时交锋 {move.response_number}"
         elif move.kind == "intercept":
             message = f"用{move.card.name}迎击即时交锋 {move.response_number}"
+        elif move.kind == "ability":
+            message = f"使用{ability_name}"
+            if move.duel_index is not None and move.target_card.state.name == "PLACED_FACE_UP":
+                message += f"，翻正常规交锋 {move.duel_index + 1} 的{move.target_card.name}"
+        elif move.kind == "choose_slot":
+            message = "依词条选择交锋"
+        elif move.kind in ("choose_card", "decline_card"):
+            message = "依词条选择技能" if move.kind == "choose_card" else "放弃此次选牌"
         else:
             message = f"打出{move.card.name}"
         suffix = "受阻" if succeeded is False else ""
@@ -770,7 +789,7 @@ class BattleMatch:
         self._special_seat = None
         if game.is_over:
             self._finish()
-        elif game.special.pending_attack is not None:
+        elif game.special.pending_attack is not None or game.special.decision_owner is not None:
             self._special_open = True
         elif game.pipeline.interrupt_space is not old_space:
             self._special_open = False
@@ -815,7 +834,7 @@ class BattleMatch:
     def _pre_action(self, action, card_id, target, duel_number):
         phase = self.game.pre_reveal
         player = self._pre_seat
-        card = next((c for c in player.cardspace.hand.content if c.id == card_id), None)
+        card = next((c for c in player.cardspace.hand.content if hand_key(c) == card_id), None)
         if action == "end_attack":
             phase.end_attack(player)
             self._history.append(f"{player.name}结束主动进攻。")
@@ -872,7 +891,7 @@ class BattleMatch:
         game = self.game
         player = game.placing
         if action == "place":
-            card = next((c for c in self._legal_cards() if c.id == card_id), None)
+            card = next((c for c in self._legal_cards() if hand_key(c) == card_id), None)
             if card is None:
                 raise ValueError("这张手牌当前无法扣置。")
             if game.auto_place_in_duel(player.side, card):
@@ -901,7 +920,9 @@ class BattleMatch:
 
     def _open_window(self, previous=None):
         game = self.game
-        while game.placing is not None and not self._legal_cards():
+        # The terminal automatically ends a player's placement when no card fits.
+        while (game.placing is not None and not self._legal_cards()
+               and not game.special.ability_options(game.placing)):
             game.ended_player.append(game.placing)
             game.switch_place_right()
             self._window_size = game.gamerule.PLACE_CAPACITY
@@ -921,6 +942,12 @@ class BattleMatch:
                 continue
             if game.is_over:
                 break
+            if game.special.decision_owner is not None:
+                self._special_open = True
+                self._special_seat = None
+                self._timing = "选择技能" if game.special.card_decision else "选择交锋"
+                self.mode = "combat"
+                return
             if self._interrupt_return is not None:
                 previous_mode, timing, space = self._interrupt_return
                 if game.pipeline.interrupt_space is space:
@@ -1005,7 +1032,7 @@ class BattleMatch:
             die = side["die"]
             if node == "logic_skill_use":
                 verb = "使用" if pipe.paid else "未能支付"
-                actions.append(f"{character.name}{verb} {pipe.card.name}")
+                actions.append(f"{character.combat_name}{verb} {pipe.card.name}")
                 game.emit_fx(
                     "cost_pay",
                     side=player.side,
@@ -1024,9 +1051,9 @@ class BattleMatch:
                 if die["win_branch_skipped"]:
                     result += "，跳过拼赢分支"
                 if len(game.pipeline.current_clash_results) == 1:
-                    scores.append(f"空白轮，{character.name}（{result}）")
+                    scores.append(f"空白轮，{character.combat_name}（{result}）")
                 else:
-                    scores.append(f"{character.name} {die['clash_score']}（{result}）")
+                    scores.append(f"{character.combat_name} {die['clash_score']}（{result}）")
                 clash_sides.append({
                     "side": player.side,
                     "character_id": character.id,
@@ -1037,7 +1064,7 @@ class BattleMatch:
                 })
                 pause = True
             elif node == "on_clash_skip" and die:
-                actions.append(f"{character.name}的{TYPE_NAMES[die['type']]}跳过拼点")
+                actions.append(f"{character.combat_name}的{TYPE_NAMES[die['type']]}跳过拼点")
                 clash_sides.append({
                     "side": player.side,
                     "character_id": character.id,
@@ -1053,7 +1080,10 @@ class BattleMatch:
                     p for p in game.players if p is not player).characters if c.is_alive), None)
                 attack = "单方面攻击" if die["result"] is None else "进攻"
                 if target is not None:
-                    actions.append(f"{character.name}{attack}，{target.name}生命 {target.hp}/{target.max_hp}")
+                    actions.append(
+                        f"{character.combat_name}{attack}，{target.combat_name}生命 {target.hp}/{target.max_hp}，"
+                        f"完整度 {target.lightcore_hp}/{target.max_lightcore_hp}"
+                    )
                     game.emit_fx(
                         "combat_strike",
                         attacker_side=player.side,
@@ -1067,7 +1097,7 @@ class BattleMatch:
                         card_id=side["card_id"],
                     )
                 else:
-                    actions.append(f"{character.name}{attack}")
+                    actions.append(f"{character.combat_name}{attack}")
                 pause = True
         if clash_sides:
             game.emit_fx(
@@ -1091,7 +1121,7 @@ class BattleMatch:
         self._draw_seat = None
         self.mode = "finished"
         winner = self.game.winner
-        fallen = [c.name for p in self.game.players for c in p.characters if not c.is_alive]
+        fallen = [c.combat_name for p in self.game.players for c in p.characters if not c.is_alive]
         if fallen:
             self._history.append("、".join(fallen) + "阵亡。")
         self._history.append(f"{winner.name}获胜。" if winner else "双方全灭，平局。")

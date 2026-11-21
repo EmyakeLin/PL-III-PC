@@ -230,18 +230,18 @@ class AnnolinTests(unittest.TestCase):
         self.assertEqual(self.enemy.hp, 26)
         self.assertNotIn("涡流", self.enemy.statuses)
 
-    def test_breeze_counts_actual_damage_only_during_its_duel_and_enables_zero_damage_die(self):
+    def test_breeze_counts_shielded_damage_and_ignores_zero_damage_and_later_duels(self):
         self.actor.add_shield("normal", 1)
         self.place(self.actor, "流风习习")
         self.place_fixture(self.enemy, [
-            dict(type="slash", level=1, base_value=10, entries=["1物理"]),
+            dict(type="slash", level=1, base_value=10, entries=["0物理", "1物理"]),
             dict(type="slash", level=1, base_value=10, entries=["1物理"]),
             dict(type="slash", level=1, base_value=-5),
             dict(type="slash", level=1, base_value=-5),
         ])
         self.place_fixture(self.enemy, [dict(type="slash", level=1, entries=["1物理"])], slot=1)
         self.battle()
-        self.assertEqual((self.actor.hp, self.actor.statuses["涡流"]), (7, 3))
+        self.assertEqual((self.actor.hp, self.actor.statuses["涡流"]), (7, 4))
         self.assertEqual((self.enemy.hp, self.enemy.statuses["涡流"]), (28, 1))
 
     def test_burst_spends_before_primary_bonus_and_pays_hp_with_shields(self):

@@ -136,7 +136,11 @@ def parse_builtin_operation(text: str, owner=None):
         return None
 
     cleaned_text = text.strip()
-    from entry.effects import damage_part
+    from entry.effects import damage_part, independent_damage_part
+    independent = independent_damage_part(cleaned_text)
+    if independent is not None:
+        amount, opcode = independent
+        return [owner if isinstance(owner, Character) else "target", amount, opcode]
     part = damage_part(cleaned_text)
     if part is not None:
         amount, grade = part

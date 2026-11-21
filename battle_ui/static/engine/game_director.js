@@ -443,7 +443,7 @@ export class GameDirector {
     }
     const viewerSide = this.state.frame.viewer_side;
     const player = viewerSide ? (this.state.frame.players || []).find((p) => p.side === viewerSide) : null;
-    const selected = player?.hand?.find((c) => c.id === this.selectedHandCardId) || null;
+    const selected = player?.hand?.find((c) => (c.action_key || c.id) === this.selectedHandCardId) || null;
     if (selected) {
       this._setCardIntent(viewerSide, selected);
     } else {
@@ -2677,7 +2677,7 @@ export class GameDirector {
       if (this.dragState?.cardKey === k) continue;
 
       const isHov = i === hoverIdx;
-      const isSel = this.selectedHandCardId === v.card.id;
+      const isSel = this.selectedHandCardId === (v.card.action_key || v.card.id);
       if (isHov) {
         v.bodyEntry.targetX = v.baseX;
         v.bodyEntry.targetY = v.liftY;
@@ -2771,11 +2771,12 @@ export class GameDirector {
         : Math.min(46, 14 + (count - 3) * 7.5);
 
     hand.forEach((card, i) => {
-      const cardKey = `hand_${viewerSide}_${card.id}`;
+      const actKey = card.action_key || card.id;
+      const cardKey = `hand_${viewerSide}_${actKey}`;
       validKeys.add(cardKey);
       this.handFanOrder.push(cardKey);
-      const isLegal = legalSet.has(card.id);
-      const isSelected = this.selectedHandCardId === card.id;
+      const isLegal = legalSet.has(actKey);
+      const isSelected = this.selectedHandCardId === actKey;
 
       const spr = buildFullCard(card, {
         side: viewerSide,
@@ -2855,14 +2856,14 @@ export class GameDirector {
         }
         let kind = 'place';
         if (this.state.mode === 'pre_attack' || this.state.mode === 'intercept') {
-          if (this.state.mode === 'intercept' && interceptSet.has(card.id) && !attackSet.has(card.id)) kind = 'intercept';
-          else if (attackSet.has(card.id)) kind = 'attack';
-          else if (interceptSet.has(card.id)) kind = 'intercept';
+          if (this.state.mode === 'intercept' && interceptSet.has(actKey) && !attackSet.has(actKey)) kind = 'intercept';
+          else if (attackSet.has(actKey)) kind = 'attack';
+          else if (interceptSet.has(actKey)) kind = 'intercept';
         }
         this.dragState = {
-          card, cardKey, side: viewerSide, kind,
-          canAttack: attackSet.has(card.id),
-          canIntercept: interceptSet.has(card.id),
+          card, cardKey, actKey, side: viewerSide, kind,
+          canAttack: attackSet.has(actKey),
+          canIntercept: interceptSet.has(actKey),
           startX: e.global.x, startY: e.global.y,
           prevX: e.global.x,
           x: e.global.x, y: e.global.y,
@@ -3409,12 +3410,13 @@ export class GameDirector {
 
     const x = e.global.x;
     const y = e.global.y;
+    const actKey = d.actKey || d.card.action_key || d.card.id;
 
     if (!d.moved && this.state.mode === 'placement') {
       this._ignoreNextStageTapUntil = performance.now() + 90;
-      if (this.selectedHandCardId === d.card.id) this._placeCard(d.card.id);
+      if (this.selectedHandCardId === actKey) this._placeCard(actKey);
       else {
-        this.selectedHandCardId = d.card.id;
+        this.selectedHandCardId = actKey;
         this._rebuildDynamicBoard();
         this._syncSelectedCardIntent();
       }
@@ -3423,7 +3425,7 @@ export class GameDirector {
 
     if (!d.moved && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')) {
       this._ignoreNextStageTapUntil = performance.now() + 90;
-      this.selectedHandCardId = this.selectedHandCardId === d.card.id ? null : d.card.id;
+      this.selectedHandCardId = this.selectedHandCardId === actKey ? null : actKey;
       this._rebuildConfrontationWings();
       this._rebuildDynamicBoard();
       this._syncSelectedCardIntent();
@@ -3433,7 +3435,7 @@ export class GameDirector {
     if (this.state.mode === 'placement') {
       const { battleX, battleW, arenaTop, stageBottom } = this.layout;
       if (x >= battleX - 16 && x <= battleX + battleW + 16 && y >= arenaTop - 24 && y <= stageBottom + 16) {
-        this._placeCard(d.card.id);
+        this._placeCard(actKey);
         return;
       }
     } else if (this.state.mode === 'pre_attack' || this.state.mode === 'intercept') {
@@ -3442,7 +3444,7 @@ export class GameDirector {
         for (const [num, r] of this.preRevealSlotRects.entries()) {
           if (pending.has(num) && x >= r.x - 12 && x <= r.x + r.w + 12 && y >= r.y - 12 && y <= r.y + r.h + 12) {
             this.audio.cardPlace();
-            this._sendAction('intercept', { card_id: d.card.id, duel_number: num });
+            this._sendAction('intercept', { card_id: actKey, duel_number: num });
             return;
           }
         }
@@ -3451,7 +3453,7 @@ export class GameDirector {
         for (const [charId, r] of this.charRects.entries()) {
           if (r.side !== d.side && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
             this.audio.cardPlace();
-            this._sendAction('attack', { card_id: d.card.id, target: { kind: 'character', id: charId } });
+            this._sendAction('attack', { card_id: actKey, target: { kind: 'character', id: charId } });
             return;
           }
         }
@@ -3463,7 +3465,7 @@ export class GameDirector {
             const lane = this.regularLaneRects.get(i);
             if (lane && lane.visible !== false && x >= lane.x - 8 && x <= lane.x + lane.w + 8 && y >= lane.y - 8 && y <= lane.y + lane.h + 8) {
               this.audio.cardPlace();
-              this._sendAction('attack', { card_id: d.card.id, target: { kind: 'duel', number: i } });
+              this._sendAction('attack', { card_id: actKey, target: { kind: 'duel', number: i } });
               return;
             }
           }

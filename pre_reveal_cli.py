@@ -37,16 +37,14 @@ def _actions(phase):
 
 def _attack(game, player, card):
     enemy = game.pre_reveal.opponent(player)
-    characters = [c for c in enemy.characters if c.is_alive]
-    targets = [f"{c.name}　生命 {c.hp}/{c.max_hp}" for c in characters]
-    targets.extend(f"常规交锋 {n}　对手扣置 {len(slot.get_content(enemy.side))} 张"
-                   for n, slot in enumerate(game.duelspace.space, 1))
-    target = _choose(targets, "选择目标，回车返回公开桌面 ")
-    if target is not None:
-        if target < len(characters):
-            game.pre_reveal.declare_attack(card, character=characters[target])
-        else:
-            game.pre_reveal.declare_attack(card, duel_index=target - len(characters))
+    targets = game.pre_reveal.attack_targets(card)
+    labels = [c.combat_summary() if c is not None
+              else f"常规交锋 {i + 1}　对手置牌 {len(game.duelspace.space[i].get_content(enemy.side))} 张"
+              for c, i in targets]
+    index = _choose(labels, "选择目标，回车返回公开桌面 ")
+    if index is not None:
+        character, duel_index = targets[index]
+        game.pre_reveal.declare_attack(card, character=character, duel_index=duel_index)
 
 
 def run_declarations(game):

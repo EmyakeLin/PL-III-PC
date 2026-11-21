@@ -6,6 +6,8 @@ from contextlib import redirect_stdout
 from game import Game
 from models.card import Card
 from models.character import Character
+from models.dice import Dice, describe_die
+from models.card import describe_skill_traits
 from models.duel import DuelSlot
 from player.player import Player
 
@@ -150,6 +152,38 @@ class RangeTests(unittest.TestCase):
         self.play()
         self.assertEqual(self.right.hp, 28)
         self.assertEqual([d.type for d in weak.instantiated_dice], ["blank", "slash"])
+
+    def test_die_range_is_scoped_to_its_own_round_and_inherited_by_repeats(self):
+        repeat = program("on_dice_use", ["$is_repeat", "NOT", ["$die", "REPEAT_DIE"], "WHEN"])
+        ranged = dict(die(entries=[repeat]), range_level_when={"skill_state": "armed", "amount": 1})
+        left = self.skill(self.left, "两次远程", [ranged, die()], entries=[
+            program("on_skill_use", ["$card", "armed", 1, "SET_SKILL_STATE"])])
+        right = self.skill(self.right, "近战", [die(base=20, entries=["2"])] * 3)
+        self.slot([left], [right])
+        self.play()
+        self.assertEqual([d.is_repeat for d in left.instantiated_dice], [False, True, False])
+        self.assertEqual([d.clash_result for d in right.instantiated_dice], ["win"] * 3)
+        self.assertEqual([d.landed_hits for d in right.instantiated_dice], [0, 0, 1])
+        self.assertEqual(self.left.hp, 28)
+
+    def test_conditional_card_range_activates_before_opposing_use(self):
+        self.left.add_status("已开启", 1)
+        ranged = self.skill(self.left, "变程", [die()], 1, range_level_when={"status": "已开启", "amount": 3})
+        near = self.skill(self.right, "近身", [die(base=20)], entries=[
+            program("on_skill_use", ["$self", "执行", 1, "STATUS"])])
+        self.slot([ranged], [near])
+        self.play()
+        self.assertNotIn("执行", self.right.statuses)
+        self.assertEqual(near.instantiated_dice[0].type, "blank")
+
+    def test_printed_conditional_ranges_visible_and_validated(self):
+        rule = {"status": "隧道开启", "amount": 3}
+        self.assertIn("极限远程", describe_skill_traits({"range_level": 1, "range_level_when": rule}))
+        self.assertIn("无视 3 级远程", describe_skill_traits({"ignore_range_when": rule}))
+        self.assertIn("普通远程", describe_die(dict(die(), range_level=1)))
+        self.assertEqual(describe_die({"type": "skip"}), "SKIP（跳过本轮）")
+        with self.assertRaises(ValueError):
+            Dice(dict(die(), ignore_range_when={"status": "隧道开启", "amount": 4}))
 
     def test_enemy_and_friendly_reactions_use_source_of_entry_not_current_event(self):
         protected = self.skill(self.right, "强化", [die(entries=["1"])], 2)

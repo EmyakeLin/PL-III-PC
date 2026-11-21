@@ -4,8 +4,9 @@ from types import SimpleNamespace
 
 from context.context import Context
 from gamerule import GameRule
+from loader import base_effects
 from models.card import CardState, describe_entry, describe_skill_traits
-from models.character import Character, CharacterRank, ONE_TURN_STATUSES
+from models.character import Character, CharacterRank
 from models.dice import describe_die
 from models.duel import DuelSpace
 from models.opcode import OpCode
@@ -29,14 +30,20 @@ class Game:
         self.ended_player = []
         self.placed_this_window = 0
         self.used_cards = []
+        self.used_skill_ids = set()
         self.cards_revealed = False
         self.turn_count = 0
         self.turn_number = 0
+        self.turn_ending = False
+        self.card_serial = 0
         self._prepared_turn = -1
         self.next_turn_statuses = []
-        self.status_entries = {}
-        self.turn_end_statuses = set(ONE_TURN_STATUSES)
-        self.turn_end_statuses.update(("置卡机会", "换卡机会"))
+        effects = base_effects()
+        self.status_entries = dict(effects.status_entries)
+        self.status_rules = dict(effects.status_rules)
+        self.ability_rules = dict(effects.ability_rules)
+        self._overflow_settled_turn = -1
+        self.turn_end_statuses = set(effects.turn_end_statuses)
         self.is_over = False
         self.winner = None
         self._private_player = None
@@ -51,11 +58,11 @@ class Game:
 
     def select_character(self, characters):
         pool = list(characters)
-        if len(pool) < len(self.players):
+        if len(pool) < len(self.players) and not any(c.get("mirror_allowed") for c in pool):
             raise ValueError("共享角色池至少需要两名角色，才能为双方各留一名。")
         rosters = []
         for index, player in enumerate(self.players):
-            reserve = len(self.players) - index - 1
+            reserve = 0 if any(c.get("mirror_allowed") for c in pool) else len(self.players) - index - 1
             limit = min(self.gamerule.MAX_CHAR_COUNT, len(pool) - reserve)
             roster = []
             while len(roster) < limit:
@@ -76,6 +83,7 @@ class Game:
                     print("请至少选一名角色，并输入列表中的编号。")
             print(f"{player.name} 出战：" + "、".join(data["name"] for data in roster))
             rosters.append(roster)
+            pool.extend(spec for spec in roster if spec.get("mirror_allowed"))
 
         for player, roster in zip(self.players, rosters):
             for data in roster:
@@ -90,7 +98,9 @@ class Game:
         rank = CharacterRank[data["rank"]]
         label = {"NORMAL": "常人", "ELITE": "精英", "BOSS": "Boss", "EMPOWERED_BOSS": "强化 Boss"}[rank.name]
         title = f"　{data['title']}" if data.get("title") else ""
-        return f"{data['name']}{title}　{label}　生命 {data['max_hp']}　最多 {Character.base_duels(data)} 交锋"
+        integrity = Character.initial_lightcore_max(data["max_hp"])
+        return (f"{data['name']}{title}　{label}　生命 {data['max_hp']}　完整度 {integrity}"
+                f"　最多 {Character.base_duels(data)} 交锋")
 
     @staticmethod
     def show_character(data):
@@ -105,12 +115,18 @@ class Game:
                     entries = [passive["description"]]
                 for entry in entries:
                     print("  " + " · ".join(part for part in (label, name, describe_entry(entry)) if part))
-        for skill in data["skills"]:
-            dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
-            entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
-            zone = "战斗外" if skill.get("out_of_combat") else ""
-            print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
-                                                  describe_skill_traits(skill), dice, entries, zone) if s))
+        for printed in data["skills"]:
+            Game.show_skill(printed)
+            for form in printed.get("forms", {}).values():
+                Game.show_skill({**printed, **form})
+
+    @staticmethod
+    def show_skill(skill):
+        dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
+        entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
+        zone = "战斗外" if skill.get("out_of_combat") else ""
+        print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
+                                              describe_skill_traits(skill), dice, entries, zone) if s))
 
     def begin_private_view(self, player):
         """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
@@ -127,6 +143,10 @@ class Game:
         self._private_player = None
 
     def next_step(self):
+        if self.special.card_decision is not None and not self.is_over:
+            return "wait_card_choice"
+        if self.special.placement_owner is not None and not self.is_over:
+            return "wait_queued_placement"
         if self.special.pending_attack is not None and not self.is_over:
             return "wait_special_intercept"
         # An extra placement can reopen the regular sequence after its last slot.
@@ -145,8 +165,9 @@ class Game:
         if self.special_prompt is None or self.is_over:
             return
         self.special_prompt(self)
-        while not self.is_over and (self.special.pending_attack is not None or self.pipeline.interrupt_space is not None):
-            if self.special.pending_attack is None:
+        while not self.is_over and (self.special.pending_attack is not None or self.special.decision_owner is not None
+                                    or self.pipeline.interrupt_space is not None):
+            if self.special.pending_attack is None and self.special.decision_owner is None:
                 self.next_step()
             if not self.is_over:
                 self.special_prompt(self)
@@ -163,6 +184,12 @@ class Game:
         yield from self.duelspace.space
         yield from self.pre_reveal.space.space
         yield from self.special.duels
+
+    @property
+    def resolving_duel(self):
+        if self.pipeline.in_duel_phase:
+            return self.pipeline._get_current_duel()
+        return None
 
     def duel_position(self):
         """The series and zero-based public number of the currently resolving duel."""
@@ -185,7 +212,10 @@ class Game:
         number = self.turn_count + 1
         if self.turn_number != number:
             self.turn_number = number
+            self.turn_ending = False
             self.context.turn_entry_uses.clear()
+            self.used_skill_ids.clear()
+            self.context.dispatch_pipeline("on_turn_limits_reset", source=None, target=None, side=None)
 
     def prepare_turn(self):
         self.open_turn()
@@ -278,9 +308,9 @@ class Game:
             return False
         return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
 
-    def place_in_duel(self, side, content, duel_idx, *, special=False):
+    def place_in_duel(self, side, content, duel_idx, *, special=False, queued=False):
         # Once regular placement closes, only an executing rule effect may insert a card.
-        if self.pre_reveal.phase != "idle" and not special and not self.context.executions:
+        if self.pre_reveal.phase != "idle" and not special and not queued and not self.context.executions:
             return False
         player = content.player
         owner = content.character
@@ -297,8 +327,12 @@ class Game:
             return False
         if old_zone is not None and content not in old_zone.content:
             return False
-        space = self.duelspace if special else self.active_duelspace
-        with self.context.binding(special_placement=content if special else None):
+        space = self.duelspace if special or queued else self.active_duelspace
+        if queued and (content not in zones.hand.content or duel_idx >= len(space.space)
+                       or not self.pipeline.can_join(space.space[duel_idx])):
+            return False
+        with self.context.binding(special_placement=content if special else None,
+                                  queued_placement=content if queued else None):
             placed = self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
         if not placed or duel_idx >= len(space.space):
             return False
@@ -311,6 +345,8 @@ class Game:
         return True
 
     def reveal_cards(self):
+        if self.cards_revealed:
+            return
         self.cards_revealed = True
         self.close_private_view()
         if not self.duelspace.space:
@@ -322,6 +358,12 @@ class Game:
                     if card.state == CardState.PLACED_FACE_DOWN:
                         card.state = CardState.PLACED_FACE_UP
         print("双方开牌。")
+        for slot in self.duelspace.space:
+            for player in sorted(self.players, key=lambda p: p is not self.first_player):
+                for card in tuple(slot.get_content(player.side)):
+                    if card.character.is_alive and not card.destroyed:
+                        self.context.dispatch_pipeline("on_card_reveal", source=card.character, side=player.side,
+                                                       card=card, duel=slot)
         for number, slot in enumerate(self.duelspace.space, 1):
             sides = []
             for player in self.players:
@@ -330,7 +372,38 @@ class Game:
                 sides.append(f"{player.name}：{names}")
             print(f"交锋 {number}　" + "　对　".join(sides))
 
+    def resolve_status_batches(self):
+        """Freeze all eligible holders before any end-of-turn batch listener runs."""
+        if self.is_over or self._overflow_settled_turn == self.turn_count:
+            return
+        self._overflow_settled_turn = self.turn_count
+        ordered = sorted(self.players, key=lambda player: player is not self.first_player)
+        characters = [char for player in ordered for char in player.characters if char.is_alive]
+        batches = []
+        for name, rule in self.status_rules.items():
+            batch = rule.get("overflow_batch")
+            if batch:
+                targets = tuple(char for char in characters
+                                if char.status_overflow.get(name, 0) >= batch["threshold"])
+                if targets:
+                    batches.append((name, batch, targets))
+        for name, batch, targets in batches:
+            if self.is_over:
+                break
+            print(f"{batch.get('label', name)}触发，目标为{'、'.join(c.combat_name for c in targets)}。")
+            self.context.dispatch_pipeline(batch["event"], source=None, target=None, card=None, die=None,
+                                           side=None, targets=targets, status=name)
+            for char in targets:
+                char.status_overflow.pop(name, None)
+                excess = char.statuses.get(name, 0) - batch["reduce_to"]
+                if char.is_alive and excess > 0:
+                    char.add_status(name, -excess)
+
     def finish_turn(self):
+        if not self.turn_ending:
+            self.context.dispatch_pipeline("before_turn_end")
+        if self.is_over:
+            return
         ordered = sorted(self.players, key=lambda player: player is not self.first_player)
         for player in ordered:
             for character in player.characters:
@@ -339,20 +412,28 @@ class Game:
         for player in ordered:
             for character in player.characters:
                 character.reset_shields()
+                character.reserved_dice.clear()
                 character.used_duels = 0
                 character.turn_duel_bonus = 0
                 for status in self.turn_end_statuses:
                     character.clear_status(status)
+                character.expire_turn_abilities()
+                character.check_death()
             player.turn_common_cost_bonus = 0
             self.context.eval_block([player, 0, 0, OpCode.RESET_COST])
 
         on_board = [card for slot in self.board_slots() for cards in slot.content.values()
                     for card in cards]
         remaining = set(on_board)
+        used = set(self.used_cards)
         for card in [*self.used_cards, *on_board]:
             if card in remaining and card.character.is_alive:
                 remaining.remove(card)
-                card.reset_for_draw()
+                if card in used:
+                    # Turn-end entries run after recycling; keep this use's caster
+                    # and local state even if the physical card is returned to its owner.
+                    self.context.withdraw_card_use(card, None, used=True, scopes=("turn",))
+                card.return_to_printed_owner()
                 card.player.cardspace.draw.add_card(card)
         for player in self.players:
             player.cardspace.delayed_discard.push_to_draw()

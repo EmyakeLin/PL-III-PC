@@ -1,7 +1,7 @@
 """Read-only, JSON-ready views of a live match. Read between engine steps."""
 
 from game import Game
-from models.card import CardState, allows_interception, describe_entry
+from models.card import CardState, allows_interception, describe_entry, describe_range_traits
 from models.dice import Dice
 from pipeline import pipeline_steps
 
@@ -27,22 +27,30 @@ def _printed_die(spec):
     # An unbound printed die uses the engine's aliases, defaults and custom roll_max.
     die = Dice(spec)
     return {
-        "type": die.type, "printed_level": die.printed_level.value,
-        "roll_max": die.roll_max, "base_value": die.base_value,
+        "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
+        "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
+        "range_traits": describe_range_traits(spec),
+        "resource_cost": dict(spec["resource_cost"]) if spec.get("resource_cost") else None,
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
         "entries": [describe_entry(entry) for entry in die.entries],
     }
 
 
-def _printed_skill(data):
+def _printed_skill(data, *, include_forms=False):
     return {
         "id": data["id"], "name": data["name"], "cost": data["cost"],
         "pre_reveal": data.get("pre_reveal", False),
+        "before_duel_attack": data.get("before_duel_attack", False),
+        "pre_reveal_target": data.get("pre_reveal_target"),
+        "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
+        "requires_status": dict(data.get("requires_status", {})),
+        "forms": [_printed_skill({**data, **form}) for form in data.get("forms", {}).values()] if include_forms else [],
         "anytime_play": list(data.get("anytime_play", [])),
         "anytime_replace": data.get("anytime_replace", False),
         "interceptable": allows_interception(data, pre_reveal=True),
         "instant_interceptable": allows_interception(data, pre_reveal=False),
         "range_level": data.get("range_level", 0), "ignore_range": data.get("ignore_range", 0),
+        "range_traits": describe_range_traits(data),
         "starts_out_of_combat": bool(data.get("out_of_combat")),
         "dice": [_printed_die(spec) for spec in data.get("dice", ())],
         "entries": [describe_entry(entry) for entry in data.get("entries", ())],
@@ -63,16 +71,25 @@ def _passives(specs):
 
 
 def _visible_card(card):
-    return {**_printed_skill(card.data), "character_id": card.character.id,
-            "cost": card.cost, "state": card.state.name.lower()}
+    details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
+    return {**details, "character_id": card.character.id, "borrowed": card.printed_owner is not card.character,
+            "instance_id": card.instance_id, "cost": card.cost, "state": card.state.name.lower()}
+
+
+def hand_key(card):
+    """Legacy template IDs stay valid when they identify exactly one card in hand."""
+    hand = card.player.cardspace.hand.content
+    if sum(other.id == card.id for other in hand) > 1:
+        return f"instance:{card.instance_id}"
+    return card.id
 
 
 def _live_die(die):
     if die is None:
         return None
-    resolved = die._resolved_level is not None
+    resolved = die._resolved_level is not None and die.type != "skip"
     return {
-        "position": die.position, "type": die.type, "printed_level": die.printed_level.value,
+        "position": die.position, "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "level": die.level.value if resolved else None, "roll_max": die.roll_max if resolved else None,
         "base_value": die.base_value, "rolled_value": die.value or None,
         "final_score": die.final_score, "clash_score": die.clash_score,
@@ -124,23 +141,42 @@ def special_seats(game):
     if game.is_over or not game.turn_number or game.turn_number <= game.turn_count:
         return []
     pending = game.special.pending_attack
+    if game.special.decision_owner is not None:
+        return [game.special.decision_owner]
     if pending is not None:
         return sorted(game.players, key=lambda p: p.side == pending.attacking_side)
     for player in game.players:
         for actor in player.characters:
             if not actor.is_alive:
                 continue
-            if (actor.statuses.get("置卡机会") or actor.statuses.get("换卡机会")
-                    or any(s.get("anytime_play") or s.get("anytime_replace") for s in actor.skill_data)):
+            if (actor.ability_permission("place") or actor.ability_permission("replace")
+                    or any(game.special.window_open(a["window"]) for a in actor.action_specs())
+                    or any(s.get("anytime_play") or s.get("anytime_replace")
+                           or s.get("before_duel_attack") and game.special.window_open("before_duel")
+                           for s in actor.skill_data)):
                 return game.players.copy()
     return []
 
 
 def special_action_label(action):
+    if action.label is not None:
+        return action.label
+    if action.kind == "ability":
+        spec = next(s for s in action.character.action_specs() if s["id"] == action.ability_id)
+        label = f"{action.character.name} · {spec['name']}"
+        if action.duel_index is not None:
+            cards = action.target_card.player.game.duelspace.space[action.duel_index].get_content(action.target_card.player.side)
+            return f"{label} · 常规交锋 {action.duel_index + 1} 的第 {cards.index(action.target_card) + 1} 张扣牌"
+        if action.target_card:
+            borrowed = "（取自对手）" if action.target_card.printed_owner is not action.target_card.character else ""
+            return f"{label} · {action.target_card.name}{borrowed}"
+        return label
     if action.kind == "pass_intercept":
         return f"放行即时交锋 {action.response_number}"
     card = action.card
     skill = f"{card.name}（{card.cost} 费）"
+    if card in card.player.cardspace.hand.content and card.character.skill_restricted(card):
+        skill += "〔限制中〕"
     if action.kind == "place":
         return f"{skill}置入常规交锋 {action.duel_index + 1}"
     if action.kind == "replace":
@@ -151,6 +187,19 @@ def special_action_label(action):
     if action.kind == "intercept":
         return f"用{skill}迎击即时交锋 {action.response_number}"
     return f"按牌面打出{skill}"
+
+
+def seat_action_view(action, player):
+    """Describe one action offered to this seat, retaining concealed target identities."""
+    target = action.target_card
+    target_id = None
+    if target and target.player is player:
+        target_id = hand_key(target) if target in player.cardspace.hand.content else target.id
+    return {"kind": action.kind, "label": special_action_label(action),
+            "card_id": hand_key(action.card) if action.card else None, "ability_id": action.ability_id,
+            "target_card_id": target_id, "character_id": action.character.id if action.character else None,
+            "duel_number": action.duel_index + 1 if action.duel_index is not None else None,
+            "response_number": action.response_number}
 
 
 class Displayer:
@@ -236,16 +285,19 @@ class Displayer:
         """Private choices, in the same order as this revision's engine options."""
         if self._viewer is None:
             return []
-        return [{"kind": a.kind, "label": special_action_label(a),
-                 "card_id": a.card.id if a.card else None,
-                 "target_card_id": a.target_card.id if a.target_card else None,
-                 "character_id": a.character.id if a.character else None,
-                 "duel_number": a.duel_index + 1 if a.duel_index is not None else None,
-                 "response_number": a.response_number}
-                for a in self._game.special.options(self._viewer)]
+        return [seat_action_view(a, self._viewer) for a in self._game.special.options(self._viewer)]
 
     def catalog(self) -> dict:
         """Public printed rules for the selected roster, independent of card locations."""
+        actions = {action["id"]: action["name"] for p in self._game.players for c in p.characters
+                   for action in c.data.get("actions", ())}
+        actions.update({action["id"]: action["name"] for rule in self._game.ability_rules.values()
+                        if (action := rule.get("action"))})
+        statuses = {name: [describe_entry(e) for e in entries]
+                    for name, entries in self._game.status_entries.items()}
+        for name, rule in self._game.status_rules.items():
+            if rule.get("description"):
+                statuses.setdefault(name, []).insert(0, rule["description"])
         return {
             "players": [{
                 "side": p.side,
@@ -253,11 +305,12 @@ class Displayer:
                     "id": c.id, "name": c.name,
                     "passives": _passives(c.passive_skill_data),
                     "faction_passives": _passives(c.data.get("faction_passives", ())),
-                    "skills": [_printed_skill(skill) for skill in c.skill_data],
+                    "skills": [_printed_skill(skill, include_forms=True) for skill in c.skill_data],
                 } for c in p.characters],
             } for p in self._game.players],
-            "statuses": {name: [describe_entry(e) for e in entries]
-                         for name, entries in self._game.status_entries.items()},
+            "statuses": statuses,
+            "actions": actions,
+            "ability_effects": {name: rule.get("description", "") for name, rule in self._game.ability_rules.items()},
         }
 
     def _player(self, player):
@@ -271,7 +324,8 @@ class Displayer:
             "draw_count": len(zones.draw.content), "hand_count": len(zones.hand.content),
             "delayed_discard_count": len(zones.delayed_discard.content),
             "out_of_combat_count": len(zones.out_of_combat.content),
-            "hand": [_visible_card(c) for c in zones.hand.content] if own else None,
+            "hand": [{**_visible_card(c), "action_key": hand_key(c), "use_restricted": c.character.skill_restricted(c)}
+                     for c in zones.hand.content] if own else None,
             "delayed_discard": [_visible_card(c) for c in zones.delayed_discard.content] if own else None,
             "out_of_combat": [_visible_card(c) for c in zones.out_of_combat.content] if own else None,
         }
@@ -280,14 +334,20 @@ class Displayer:
         return {
             "id": c.id, "name": c.name, "title": c.data.get("title"), "faction": c.faction,
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
+            "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": dict(c.statuses), "bleed_burst": c.bleed_burst,
+            "ability_effects": dict(c.ability_effects),
+            "reserved_dice": [{"skill": reserve.card.name, "position": reserve.position, "remaining": reserve.remaining}
+                              for reserve in c.reserved_dice],
+            "status_overflow": {name: {"amount": n, "threshold": c.status_rules[name]["overflow_batch"]["threshold"]}
+                                for name, n in c.status_overflow.items()},
             "cost": {"available": c.available_cost, "refill": c.independent_cost, "spent": c.used_independent_cost},
             "duels": {"max": c.max_duels, "used": c.used_duels if own or self._game.cards_revealed else None},
         }
 
     def _board_visible(self, card):
-        return card.player is self._viewer or (
+        return card.player is self._viewer or card.state == CardState.PLACED_FACE_UP or (
             self._game.cards_revealed and card.state != CardState.PLACED_FACE_DOWN)
 
     def _board_card(self, card):
@@ -312,6 +372,7 @@ class Displayer:
                 "side": player.side, "node": pipe.current_node.id if pipe.current_node else None,
                 "waiting_at": pipe.blocked_at.id if pipe.blocked_at else None,
                 "card_id": card.id if card is not None else None,
+                "card_instance_id": card.instance_id if card is not None else None,
                 "play_mode": space.space[index].play_mode(card) if (early or instant) and card is not None else None,
                 "range_deficit": card.range_deficit if card is not None else 0,
                 "character_id": card.character.id if card is not None else None,

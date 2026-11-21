@@ -9,6 +9,7 @@ from game import Game
 from loader import load_characters_from_packs
 from models.card import CardState
 from models.character import Character
+from models.opcode import OpCode
 from player.player import Player
 
 
@@ -81,6 +82,18 @@ class DisplayerTests(unittest.TestCase):
             self.assertIsNone(team["hand"])
             self.assertEqual(slot["cards"][0]["id"], team["name"] + "置入")
             self.assertEqual(slot["cards"][0]["character_id"], team["characters"][0]["id"])
+
+    def test_lightcore_and_its_reduced_maximum_are_public(self):
+        game = self.make_game()
+        target = game.players[0].characters[0]
+        old = Displayer(game).snapshot()["players"][0]["characters"][0]
+        self.assertEqual((old["lightcore_hp"], old["max_lightcore_hp"]), (12, 12))
+        game.context.eval_block([target, 14, OpCode.LIGHTCORE_DAMAGE])
+        game.context.eval_block([target, 2, OpCode.LIGHTCORE_DAMAGE])
+        for viewer in (None, 1, 2):
+            now = Displayer(game, viewer_side=viewer).snapshot()["players"][0]["characters"][0]
+            self.assertEqual((now["hp"], now["lightcore_hp"], now["max_lightcore_hp"]), (3, 6, 8))
+        self.assertEqual(old["max_lightcore_hp"], 12)
 
     def test_delayed_discard_and_out_of_combat_lists_are_private(self):
         game = self.make_game()

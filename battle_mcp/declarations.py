@@ -3,9 +3,10 @@
 EVENTS = ("decision", "placement", "pre_reveal", "roll", "scores_ready", "timing", "action",
           "combat", "reveal", "turn_end", "timer")
 ORDINARY = {"place", "pass", "end", "attack", "intercept", "let_through", "end_attack",
-            "special_intercept", "special_pass_intercept"}
-KINDS = ORDINARY | {"special_place", "special_replace", "special_attack", "special_custom"}
-MOVE_KEYS = {"kind", "card_id", "character_id", "duel_number", "response_number", "target_card_id"}
+            "special_intercept", "special_pass_intercept", "special_choose_card", "special_decline_card",
+            "special_choose_slot"}
+KINDS = ORDINARY | {"special_place", "special_replace", "special_attack", "special_custom", "special_ability"}
+MOVE_KEYS = {"kind", "card_id", "character_id", "duel_number", "response_number", "target_card_id", "ability_id"}
 CONDITIONS = {"turn", "duel_kind", "duel_number", "die_number", "own_card_id", "score",
               "timing", "actor_side", "action_kind", "pending_number", "after_ms"}
 NUMBERS = {"turn", "duel_number", "die_number", "actor_side", "pending_number", "after_ms",
