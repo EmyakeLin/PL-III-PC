@@ -112,7 +112,7 @@ class PreRevealPhase:
 
     def attack_cards(self, player):
         return ([c for c in self.playable_hand(player)
-                 if (c.data.get("pre_reveal") or "attack" in c.data.get("anytime_play", ()))
+                 if (c.can_open_pre_reveal or "attack" in c.data.get("anytime_play", ()))
                  and self.attack_targets(c)]
                 if self.can_attack(player) else [])
 
@@ -193,7 +193,7 @@ class PreRevealPhase:
         self.space.append_new_duel(slot)
         label = character.name if character is not None else f"常规交锋 {duel_index + 1}"
         print(f"开牌前交锋 {len(self.space.space)}：{card.player.name} 声明「{card.name}」→ {label}。")
-        self.play_from_hand(slot, card, character)
+        self.play_declared_skill(slot, card, character)
         self._refresh(offer_interception_to=enemy)
         return slot
 
@@ -216,7 +216,7 @@ class PreRevealPhase:
         slot.target_character = slot.target_duel_index = None
         slot.ready = True
         print(f"{player.name} 用「{card.name}」拦截，开牌前交锋 {self.space.space.index(slot) + 1} 转火。")
-        self.play_from_hand(slot, card, slot.attack_card.character)
+        self.play_declared_skill(slot, card, slot.attack_card.character)
         self._refresh()
 
     def pass_intercept(self, duel_number=None, player=None):
@@ -228,16 +228,19 @@ class PreRevealPhase:
         slot.ready = True
         self._refresh()
 
-    def play_from_hand(self, slot, card, target):
+    def play_declared_skill(self, slot, card, target):
         # Settle the new zone before publishing the change in hand size.
         slot.add_content(card.player.side, card)
         card.state = CardState.PLACED_FACE_UP
-        hand = card.player.cardspace.hand
-        hand.remove_card(hand.content.index(card))
+        if not card.temporary:
+            hand = card.player.cardspace.hand
+            hand.remove_card(hand.content.index(card))
         self.game.context.dispatch_pipeline(
             "on_pre_reveal_play", side=card.player.side, source=card.character, card=card,
             target=target, target_duel_index=slot.target_duel_index, duel=slot,
             play_mode=slot.play_mode(card))
+
+    play_from_hand = play_declared_skill
 
     def begin_resolution(self):
         if self.phase != "ready" or any(not slot.ready for slot in self.space.space):

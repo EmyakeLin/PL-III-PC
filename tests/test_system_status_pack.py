@@ -110,6 +110,50 @@ class SystemStatusPackTests(unittest.TestCase):
         actor.after_damage_part()
         self.assertEqual(actor.hp, 10)
 
+    def test_turn_end_burn_starts_at_four_stacks(self):
+        actor = fighter(Player(1, "甲"))
+        actor.add_status("烧伤", 3)
+        actor.on_turn_end()
+        self.assertEqual((actor.hp, actor.statuses["烧伤"]), (15, 3))
+        actor.add_status("烧伤", 1)
+        actor.on_turn_end()
+        self.assertEqual((actor.hp, actor.statuses["烧伤"]), (14, 1))
+
+    def test_ignition_rounds_up_after_damage_modifiers_and_preserves_die_credit(self):
+        left, right = Player(1, "甲"), Player(2, "乙")
+        game = Game([left, right])
+        source, target = fighter(left), fighter(right)
+        card = Card(left, dict(id="spark", name="测试突刺", cost=0, dice=[dict(type="pierce", level=1)]), source)
+        die = card.get_current_die(game)
+        ctx = game.context
+        ctx.register_entries(source, [dict(trigger="on_spark",
+            operation={"op": "ignite", "from_die": True, "final_divisor": 2})])
+        ctx.register_entries(target, [dict(trigger="BEFORE RESOLVE_DAMAGE", subject="target",
+            operation={"op": "program", "code": [2, "ADD"]})])
+        receipts = []
+        ctx.register_entries(target, [dict(trigger="AFTER DAMAGE", subject="target", operation=lambda vm:
+            receipts.append((vm.event["damage_die"], vm.event["damage_amount"])))])
+        target.add_status("烧伤", 12)
+        target.add_shield("normal", 2)
+        ctx.dispatch_pipeline("on_spark", source=source, target=target, card=card, die=die)
+        # 3 printed + 2 from the damage listener, then ceil(5 / 2), then shields.
+        self.assertEqual(receipts, [(die, 3)])
+        self.assertEqual((target.hp, target.shield, target.statuses["烧伤"]), (14, 0, 7))
+
+    def test_ignite_burns_stacks_at_zero_damage_and_below_four(self):
+        left, right = Player(1, "甲"), Player(2, "乙")
+        game = Game([left, right])
+        source, target = fighter(left), fighter(right)
+        ctx = game.context
+        ctx.register_entries(source, [dict(trigger="on_spark", operation="引燃")])
+        ctx.register_entries(target, [dict(trigger="BEFORE DAMAGE", operation="Armor: 3")])
+        for starting, sequence in ((7, (4, 1, 0)), (3, (1, 0)), (2, (0,))):
+            with self.subTest(starting=starting):
+                target.add_status("烧伤", starting)
+                for remaining in sequence:
+                    ctx.dispatch_pipeline("on_spark", source=source, target=target)
+                    self.assertEqual((target.hp, target.statuses.get("烧伤", 0)), (15, remaining))
+
     def test_aliases_share_stacks_costs_checks_and_notifications_in_a_bare_game(self):
         left, right = Player(1, "甲"), Player(2, "乙")
         game = Game([left, right])

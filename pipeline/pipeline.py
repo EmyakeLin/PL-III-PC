@@ -92,6 +92,7 @@ class Pipeline:
         self._frames = []
         self._rounds_started = 0
         self._closed_slots = WeakSet()
+        self._pending_special_duels = []
 
     @property
     def in_duel_phase(self):
@@ -128,7 +129,7 @@ class Pipeline:
             for pipe in self.side_pipelines.values()))
 
     def next_step(self):
-        if self.in_duel_phase:
+        if self.in_duel_phase or (self._pending_special_duels and not self.game.is_over):
             return self.step_duel_combat()
         if self.is_finished or self.current_step_index + 1 >= len(self.step_list):
             self.is_finished = True
@@ -224,6 +225,24 @@ class Pipeline:
     def start_special_duel(self, slot):
         self.start_special_duels([slot])
 
+    def queue_special_duels(self, slots):
+        """Hooks finish in their originating frame; the next step starts their attacks in order."""
+        self._pending_special_duels.extend(slots)
+
+    def release_temporary_skills(self, slot):
+        for cards in slot.content.values():
+            for card in tuple(cards):
+                if card.temporary:
+                    if not self.game.is_over and card in self.game.used_cards:
+                        self.game.context.withdraw_card_use(card, slot, used=True, scopes=("turn",))
+                    slot.remove_card(card)
+                    card.dissolve()
+
+    def end_battle(self):
+        self._pending_special_duels.clear()
+        for slot in self.game.board_slots():
+            self.release_temporary_skills(slot)
+
     def start_special_duels(self, slots):
         """Suspend the current turn or duel and resolve this group in declaration order."""
         slots = list(slots)
@@ -276,8 +295,18 @@ class Pipeline:
             return False
         card = use.card
         side = card.player.side
-        if card not in self.game.special.own_hand_skills(card.character):
+        if self.game.is_over or not card.character.is_alive or card.character.skill_restricted(card):
             return False
+        if not card.temporary and card not in self.game.special.own_hand_skills(card.character):
+            return False
+        if at == "immediate_attack":
+            if not any(subject in player.characters for player in self.game.players if player is not card.player):
+                return False
+            if not subject.is_alive:
+                return False
+            use.set_price()
+            self.game.special.declare_field_attack(card, subject, deferred=True)
+            return True
         if at == "slot_tail":
             slot = subject or event.get("duel")
         else:
@@ -310,9 +339,7 @@ class Pipeline:
             return False
         if not self.game.place_in_duel(side, card, space.space.index(slot), queued=regular):
             return False
-        card.use_state["use_discount"] = max(0, use.discount)
-        if use.prepaid:
-            card.use_state["cost_prepaid"] = True
+        use.set_price()
         if at == "slot_tail":
             return True
         cards = slot.get_content(side)
@@ -422,6 +449,9 @@ class Pipeline:
 
     def step_duel_combat(self):
         if not self.game.is_over:
+            if self._pending_special_duels:
+                slots, self._pending_special_duels = self._pending_special_duels, []
+                self.start_special_duels(slots)
             try:
                 return next(self._frame.runner)
             except StopIteration:
@@ -449,6 +479,7 @@ class Pipeline:
                 print(f"\n结算{label} {self.game.duel_position()[1] + 1}")
                 if not slot.prepare(self.game.pre_reveal):
                     print("进攻牌或目标已离场，本场交锋跳过。")
+                    self.release_temporary_skills(slot)
                     self._closed_slots.add(slot)
                     space.current_duel_index += 1
                     continue
@@ -461,6 +492,7 @@ class Pipeline:
                 self._frame.started = False
                 yield from self._play_slot(slot, pipes)
                 self.game.context.expire_lasting_entries(slot)
+            self.release_temporary_skills(slot)
             self._closed_slots.add(slot)
             space.current_duel_index += 1
 
@@ -994,6 +1026,7 @@ class Pipeline:
                     card=pipe.card, die=pipe.die, target=target, duel=duel,
                     play_mode=play_mode, combat_window=combat_window,
                     simultaneous_solo=bool(self.current_clash_pair and self.current_clash_pair.split),
+                    one_sided=self.current_clash_pair is None or self.current_clash_pair.split,
                     hit_mode=getattr(pipe.die, "hit_mode", None),
                     hit_index=getattr(pipe.die, "hit_index", 0),
                     clash_result=getattr(pipe.die, "clash_result", None),

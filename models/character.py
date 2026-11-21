@@ -3,7 +3,9 @@ from math import prod
 import random
 
 from models.card import Card
+from models.dice import Dice, DiceLevel, dice_value_range
 from models.opcode import OpCode
+from models.values import ValueBounds
 
 
 class CharacterRank(Enum):
@@ -13,13 +15,13 @@ class CharacterRank(Enum):
     EMPOWERED_BOSS = auto()
 
 
-class SpeedDie:
-    """An unprinted die used only to determine initiative."""
-    card = None
+class SpeedDie(Dice):
+    """An initiative die uses the same level ladder as combat dice."""
 
-    def __init__(self, owner):
-        self.owner = owner
-        self.value = 0
+    def __init__(self, owner, high):
+        grade = next((level for level, bounds in dice_value_range.items() if bounds[1] >= high), DiceLevel.D20)
+        super().__init__({"type": "blank", "level": grade.value, "roll_max": high}, owner.game)
+        self.owner = self.character = owner
 
 
 RANK_DUEL_MAP = dict(zip(CharacterRank, (1, 2, 3, 4)))
@@ -136,10 +138,16 @@ class Character:
             self.game.next_turn_statuses.append((source, self, name, amount, authority))
 
     def roll_speed(self):
-        die = SpeedDie(self)
         low, high = self.data.get("speed_die", (1, 4))
-        with self.game.context.binding(roll_kind="speed"):
-            rolled = self.game.context.eval_block([low, high, 0, die, OpCode.ROLL])
+        die = SpeedDie(self, high)
+        ctx = self.game.context
+        minimum = ValueBounds()
+        ctx.dispatch_pipeline("before_speed_roll", source=self, side=self.player.side, die=die,
+                              value_ref=minimum, printed_min=low, roll_kind="speed")
+        high = die.roll_max
+        low = min(high, max(1, minimum.apply(low)))
+        with ctx.binding(roll_kind="speed"):
+            rolled = ctx.eval_block([low, high, 0, die, OpCode.ROLL])
         raw = min(high, max(low, die.value)) if rolled is not None else 0
         self.speed = raw + self.status_modifier("speed")
         return self.speed
@@ -343,6 +351,10 @@ class Character:
 
     def notify_status_change(self, name, previous, current):
         if previous != current:
+            duel = self.game.resolving_duel if self.game is not None else None
+            if duel is not None and current < previous:
+                key = self.player.side, name
+                duel.status_lost[key] = duel.status_lost.get(key, 0) + previous - current
             self._status_event("on_status_changed", status=name, previous_stacks=previous,
                                current_stacks=current, actual_delta=current - previous)
 

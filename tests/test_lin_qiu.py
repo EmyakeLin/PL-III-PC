@@ -278,7 +278,8 @@ class LinQiuTests(unittest.TestCase):
     def test_standard_shuffled_match_reaches_victory(self):
         game = replay()
         self.assertTrue(game.is_over)
-        self.assertEqual((game.winner.name, game.turn_number), ("林秋", 6))
+        self.assertEqual((game.winner.name, game.turn_number), ("林秋", 7))
+        self.assertEqual([actor.hp for player in game.players for actor in player.characters], [8, 0, 0])
         self.assertIn("「分界」本次费用减免 2，实付 2 费", self.log.getvalue())
         self.assertIn("「空断」追加命中", self.log.getvalue())
 

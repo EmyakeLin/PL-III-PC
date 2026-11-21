@@ -209,15 +209,20 @@ def run_effect(ctx, entry, operation):
             keywords = rule.get("activation", {}).get("keywords", ())
             if name in keywords:
                 owner = entry.owner
+                final_divisor = data.get("final_divisor", 1)
+                if type(final_divisor) is not int or final_divisor < 1:
+                    raise ValueError("状态发动的最终伤害除数须为正整数")
                 if data.get("from_die"):
-                    owner = ctx.event.get("die")
+                    owner = (ctx.event.get("activation_die") if ctx.event.get("opcode") == "ACTIVATE_STATUS"
+                             else ctx.event.get("die"))
                     if (owner is None or character_of(owner) is not source
                             or ctx.range_blocks_target(target, card=owner.card)):
                         return
                 ctx.stack.extend((target, status))
                 return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
                                       activation_owner=owner, activation_kind=keywords[0],
-                                      activation_multiplier=data.get("multiplier", 1))
+                                      activation_multiplier=data.get("multiplier", 1),
+                                      activation_final_divisor=final_divisor)
         raise ValueError(f"未知词条操作 {name!r}")
     with ctx.binding(source=source, target=target, authority=entry.authority):
         ctx.eval_block(block)

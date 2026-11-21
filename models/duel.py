@@ -49,6 +49,7 @@ class DuelSlot:
         self.settled = False
         self.current_card_index = {}
         self.damage_taken = {}
+        self.status_lost = {}
 
     def add_content(self, side, content):
         self.content.setdefault(side, []).append(content)

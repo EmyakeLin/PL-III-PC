@@ -13,8 +13,14 @@ def range_trait(data, key, card):
     if condition and card is not None:
         if "skill_state" in condition:
             active = card.use_state.get(condition["skill_state"])
+        elif "speed_lead" in condition:
+            target = card.range_target()
+            active = target is not None and card.character.speed - target.speed >= condition["speed_lead"]
         else:
-            active = card.character is not None and card.character.statuses.get(condition["status"], 0)
+            stacks = card.character.statuses.get(condition["status"], 0) if card.character else 0
+            if "snapshot" in condition:
+                stacks = card.use_state.get(condition["snapshot"], stacks)
+            active = stacks >= condition.get("minimum", 1)
         if active:
             value = max(value, condition["amount"])
     per_stack = data.get(key + "_per_stack")
@@ -34,11 +40,22 @@ def validate_range_trait(data, key):
         raise ValueError(f"{key} 必须是 0 到 3 的整数")
     if key + "_when" in data:
         condition = data[key + "_when"]
-        if (not isinstance(condition, dict)
-                or set(condition) not in ({"status", "amount"}, {"skill_state", "amount"})
-                or not isinstance(name := condition.get("status", condition.get("skill_state")), str)
-                or not name.strip() or type(condition["amount"]) is not int or not 0 <= condition["amount"] <= 3):
-            raise ValueError(f"{key}_when 需要状态或本次技能标记，以及 0 到 3 的远程等级")
+        if not isinstance(condition, dict) or type(condition.get("amount")) is not int or not 0 <= condition["amount"] <= 3:
+            raise ValueError(f"{key}_when 需要 0 到 3 的远程等级")
+        gates = set(condition) - {"amount"}
+        if gates == {"speed_lead"} and type(condition["speed_lead"]) is int:
+            return
+        if "snapshot" in gates:
+            snapshot = condition["snapshot"]
+            if "status" not in gates or not isinstance(snapshot, str) or not snapshot.strip():
+                raise ValueError(f"{key}_when 的状态快照须指定技能内的记录名称")
+            gates.remove("snapshot")
+        if gates in ({"status"}, {"status", "minimum"}, {"skill_state"}):
+            name = condition.get("status", condition.get("skill_state"))
+            minimum = condition.get("minimum", 1)
+            if isinstance(name, str) and name.strip() and type(minimum) is int and minimum > 0:
+                return
+        raise ValueError(f"{key}_when 需要状态层数、速度差或本次技能标记")
 
 
 def validate_skill_traits(data):
@@ -66,7 +83,13 @@ def describe_range_traits(data):
         if data.get(key):
             traits.append(label(data[key]))
         if condition := data.get(key + "_when"):
-            when = f"【{condition['status']}】" if "status" in condition else "本技能相应词条生效时"
+            if "speed_lead" in condition:
+                when = f"个人速度领先目标至少{condition['speed_lead']}时"
+            elif "minimum" in condition:
+                timing = "使用时" if "snapshot" in condition else ""
+                when = f"{timing}{condition['status']}至少{condition['minimum']}层，"
+            else:
+                when = f"【{condition['status']}】" if "status" in condition else "本技能相应词条生效时"
             traits.append(when + label(condition["amount"]))
         if per_stack := data.get(key + "_per_stack"):
             traits.append(f"每层{per_stack}提供1级" + ("远程" if key == "range_level" else "无视远程"))
@@ -77,6 +100,8 @@ def describe_skill_traits(data):
     traits = describe_range_traits(data)
     if data.get("pre_reveal"):
         traits.append("可在开牌前交锋打出")
+    if required := data.get("pre_reveal_requires_status"):
+        traits.append("、".join(f"{name}达到{count}层" for name, count in required.items()) + "时可在开牌前交锋打出")
     if data.get("before_duel_attack"):
         traits.append("可在交锋开始前打出")
     if data.get("pre_reveal_target") == "occupied_enemy_slot":
@@ -107,7 +132,7 @@ class CardState(Enum):
 
 
 class Card:
-    def __init__(self, player, data, character=None):
+    def __init__(self, player, data, character=None, *, temporary=False):
         validate_skill_traits(data)
         game = getattr(player, "game", None)
         if game is not None:
@@ -116,6 +141,7 @@ class Card:
         self.player = player
         self.character = character
         self.printed_owner = character
+        self.temporary = temporary
         self.printed_data = data
         self.data = data
         self._form = None
@@ -146,6 +172,27 @@ class Card:
     def meets_use_requirements(self):
         return all(self.character is not None and self.character.statuses.get(name, 0) >= minimum
                    for name, minimum in self.data.get("requires_status", {}).items())
+
+    @property
+    def can_open_pre_reveal(self):
+        if self.data.get("pre_reveal"):
+            return True
+        required = self.data.get("pre_reveal_requires_status", {})
+        return bool(required) and self.character is not None and all(
+            self.character.statuses.get(name, 0) >= count for name, count in required.items())
+
+    def range_target(self):
+        game = getattr(self.player, "game", None)
+        if game is not None and game.pipeline.in_duel_phase:
+            sides = game.pipeline.side_pipelines
+            pipe = sides.get(self.player.side)
+            if pipe is not None and pipe.card is self:
+                other = next((p.card for side, p in sides.items() if side != self.player.side and p.card is not None), None)
+                if other is not None:
+                    return other.character
+                if pipe.target is not None:
+                    return pipe.target
+        return self.range_opponent.character if self.range_opponent is not None else None
 
     def has_next_die(self):
         return not self.destroyed and self.current_dice_index < len(self._dice_order)
@@ -266,6 +313,14 @@ class Card:
     def return_to_printed_owner(self):
         self.reset_for_draw()
         self.set_controller(self.printed_owner)
+
+    def dissolve(self):
+        """Release a temporary skill's listeners and any materialized dice when it leaves play."""
+        self.destroyed = True
+        self._release_dice()
+        self.player.game.context.unregister_entries(self)
+        if self in self.character.conditional_cards:
+            self.character.conditional_cards.remove(self)
 
     @property
     def effective_range(self):

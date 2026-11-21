@@ -77,13 +77,13 @@ class LightcoreBossTests(unittest.TestCase):
         self.assertEqual((self.target.shield, boss.reinforced_shield), (7, 2))
         self.assertNotIn("钟振", boss.statuses)
 
-    def test_insufficient_resonance_is_consumed_without_echo(self):
+    def test_insufficient_resonance_is_retained_without_echo(self):
         boss = self.choose("阙鸣")
         boss.add_status("钟振", 1)
         initial = self.target.lightcore_hp
         self.play("复鸣")
         self.assertEqual((self.target.hp, self.target.lightcore_hp), (30, initial - 7))
-        self.assertNotIn("钟振", boss.statuses)
+        self.assertEqual(boss.statuses["钟振"], 1)
 
     def test_charged_ultimate_uses_piercing_direct_damage(self):
         boss = self.choose("阙鸣")

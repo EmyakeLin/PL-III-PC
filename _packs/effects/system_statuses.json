@@ -8,11 +8,9 @@
         "label": "烧伤", "keywords": ["ignite", "引燃"],
         "operation": {"op": "program", "code": [
           "$target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "units", "STORE",
-          {"local": "units"}, 0, "GT", [
-            "$target", {"local": "units"}, 3, "MIN",
-            "normal", "none", "DAMAGE_AMOUNT", 0, "GT",
-            ["$target", "烧伤", 0, {"local": "units"}, 2, "ADD", "SUB", "STATUS"], "WHEN"
-          ], "WHEN"
+          {"local": "units"}, 0, "GT",
+          ["$target", {"local": "units"}, 3, "MIN", "normal", "none", "DAMAGE"], "WHEN",
+          "$target", "烧伤", 0, {"local": "units"}, 2, "ADD", "SUB", "STATUS"
         ]}
       }
     },
@@ -35,7 +33,7 @@
   "status_entries": {
     "烧伤": [{
       "trigger": "on_character_turn_end", "damage_cause": "烧伤",
-      "description": "回合结束时，若烧伤至少 4 层，每满 4 层算一组。自身承受一次普通伤害，原始伤害等于组数，至多 3 点。若入盾前的伤害量大于 0，烧伤减少「组数 + 2」层，即使护盾挡下全部伤害也照常减少。",
+      "description": "回合末持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。",
       "when": {"owner_status_at_least": {"烧伤": 4}},
       "operation": {"op": "program", "code": ["$self", "烧伤", "ACTIVATE_STATUS", "POP"]}
     }],

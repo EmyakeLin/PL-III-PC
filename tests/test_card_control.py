@@ -252,5 +252,5 @@ class CardControlTests(unittest.TestCase):
         self.place(ranged, self.skill(self.b, "近攻", [die(4, "1")]))
         self.battle()
         self.assertEqual((self.a.hp, self.b.hp), (14, 15))
-        self.assertNotIn("能源", self.a.statuses)
+        self.assertEqual(self.a.statuses["能源"], 1)
         self.assertEqual(self.a.used_independent_cost + self.a.player.used_cost, 0)

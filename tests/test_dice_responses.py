@@ -143,6 +143,18 @@ class DiceResponseTests(unittest.TestCase):
         self.assertIsNone(card.instantiated_dice[0])
         self.assertEqual(self.enemy.hp, 29)
 
+    def test_surcharged_die_skips_without_spending_its_last_ammo(self):
+        self.actor.add_status("弹药", 1)
+        self.game.context.register_entries(self.actor, [dict(
+            trigger="BEFORE SPEND_STATUS", when={"status": "弹药"},
+            operation={"op": "program", "code": [1, "ADD"]})])
+        card = self.card(self.actor, "加费射击", [die(9, 4, resource_cost=dict(status="弹药", amount=1)), die(0)])
+        self.place(card, 0)
+        self.fight()
+        self.assertEqual(self.actor.statuses["弹药"], 1)
+        self.assertNotIn("弹药", card.use_state.get("spent_statuses", {}))
+        self.assertEqual(self.enemy.hp, 29)
+
     def test_solo_defense_and_an_empty_round_cannot_spend_a_response(self):
         self.reserve_card(1)
         self.place(self.card(self.enemy, "无人对位的闪避", [dict(type="evade", level=1)]), 1)

@@ -60,13 +60,13 @@ class ReplayPlayer(Player):
         values = {c: card_value(c) for c in hand}
         for size in range(1, len(hand) + 1):
             for selection in combinations(hand, size):
-                regular = Counter(c.character for c in selection if not c.data.get("pre_reveal"))
+                regular = Counter(c.character for c in selection if not c.can_open_pre_reveal)
                 if any(n + actor.used_duels > actor.max_duels for actor, n in regular.items()):
                     continue
                 score = sum(values[c] for c in selection)
                 if score > best_score and self.affordable(selection):
                     best, best_score = selection, score
-        regular = [c for c in best if not c.data.get("pre_reveal")]
+        regular = [c for c in best if not c.can_open_pre_reveal]
         if not regular:
             return "ended"
         card = max(regular, key=values.get)

@@ -28,6 +28,13 @@ def run_program(ctx, entry, tokens):
             return getattr(event.get("target"), field.removeprefix("target_"), 0)
         if field == "speed_lead":
             return actor.speed - next(other.speed for other in ctx.game.players if other is not player)
+        if field == "target_speed_lead":
+            target = event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
+            return actor.speed - target.speed if target is not None else 0
+        if field == "printed_min":
+            return event["printed_min"]
+        if field == "opponent_player":
+            return next(other for other in ctx.game.players if other is not player)
         if field == "target_alive":
             return bool(getattr(event.get("target"), "is_alive", False))
         if field == "target_player":
@@ -59,7 +66,8 @@ def run_program(ctx, entry, tokens):
             return event["die"].did_deal_damage
         if field == "damage_die_is_attack":
             return bool(getattr(event.get("damage_die"), "is_attack", False))
-        if field in ("activation_kind", "activation_multiplier", "damage_card", "damage_status"):
+        if field in ("activation_kind", "activation_multiplier", "activation_owner", "activation_origin",
+                     "activation_die", "activation_die_type", "damage_card", "damage_status"):
             return event.get(field)
         if field == "clash_result":
             return event["die"].clash_result
@@ -153,6 +161,21 @@ def run_program(ctx, entry, tokens):
         name, target = vm.pop(), vm.pop()
         vm.push(target is not None and target.canonical_status_name(name) in target.active_statuses)
 
+    def duel_status_lost(vm):
+        name, side_owner = vm.pop(), vm.pop()
+        duel = vm.game.resolving_duel
+        vm.push(duel.status_lost.get((side_owner.side, name), 0) if duel is not None else 0)
+
+    def repeat_while(vm):
+        action, condition, limit = vm.pop(), vm.pop(), vm.pop()
+        for _ in range(limit):
+            if vm.executions and vm.executions[-1].cancelled:
+                break
+            vm.eval_block(condition)
+            if (vm.executions and vm.executions[-1].cancelled) or not vm.pop():
+                break
+            vm.eval_block(action)
+
     def once_per_round(vm):
         key = vm.pop()
         vm.push(key not in actor.round_triggers)
@@ -214,6 +237,12 @@ def run_program(ctx, entry, tokens):
         terms, card = vm.pop(), vm.pop()
         vm.push(SkillUse(card, **terms) if isinstance(terms, dict) else SkillUse(card, discount=terms))
 
+    def copy_skill(vm):
+        from models.special_actions import SkillCopy
+        skill_id, actor = vm.pop(), vm.pop()
+        data = next((card.printed_data for card in actor.skills if card.id == skill_id), None) if actor else None
+        vm.push(SkillCopy(actor, data) if data is not None else None)
+
     def contains(vm):
         element, collection = vm.pop(), vm.pop()
         vm.push(element in collection)
@@ -229,15 +258,17 @@ def run_program(ctx, entry, tokens):
         vm.push(vm.execute_op(OpCode.SPEND_STATUS) or 0)
 
     def spend_in_full(vm):
-        vm.push(bool(vm.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full")))
+        vm.push(vm.pay_status_cost())
 
     words = {
+        "REPEAT_WHILE": repeat_while, "DUEL_STATUS_LOST": duel_status_lost,
+        "CHARACTER_OF": lambda vm: vm.push(character_of(vm.pop())),
         "DAMAGE_AMOUNT": lambda vm: vm.push(vm.execute_op(OpCode.DAMAGE) or 0),
         "DAMAGE_ADD": damage_add,
         "ONCE_PER_ROUND": once_per_round, "STATUS_ACTIVE": status_active,
         "DIE_STATE": die_state,
         "ACTIVATE_STATUS": lambda vm: vm.push(bool(vm.execute_op(OpCode.ACTIVATE_STATUS))),
-        "SKILL_USE": skill_use, "INSERT_AT": insert_at,
+        "SKILL_USE": skill_use, "COPY_SKILL": copy_skill, "INSERT_AT": insert_at,
         "CARD_COST": lambda vm: vm.push(vm.pop().cost), "CONTAINS": contains,
         "TAKE_HAND_CARD": lambda vm: vm.push(vm.execute_op(OpCode.TAKE_HAND_CARD)),
         "SHIELD_COUNT": shield_count,

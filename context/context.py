@@ -166,6 +166,10 @@ class Context:
             self.code_stream = previous
         return result
 
+    def pay_status_cost(self):
+        """Pay the SPEND_STATUS operands on the stack only if the adjusted cost is affordable."""
+        return bool(self.execute_op(OpCode.SPEND_STATUS, require_full=True, result_field="paid_in_full"))
+
     def execute_op(self, opcode, *, result_field="result", **fields):
         """Run one hooked operation and read a result field from its own event."""
         names = OPERANDS.get(opcode, ())
@@ -205,6 +209,13 @@ class Context:
             fields.setdefault("activation_owner", None)
             fields.setdefault("activation_kind", None)
             fields.setdefault("activation_multiplier", 1)
+            fields.setdefault("activation_final_divisor", 1)
+            owner = fields["activation_owner"]
+            fields["activation_origin"] = (
+                originating_entry.entry.origin if originating_entry and owner is originating_entry.entry.owner
+                else kind_of(owner) if owner is not None else "status")
+            fields["activation_die"] = owner if fields["activation_origin"] == "die" else None
+            fields["activation_die_type"] = getattr(fields["activation_die"], "type", None)
         if self._range_blocks_op(opcode, fields) or (
                 opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
             del self.stack[mark:]
@@ -238,6 +249,8 @@ class Context:
         elif opcode in (OpCode.SPEND_STATUS, OpCode.SPEND_ABILITY_EFFECT):
             actor = fields["target"]
             fields.update(source=actor, side=actor.player.side)
+            # A nested spend chooses its own mode, even inside a conditional payment hook.
+            fields.setdefault("require_full", False)
         elif opcode in (OpCode.SKILL_FINAL_ADD, OpCode.SKILL_LEVEL_ADD, OpCode.SET_SKILL_STATE,
                         OpCode.QUEUE_HIT, OpCode.SKIP_ROUND,
                         OpCode.DIE_FINAL_ADD, OpCode.DIE_BASE_ADD, OpCode.DIE_LEVEL_ADD, OpCode.SET_DIE_STATE,
@@ -260,11 +273,13 @@ class Context:
             fields.setdefault("base_amount", fields["amount"])
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
+                fields["damage_final_divisor"] = 1
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
                 if originating_entry and originating_entry.entry.trigger == "activate_status":
                     multiplier = self.event.get("activation_multiplier", 1)
                     if multiplier != 1:
                         fields["modifiers"].append(("damage_multiply", multiplier, "concept"))
+                    fields["damage_final_divisor"] = self.event.get("activation_final_divisor", 1)
             elif opcode in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE):
                 fields["damage_amount"] = fields["amount"]
                 if opcode == OpCode.FINALIZE_DAMAGE:
@@ -348,10 +363,12 @@ class Context:
         if card is not None and getattr(card, "destroyed", False):
             return False
         if (card is not None and card is getattr(event.get("die"), "card", None)
-                and event.get("hit_mode") == "damage_only"
-                and entry.trigger in ("before_dice_hit", "on_dice_hit", "after_dice_hit", OpCode.RESOLVE_HIT)
-                and not (isinstance(entry.operation, dict) and entry.operation.get("damage_part"))):
-            return False
+                and entry.trigger in ("before_dice_hit", "on_dice_hit", "after_dice_hit", OpCode.RESOLVE_HIT)):
+            is_part = isinstance(entry.operation, dict) and entry.operation.get("damage_part")
+            if event.get("hit_mode") == "damage_only" and not is_part:
+                return False
+            if event.get("hit_mode") == "effects_only" and is_part:
+                return False
         player = getattr(character, "player", None)
         side = getattr(player, "side", None)
         if entry.scope == "die":
@@ -684,7 +701,10 @@ class Context:
         if (not (die.is_attack or self.event.get("simultaneous_solo") and die.is_passive)
                 or not target.is_alive or not source.is_alive or die.destroyed or card.destroyed):
             return False
-        if self.event.get("hit_mode") == "damage_only":
+        mode = self.event.get("hit_mode")
+        if mode == "effects_only":
+            print(f"{source.combat_name}「{card.name}」命中 {target.combat_name}，仅结算效果部分。")
+        elif mode == "damage_only":
             print(f"{source.combat_name}「{card.name}」命中 {target.combat_name}，仅结算伤害部分。")
         elif (self.event.get("hit_index") or 0) > 1:
             print(f"{source.combat_name}「{card.name}」追加命中 {target.combat_name}。")
@@ -695,9 +715,11 @@ class Context:
             if isinstance(text, dict):
                 continue
             part = damage_part(text)
+            if mode == "effects_only" and (part or independent_damage_part(text)):
+                continue
             if part:
                 bit = {"op": "damage", "amount": part[0], "grade": part[1], "damage_part": True}
                 self._invoke(Entry(die, TriggerType.PIPELINE, "damage_part", bit))
-            elif self.event.get("hit_mode") != "damage_only" or independent_damage_part(text):
+            elif mode != "damage_only" or independent_damage_part(text):
                 self._invoke(Entry(die, TriggerType.PIPELINE, "on_dice_hit", text))
         return True

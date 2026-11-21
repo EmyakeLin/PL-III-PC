@@ -506,16 +506,25 @@ async function showCard(id) {
         const card = printed.get(id);
         if (!card) throw new Error("图鉴中没有这张技能。");
         const traits = [card.cost + " 费"];
-        if (card.range_level) traits.push(["", "普通远程", "强化远程", "极限远程"][card.range_level]);
-        if (card.ignore_range) traits.push("无视远程 " + card.ignore_range);
-        if (card.pre_reveal) traits.push("可在开牌前打出");
+        traits.push(...card.range_traits);
+        const earlyConditions = Object.entries(card.pre_reveal_requires_status || {});
+        if (earlyConditions.length) {
+            const terms = earlyConditions.map(([name, count]) => name + "达到" + count + "层");
+            traits.push(terms.join("、") + "时可在开牌前打出");
+        } else if (card.pre_reveal) traits.push("可在开牌前打出");
         if (card.anytime_replace) traits.push("可随时替换");
         const ways = {attack: "主动进攻", place: "置入空位", custom: "按牌面执行"};
         if (card.anytime_play?.length) traits.push("可随时" + card.anytime_play.map(way => ways[way]).join("、"));
         if (card.pre_reveal && !card.interceptable) traits.push("开牌前进攻不可拦截");
         if (card.anytime_play?.includes("attack")) traits.push(card.instant_interceptable ? "场内进攻可迎击" : "场内进攻不可拦截");
         const lines = [traits.join(" · "), ...card.entries];
-        for (const die of card.dice) lines.push((dieNames[die.type] || die.type) + " 1～" + die.roll_max + "　" + die.entries.join("；"));
+        for (const die of card.dice) {
+            const effects = [...die.range_traits, ...die.entries];
+            if (die.resource_cost) effects.push("使用本骰须消耗" + die.resource_cost.amount + die.resource_cost.status);
+            if (die.base_value) effects.push("基础值 " + die.base_value);
+            if (die.multiplier !== 1) effects.push("倍率 " + die.multiplier);
+            lines.push((dieNames[die.type] || die.type) + " 1～" + die.roll_max + "　" + effects.join("；"));
+        }
         navigation([["出战图鉴", showCatalog], ["规则目录", showIndex]]);
         page(card.name, make("p", lines.join("\n\n")));
     } catch (error) { ruleError(version, error); }

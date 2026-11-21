@@ -228,7 +228,11 @@ function cardDetails(card) {
         for (const [name, amount] of Object.entries(card.requires_status || {})) {
             traits.push("须持有" + amount + "层" + name);
         }
-        if (card.pre_reveal) traits.push("可在开牌前进攻");
+        const earlyConditions = Object.entries(card.pre_reveal_requires_status || {});
+        if (earlyConditions.length) {
+            const terms = earlyConditions.map(([name, count]) => name + "达到" + count + "层");
+            traits.push(terms.join("、") + "时可在开牌前进攻");
+        } else if (card.pre_reveal) traits.push("可在开牌前进攻");
         if (card.before_duel_attack) traits.push("可在交锋开始前进攻");
         if (card.resource_cost) traits.push("使用时须支付" + card.resource_cost.amount + card.resource_cost.status);
         if (card.pre_reveal_target === "occupied_enemy_slot") traits.push("开牌前仅可指定已置敌牌的交锋");

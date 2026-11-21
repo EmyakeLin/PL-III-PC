@@ -190,7 +190,7 @@ class HeckTests(unittest.TestCase):
         self.assertEqual(self.target.hp, 88)
         self.assertEqual(self.target.statuses["烧伤"], 5)
 
-    def test_missing_energy_drains_on_analysis_without_burn_or_conditional_damage(self):
+    def test_unfunded_analysis_keeps_its_energy_and_skips_its_bonus(self):
         self.heck.add_status("凝聚", 4)
         # Leave two energy between its first hit and its second die.
         self.game.context.register_entries(self.heck, [{
@@ -203,7 +203,7 @@ class HeckTests(unittest.TestCase):
         self.fight("能源反解析")
         self.assertEqual(self.target.hp, 100)
         self.assertEqual(self.target.statuses["烧伤"], 2)
-        self.assertNotIn("能源", self.heck.statuses)
+        self.assertEqual(self.heck.statuses["能源"], 2)
 
     def test_one_round_of_ammo_jumps_from_first_shot_to_printed_finisher(self):
         self.full_power(12)
