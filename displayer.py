@@ -167,7 +167,10 @@ def special_action_label(action):
         if action.duel_index is not None:
             cards = action.target_card.player.game.duelspace.space[action.duel_index].get_content(action.target_card.player.side)
             return f"{label} · 常规交锋 {action.duel_index + 1} 的第 {cards.index(action.target_card) + 1} 张扣牌"
-        return f"{label} · {action.target_card.name}" if action.target_card else label
+        if action.target_card:
+            borrowed = "（取自对手）" if action.target_card.printed_owner is not action.target_card.character else ""
+            return f"{label} · {action.target_card.name}{borrowed}"
+        return label
     if action.kind == "pass_intercept":
         return f"放行即时交锋 {action.response_number}"
     card = action.card
@@ -184,6 +187,19 @@ def special_action_label(action):
     if action.kind == "intercept":
         return f"用{skill}迎击即时交锋 {action.response_number}"
     return f"按牌面打出{skill}"
+
+
+def seat_action_view(action, player):
+    """Describe one action offered to this seat, retaining concealed target identities."""
+    target = action.target_card
+    target_id = None
+    if target and target.player is player:
+        target_id = hand_key(target) if target in player.cardspace.hand.content else target.id
+    return {"kind": action.kind, "label": special_action_label(action),
+            "card_id": hand_key(action.card) if action.card else None, "ability_id": action.ability_id,
+            "target_card_id": target_id, "character_id": action.character.id if action.character else None,
+            "duel_number": action.duel_index + 1 if action.duel_index is not None else None,
+            "response_number": action.response_number}
 
 
 class Displayer:
@@ -269,16 +285,14 @@ class Displayer:
         """Private choices, in the same order as this revision's engine options."""
         if self._viewer is None:
             return []
-        return [{"kind": a.kind, "label": special_action_label(a),
-                 "card_id": hand_key(a.card) if a.card else None, "ability_id": a.ability_id,
-                 "target_card_id": a.target_card.id if a.target_card and a.target_card.player is self._viewer else None,
-                 "character_id": a.character.id if a.character else None,
-                 "duel_number": a.duel_index + 1 if a.duel_index is not None else None,
-                 "response_number": a.response_number}
-                for a in self._game.special.options(self._viewer)]
+        return [seat_action_view(a, self._viewer) for a in self._game.special.options(self._viewer)]
 
     def catalog(self) -> dict:
         """Public printed rules for the selected roster, independent of card locations."""
+        actions = {action["id"]: action["name"] for p in self._game.players for c in p.characters
+                   for action in c.data.get("actions", ())}
+        actions.update({action["id"]: action["name"] for rule in self._game.ability_rules.values()
+                        if (action := rule.get("action"))})
         statuses = {name: [describe_entry(e) for e in entries]
                     for name, entries in self._game.status_entries.items()}
         for name, rule in self._game.status_rules.items():
@@ -295,6 +309,7 @@ class Displayer:
                 } for c in p.characters],
             } for p in self._game.players],
             "statuses": statuses,
+            "actions": actions,
             "ability_effects": {name: rule.get("description", "") for name, rule in self._game.ability_rules.items()},
         }
 

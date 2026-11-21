@@ -28,7 +28,7 @@ python -m battle_mcp --public-url https://play.example.org
 
 ### 和 AI Agent 对战
 
-在项目目录运行以下命令，启动一间独立的本机对战房间。默认对阵为闻笙与安诺琳，每席一名不同角色。用 `python -m battle_mcp --list-characters` 查看可用的角色 ID。
+在项目目录运行以下命令，启动一间独立的本机对战房间。默认对阵为闻笙与安诺琳，每席一名角色。允许镜像的角色可由双方同选，例如空白。用 `python -m battle_mcp --list-characters` 查看可用的角色 ID。
 
 ```powershell
 python -m battle_mcp --roster ember_wen_sheng plan_b_annolin --seed 1125

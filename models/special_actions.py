@@ -100,7 +100,8 @@ class SpecialActions:
                     return f"{group} {index} · 第 {cards.index(card) + 1} 张 · {name}"
         if viewer is not card.player:
             return f"对方第 {card.player.cardspace.hand.content.index(card) + 1} 张手牌"
-        return f"{card.name}（{card.cost} 费）"
+        borrowed = "（取自对手）" if card.printed_owner is not card.character else ""
+        return f"{card.name}{borrowed}（{card.cost} 费）"
 
     def _valid_candidates(self, decision):
         board = {card for slot in self.game.board_slots() for cards in slot.content.values() for card in cards}
