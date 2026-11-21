@@ -21,9 +21,9 @@ function drawPolygon(g, cx, cy, r, sides, rot = 0) {
 /**
  * Character-specific visual palette & silhouette motif (strictly warm bright tones, zero black/blue-purple).
  */
-function actorPalette(ch, side) {
+export function actorPalette(ch, side = 1) {
   const sideTheme = SIDE_THEME[side] || SIDE_THEME[1];
-  const id = ch.id || '';
+  const id = ch?.id || '';
   if (id === 'plan_b_annolin') {
     return { primary: 0x1c946b, secondary: 0x52c496, highlight: 0xdef7ec, metal: 0xd49622, trim: 0x3b322a, motif: 'annolin' };
   }
@@ -41,6 +41,24 @@ function actorPalette(ch, side) {
   }
   if (id === 'ember_wen_sheng') {
     return { primary: 0xc44558, secondary: 0xd99224, highlight: 0xfdeef0, metal: 0x7d6858, trim: 0x3b322a, motif: 'wen_sheng' };
+  }
+  if (id === 'char_iron_vanguard') {
+    return { primary: 0x6b7c5e, secondary: 0xd49622, highlight: 0xedf2e6, metal: 0x8c7b68, trim: 0x3b322a, motif: 'iron_vanguard' };
+  }
+  if (id === 'char_crimson_duelist') {
+    return { primary: 0xc93b44, secondary: 0xe6a12c, highlight: 0xfdebed, metal: 0x7d6d5b, trim: 0x3b322a, motif: 'crimson_duelist' };
+  }
+  if (id === 'drill_scout') {
+    return { primary: 0x2a8f72, secondary: 0xd49b2c, highlight: 0xe7f5ef, metal: 0x6b6052, trim: 0x3b322a, motif: 'drill_scout' };
+  }
+  if (id === 'drill_medic') {
+    return { primary: 0x3b9c6e, secondary: 0xe08a24, highlight: 0xebf8f0, metal: 0x8a7558, trim: 0x3b322a, motif: 'drill_medic' };
+  }
+  if (id === 'drill_captain') {
+    return { primary: 0xc96b1f, secondary: 0xe6ad2e, highlight: 0xfef4df, metal: 0x7d6d5b, trim: 0x3b322a, motif: 'drill_captain' };
+  }
+  if (id === 'drill_engine') {
+    return { primary: 0x9e5828, secondary: 0xe39e24, highlight: 0xfaeee2, metal: 0x6b6052, trim: 0x3b322a, motif: 'drill_engine' };
   }
   return {
     primary: sideTheme.accent,
@@ -243,6 +261,179 @@ function drawCharacterBody(g, pal, ch, radius, time) {
     g.moveTo(r * 0.16, r * 0.08 + breathe).lineTo(r * 0.92, -r * 0.18 + breathe)
       .stroke({ width: 3.2, color: trim, cap: 'round' });
     g.circle(r * 0.92, -r * 0.18 + breathe, r * 0.08).fill({ color: secondary });
+  } else if (pal.motif === 'iron_vanguard') {
+    // Broad armored torso & twin pauldron plates
+    g.poly([
+      -r * 0.42, -r * 0.24 + breathe,
+      r * 0.26, -r * 0.24 + breathe,
+      r * 0.22, r * 0.62,
+      -r * 0.36, r * 0.62,
+    ]).fill({ color: primary }).stroke({ width: 1.8, color: INK.paper });
+    g.roundRect(-r * 0.48, -r * 0.3 + breathe, r * 0.32, r * 0.22, 5)
+      .fill({ color: pal.metal }).stroke({ width: 1.5, color: secondary });
+    // Visored knight helm
+    g.poly(drawPolygon(g, -r * 0.04, -r * 0.48 + breathe, r * 0.22, 6, Math.PI / 6))
+      .fill({ color: INK.paper }).stroke({ width: 1.8, color: trim });
+    g.moveTo(-r * 0.14, -r * 0.48 + breathe).lineTo(r * 0.14, -r * 0.48 + breathe)
+      .stroke({ width: 2.2, color: primary });
+    // Massive hexagonal tower shield forward
+    g.poly([
+      r * 0.22, -r * 0.42 + breathe,
+      r * 0.66, -r * 0.28 + breathe,
+      r * 0.72, r * 0.32,
+      r * 0.42, r * 0.64,
+      r * 0.16, r * 0.38,
+    ]).fill({ color: primary }).stroke({ width: 2.4, color: secondary });
+    g.moveTo(r * 0.44, -r * 0.28 + breathe).lineTo(r * 0.44, r * 0.44)
+      .stroke({ width: 2.2, color: secondary });
+    g.moveTo(r * 0.26, r * 0.06 + breathe).lineTo(r * 0.62, r * 0.06 + breathe)
+      .stroke({ width: 2.2, color: secondary });
+  } else if (pal.motif === 'crimson_duelist') {
+    // Flowing crimson duelist cape streaming back
+    g.moveTo(-r * 0.08, -r * 0.28 + breathe)
+      .quadraticCurveTo(-r * 0.66, -r * 0.34 + flutter, -r * 0.92, r * 0.32 - flutter * 0.6)
+      .lineTo(-r * 0.24, r * 0.48)
+      .fill({ color: primary, alpha: 0.78 }).stroke({ width: 1.4, color: secondary });
+    // Slim fencing coat
+    g.poly([
+      -r * 0.22, -r * 0.28 + breathe,
+      r * 0.28, -r * 0.18 + breathe,
+      r * 0.2, r * 0.62,
+      -r * 0.26, r * 0.62,
+    ]).fill({ color: primary }).stroke({ width: 1.6, color: INK.paper });
+    g.poly([
+      0, -r * 0.22 + breathe,
+      r * 0.14, r * 0.12 + breathe,
+      0, r * 0.26 + breathe,
+      -r * 0.12, r * 0.12 + breathe,
+    ]).fill({ color: secondary });
+    // Plumed head
+    g.circle(r * 0.02, -r * 0.48 + breathe, r * 0.2)
+      .fill({ color: INK.paper }).stroke({ width: 1.8, color: trim });
+    g.moveTo(-r * 0.1, -r * 0.64 + breathe)
+      .quadraticCurveTo(-r * 0.42, -r * 0.84 + flutter * 0.5, -r * 0.58, -r * 0.52 + flutter * 0.4)
+      .stroke({ width: 2.8, color: secondary, cap: 'round' });
+    // Long gilded fencing rapier thrusting forward
+    g.circle(r * 0.32, r * 0.02 + breathe, r * 0.13)
+      .fill({ color: hi }).stroke({ width: 1.8, color: secondary });
+    g.moveTo(r * 0.36, r * 0.01 + breathe).lineTo(r * 1.08, -r * 0.26 + breathe)
+      .stroke({ width: 2.4, color: trim, cap: 'round' });
+    g.moveTo(r * 0.4, -r * 0.01 + breathe).lineTo(r * 1.04, -r * 0.24 + breathe)
+      .stroke({ width: 1.2, color: secondary, cap: 'round' });
+  } else if (pal.motif === 'drill_scout') {
+    // Wind-swept scarf
+    g.moveTo(-r * 0.1, -r * 0.28 + breathe)
+      .quadraticCurveTo(-r * 0.54, -r * 0.2 + flutter, -r * 0.8, r * 0.04 - flutter)
+      .stroke({ width: 4.5, color: secondary, cap: 'round' });
+    // Agile crouching scout silhouette
+    g.poly([
+      -r * 0.26, -r * 0.2 + breathe,
+      r * 0.3, -r * 0.12 + breathe,
+      r * 0.24, r * 0.6,
+      -r * 0.28, r * 0.6,
+    ]).fill({ color: primary }).stroke({ width: 1.5, color: INK.paper });
+    // Peaked hood + head
+    g.circle(r * 0.04, -r * 0.44 + breathe, r * 0.19)
+      .fill({ color: INK.paper }).stroke({ width: 1.7, color: trim });
+    g.poly([
+      -r * 0.28, -r * 0.38 + breathe,
+      -r * 0.04, -r * 0.72 + breathe,
+      r * 0.22, -r * 0.5 + breathe,
+      -r * 0.02, -r * 0.54 + breathe,
+    ]).fill({ color: primary });
+    // Twin forward recon daggers
+    g.moveTo(r * 0.24, r * 0.04 + breathe).lineTo(r * 0.84, -r * 0.26 + breathe)
+      .stroke({ width: 2.4, color: trim, cap: 'round' });
+    g.moveTo(r * 0.26, r * 0.24 + breathe).lineTo(r * 0.76, r * 0.1 + breathe)
+      .stroke({ width: 2.2, color: secondary, cap: 'round' });
+  } else if (pal.motif === 'drill_medic') {
+    // Sunlit medical cross halo behind shoulders
+    g.circle(0, -r * 0.12 + breathe, r * 0.52).stroke({ width: 1.4, color: primary, alpha: 0.42 });
+    g.roundRect(-r * 0.1, -r * 0.32 + breathe, r * 0.2, r * 0.42, 3).fill({ color: secondary, alpha: 0.26 });
+    g.roundRect(-r * 0.21, -r * 0.21 + breathe, r * 0.42, r * 0.2, 3).fill({ color: secondary, alpha: 0.26 });
+    // Field coat
+    g.poly([
+      -r * 0.28, -r * 0.26 + breathe,
+      r * 0.28, -r * 0.26 + breathe,
+      r * 0.34, r * 0.62,
+      -r * 0.34, r * 0.62,
+    ]).fill({ color: primary }).stroke({ width: 1.6, color: INK.paper });
+    // Crisp white cross badge on chest
+    g.roundRect(-r * 0.05, -r * 0.04 + breathe, r * 0.1, r * 0.28, 2).fill({ color: INK.paper });
+    g.roundRect(-r * 0.14, r * 0.05 + breathe, r * 0.28, r * 0.1, 2).fill({ color: INK.paper });
+    g.circle(0, -r * 0.48 + breathe, r * 0.2)
+      .fill({ color: INK.paper }).stroke({ width: 1.8, color: trim });
+    // Glowing alchemist lantern staff forward
+    g.moveTo(r * 0.46, -r * 0.42 + breathe).lineTo(r * 0.46, r * 0.6)
+      .stroke({ width: 2.6, color: pal.metal, cap: 'round' });
+    const glow = 0.85 + Math.sin(time * 4.2) * 0.15;
+    g.circle(r * 0.46, -r * 0.46 + breathe, r * 0.15 * glow)
+      .fill({ color: secondary, alpha: 0.88 }).stroke({ width: 1.4, color: INK.paper });
+  } else if (pal.motif === 'drill_captain') {
+    // Tall fluttering command banner behind
+    g.moveTo(-r * 0.48, -r * 0.78).lineTo(-r * 0.48, r * 0.62)
+      .stroke({ width: 2.8, color: pal.metal, cap: 'round' });
+    g.poly([
+      -r * 0.48, -r * 0.74,
+      -r * 0.96, -r * 0.56 + flutter * 0.7,
+      -r * 0.82, -r * 0.24 + flutter * 0.5,
+      -r * 0.48, -r * 0.34,
+    ]).fill({ color: secondary, alpha: 0.88 }).stroke({ width: 1.4, color: primary });
+    // Armored commander torso
+    g.poly([
+      -r * 0.32, -r * 0.28 + breathe,
+      r * 0.34, -r * 0.22 + breathe,
+      r * 0.28, r * 0.62,
+      -r * 0.3, r * 0.62,
+    ]).fill({ color: primary }).stroke({ width: 1.8, color: INK.paper });
+    g.poly([
+      -r * 0.22, -r * 0.2 + breathe,
+      r * 0.24, -r * 0.16 + breathe,
+      0, r * 0.26 + breathe,
+    ]).fill({ color: secondary });
+    // Head + golden command crown crest
+    g.circle(0, -r * 0.48 + breathe, r * 0.21)
+      .fill({ color: INK.paper }).stroke({ width: 1.8, color: trim });
+    g.poly([
+      -r * 0.22, -r * 0.62 + breathe,
+      -r * 0.12, -r * 0.82 + breathe,
+      0, -r * 0.68 + breathe,
+      r * 0.12, -r * 0.82 + breathe,
+      r * 0.22, -r * 0.62 + breathe,
+    ]).fill({ color: secondary });
+    // Forward halberd
+    g.moveTo(r * 0.16, r * 0.38 + breathe).lineTo(r * 0.94, -r * 0.52 + breathe)
+      .stroke({ width: 3, color: trim, cap: 'round' });
+    g.poly([
+      r * 0.72, -r * 0.28 + breathe,
+      r * 1.02, -r * 0.62 + breathe,
+      r * 0.96, -r * 0.18 + breathe,
+    ]).fill({ color: INK.paper }).stroke({ width: 1.8, color: primary });
+  } else if (pal.motif === 'drill_engine') {
+    // Towering heavy siege mech chassis with twin pulsing furnace pistons
+    const piston = Math.sin(time * 5.6) * (r * 0.05);
+    // Back steam/piston stacks
+    g.roundRect(-r * 0.58, -r * 0.66 - piston, r * 0.22, r * 0.48, 4)
+      .fill({ color: pal.metal }).stroke({ width: 1.6, color: secondary });
+    g.roundRect(r * 0.36, -r * 0.62 + piston, r * 0.22, r * 0.44, 4)
+      .fill({ color: pal.metal }).stroke({ width: 1.6, color: secondary });
+    // Massive octagonal armored torso
+    g.poly(drawPolygon(g, 0, r * 0.06 + breathe * 0.6, r * 0.58, 8, Math.PI / 8))
+      .fill({ color: primary }).stroke({ width: 2.2, color: INK.paper });
+    // Inner armored furnace core
+    const glow = 0.88 + Math.sin(time * 6.2) * 0.12;
+    g.poly(drawPolygon(g, r * 0.04, r * 0.08 + breathe * 0.6, r * 0.24 * glow, 6, 0))
+      .fill({ color: secondary }).stroke({ width: 1.6, color: INK.paper });
+    // Armored optic turret head
+    g.roundRect(-r * 0.26, -r * 0.62 + breathe * 0.6, r * 0.54, r * 0.28, 6)
+      .fill({ color: pal.metal }).stroke({ width: 1.8, color: trim });
+    g.roundRect(-r * 0.04, -r * 0.54 + breathe * 0.6, r * 0.28, r * 0.12, 3)
+      .fill({ color: secondary });
+    // Heavy forward battering ram arm
+    g.roundRect(r * 0.42, -r * 0.18 + breathe * 0.6, r * 0.48, r * 0.42, 7)
+      .fill({ color: primary }).stroke({ width: 2, color: secondary });
+    g.roundRect(r * 0.68, -r * 0.1 + breathe * 0.6, r * 0.16, r * 0.26, 3)
+      .fill({ color: secondary });
   } else {
     // Sculpted generic tactical figure + rank crest
     g.poly([
@@ -460,7 +651,7 @@ export function createCharacterActor(ch, side, { radius = 38 } = {}) {
     floorG.ellipse(offsetX * 0.4, r * 0.66, r * 0.76, r * 0.22)
       .fill({ color: INK.shadow, alpha: 0.28 });
     floorG.ellipse(0, r * 0.66, r * 0.92, r * 0.27)
-      .stroke({ width: 1.5, color: cur.alive ? theme.accent : INK.line, alpha: 0.55 });
+      .stroke({ width: 1.5, color: cur.alive !== false ? theme.accent : INK.line, alpha: 0.55 });
 
     // 2. Orbiting live status auras
     auraG.clear();

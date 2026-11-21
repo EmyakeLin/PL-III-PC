@@ -32,6 +32,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
             "/engine/audio.js",
             "/engine/physics.js",
             "/engine/three_world.js",
+            "/engine/design_system.js",
             "/engine/card_print.js",
             "/engine/stage_actors.js",
             "/engine/table_overlays.js",
@@ -66,7 +67,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 )
 
     def test_no_paraphrasing_die_level_labels_or_filler_text(self):
-        for name in ("card_print.js", "stage_actors.js", "table_overlays.js", "game_director.js", "three_world.js"):
+        for name in ("design_system.js", "card_print.js", "stage_actors.js", "table_overlays.js", "game_director.js", "three_world.js"):
             raw = (STATIC_DIR / "engine" / name).read_text(encoding="utf-8")
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", raw, flags=re.S)
             for forbidden in ("Lv.", "无附加词条", "compactDieBadges", "compactSkillTag", "拖入扣置或双击", "被动 (", "placeLeft"):

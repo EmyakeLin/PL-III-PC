@@ -10,6 +10,7 @@ import {
   INK,
   SIDE_THEME,
   RANK_LABEL,
+  RANK_COLOR,
   DIE_STYLE,
   SHIELD_STYLE,
   STATUS_COLORS,
@@ -21,8 +22,13 @@ import {
   drawShieldGlyph,
   drawLightStar,
   buildCardFront,
+  buildFullCard,
   buildVerbatimCardPanel,
+  buildRichVerbatimText,
+  buildUnifiedEntryPlate,
+  buildUnifiedSkillRow,
 } from './card_print.js';
+import { createCharacterActor, actorPalette } from './stage_actors.js';
 
 export function makeSealButton(label, {
   width = 138,
@@ -75,290 +81,676 @@ export function makeSealButton(label, {
   return c;
 }
 
+function makeSmoothScrollbar({ x, y, height, totalH, viewH, scrollY = 0, accentColor = INK.secondary, onChange }) {
+  const maxScroll = Math.max(0, totalH - viewH);
+  const track = new PIXI.Container();
+  track.position.set(x, y);
+  const trackH = Math.max(24, height);
+  const thumbH = Math.max(28, Math.round(trackH * (viewH / Math.max(viewH + 1, totalH))));
+  const travel = Math.max(1, trackH - thumbH);
+
+  const trackG = new PIXI.Graphics();
+  trackG.roundRect(-3, 0, 10, trackH, 5).fill({ color: INK.paper, alpha: 0.001 });
+  trackG.roundRect(0, 0, 4, trackH, 2).fill({ color: INK.hairline, alpha: 0.9 });
+  track.addChild(trackG);
+
+  const thumbG = new PIXI.Graphics();
+  const drawThumb = (active) => {
+    thumbG.clear();
+    thumbG.roundRect(-1, 0, 6, thumbH, 3).fill({ color: accentColor, alpha: active ? 0.95 : 0.72 });
+  };
+  drawThumb(false);
+  track.addChild(thumbG);
+
+  const updateThumb = (sy) => {
+    const c = Math.max(0, Math.min(maxScroll, sy));
+    thumbG.y = maxScroll > 0 ? (c / maxScroll) * travel : 0;
+  };
+  updateThumb(scrollY);
+
+  let dragging = false;
+  const applyLocalY = (localY) => {
+    const ratio = Math.max(0, Math.min(1, (localY - thumbH / 2) / travel));
+    const next = ratio * maxScroll;
+    updateThumb(next);
+    if (onChange) onChange(next);
+  };
+
+  track.eventMode = 'static';
+  track.cursor = 'pointer';
+  track.on('pointerover', () => drawThumb(true));
+  track.on('pointerout', () => { if (!dragging) drawThumb(false); });
+  track.on('pointerdown', (e) => {
+    e.stopPropagation();
+    dragging = true;
+    drawThumb(true);
+    const local = track.toLocal(e.global);
+    applyLocalY(local.y);
+  });
+  track.on('globalpointermove', (e) => {
+    if (!dragging) return;
+    const local = track.toLocal(e.global);
+    applyLocalY(local.y);
+  });
+  const endDrag = () => {
+    if (!dragging) return;
+    dragging = false;
+    drawThumb(false);
+  };
+  track.on('pointerup', endDrag);
+  track.on('pointerupoutside', endDrag);
+
+  track._updateThumb = updateThumb;
+  return track;
+}
+
 /**
- * Arknights / Library-of-Ruina inspired Pinned Character Dossier:
- * Click ANY character on the field to see ALL passives (100% verbatim),
- * ALL active statuses (icon + stacks + 100% verbatim rule text), and ALL printed skills
- * (click/hover any skill to view its full 100% verbatim card sheet right beside it!).
+ * Library of Ruina / Limbus Company Side-Docked Physical Hero Inspector:
+ *  - Anchored cleanly to that side (P1 Left / P2 Right) BELOW cost/piles and ABOVE hand tray!
+ *  - ZERO overlap with the central duel bridge (① ↓ ② ↓ ③), opponent, cost crystals, or hand cards!
+ *  - Opens ONLY on explicit click (NEVER surprise hover popups!)
+ *  - CONSTANT comfortable reading font (12.5px, NEVER shrinks even for 3,000+ word passives!)
+ *  - True O(1) setScroll(y) + draggable scrollbar (zero Pixi rebuilds, buttery 60fps scroll!)
  */
-export function buildCharacterDossier(w, h, {
+export function buildHeroSidePanel({
   character,
   side,
   catalogChar,
   catalogStatuses,
-  selectedSkillId,
-  canSetTarget,
-  isDefaultTarget,
+  teamChars = [],
+  x,
+  y,
+  width,
+  height,
+  tab = 'passives',
+  canSetTarget = false,
+  isDefaultTarget = false,
   scrollY = 0,
-  onSelectSkill,
+  onSwitchChar,
+  onTab,
+  onHoverSkill,
   onSetFocusTarget,
+  onScrollChange,
   onClose,
 }) {
   const root = new PIXI.Container();
+  root.position.set(x, y);
+  const actors = [];
   const theme = SIDE_THEME[side] || SIDE_THEME[1];
+  const pal = actorPalette(character, side);
 
-  const veil = new PIXI.Graphics();
-  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.78 });
-  veil.eventMode = 'static';
-  veil.on('pointertap', onClose);
-  root.addChild(veil);
+  // Tactile Tabletop Physical Card Frame (stacked-paper bottom edge bevel + top semantic bar)
+  const frame = new PIXI.Graphics();
+  frame.roundRect(3, 7, width, height, 12).fill({ color: INK.shadow, alpha: 0.24 });
+  frame.roundRect(0, 3, width, height, 11).fill({ color: 0xe3dac9 });
+  frame.roundRect(0, 0, width, height, 11)
+    .fill({ color: INK.paper, alpha: 0.99 })
+    .stroke({ width: 1.6, color: theme.accent });
+  frame.roundRect(2, 1.5, width - 4, 4, 2).fill({ color: theme.accent });
+  frame.eventMode = 'static';
+  frame.on('pointertap', (e) => e.stopPropagation());
+  root.addChild(frame);
 
-  const skills = catalogChar?.skills || [];
-  const activeSkill = skills.find((s) => s.id === selectedSkillId) || skills[0] || null;
-  const cardW = 382;
-  const leftW = Math.min(520, w - cardW - 72);
-  const totalW = leftW + (activeSkill ? cardW + 18 : 0);
-  const panelH = Math.min(640, h - 72);
-  const px = Math.max(24, (w - totalW) / 2);
-  const py = (h - panelH) / 2;
+  let curY = 9;
 
-  const panel = new PIXI.Graphics();
-  panel.roundRect(px + 5, py + 8, leftW, panelH, 14).fill({ color: INK.shadow, alpha: 0.34 });
-  panel.roundRect(px, py, leftW, panelH, 14)
-    .fill({ color: INK.paper })
-    .stroke({ width: 2, color: theme.accent });
-  panel.roundRect(px + 2, py + 2, leftW - 4, 62, 12).fill({ color: theme.softBg });
-  panel.eventMode = 'static';
-  root.addChild(panel);
+  // Optional Teammate Switcher Strip (2v2 / 3v3)
+  if (teamChars.length > 1) {
+    let tx = 12;
+    const gap = 5;
+    const maxPillW = Math.floor((width - 24 - gap * (teamChars.length - 1)) / teamChars.length);
+    for (const tc of teamChars) {
+      const isCur = tc.id === character.id;
+      const btn = makeSealButton(tc.name, {
+        width: maxPillW,
+        height: 22,
+        accent: theme.accent,
+        solid: isCur,
+        fontSize: 10.8,
+        radius: 6,
+        onClick: isCur ? null : () => onSwitchChar && onSwitchChar(tc.id),
+      });
+      btn.position.set(tx, curY);
+      root.addChild(btn);
+      tx += maxPillW + gap;
+    }
+    curY += 27;
+  }
 
-  // Header: Character Name + Exact Stats
+  // Compact Hero Identity Header (living 60fps WebGL portrait + Name + Faction/Rank + Live HP/Speed/Duels/Cost)
+  const artSize = 54;
+  const artX = 12;
+  const artY = curY + 2;
+  const artG = new PIXI.Graphics();
+  artG.roundRect(artX, artY, artSize, artSize, 9)
+    .fill({ color: pal.highlight })
+    .stroke({ width: 1.1, color: pal.primary, alpha: 0.45 });
+  artG.ellipse(artX + artSize / 2, artY + artSize - 9, artSize * 0.32, 4.5)
+    .fill({ color: INK.paper, alpha: 0.78 });
+  root.addChild(artG);
+
+  const actor = createCharacterActor(character, side, { radius: 21 });
+  actor.position.set(artX + artSize / 2, artY + artSize * 0.52);
+  root.addChild(actor);
+  actors.push({ actor, ch: character });
+
+  const infoX = artX + artSize + 10;
+  const infoW = width - infoX - 12;
+
   const nameTxt = new PIXI.Text({
-    text: `${character.name}${character.title ? ' · ' + character.title : ''}`,
-    style: { fontFamily: FONT_UI, fontSize: 20, fontWeight: '800', fill: INK.primary },
+    text: `${character.name}${character.alive ? '' : ' [亡]'}`,
+    style: { fontFamily: FONT_UI, fontSize: 16.5, fontWeight: '900', fill: character.alive ? INK.strong : INK.muted },
   });
-  nameTxt.position.set(px + 20, py + 12);
+  nameTxt.position.set(infoX, curY);
   root.addChild(nameTxt);
 
-  const statBits = [
-    character.faction || '',
-    RANK_LABEL[character.rank] || '',
-    `生命 ${character.hp}/${character.max_hp}`,
-    `速度 ${character.speed ?? 0}`,
-    `常规交锋 ${character.duels?.used ?? '?'}/${character.duels?.max ?? 1}`,
-    `个人费 ${character.cost?.available ?? 0}`,
-  ].filter(Boolean);
-  const statTxt = new PIXI.Text({
-    text: statBits.join(' · '),
-    style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: theme.accent },
-  });
-  statTxt.position.set(px + 20, py + 40);
-  root.addChild(statTxt);
-
-  const closeBtn = makeSealButton('关闭', {
-    width: 68, height: 30, accent: INK.secondary, fontSize: 12, onClick: onClose,
-  });
-  closeBtn.position.set(px + leftW - 84, py + 16);
-  root.addChild(closeBtn);
-
-  if (canSetTarget && character.alive) {
-    const focusBtn = makeSealButton(isDefaultTarget ? '当前集火目标' : '设为集火目标', {
-      width: 110, height: 30, accent: INK.gold, solid: isDefaultTarget, fontSize: 11.5,
-      onClick: onSetFocusTarget,
+  const metaParts = [character.faction || '', RANK_LABEL[character.rank] || ''].filter(Boolean).join(' · ');
+  if (metaParts) {
+    const metaTxt = new PIXI.Text({
+      text: metaParts,
+      style: { fontFamily: FONT_UI, fontSize: 10.4, fontWeight: '800', fill: theme.accent },
     });
-    focusBtn.position.set(px + leftW - 202, py + 16);
-    root.addChild(focusBtn);
+    metaTxt.anchor.set(1, 0);
+    metaTxt.position.set(width - 12, curY + 4);
+    root.addChild(metaTxt);
   }
 
-  // Scrollable content mask
-  const vx = px + 18;
-  const vy = py + 74;
-  const vw = leftW - 36;
-  const vh = panelH - 90;
-  const mask = new PIXI.Graphics();
-  mask.rect(vx, vy, vw, vh).fill({ color: 0xffffff });
-  root.addChild(mask);
+  const hpY = curY + 23;
+  const hpBarW = Math.max(80, infoW - 48);
+  const ratio = Math.max(0, Math.min(1, (character.hp ?? 0) / Math.max(1, character.max_hp || 1)));
+  const hpG = new PIXI.Graphics();
+  hpG.roundRect(infoX, hpY, hpBarW, 10, 5).fill({ color: INK.paperTint }).stroke({ width: 0.8, color: INK.line });
+  if (ratio > 0) {
+    hpG.roundRect(infoX + 1, hpY + 1, Math.max(5, (hpBarW - 2) * ratio), 8, 4)
+      .fill({ color: ratio < 0.34 ? 0xd13f20 : theme.accent });
+  }
+  root.addChild(hpG);
 
-  const body = new PIXI.Container();
-  body.mask = mask;
-  root.addChild(body);
+  const hpTxt = new PIXI.Text({
+    text: `${character.hp}/${character.max_hp}`,
+    style: { fontFamily: FONT_NUM, fontSize: 11, fontWeight: '900', fill: INK.strong },
+  });
+  hpTxt.anchor.set(1, 0.5);
+  hpTxt.position.set(width - 12, hpY + 5);
+  root.addChild(hpTxt);
 
-  let y = 0;
-  const maxChars = Math.max(32, Math.floor((vw - 16) / 6.5));
+  const subStats = new PIXI.Text({
+    text: `速度 ${character.speed ?? 0}  ·  交锋 ${character.duels?.used ?? '?'}/${character.duels?.max ?? 1}  ·  个人费 ${character.cost?.available ?? 0}`,
+    style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '800', fill: INK.secondary },
+  });
+  subStats.position.set(infoX, curY + 38);
+  root.addChild(subStats);
 
-  // Active Shields (ONLY if any > 0)
+  curY += artSize + 8;
+
+  // Compact Active Shields / Status Chips Row (only if present)
   const sh = character.shields || {};
   const activeShields = ['normal', 'reinforced', 'concept'].filter((k) => (sh[k] || 0) > 0);
-  if (activeShields.length) {
-    const shRow = new PIXI.Graphics();
-    let sx = 0;
+  const statuses = Object.entries(character.statuses || {});
+  if (activeShields.length || statuses.length) {
+    let bx = 12;
+    const badgeG = new PIXI.Graphics();
+    root.addChild(badgeG);
     for (const kind of activeShields) {
       const st = SHIELD_STYLE[kind];
-      shRow.roundRect(vx + sx, vy + y - scrollY, 108, 26, 6).fill({ color: st.bg }).stroke({ width: 1.2, color: st.color });
-      drawShieldGlyph(shRow, kind, vx + sx + 14, vy + y - scrollY + 13, 7);
+      badgeG.roundRect(bx, curY, 44, 19, 4).fill({ color: st.bg }).stroke({ width: 1, color: st.color });
+      drawShieldGlyph(badgeG, kind, bx + 9, curY + 9.5, 4.8);
       const t = new PIXI.Text({
-        text: `${st.label} ${sh[kind]}`,
-        style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: st.color },
+        text: String(sh[kind]),
+        style: { fontFamily: FONT_NUM, fontSize: 10.2, fontWeight: '900', fill: st.color },
       });
       t.anchor.set(0, 0.5);
-      t.position.set(vx + sx + 26, vy + y - scrollY + 13);
-      body.addChild(t);
-      sx += 116;
+      t.position.set(bx + 18, curY + 9.5);
+      root.addChild(t);
+      bx += 48;
     }
-    body.addChildAt(shRow, 0);
-    y += 36;
+    for (const [sName, sVal] of statuses) {
+      if (bx + 48 > width - 12) break;
+      const col = STATUS_COLORS[sName] || INK.secondary;
+      const burst = sName === '裂血' && character.bleed_burst;
+      const stTxt = new PIXI.Text({
+        text: `${sName}${sVal}`,
+        style: { fontFamily: FONT_UI, fontSize: 10.4, fontWeight: '800', fill: col },
+      });
+      const bw = Math.ceil(stTxt.width) + 10;
+      badgeG.roundRect(bx, curY, bw, 19, 4)
+        .fill({ color: burst ? 0xfce0e4 : INK.paperSoft })
+        .stroke({ width: burst ? 1.5 : 0.9, color: col });
+      stTxt.anchor.set(0.5);
+      stTxt.position.set(bx + bw / 2, curY + 9.5);
+      root.addChild(stTxt);
+      bx += bw + 4;
+    }
+    curY += 24;
   }
 
-  // Section 1: ALL Active Statuses (Limbus icon + stacks + 100% VERBATIM rule text!)
-  const statuses = Object.entries(character.statuses || {});
-  if (statuses.length) {
-    const sHead = new PIXI.Text({
-      text: '状态效果',
-      style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.secondary },
-    });
-    sHead.position.set(vx, vy + y - scrollY);
-    body.addChild(sHead);
-    y += 22;
+  // Tabs & Actions Row: [被动与状态] [技能牌组(N)] ... [集火] [✕]
+  const skills = catalogChar?.skills || [];
+  const tabH = 25;
+  const t1 = makeSealButton('被动与状态', {
+    width: 92, height: tabH, accent: theme.accent, solid: tab === 'passives', fontSize: 11.2, radius: 6,
+    onClick: () => onTab && onTab('passives'),
+  });
+  t1.position.set(12, curY);
+  root.addChild(t1);
 
-    for (const [name, val] of statuses) {
-      const col = STATUS_COLORS[name] || INK.secondary;
-      const burst = name === '裂血' && character.bleed_burst;
-      const ruleList = catalogStatuses?.[name];
-      const ruleText = (ruleList && ruleList.length ? ruleList.join('\n') : OFFICIAL_STATUS_RULES[name]) || '';
-      const head = new PIXI.Text({
-        text: `${name} ${val}${burst ? '（爆发）' : ''}`,
-        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: col },
-      });
-      const desc = ruleText ? new PIXI.Text({
-        text: wrapCjkText(ruleText, maxChars - 5),
-        style: {
-          fontFamily: FONT_UI, fontSize: 11.5, fill: INK.primary, lineHeight: 17,
-          wordWrap: true, breakWords: true, wordWrapWidth: vw - 46,
-        },
-      }) : null;
-      const bh = Math.max(36, 24 + (desc ? desc.height + 8 : 8));
-      const box = new PIXI.Graphics();
-      box.roundRect(vx, vy + y - scrollY, vw, bh, 8)
-        .fill({ color: INK.paperSoft })
-        .stroke({ width: 1.2, color: col, alpha: 0.7 });
-      drawStatusIcon(box, name, vx + 18, vy + y - scrollY + 18, 10, col);
-      head.position.set(vx + 36, vy + y - scrollY + 6);
-      body.addChild(box, head);
-      if (desc) {
-        desc.position.set(vx + 36, vy + y - scrollY + 24);
-        body.addChild(desc);
-      }
-      y += bh + 7;
-    }
-    y += 6;
+  const t2 = makeSealButton(`技能牌组(${skills.length})`, {
+    width: 96, height: tabH, accent: theme.accent, solid: tab === 'skills', fontSize: 11.2, radius: 6,
+    onClick: () => onTab && onTab('skills'),
+  });
+  t2.position.set(110, curY);
+  root.addChild(t2);
+
+  let rx = width - 12;
+  const closeBtn = makeSealButton('✕', {
+    width: 28, height: tabH, accent: INK.secondary, fontSize: 11.5, radius: 6,
+    onClick: onClose,
+  });
+  rx -= 28;
+  closeBtn.position.set(rx, curY);
+  root.addChild(closeBtn);
+
+  if (canSetTarget && character.alive && onSetFocusTarget) {
+    rx -= 68;
+    const focusBtn = makeSealButton(isDefaultTarget ? '◎集火' : '设为集火', {
+      width: 62, height: tabH, accent: INK.gold, solid: isDefaultTarget, fontSize: 10.4, radius: 6,
+      onClick: onSetFocusTarget,
+    });
+    focusBtn.position.set(rx, curY);
+    root.addChild(focusBtn);
   }
+  curY += tabH + 8;
 
-  // Section 2: ALL Passives (100% VERBATIM!)
-  const allPassives = [
-    ...(catalogChar?.faction_passives || []).map((p) => ({ ...p, kind: '阵营被动' })),
-    ...(catalogChar?.passives || []).map((p) => ({ ...p, kind: '角色被动' })),
-  ];
-  if (allPassives.length) {
-    const pHead = new PIXI.Text({
-      text: '被动技能',
-      style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.secondary },
-    });
-    pHead.position.set(vx, vy + y - scrollY);
-    body.addChild(pHead);
-    y += 22;
+  // Scrollable Reading Viewport (FIXED 12.5px readable font — NEVER shrinks, O(1) smooth scroll!)
+  const vx = 10;
+  const vy = curY;
+  const vw = width - 20;
+  const vh = Math.max(96, height - vy - 10);
 
-    for (const p of allPassives) {
-      const text = (p.entries || []).join('\n') || p.description || '';
-      const head = new PIXI.Text({
-        text: `${p.name || p.kind}${p.kind === '阵营被动' ? '（阵营被动）' : ''}`,
-        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: INK.gold },
-      });
-      const desc = new PIXI.Text({
-        text: wrapCjkText(text, maxChars - 2),
-        style: {
-          fontFamily: FONT_UI, fontSize: 12, fill: INK.primary, lineHeight: 18,
-          wordWrap: true, breakWords: true, wordWrapWidth: vw - 22,
-        },
-      });
-      const bh = 28 + desc.height + 10;
-      const box = new PIXI.Graphics();
-      box.roundRect(vx, vy + y - scrollY, vw, bh, 8)
-        .fill({ color: INK.goldBg, alpha: 0.65 })
-        .stroke({ width: 1.1, color: INK.gold, alpha: 0.55 });
-      head.position.set(vx + 11, vy + y - scrollY + 7);
-      desc.position.set(vx + 11, vy + y - scrollY + 27);
-      body.addChild(box, head, desc);
-      y += bh + 7;
-    }
-    y += 6;
-  }
+  const vpBg = new PIXI.Graphics();
+  vpBg.roundRect(vx, vy, vw, vh, 8)
+    .fill({ color: INK.paperSoft, alpha: 0.65 })
+    .stroke({ width: 0.9, color: INK.hairline });
+  root.addChild(vpBg);
 
-  // Section 3: ALL Printed Skills (click/hover to view full verbatim card right beside!)
-  if (skills.length) {
-    const skHead = new PIXI.Text({
-      text: '技能牌组',
-      style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.secondary },
-    });
-    skHead.position.set(vx, vy + y - scrollY);
-    body.addChild(skHead);
-    y += 22;
+  const maskG = new PIXI.Graphics();
+  maskG.rect(vx + 2, vy + 2, vw - 4, vh - 4).fill({ color: 0xffffff });
+  root.addChild(maskG);
 
+  const content = new PIXI.Container();
+  content.mask = maskG;
+  root.addChild(content);
+
+  const padIn = 10;
+  const innerW = vw - padIn * 2 - 8;
+  let cy = padIn;
+
+  if (tab === 'skills') {
     for (const sk of skills) {
-      const isActive = activeSkill && activeSkill.id === sk.id;
-      const row = new PIXI.Container();
-      row.position.set(vx, vy + y - scrollY);
-      const rg = new PIXI.Graphics();
-      rg.roundRect(0, 0, vw, 38, 8)
-        .fill({ color: isActive ? theme.softBg : INK.paperSoft })
-        .stroke({ width: isActive ? 2 : 1, color: isActive ? theme.accent : INK.line });
-      rg.circle(20, 19, 11).fill({ color: theme.accent });
-      row.addChild(rg);
-
-      const cTxt = new PIXI.Text({
-        text: String(sk.cost),
-        style: { fontFamily: FONT_NUM, fontSize: 13, fontWeight: '800', fill: INK.paper },
-      });
-      cTxt.anchor.set(0.5);
-      cTxt.position.set(20, 19);
-      const nTxt = new PIXI.Text({
-        text: sk.name,
-        style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.primary },
-      });
-      nTxt.anchor.set(0, 0.5);
-      nTxt.position.set(38, 19);
-      row.addChild(cTxt, nTxt);
-
-      // Right side: die icons + exact roll ranges (NO Lv.X!)
-      let dx = vw - 10;
-      for (let i = (sk.dice || []).length - 1; i >= 0; i--) {
-        const d = sk.dice[i];
-        const ds = DIE_STYLE[d.type] || DIE_STYLE.blank;
-        const rt = new PIXI.Text({
-          text: formatDieRange(d),
-          style: { fontFamily: FONT_NUM, fontSize: 11.5, fontWeight: '800', fill: ds.color },
-        });
-        rt.anchor.set(1, 0.5);
-        rt.position.set(dx, 19);
-        row.addChild(rt);
-        dx -= rt.width + 12;
-        drawDieIcon(rg, d.type, dx + 3, 19, 6.5, ds.color);
-        dx -= 12;
-      }
-
+      const row = buildUnifiedSkillRow(sk, { width: innerW, side, active: false });
+      row.position.set(vx + padIn, vy + cy);
       row.eventMode = 'static';
       row.cursor = 'pointer';
       row.on('pointerover', () => {
-        if (!isActive) onSelectSkill(sk.id);
+        if (onHoverSkill) {
+          const gp = row.getGlobalPosition();
+          const anchorX = side === 1 ? x + width + 122 : x - 122;
+          onHoverSkill(sk, anchorX, gp.y + row._height / 2);
+        }
       });
-      row.on('pointertap', (e) => {
-        e.stopPropagation();
-        onSelectSkill(sk.id);
+      row.on('pointerout', () => {
+        if (onHoverSkill) onHoverSkill(null);
       });
-      body.addChild(row);
-      y += 44;
+      content.addChild(row);
+      cy += row._height + 7;
+    }
+  } else {
+    const factionPassives = catalogChar?.faction_passives || [];
+    const rolePassives = catalogChar?.passives || [];
+
+    for (const fp of factionPassives) {
+      const entries = (fp.entries && fp.entries.length) ? fp.entries : (fp.description ? [fp.description] : []);
+      const plate = buildUnifiedEntryPlate({
+        variant: 'passive',
+        title: fp.name || '阵营被动',
+        tagLabel: '阵营被动',
+        entries,
+        width: innerW,
+        accentColor: theme.accent,
+        fontSize: 12.4,
+        lineHeight: 19.2,
+      });
+      plate.position.set(vx + padIn, vy + cy);
+      content.addChild(plate);
+      cy += plate._height + 8;
+    }
+
+    for (const p of rolePassives) {
+      const entries = (p.entries && p.entries.length) ? p.entries : (p.description ? [p.description] : []);
+      const plate = buildUnifiedEntryPlate({
+        variant: 'passive',
+        title: p.name || '角色被动',
+        entries,
+        width: innerW,
+        accentColor: INK.gold,
+        fontSize: 12.4,
+        lineHeight: 19.2,
+      });
+      plate.position.set(vx + padIn, vy + cy);
+      content.addChild(plate);
+      cy += plate._height + 8;
+    }
+
+    if (statuses.length) {
+      if (cy > padIn) cy += 4;
+      const stHead = new PIXI.Text({
+        text: '当前状态规则',
+        style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: INK.secondary },
+      });
+      stHead.position.set(vx + padIn, vy + cy);
+      content.addChild(stHead);
+      cy += 21;
+
+      for (const [sName, sVal] of statuses) {
+        const burst = sName === '裂血' && character.bleed_burst;
+        const ruleList = catalogStatuses?.[sName];
+        const ruleText = (ruleList && ruleList.length ? ruleList.join('\n') : OFFICIAL_STATUS_RULES[sName]) || '';
+        const plate = buildUnifiedEntryPlate({
+          variant: 'status',
+          statusName: sName,
+          statusValue: sVal,
+          statusBurst: burst,
+          entries: ruleText ? [ruleText] : [],
+          width: innerW,
+          fontSize: 12,
+          lineHeight: 18.4,
+        });
+        plate.position.set(vx + padIn, vy + cy);
+        content.addChild(plate);
+        cy += plate._height + 7;
+      }
+    }
+
+    if (!factionPassives.length && !rolePassives.length && !statuses.length) {
+      const empty = new PIXI.Text({
+        text: '当前角色无被动技能与生效状态。',
+        style: { fontFamily: FONT_UI, fontSize: 12.5, fill: INK.muted },
+      });
+      empty.position.set(vx + padIn, vy + cy + 8);
+      content.addChild(empty);
+      cy += 34;
     }
   }
 
-  root._maxScroll = Math.max(0, y - vh + 24);
+  const totalH = cy + padIn;
+  const maxScroll = Math.max(0, totalH - vh);
+  let curScroll = Math.max(0, Math.min(maxScroll, scrollY));
+  content.y = -curScroll;
 
-  // Right Side: Full 100% Verbatim Card Panel for the hovered/selected skill!
-  if (activeSkill) {
-    const cardPanel = buildVerbatimCardPanel(activeSkill, { side, ownerName: character.name, width: cardW });
-    cardPanel.position.set(px + leftW + 18, Math.max(24, py + Math.max(0, (panelH - cardPanel._boxHeight) / 2)));
-    cardPanel.eventMode = 'static';
-    cardPanel.on('pointertap', (e) => e.stopPropagation());
-    root.addChild(cardPanel);
+  let sb = null;
+  const setScroll = (nextY) => {
+    curScroll = Math.max(0, Math.min(maxScroll, nextY));
+    content.y = -curScroll;
+    if (sb) sb._updateThumb(curScroll);
+    if (onScrollChange) onScrollChange(curScroll);
+    return curScroll;
+  };
+
+  if (maxScroll > 0) {
+    sb = makeSmoothScrollbar({
+      x: vx + vw - 7,
+      y: vy + 6,
+      height: vh - 12,
+      totalH,
+      viewH: vh,
+      scrollY: curScroll,
+      accentColor: theme.accent,
+      onChange: (val) => setScroll(val),
+    });
+    root.addChild(sb);
   }
 
+  root._actors = actors;
+  root._maxScroll = maxScroll;
+  root._rect = { x, y, w: width, h: height };
+  root.setScroll = setScroll;
+  return root;
+}
+
+/**
+ * Limbus-style Dual-Side Squad Passive Overview Sheet (Tab / 被动 button):
+ *  - Sits cleanly above the hand tray (NO full-screen blackout — hand cards remain visible!)
+ *  - Left Column = P1, Right Column = P2 (~560px each), CONSTANT readable font size (12.2px — NEVER shrinks!)
+ *  - INDEPENDENT Left & Right scroll viewports + independent draggable scrollbars!
+ *    Rolling wheel on the left side scrolls ONLY P1; rolling on the right side scrolls ONLY P2!
+ *  - Click any character strip to jump straight into their Side Hero Inspector!
+ */
+export function buildPassiveDrawer({
+  x,
+  y,
+  width,
+  maxHeight,
+  players = [],
+  catalogById = new Map(),
+  scrollY1 = 0,
+  scrollY2 = 0,
+  onOpenHeroSheet,
+  onScrollChange,
+  onClose,
+}) {
+  const root = new PIXI.Container();
+  root.position.set(x, y);
+
+  const padX = 16;
+  const colGap = 24;
+  const colW = Math.floor((width - padX * 2 - colGap) / 2);
+  const innerColW = colW - 12; // reserve clean lane for each column's own scrollbar
+  const headerH = 38;
+  const splitX = x + padX + colW + colGap / 2;
+
+  const builtCols = {};
+  let maxColH = 0;
+
+  [1, 2].forEach((side, colIdx) => {
+    const player = players.find((p) => p.side === side);
+    const theme = SIDE_THEME[side] || SIDE_THEME[1];
+    const colX = padX + colIdx * (colW + colGap);
+    const colContainer = new PIXI.Container();
+    let cy = 4;
+
+    if (player) {
+      const sTxt = new PIXI.Text({
+        text: `${player.name}  ·  速${Number(player.speed || 0).toFixed(player.speed % 1 ? 1 : 0)}  ·  费${player.cost?.available ?? 0}`,
+        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '900', fill: theme.accent },
+      });
+      sTxt.position.set(2, cy);
+      colContainer.addChild(sTxt);
+      cy += 22;
+
+      const chars = player.characters || [];
+
+      // Deduplicated Faction Passives
+      const seenFaction = new Set();
+      for (const ch of chars) {
+        const cat = catalogById.get(ch.id);
+        for (const fp of cat?.faction_passives || []) {
+          const key = fp.name || (fp.entries || []).join('|');
+          if (seenFaction.has(key)) continue;
+          seenFaction.add(key);
+          const entries = (fp.entries && fp.entries.length) ? fp.entries : (fp.description ? [fp.description] : []);
+          const plate = buildUnifiedEntryPlate({
+            variant: 'passive',
+            title: fp.name || '阵营被动',
+            tagLabel: '阵营被动',
+            entries,
+            width: innerColW,
+            accentColor: theme.accent,
+            fontSize: 12.2,
+            lineHeight: 18.8,
+          });
+          plate.position.set(0, cy);
+          colContainer.addChild(plate);
+          cy += plate._height + 7;
+        }
+      }
+
+      // Per-Character Block
+      for (const ch of chars) {
+        const cat = catalogById.get(ch.id);
+        const pal = actorPalette(ch, side);
+        const rolePassives = cat?.passives || [];
+
+        const rowHead = new PIXI.Container();
+        rowHead.position.set(0, cy);
+        const rhH = 27;
+        const rhG = new PIXI.Graphics();
+        const drawRh = (hov) => {
+          rhG.clear();
+          rhG.roundRect(0, 0, innerColW, rhH, 6)
+            .fill({ color: hov ? theme.warmTint : INK.paperSoft })
+            .stroke({ width: hov ? 1.3 : 0.85, color: hov ? theme.accent : INK.hairline });
+          rhG.circle(12, rhH / 2, 6).fill({ color: pal.primary });
+        };
+        drawRh(false);
+        rowHead.addChild(rhG);
+
+        const stSummary = Object.entries(ch.statuses || {}).map(([n, v]) => `${n}${v}`).join(' ');
+        const chTxt = new PIXI.Text({
+          text: `${ch.name}${ch.alive ? '' : ' [亡]'} · 生命 ${ch.hp}/${ch.max_hp}${stSummary ? ' · ' + stSummary : ''}`,
+          style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: ch.alive ? INK.strong : INK.muted },
+        });
+        chTxt.position.set(24, 5);
+        rowHead.addChild(chTxt);
+
+        const openLink = new PIXI.Text({
+          text: '角色牌面 ↗',
+          style: { fontFamily: FONT_UI, fontSize: 10.8, fontWeight: '800', fill: theme.accent },
+        });
+        openLink.anchor.set(1, 0.5);
+        openLink.position.set(innerColW - 10, rhH / 2);
+        rowHead.addChild(openLink);
+
+        rowHead.eventMode = 'static';
+        rowHead.cursor = 'pointer';
+        rowHead.on('pointerover', () => drawRh(true));
+        rowHead.on('pointerout', () => drawRh(false));
+        rowHead.on('pointertap', (e) => {
+          e.stopPropagation();
+          if (onOpenHeroSheet) onOpenHeroSheet(ch.id, side);
+        });
+        colContainer.addChild(rowHead);
+        cy += rhH + 6;
+
+        for (const p of rolePassives) {
+          const entries = (p.entries && p.entries.length) ? p.entries : (p.description ? [p.description] : []);
+          const plate = buildUnifiedEntryPlate({
+            variant: 'passive',
+            title: p.name || '角色被动',
+            entries,
+            width: innerColW - 6,
+            accentColor: INK.gold,
+            fontSize: 12.2,
+            lineHeight: 18.8,
+          });
+          plate.position.set(6, cy);
+          colContainer.addChild(plate);
+          cy += plate._height + 6;
+        }
+        cy += 5;
+      }
+    }
+
+    builtCols[side] = { colContainer, colX, totalH: cy + 8, theme };
+    maxColH = Math.max(maxColH, cy);
+  });
+
+  const drawerH = Math.min(maxHeight, Math.max(150, headerH + maxColH + 14));
+  const vh = drawerH - headerH - 10;
+
+  const frame = new PIXI.Graphics();
+  frame.roundRect(4, 8, width, drawerH, 13).fill({ color: INK.shadow, alpha: 0.26 });
+  frame.roundRect(0, 0, width, drawerH, 13)
+    .fill({ color: INK.paper, alpha: 0.99 })
+    .stroke({ width: 1.6, color: INK.gold, alpha: 0.9 });
+  frame.roundRect(1.5, 1.5, width - 3, headerH - 1, 11).fill({ color: INK.paperSoft });
+  frame.moveTo(12, headerH + 1).lineTo(width - 12, headerH + 1).stroke({ width: 1, color: INK.hairline });
+  frame.eventMode = 'static';
+  frame.on('pointertap', (e) => e.stopPropagation());
+  root.addChild(frame);
+
+  const title = new PIXI.Text({
+    text: '双方被动总览',
+    style: { fontFamily: FONT_UI, fontSize: 14, fontWeight: '900', fill: INK.strong },
+  });
+  title.position.set(16, 9);
+  root.addChild(title);
+
+  const hint = new PIXI.Text({
+    text: '左右栏可独立滚动 · Tab / 点外部 / 右键收起',
+    style: { fontFamily: FONT_UI, fontSize: 10.8, fontWeight: '700', fill: INK.muted },
+  });
+  hint.position.set(16 + title.width + 12, 11);
+  root.addChild(hint);
+
+  const closeBtn = makeSealButton('关闭', {
+    width: 60, height: 25, accent: INK.secondary, fontSize: 11.2, radius: 12, onClick: onClose,
+  });
+  closeBtn.position.set(width - 72, 6.5);
+  root.addChild(closeBtn);
+
+  const div = new PIXI.Graphics();
+  div.moveTo(padX + colW + colGap / 2, headerH + 6).lineTo(padX + colW + colGap / 2, drawerH - 10)
+    .stroke({ width: 1, color: INK.hairline });
+  root.addChild(div);
+
+  // Mount Left (P1) & Right (P2) as INDEPENDENT masked scroll columns with independent scrollbars!
+  const baseY = headerH + 5;
+  const colControllers = {};
+  const maxScrollBySide = { 1: 0, 2: 0 };
+
+  for (const side of [1, 2]) {
+    const info = builtCols[side];
+    const maxS = Math.max(0, info.totalH - vh);
+    maxScrollBySide[side] = maxS;
+    let curS = Math.max(0, Math.min(maxS, side === 1 ? scrollY1 : scrollY2));
+
+    const maskG = new PIXI.Graphics();
+    maskG.rect(info.colX - 2, headerH + 3, innerColW + 4, vh).fill({ color: 0xffffff });
+    root.addChild(maskG);
+
+    info.colContainer.position.set(info.colX, baseY - curS);
+    info.colContainer.mask = maskG;
+    root.addChild(info.colContainer);
+
+    let sb = null;
+    const setSideScroll = (nextY) => {
+      curS = Math.max(0, Math.min(maxS, nextY));
+      info.colContainer.y = baseY - curS;
+      if (sb) sb._updateThumb(curS);
+      if (onScrollChange) onScrollChange(side, curS);
+      return curS;
+    };
+
+    if (maxS > 0) {
+      sb = makeSmoothScrollbar({
+        x: info.colX + innerColW + 4,
+        y: headerH + 5,
+        height: vh - 6,
+        totalH: info.totalH,
+        viewH: vh,
+        scrollY: curS,
+        accentColor: info.theme.accent,
+        onChange: (val) => setSideScroll(val),
+      });
+      root.addChild(sb);
+    }
+
+    colControllers[side] = { setScroll: setSideScroll, getScroll: () => curS, maxScroll: maxS };
+  }
+
+  root._maxScrollBySide = maxScrollBySide;
+  root._splitX = splitX;
+  root._rect = { x, y, w: width, h: drawerH };
+  root.setSideScroll = (side, nextY) => colControllers[side]?.setScroll(nextY);
   return root;
 }
 
@@ -401,63 +793,73 @@ export function buildHandoffOverlay(w, h, { activeSide, eligibleSides, onReady }
   return root;
 }
 
-export function buildDrawSelectOverlay(w, h, { prompt, selectedIds, onToggle, onConfirm, onHoverCard }) {
+export function buildDrawSelectOverlay(w, h, { prompt, selectedIds, onToggle, onConfirm }) {
   const root = new PIXI.Container();
   const theme = SIDE_THEME[prompt.side] || SIDE_THEME[1];
 
   const veil = new PIXI.Graphics();
-  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.95 });
+  veil.rect(0, 0, w, h).fill({ color: 0xf5f1e7, alpha: 0.965 });
   veil.eventMode = 'static';
   root.addChild(veil);
 
   const cx = w / 2;
   const title = new PIXI.Text({
     text: `${theme.name} · 选 ${prompt.discard_count} 张置底（${selectedIds.size}/${prompt.discard_count}）`,
-    style: { fontFamily: FONT_UI, fontSize: 22, fontWeight: '800', fill: theme.accent },
+    style: { fontFamily: FONT_UI, fontSize: 21, fontWeight: '800', fill: theme.accent },
   });
   title.anchor.set(0.5);
-  title.position.set(cx, 74);
+  title.position.set(cx, 56);
   root.addChild(title);
 
-  const count = prompt.candidates.length;
-  const cardW = 144;
-  const cardH = 198;
-  const spacing = Math.min(174, (w - 140) / Math.max(1, count));
-  const startX = cx - ((count - 1) * spacing) / 2;
-  const cardY = Math.max(h * 0.56, h - 224);
+  const count = Math.max(1, prompt.candidates.length);
+  const gap = 16;
+  const cardW = Math.max(192, Math.min(212, Math.floor((w - 64 - gap * (count - 1)) / count)));
+  const portraitH = Math.round(cardW * 1.40);
+  const totalW = count * cardW + (count - 1) * gap;
+  const startX = cx - totalW / 2;
 
-  prompt.candidates.forEach((card, i) => {
+  // Build ALL candidate cards with STRICT fixed vertical physical card proportions (1 : 1.40, NEVER stretches!)
+  const built = prompt.candidates.map((card) => {
     const isMarked = selectedIds.has(card.id);
-    const cardX = startX + i * spacing;
-    const drawY = isMarked ? cardY + 20 : cardY - 6;
-    const holder = new PIXI.Container();
-    holder.position.set(cardX, drawY);
-    const spr = buildCardFront(card, {
+    const spr = buildFullCard(card, {
       side: prompt.side,
       ownerName: card.character_name || '',
       showOwner: true,
       width: cardW,
-      height: cardH,
+      fixedHeight: portraitH,
+      dense: true,
+      centered: false,
       legal: true,
       selected: isMarked,
     });
+    return { card, isMarked, spr };
+  });
+
+  const maxH = built.reduce((m, b) => Math.max(m, b.spr._boxHeight), 200);
+  const baseTop = Math.max(96, Math.min(h - maxH - 122, (h - maxH - 44) / 2));
+
+  built.forEach(({ card, isMarked, spr }, i) => {
+    const cardX = startX + i * (cardW + gap);
+    const drawY = baseTop + (isMarked ? 16 : 0);
+    const holder = new PIXI.Container();
+    holder.position.set(cardX, drawY);
     holder.addChild(spr);
 
+    const ch = spr._boxHeight;
     const pill = new PIXI.Graphics();
-    pill.roundRect(-42, cardH / 2 + 12, 84, 24, 7).fill({ color: isMarked ? 0xcf4932 : 0x1c8a64 });
+    pill.roundRect(cardW / 2 - 48, ch + 10, 96, 26, 6)
+      .fill({ color: isMarked ? 0xc8452e : 0x1a825e });
     holder.addChild(pill);
     const bTxt = new PIXI.Text({
       text: isMarked ? '置底' : '保留',
       style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: INK.paper },
     });
     bTxt.anchor.set(0.5);
-    bTxt.position.set(0, cardH / 2 + 24);
+    bTxt.position.set(cardW / 2, ch + 23);
     holder.addChild(bTxt);
 
     holder.eventMode = 'static';
     holder.cursor = 'pointer';
-    holder.on('pointerover', () => onHoverCard && onHoverCard(card, prompt.side, card.character_name || '', cardX, drawY, cardH, spr));
-    holder.on('pointerout', () => onHoverCard && onHoverCard(null));
     holder.on('pointertap', (e) => {
       e.stopPropagation();
       onToggle(card.id);
@@ -470,7 +872,7 @@ export function buildDrawSelectOverlay(w, h, { prompt, selectedIds, onToggle, on
     width: 176, height: 42, accent: ready ? theme.accent : INK.muted, solid: ready, disabled: !ready, fontSize: 15,
     onClick: () => onConfirm(),
   });
-  btn.position.set(cx - 88, h - 66);
+  btn.position.set(cx - 88, h - 64);
   root.addChild(btn);
 
   return root;
@@ -536,199 +938,605 @@ export function buildSpecialOverlay(w, h, { side, timing, options, pendingAttack
   return root;
 }
 
+function drawHeartIcon(g, cx, cy, r, col) {
+  g.poly([
+    cx, cy + r * 0.85,
+    cx - r * 0.82, cy - r * 0.05,
+    cx - r * 0.45, cy - r * 0.72,
+    cx, cy - r * 0.25,
+    cx + r * 0.45, cy - r * 0.72,
+    cx + r * 0.82, cy - r * 0.05,
+  ]).fill({ color: col });
+}
+
+function drawDuelPip(g, cx, cy, r, col) {
+  g.poly([cx, cy - r, cx + r * 0.75, cy, cx, cy + r, cx - r * 0.75, cy]).fill({ color: col });
+}
+
+/**
+ * Visual Confrontational Team Formation & Living Character Showcase (ZERO plain-text tiling!):
+ *  - Top: Confrontational VS Stage with 3+3 living animated character pedestals facing each other
+ *  - Left: Faction-filtered Living Character Portrait Gallery (breathing silhouettes + visual stat emblems)
+ *  - Right: Living Hero Showcase + Structured Verbatim Passive Plates + Real Interactive Skill Cards (hover to magnify!)
+ */
 export function buildRosterOverlay(w, h, {
   catalog,
   team1,
   team2,
   assignSide,
   hoveredChar,
+  factionFilter = null,
+  galleryScrollY = 0,
+  inspectScrollY = 0,
   onSetAssignSide,
+  onSetFaction,
   onToggleChar,
+  onRemoveFromSide,
   onHoverChar,
+  onHoverCard,
   onStart,
   onCancel,
 }) {
   const root = new PIXI.Container();
+  const actors = [];
+
   const veil = new PIXI.Graphics();
-  veil.rect(0, 0, w, h).fill({ color: 0xf5f1e7, alpha: 0.98 });
+  veil.rect(0, 0, w, h).fill({ color: 0xf5f1e7, alpha: 0.985 });
   veil.eventMode = 'static';
   root.addChild(veil);
 
-  const pad = 26;
-  const title = new PIXI.Text({
-    text: '编队选人（每方 1～3 名）',
-    style: { fontFamily: FONT_UI, fontSize: 20, fontWeight: '800', fill: INK.primary },
-  });
-  title.position.set(pad, 18);
-  root.addChild(title);
+  const pad = 20;
+  const charById = new Map(catalog.map((c) => [c.id, c]));
 
-  [1, 2].forEach((s, idx) => {
-    const t = SIDE_THEME[s];
-    const active = assignSide === s;
-    const list = s === 1 ? team1 : team2;
-    const names = list.map((id) => catalog.find((c) => c.id === id)?.name || id).join('、') || '未选';
-    const b = makeSealButton(`${t.name}（${list.length}/3）：${names}`, {
-      width: 286, height: 36, accent: t.accent, fill: active ? t.softBg : INK.paper, solid: active, fontSize: 12.5,
-      onClick: () => onSetAssignSide(s),
+  // ── 1. TOP CONFRONTATIONAL VS SQUAD FORMATION BAR ──
+  const topY = 12;
+  const topH = 114;
+  const centerW = 196;
+  const wingW = Math.floor((w - pad * 2 - centerW - 24) / 2);
+
+  [1, 2].forEach((side) => {
+    const t = SIDE_THEME[side];
+    const isEditing = assignSide === side;
+    const list = side === 1 ? team1 : team2;
+    const wx = side === 1 ? pad : w - pad - wingW;
+
+    const wing = new PIXI.Container();
+    wing.position.set(wx, topY);
+    const wg = new PIXI.Graphics();
+    wg.roundRect(2, 4, wingW, topH, 13).fill({ color: INK.shadow, alpha: isEditing ? 0.28 : 0.16 });
+    wg.roundRect(0, 0, wingW, topH, 13)
+      .fill({ color: isEditing ? t.warmTint : INK.paper })
+      .stroke({ width: isEditing ? 2.6 : 1.3, color: isEditing ? t.accent : INK.line });
+    wg.roundRect(2, 2, wingW - 4, 24, 11).fill({ color: isEditing ? t.softBg : INK.paperSoft });
+    wing.addChild(wg);
+
+    const wTitle = new PIXI.Text({
+      text: `${t.name}（${list.length}/3）`,
+      style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: t.accent },
     });
-    b.position.set(pad + idx * 300, 52);
-    root.addChild(b);
+    wTitle.position.set(side === 1 ? 12 : wingW - 12 - wTitle.width, 5);
+    wing.addChild(wTitle);
+
+    if (isEditing) {
+      const edTxt = new PIXI.Text({
+        text: '● 正在编队',
+        style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: INK.gold },
+      });
+      edTxt.position.set(side === 1 ? wingW - 12 - edTxt.width : 12, 6);
+      wing.addChild(edTxt);
+    }
+
+    wing.eventMode = 'static';
+    wing.cursor = 'pointer';
+    wing.on('pointertap', (e) => {
+      e.stopPropagation();
+      onSetAssignSide(side);
+    });
+
+    // 3 visual character pedestal slots per side (P1 left-to-right, P2 mirrored right-to-left facing center!)
+    const slotGap = 8;
+    const slotW = Math.floor((wingW - 20 - slotGap * 2) / 3);
+    const slotH = 78;
+    const slotY = 29;
+    for (let i = 0; i < 3; i++) {
+      const visualIdx = side === 1 ? i : 2 - i;
+      const sx = 10 + visualIdx * (slotW + slotGap);
+      const cid = list[i];
+      const ch = cid ? charById.get(cid) : null;
+      const slot = new PIXI.Container();
+      slot.position.set(sx, slotY);
+
+      const sg = new PIXI.Graphics();
+      if (ch) {
+        const pal = actorPalette(ch, side);
+        sg.roundRect(0, 0, slotW, slotH, 9)
+          .fill({ color: pal.highlight })
+          .stroke({ width: 1.7, color: t.accent });
+        sg.ellipse(slotW / 2, slotH - 22, slotW * 0.34, 8)
+          .fill({ color: INK.paper, alpha: 0.72 })
+          .stroke({ width: 1, color: pal.primary, alpha: 0.35 });
+        slot.addChild(sg);
+
+        const actor = createCharacterActor(ch, side, { radius: 22 });
+        actor.position.set(slotW / 2, 34);
+        slot.addChild(actor);
+        actors.push({ actor, ch });
+
+        const nm = new PIXI.Text({
+          text: ch.name,
+          style: { fontFamily: FONT_UI, fontSize: ch.name.length > 4 ? 10.5 : 11.5, fontWeight: '800', fill: INK.primary },
+        });
+        nm.anchor.set(0.5);
+        nm.position.set(slotW / 2, slotH - 11);
+        slot.addChild(nm);
+
+        // Compact remove badge
+        const rx = side === 1 ? slotW - 12 : 12;
+        const rmBg = new PIXI.Graphics();
+        rmBg.circle(rx, 11, 7.5).fill({ color: INK.paper, alpha: 0.92 }).stroke({ width: 1.2, color: INK.secondary, alpha: 0.65 });
+        rmBg.moveTo(rx - 3, 8).lineTo(rx + 3, 14).stroke({ width: 1.4, color: 0xcf4932 });
+        rmBg.moveTo(rx + 3, 8).lineTo(rx - 3, 14).stroke({ width: 1.4, color: 0xcf4932 });
+        slot.addChild(rmBg);
+
+        slot.eventMode = 'static';
+        slot.cursor = 'pointer';
+        slot.on('pointerover', () => onHoverChar(ch));
+        slot.on('pointertap', (e) => {
+          e.stopPropagation();
+          if (onRemoveFromSide) onRemoveFromSide(side, ch.id);
+          else onToggleChar(ch.id);
+        });
+      } else {
+        sg.roundRect(0, 0, slotW, slotH, 9)
+          .fill({ color: INK.paperSoft, alpha: 0.75 })
+          .stroke({ width: 1.2, color: isEditing ? t.border : INK.line, alpha: 0.8 });
+        sg.moveTo(slotW / 2 - 7, slotH / 2 - 4).lineTo(slotW / 2 + 7, slotH / 2 - 4)
+          .stroke({ width: 1.8, color: INK.muted, alpha: 0.7 });
+        sg.moveTo(slotW / 2, slotH / 2 - 11).lineTo(slotW / 2, slotH / 2 + 3)
+          .stroke({ width: 1.8, color: INK.muted, alpha: 0.7 });
+        slot.addChild(sg);
+
+        const idxTxt = new PIXI.Text({
+          text: `${i + 1}号位`,
+          style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '700', fill: INK.muted },
+        });
+        idxTxt.anchor.set(0.5);
+        idxTxt.position.set(slotW / 2, slotH - 12);
+        slot.addChild(idxTxt);
+      }
+      wing.addChild(slot);
+    }
+
+    root.addChild(wing);
   });
 
-  const gridX = pad;
-  const gridY = 104;
-  const gridW = Math.floor((w - pad * 3) * 0.56);
-  const cols = gridW > 620 ? 3 : 2;
-  const gap = 11;
-  const cellW = Math.floor((gridW - gap * (cols - 1)) / cols);
-  const cellH = 74;
+  // Center VS Crest + Start / Cancel Seals
+  const cx = w / 2;
+  const vsG = new PIXI.Graphics();
+  drawLightStar(vsG, cx, topY + 24, 18, INK.gold, 0.9);
+  root.addChild(vsG);
+  const vsTxt = new PIXI.Text({
+    text: 'VS',
+    style: { fontFamily: FONT_NUM, fontSize: 15, fontWeight: '900', fill: INK.primary, letterSpacing: 1 },
+  });
+  vsTxt.anchor.set(0.5);
+  vsTxt.position.set(cx, topY + 24);
+  root.addChild(vsTxt);
 
-  catalog.forEach((char, idx) => {
+  const valid = team1.length >= 1 && team2.length >= 1;
+  const startBtn = makeSealButton('开始对局', {
+    width: 154, height: 36, accent: valid ? 0x1c8a64 : INK.muted, solid: valid, disabled: !valid, fontSize: 14, radius: 18,
+    onClick: () => onStart([team1.slice(), team2.slice()]),
+  });
+  startBtn.position.set(cx - 77, topY + 46);
+  root.addChild(startBtn);
+
+  const cancelBtn = makeSealButton('返回', {
+    width: 106, height: 26, accent: INK.secondary, fontSize: 11.5, radius: 13, onClick: onCancel,
+  });
+  cancelBtn.position.set(cx - 53, topY + 88);
+  root.addChild(cancelBtn);
+
+  // ── 2. LEFT HALF: FACTION-FILTERED LIVING PORTRAIT GALLERY ──
+  const bodyTop = topY + topH + 12;
+  const bodyH = h - bodyTop - 16;
+  const galleryW = Math.floor((w - pad * 2 - 16) * 0.515);
+  const galleryX = pad;
+
+  const galleryBg = new PIXI.Graphics();
+  galleryBg.roundRect(galleryX + 2, bodyTop + 4, galleryW, bodyH, 13).fill({ color: INK.shadow, alpha: 0.18 });
+  galleryBg.roundRect(galleryX, bodyTop, galleryW, bodyH, 13)
+    .fill({ color: INK.paper })
+    .stroke({ width: 1.5, color: INK.line });
+  root.addChild(galleryBg);
+
+  // Faction Filter Bar
+  const factions = [];
+  for (const c of catalog) {
+    const f = c.faction || '独立';
+    if (!factions.includes(f)) factions.push(f);
+  }
+  const filterItems = [{ id: null, label: `全部 ${catalog.length}` }, ...factions.map((f) => ({ id: f, label: f }))];
+  let fx = galleryX + 12;
+  const fy = bodyTop + 10;
+  for (const item of filterItems) {
+    const active = factionFilter === item.id;
+    const labelW = Math.max(54, item.label.length * 11 + 18);
+    if (fx + labelW > galleryX + galleryW - 10) break;
+    const pill = makeSealButton(item.label, {
+      width: labelW,
+      height: 26,
+      accent: active ? SIDE_THEME[assignSide].accent : INK.secondary,
+      fill: INK.paperSoft,
+      solid: active,
+      fontSize: 11,
+      radius: 13,
+      onClick: () => onSetFaction && onSetFaction(item.id),
+    });
+    pill.position.set(fx, fy);
+    root.addChild(pill);
+    fx += labelW + 6;
+  }
+
+  const filtered = factionFilter
+    ? catalog.filter((c) => (c.faction || '独立') === factionFilter)
+    : catalog;
+
+  const gx = galleryX + 12;
+  const gy = bodyTop + 44;
+  const gw = galleryW - 24;
+  const gh = bodyH - 54;
+
+  const gMask = new PIXI.Graphics();
+  gMask.rect(gx, gy, gw, gh).fill({ color: 0xffffff });
+  root.addChild(gMask);
+
+  const gBody = new PIXI.Container();
+  gBody.mask = gMask;
+  root.addChild(gBody);
+
+  const cols = gw >= 540 ? 4 : 3;
+  const gap = 10;
+  const cellW = Math.floor((gw - 8 - gap * (cols - 1)) / cols);
+  const cellH = 148;
+  const rows = Math.ceil(filtered.length / cols);
+  const totalGalleryH = rows * cellH + Math.max(0, rows - 1) * gap + 8;
+  root._galleryMaxScroll = Math.max(0, totalGalleryH - gh);
+  const clampedGScroll = Math.max(0, Math.min(root._galleryMaxScroll, galleryScrollY));
+
+  const target = hoveredChar || filtered[0] || catalog[0];
+
+  filtered.forEach((char, idx) => {
     const col = idx % cols;
     const row = Math.floor(idx / cols);
-    const x = gridX + col * (cellW + gap);
-    const y = gridY + row * (cellH + gap);
-    if (y + cellH > h - 76) return;
+    const x = gx + col * (cellW + gap);
+    const y = gy + row * (cellH + gap) - clampedGScroll;
 
     const in1 = team1.indexOf(char.id);
     const in2 = team2.indexOf(char.id);
     const ownerSide = in1 >= 0 ? 1 : in2 >= 0 ? 2 : 0;
-    const borderCol = ownerSide ? SIDE_THEME[ownerSide].accent : hoveredChar?.id === char.id ? INK.gold : INK.line;
+    const isSelected = target?.id === char.id;
+    const pal = actorPalette(char, ownerSide || assignSide);
+    const borderCol = ownerSide ? SIDE_THEME[ownerSide].accent : isSelected ? INK.gold : INK.line;
 
     const card = new PIXI.Container();
     card.position.set(x, y);
     const bg = new PIXI.Graphics();
-    bg.roundRect(2, 4, cellW, cellH, 10).fill({ color: INK.shadow, alpha: 0.2 });
-    bg.roundRect(0, 0, cellW, cellH, 10)
-      .fill({ color: ownerSide ? SIDE_THEME[ownerSide].softBg : INK.paper })
-      .stroke({ width: ownerSide ? 2.2 : 1.3, color: borderCol });
+    bg.roundRect(2, 4, cellW, cellH, 11).fill({ color: INK.shadow, alpha: isSelected ? 0.3 : 0.18 });
+    bg.roundRect(0, 0, cellW, cellH, 11)
+      .fill({ color: INK.paper })
+      .stroke({ width: ownerSide ? 2.4 : isSelected ? 2.2 : 1.3, color: borderCol });
+
+    // Sculpted portrait art stage (upper 84px)
+    const artH = 84;
+    bg.roundRect(3, 3, cellW - 6, artH, 8).fill({ color: pal.highlight });
+    bg.circle(cellW / 2, artH * 0.54, 30)
+      .fill({ color: INK.paper, alpha: 0.68 })
+      .stroke({ width: 1.2, color: pal.primary, alpha: 0.35 });
+    bg.ellipse(cellW / 2, artH - 9, cellW * 0.3, 6).fill({ color: pal.primary, alpha: 0.14 });
     card.addChild(bg);
 
-    const nm = new PIXI.Text({
-      text: char.name,
-      style: { fontFamily: FONT_UI, fontSize: 14, fontWeight: '800', fill: INK.primary },
-    });
-    nm.position.set(12, 10);
-    const meta = new PIXI.Text({
-      text: `${char.faction || '独立'} · ${RANK_LABEL[char.rank] || ''} · 生命 ${char.max_hp} · ${char.base_duels}交锋`,
-      style: { fontFamily: FONT_UI, fontSize: 11, fill: INK.secondary },
-    });
-    meta.position.set(12, 36);
-    card.addChild(nm, meta);
+    // Living animated character actor right inside the portrait!
+    const actor = createCharacterActor(char, ownerSide || 1, { radius: 26 });
+    actor.position.set(cellW / 2, artH * 0.56);
+    card.addChild(actor);
+    actors.push({ actor, ch: char });
 
+    // Rank crest pill (top-left)
+    const rankLabel = RANK_LABEL[char.rank] || '';
+    if (rankLabel) {
+      const rCol = RANK_COLOR[char.rank] || INK.secondary;
+      const rw = rankLabel.length * 9 + 10;
+      const rg = new PIXI.Graphics();
+      rg.roundRect(6, 6, rw, 17, 5).fill({ color: INK.paper, alpha: 0.9 }).stroke({ width: 1.1, color: rCol, alpha: 0.85 });
+      card.addChild(rg);
+      const rTxt = new PIXI.Text({
+        text: rankLabel,
+        style: { fontFamily: FONT_UI, fontSize: 9.2, fontWeight: '800', fill: rCol },
+      });
+      rTxt.anchor.set(0.5);
+      rTxt.position.set(6 + rw / 2, 14.5);
+      card.addChild(rTxt);
+    }
+
+    // Team ownership ribbon (top-right)
     if (ownerSide) {
-      const tag = new PIXI.Graphics();
-      tag.roundRect(cellW - 54, 8, 46, 20, 6).fill({ color: SIDE_THEME[ownerSide].accent });
-      card.addChild(tag);
+      const tg = new PIXI.Graphics();
+      tg.roundRect(cellW - 48, 6, 42, 18, 5).fill({ color: SIDE_THEME[ownerSide].accent });
+      card.addChild(tg);
       const tTxt = new PIXI.Text({
         text: `P${ownerSide}#${(ownerSide === 1 ? in1 : in2) + 1}`,
-        style: { fontFamily: FONT_NUM, fontSize: 11, fontWeight: '800', fill: INK.paper },
+        style: { fontFamily: FONT_NUM, fontSize: 10.5, fontWeight: '900', fill: INK.paper },
       });
       tTxt.anchor.set(0.5);
-      tTxt.position.set(cellW - 31, 18);
+      tTxt.position.set(cellW - 27, 15);
       card.addChild(tTxt);
     }
 
-    card.eventMode = 'static';
-    card.cursor = 'pointer';
-    card.on('pointerover', () => onHoverChar(char));
-    card.on('pointertap', (e) => {
-      e.stopPropagation();
-      onToggleChar(char.id);
+    // Bottom Nameplate + Visual Stat Emblems
+    const nm = new PIXI.Text({
+      text: char.name,
+      style: { fontFamily: FONT_UI, fontSize: char.name.length > 5 ? 12 : 13.5, fontWeight: '800', fill: INK.primary },
     });
-    root.addChild(card);
+    nm.position.set(9, artH + 7);
+    card.addChild(nm);
+
+    const fac = new PIXI.Text({
+      text: char.faction || '独立',
+      style: { fontFamily: FONT_UI, fontSize: 9.8, fontWeight: '700', fill: pal.primary },
+    });
+    fac.position.set(9, artH + 25);
+    card.addChild(fac);
+
+    // Visual HP heart & Duel diamond pips along bottom bar
+    const statG = new PIXI.Graphics();
+    const sy = cellH - 14;
+    drawHeartIcon(statG, 15, sy, 5.5, 0xcf4330);
+    const hpTxt = new PIXI.Text({
+      text: String(char.max_hp),
+      style: { fontFamily: FONT_NUM, fontSize: 11, fontWeight: '800', fill: INK.primary },
+    });
+    hpTxt.anchor.set(0, 0.5);
+    hpTxt.position.set(24, sy);
+
+    const duelCount = char.base_duels || 1;
+    const pipStart = cellW - 10;
+    for (let d = 0; d < Math.min(4, duelCount); d++) {
+      drawDuelPip(statG, pipStart - d * 11, sy, 4.5, INK.gold);
+    }
+    card.addChild(statG, hpTxt);
+
+    if (y + cellH > gy && y < gy + gh) {
+      card.eventMode = 'static';
+      card.cursor = 'pointer';
+      card.on('pointerover', () => onHoverChar(char));
+      card.on('pointertap', (e) => {
+        e.stopPropagation();
+        onToggleChar(char.id);
+      });
+    }
+    gBody.addChild(card);
   });
 
-  // Right 42%: 100% Verbatim Character Sheet
-  const inspX = gridX + gridW + pad;
-  const inspY = 104;
+  if (root._galleryMaxScroll > 0) {
+    const sbH = Math.max(32, gh * (gh / totalGalleryH));
+    const sbY = gy + (clampedGScroll / root._galleryMaxScroll) * (gh - sbH);
+    const sb = new PIXI.Graphics();
+    sb.roundRect(gx + gw - 4, gy, 4, gh, 2).fill({ color: INK.line, alpha: 0.45 });
+    sb.roundRect(gx + gw - 4, sbY, 4, sbH, 2).fill({ color: INK.secondary, alpha: 0.7 });
+    root.addChild(sb);
+  }
+
+  // ── 3. RIGHT HALF: LIVING HERO SHOWCASE + VERBATIM PASSIVES + REAL SKILL CARDS ──
+  const inspX = galleryX + galleryW + 16;
+  const inspY = bodyTop;
   const inspW = w - inspX - pad;
-  const inspH = h - inspY - 78;
+  const inspH = bodyH;
+  root._gallerySplitX = inspX;
+
   const inspBg = new PIXI.Graphics();
-  inspBg.roundRect(inspX + 3, inspY + 5, inspW, inspH, 12).fill({ color: INK.shadow, alpha: 0.24 });
-  inspBg.roundRect(inspX, inspY, inspW, inspH, 12).fill({ color: INK.paper }).stroke({ width: 1.5, color: INK.line });
+  inspBg.roundRect(inspX + 2, inspY + 4, inspW, inspH, 13).fill({ color: INK.shadow, alpha: 0.22 });
+  inspBg.roundRect(inspX, inspY, inspW, inspH, 13)
+    .fill({ color: INK.paper })
+    .stroke({ width: 1.6, color: INK.line });
   root.addChild(inspBg);
 
-  const target = hoveredChar || catalog[0];
   if (target) {
-    let cy = inspY + 14;
-    const maxChars = Math.max(28, Math.floor((inspW - 32) / 6.3));
-    const h1 = new PIXI.Text({
-      text: `${target.name}${target.title ? ' · ' + target.title : ''}`,
-      style: { fontFamily: FONT_UI, fontSize: 17.5, fontWeight: '800', fill: INK.primary },
-    });
-    h1.position.set(inspX + 16, cy);
-    root.addChild(h1);
-    cy += 26;
+    const in1 = team1.indexOf(target.id);
+    const in2 = team2.indexOf(target.id);
+    const ownerSide = in1 >= 0 ? 1 : in2 >= 0 ? 2 : 0;
+    const previewSide = ownerSide || assignSide;
+    const pal = actorPalette(target, previewSide);
 
-    const h2 = new PIXI.Text({
-      text: `${target.faction || '独立'} · ${RANK_LABEL[target.rank] || ''} · 生命 ${target.max_hp} · 基础交锋 ${target.base_duels}`,
-      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '700', fill: INK.gold },
+    // Hero Pedestal Banner (top 118px)
+    const bannerH = 118;
+    const bG = new PIXI.Graphics();
+    bG.roundRect(inspX + 3, inspY + 3, inspW - 6, bannerH, 10).fill({ color: pal.highlight });
+    // Sculpted rotating-compass pedestal behind living hero actor
+    const acx = inspX + 66;
+    const acy = inspY + 62;
+    bG.circle(acx, acy, 44).fill({ color: INK.paper, alpha: 0.72 }).stroke({ width: 1.4, color: pal.primary, alpha: 0.4 });
+    bG.circle(acx, acy, 34).stroke({ width: 1, color: pal.secondary, alpha: 0.4 });
+    bG.ellipse(acx, acy + 30, 34, 8).fill({ color: pal.primary, alpha: 0.16 });
+    root.addChild(bG);
+
+    const heroActor = createCharacterActor(target, previewSide, { radius: 38 });
+    heroActor.position.set(acx, acy + 4);
+    root.addChild(heroActor);
+    actors.push({ actor: heroActor, ch: target });
+
+    const infoX = inspX + 124;
+    const nameTxt = new PIXI.Text({
+      text: target.name,
+      style: { fontFamily: FONT_UI, fontSize: 21, fontWeight: '800', fill: INK.primary },
     });
-    h2.position.set(inspX + 16, cy);
-    root.addChild(h2);
-    cy += 22;
+    nameTxt.position.set(infoX, inspY + 14);
+    root.addChild(nameTxt);
+
+    if (target.title) {
+      const tt = new PIXI.Text({
+        text: target.title,
+        style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: pal.primary },
+      });
+      tt.position.set(infoX + nameTxt.width + 10, inspY + 21);
+      root.addChild(tt);
+    }
+
+    const subTxt = new PIXI.Text({
+      text: `${target.faction || '独立'} · ${RANK_LABEL[target.rank] || ''}`,
+      style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: INK.secondary },
+    });
+    subTxt.position.set(infoX, inspY + 44);
+    root.addChild(subTxt);
+
+    // Visual Stat Badges Row
+    const badgeY = inspY + 72;
+    const pills = [
+      { label: `生命 ${target.max_hp}`, col: 0xcf4330, bg: 0xfdece9 },
+      { label: `交锋 ${target.base_duels || 1}`, col: INK.gold, bg: INK.goldBg },
+      { label: `${(target.skills || []).length} 张技能`, col: pal.primary, bg: INK.paper },
+    ];
+    let px = infoX;
+    const pillG = new PIXI.Graphics();
+    root.addChild(pillG);
+    for (const pl of pills) {
+      const pt = new PIXI.Text({
+        text: pl.label,
+        style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: pl.col },
+      });
+      const pw = pt.width + 16;
+      pillG.roundRect(px, badgeY, pw, 24, 7).fill({ color: pl.bg }).stroke({ width: 1.2, color: pl.col, alpha: 0.7 });
+      pt.position.set(px + 8, badgeY + 4);
+      root.addChild(pt);
+      px += pw + 8;
+    }
+
+    // Contextual Assign/Remove Action Button on top-right of hero banner
+    const activeTheme = SIDE_THEME[assignSide];
+    const inActive = (assignSide === 1 ? in1 : in2) >= 0;
+    const inOther = (assignSide === 1 ? in2 : in1) >= 0;
+    const actLabel = inActive
+      ? `移出${activeTheme.name}`
+      : inOther
+        ? `调入${activeTheme.name}`
+        : `+ 编入${activeTheme.name}`;
+    const actBtn = makeSealButton(actLabel, {
+      width: 118,
+      height: 32,
+      accent: inActive ? 0xcf4932 : inOther ? INK.gold : activeTheme.accent,
+      solid: !inActive,
+      fontSize: 12,
+      radius: 16,
+      onClick: () => onToggleChar(target.id),
+    });
+    actBtn.position.set(inspX + inspW - 130, inspY + 14);
+    root.addChild(actBtn);
+
+    // Scrollable Showcase Body: Structured Passive Plates + Real Interactive Skill Cards!
+    const svx = inspX + 14;
+    const svy = inspY + bannerH + 12;
+    const svw = inspW - 28;
+    const svh = inspH - bannerH - 24;
+
+    const sMask = new PIXI.Graphics();
+    sMask.rect(svx, svy, svw, svh).fill({ color: 0xffffff });
+    root.addChild(sMask);
+
+    const sBody = new PIXI.Container();
+    sBody.mask = sMask;
+    root.addChild(sBody);
+
+    let cy = 0;
+    const innerW = svw - 8;
+    const maxChars = Math.max(28, Math.floor((innerW - 22) / 6.4));
 
     const allPassives = [
       ...(target.faction_passives || []).map((p) => ({ ...p, tag: '阵营被动' })),
       ...(target.passives || []).map((p) => ({ ...p, tag: '角色被动' })),
     ];
-    for (const p of allPassives) {
-      if (cy > inspY + inspH - 72) break;
-      const desc = (p.entries || []).join('；') || p.description || '';
-      const pt = new PIXI.Text({
-        text: wrapCjkText(`【${p.name || p.tag}】${desc}`, maxChars),
-        style: {
-          fontFamily: FONT_UI, fontSize: 11.5, fill: INK.primary, lineHeight: 16.5,
-          wordWrap: true, breakWords: true, wordWrapWidth: inspW - 32,
-        },
+
+    if (allPassives.length) {
+      const pHead = new PIXI.Text({
+        text: '被动技能',
+        style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.secondary },
       });
-      pt.position.set(inspX + 16, cy);
-      root.addChild(pt);
-      cy += pt.height + 6;
+      pHead.position.set(svx, svy + cy - inspectScrollY);
+      sBody.addChild(pHead);
+      cy += 22;
+
+      for (const p of allPassives) {
+        const entries = (p.entries && p.entries.length) ? p.entries : (p.description ? [p.description] : []);
+        const plate = buildUnifiedEntryPlate({
+          variant: 'passive',
+          title: p.name || p.tag,
+          tagLabel: p.tag === '阵营被动' ? '阵营被动' : '',
+          entries,
+          width: innerW,
+          fontSize: 11.6,
+          lineHeight: 17.5,
+        });
+        plate.position.set(svx, svy + cy - inspectScrollY);
+        sBody.addChild(plate);
+        cy += plate._height + 8;
+      }
+      cy += 4;
     }
 
-    cy += 6;
-    for (const sk of target.skills || []) {
-      if (cy > inspY + inspH - 36) break;
-      const diceStr = (sk.dice || []).map((d) => `${DIE_STYLE[d.type]?.label || d.type} ${formatDieRange(d)}`).join(' / ');
-      const st = new PIXI.Text({
-        text: wrapCjkText(`[${sk.cost}费] ${sk.name}：${diceStr}`, maxChars),
-        style: {
-          fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: INK.primary, lineHeight: 16,
-          wordWrap: true, breakWords: true, wordWrapWidth: inspW - 32,
-        },
+    // Section 2: ZERO-HOVER Full Readable Skill Cards (2-col on wide screens, 1-col on narrow — read EVERY skill directly!)
+    const skills = target.skills || [];
+    if (skills.length) {
+      const skHead = new PIXI.Text({
+        text: '技能牌组',
+        style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.secondary },
       });
-      st.position.set(inspX + 16, cy);
-      root.addChild(st);
-      cy += st.height + 4;
-      if (sk.entries && sk.entries.length && cy < inspY + inspH - 22) {
-        const se = new PIXI.Text({
-          text: wrapCjkText(sk.entries.join('\n'), maxChars - 2),
-          style: {
-            fontFamily: FONT_UI, fontSize: 11, fill: INK.secondary, lineHeight: 15.5,
-            wordWrap: true, breakWords: true, wordWrapWidth: inspW - 38,
-          },
-        });
-        se.position.set(inspX + 22, cy);
-        root.addChild(se);
-        cy += se.height + 6;
+      skHead.position.set(svx, svy + cy - inspectScrollY);
+      sBody.addChild(skHead);
+      cy += 22;
+
+      const skCols = innerW >= 630 ? 3 : 2;
+      const skGapX = 12;
+      const skGapY = 12;
+      const skW = Math.min(216, Math.floor((innerW - skGapX * (skCols - 1)) / skCols));
+      const skMinH = Math.round(skW * 1.38);
+
+      for (let i = 0; i < skills.length; i += skCols) {
+        let rowH = 0;
+        for (let c = 0; c < skCols && i + c < skills.length; c++) {
+          const sk = skills[i + c];
+          const cardSpr = buildFullCard(sk, {
+            side: previewSide,
+            ownerName: target.name,
+            showOwner: false,
+            width: skW,
+            fixedHeight: skMinH,
+            dense: true,
+            centered: false,
+            legal: true,
+          });
+          cardSpr.position.set(svx + c * (skW + skGapX), svy + cy - inspectScrollY);
+          sBody.addChild(cardSpr);
+          rowH = Math.max(rowH, cardSpr._boxHeight);
+        }
+        cy += rowH + skGapY;
       }
+      cy += 6;
     }
+
+    root._inspectMaxScroll = Math.max(0, cy - svh + 10);
+    if (root._inspectMaxScroll > 0) {
+      const clampedS = Math.max(0, Math.min(root._inspectMaxScroll, inspectScrollY));
+      const sbH = Math.max(32, svh * (svh / Math.max(svh + 1, cy)));
+      const sbY = svy + (clampedS / root._inspectMaxScroll) * (svh - sbH);
+      const sb = new PIXI.Graphics();
+      sb.roundRect(svx + svw - 4, svy, 4, svh, 2).fill({ color: INK.line, alpha: 0.45 });
+      sb.roundRect(svx + svw - 4, sbY, 4, sbH, 2).fill({ color: INK.secondary, alpha: 0.7 });
+      root.addChild(sb);
+    }
+  } else {
+    root._inspectMaxScroll = 0;
   }
 
-  const valid = team1.length >= 1 && team2.length >= 1;
-  const startBtn = makeSealButton('开局', {
-    width: 156, height: 42, accent: valid ? 0x1c8a64 : INK.muted, solid: valid, disabled: !valid, fontSize: 15,
-    onClick: () => onStart([team1.slice(), team2.slice()]),
-  });
-  startBtn.position.set(w - pad - 156, h - 58);
-  root.addChild(startBtn);
-
-  const cancelBtn = makeSealButton('返回', { width: 116, height: 42, accent: INK.secondary, onClick: onCancel });
-  cancelBtn.position.set(w - pad - 156 - 130, h - 58);
-  root.addChild(cancelBtn);
-
+  root._actors = actors;
   return root;
 }
 
@@ -810,32 +1618,80 @@ export function buildCodexOverlay(w, h, { tab, scrollY, catalog, history, onTab,
   };
 
   if (tab === 'rules') {
-    for (const para of RULES_VERBATIM) addLine(para, { size: 13, gapAfter: 12 });
+    for (const para of RULES_VERBATIM) {
+      const m = para.match(/^【([^】]+)】(.*)$/s);
+      if (m) {
+        const plate = buildUnifiedEntryPlate({
+          variant: 'skill',
+          title: m[1],
+          entries: [m[2]],
+          width: vw - 10,
+          accentColor: INK.gold,
+          fontSize: 12.5,
+          lineHeight: 19,
+        });
+        plate.position.set(vx, vy + y - scrollY);
+        body.addChild(plate);
+        y += plate._height + 10;
+      } else {
+        addLine(para, { size: 13, gapAfter: 12 });
+      }
+    }
   } else if (tab === 'catalog' && catalog) {
+    const colGap = 12;
+    const cardW = Math.floor((vw - 12 - colGap) / 2);
     for (const pl of catalog.players || []) {
       const theme = SIDE_THEME[pl.side] || SIDE_THEME[1];
       addLine(`── ${theme.name} ──`, { size: 15, color: theme.accent, bold: true, gapAfter: 8 });
       for (const ch of pl.characters || []) {
-        addLine(ch.name, { size: 14.5, color: INK.primary, bold: true, gapAfter: 6, indent: 4 });
-        for (const p of [...(ch.faction_passives || []), ...(ch.passives || [])]) {
-          addLine(`【${p.name || '被动'}】${(p.entries || []).join('\n')}`, { size: 12, color: INK.gold, gapAfter: 6, indent: 12 });
-        }
-        for (const sk of ch.skills || []) {
-          const head = `[${sk.cost}费] ${sk.name}`;
-          const diceLines = (sk.dice || []).map((d) => {
-            const ds = DIE_STYLE[d.type]?.label || d.type;
-            const ent = (d.entries || []).join('；');
-            return `${ds} ${formatDieRange(d)}${ent ? '：' + ent : ''}`;
+        addLine(ch.name, { size: 14.5, color: INK.primary, bold: true, gapAfter: 8, indent: 2 });
+        for (const p of [...(ch.faction_passives || []).map((x) => ({ ...x, _tag: '阵营被动' })), ...(ch.passives || []).map((x) => ({ ...x, _tag: '' }))]) {
+          const plate = buildUnifiedEntryPlate({
+            variant: 'passive',
+            title: p.name || '被动',
+            tagLabel: p._tag,
+            entries: p.entries || [],
+            width: vw - 14,
+            fontSize: 11.8,
+            lineHeight: 17.5,
           });
-          const bodyLines = [...(sk.entries || []), ...diceLines].join('\n');
-          addLine(`${head}\n${bodyLines}`, { size: 12, color: INK.secondary, gapAfter: 8, indent: 12 });
+          plate.position.set(vx + 4, vy + y - scrollY);
+          body.addChild(plate);
+          y += plate._height + 7;
         }
+        const skList = ch.skills || [];
+        for (let i = 0; i < skList.length; i += 2) {
+          const leftCard = buildVerbatimCardPanel(skList[i], { side: pl.side, ownerName: ch.name, width: cardW, compact: true });
+          leftCard.position.set(vx + 4, vy + y - scrollY);
+          body.addChild(leftCard);
+          let rowH = leftCard._boxHeight;
+          if (i + 1 < skList.length) {
+            const rightCard = buildVerbatimCardPanel(skList[i + 1], { side: pl.side, ownerName: ch.name, width: cardW, compact: true });
+            rightCard.position.set(vx + 4 + cardW + colGap, vy + y - scrollY);
+            body.addChild(rightCard);
+            rowH = Math.max(rowH, rightCard._boxHeight);
+          }
+          y += rowH + 10;
+        }
+        y += 6;
       }
     }
     const statuses = Object.entries(catalog.statuses || {});
     if (statuses.length) {
       addLine('── 特殊状态 ──', { size: 15, color: INK.gold, bold: true, gapAfter: 8 });
-      for (const [name, list] of statuses) addLine(`【${name}】${list.join('\n')}`, { size: 12, color: INK.primary, gapAfter: 6, indent: 10 });
+      for (const [name, list] of statuses) {
+        const plate = buildUnifiedEntryPlate({
+          variant: 'status',
+          statusName: name,
+          entries: list,
+          width: vw - 14,
+          fontSize: 11.8,
+          lineHeight: 17.5,
+        });
+        plate.position.set(vx + 4, vy + y - scrollY);
+        body.addChild(plate);
+        y += plate._height + 7;
+      }
     }
   } else if (tab === 'history') {
     if (!history.length) addLine('尚无战报。', { size: 13, color: INK.muted });
@@ -850,47 +1706,71 @@ export function buildCodexOverlay(w, h, { tab, scrollY, catalog, history, onTab,
   return root;
 }
 
-export function buildPileOverlay(w, h, { title, side, cards, charNames, onHoverCard, onClose }) {
+export function buildPileOverlay(w, h, { title, side, cards, charNames, scrollY = 0, onClose }) {
   const root = new PIXI.Container();
   const veil = new PIXI.Graphics();
-  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.92 });
+  veil.rect(0, 0, w, h).fill({ color: 0xf5f1e7, alpha: 0.94 });
   veil.eventMode = 'static';
   veil.on('pointertap', onClose);
   root.addChild(veil);
 
   const head = new PIXI.Text({
     text: `${title}（${cards.length}）`,
-    style: { fontFamily: FONT_UI, fontSize: 19, fontWeight: '800', fill: INK.primary },
+    style: { fontFamily: FONT_UI, fontSize: 19, fontWeight: '800', fill: INK.strong },
   });
   head.anchor.set(0.5);
-  head.position.set(w / 2, 74);
+  head.position.set(w / 2, 46);
   root.addChild(head);
 
+  const closeBtn = makeSealButton('关闭', { width: 80, height: 30, accent: INK.secondary, fontSize: 12, onClick: onClose });
+  closeBtn.position.set(w - 108, 31);
+  root.addChild(closeBtn);
+
+  const vx = 32;
+  const vy = 82;
+  const vw = w - 64;
+  const vh = h - 106;
+  const mask = new PIXI.Graphics();
+  mask.rect(vx, vy, vw, vh).fill({ color: 0xffffff });
+  root.addChild(mask);
+
+  const body = new PIXI.Container();
+  body.mask = mask;
+  root.addChild(body);
+
+  let cy = 0;
   if (cards.length) {
-    const cols = Math.min(cards.length, 6);
-    const gapX = 152;
-    const gapY = 206;
-    const rows = Math.ceil(cards.length / cols);
-    const startY = h / 2 - ((rows - 1) * gapY) / 2;
-    cards.forEach((card, i) => {
-      const r = Math.floor(i / cols);
-      const c = i % cols;
-      const rowCount = Math.min(cols, cards.length - r * cols);
-      const startX = w / 2 - ((rowCount - 1) * gapX) / 2;
-      const spr = buildCardFront(card, {
-        side, ownerName: charNames[card.character_id] || '', showOwner: true, width: 138, height: 190, legal: true,
-      });
-      const cardX = startX + c * gapX;
-      const cardY = startY + r * gapY;
-      spr.position.set(cardX, cardY);
-      spr.eventMode = 'static';
-      spr.cursor = 'pointer';
-      spr.on('pointerover', () => onHoverCard && onHoverCard(card, side, charNames[card.character_id] || '', cardX, cardY, 190, spr));
-      spr.on('pointerout', () => onHoverCard && onHoverCard(null));
-      spr.on('pointertap', (e) => e.stopPropagation());
-      root.addChild(spr);
-    });
+    const gap = 16;
+    const cols = Math.max(2, Math.min(cards.length, Math.floor((vw + gap) / 218)));
+    const cardW = Math.min(210, Math.floor((vw - gap * (cols - 1)) / cols));
+    const portraitH = Math.round(cardW * 1.38);
+    for (let i = 0; i < cards.length; i += cols) {
+      const rowCount = Math.min(cols, cards.length - i);
+      const rowW = rowCount * cardW + (rowCount - 1) * gap;
+      const startX = vx + (vw - rowW) / 2;
+      let rowH = 0;
+      for (let c = 0; c < rowCount; c++) {
+        const card = cards[i + c];
+        const spr = buildFullCard(card, {
+          side,
+          ownerName: charNames[card.character_id] || '',
+          showOwner: true,
+          width: cardW,
+          fixedHeight: portraitH,
+          dense: true,
+          centered: false,
+          legal: true,
+        });
+        spr.position.set(startX + c * (cardW + gap), vy + cy - scrollY);
+        spr.eventMode = 'static';
+        spr.on('pointertap', (e) => e.stopPropagation());
+        body.addChild(spr);
+        rowH = Math.max(rowH, spr._boxHeight);
+      }
+      cy += rowH + gap;
+    }
   }
+  root._maxScroll = Math.max(0, cy - vh + 16);
   return root;
 }
 

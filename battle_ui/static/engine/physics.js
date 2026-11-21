@@ -105,13 +105,13 @@ export class TabletopPhysics {
     this._rebuildWalls(w, h);
   }
 
-  ensureHandCard(key, x, y, w = 132, h = 180) {
+  ensureHandCard(key, x, y, w = 196, h = 274) {
     let entry = this.handCards.get(key);
     if (!entry) {
       const { Bodies, Composite } = this.Matter;
       const body = Bodies.rectangle(x, y, w, h, {
-        frictionAir: 0.28,
-        restitution: 0.15,
+        frictionAir: 0,
+        restitution: 0,
         density: 0.001,
         collisionFilter: { category: CAT_HAND, mask: 0 },
       });
@@ -124,7 +124,6 @@ export class TabletopPhysics {
         targetAngle: 0,
         targetScale: 1,
         scale: 1,
-        scaleVel: 0,
         dragging: false,
       };
       this.handCards.set(key, entry);
@@ -230,9 +229,6 @@ export class TabletopPhysics {
       }
     };
     for (const s of this.shards) push(s.body, 0.85);
-    for (const card of this.handCards.values()) {
-      if (!card.dragging) push(card.body, 0.14);
-    }
   }
 
   step(dtSec) {
@@ -242,18 +238,24 @@ export class TabletopPhysics {
 
     let steps = 0;
     while (this.accumulator >= FIXED_DT && steps < 4) {
-      // Hand cards: critically damped spring toward fan slot, clamped readable tilt
+      // Hand cards: strictly overdamped zero-bounce smooth glide (NO rubber-band oscillation!)
       for (const entry of this.handCards.values()) {
         const b = entry.body;
-        const k = entry.dragging ? 0.015 : 0.0044;
-        Body.applyForce(b, b.position, {
-          x: (entry.targetX - b.position.x) * k,
-          y: (entry.targetY - b.position.y) * k,
-        });
+        const gain = entry.dragging ? 0.42 : 0.24;
+        const dx = entry.targetX - b.position.x;
+        const dy = entry.targetY - b.position.y;
+        const vx = Math.abs(dx) < 0.2 ? 0 : dx * gain;
+        const vy = Math.abs(dy) < 0.2 ? 0 : dy * gain;
+        if (vx === 0 && vy === 0 && (dx !== 0 || dy !== 0)) {
+          Body.setPosition(b, { x: entry.targetX, y: entry.targetY });
+        }
+        Body.setVelocity(b, { x: vx, y: vy });
+
         const desiredAngle = entry.dragging
-          ? Math.max(-0.18, Math.min(0.18, b.velocity.x * 0.01))
+          ? Math.max(-0.14, Math.min(0.14, vx * 0.008))
           : entry.targetAngle;
-        Body.setAngularVelocity(b, b.angularVelocity * 0.55 + (desiredAngle - b.angle) * 0.28);
+        const da = desiredAngle - b.angle;
+        Body.setAngularVelocity(b, Math.abs(da) < 0.001 ? 0 : da * 0.28);
       }
 
       // Clash dice phases: 0..0.44s settle at left/right spots -> 0.44s lunge into real collision!
@@ -284,10 +286,10 @@ export class TabletopPhysics {
       steps++;
     }
 
+    const scaleLerp = Math.min(1, dtSec * 16);
     for (const entry of this.handCards.values()) {
-      const f = (entry.targetScale - entry.scale) * 180;
-      entry.scaleVel = (entry.scaleVel + f * dtSec) * Math.pow(0.04, dtSec);
-      entry.scale += entry.scaleVel * dtSec;
+      const ds = entry.targetScale - entry.scale;
+      entry.scale = Math.abs(ds) < 0.0008 ? entry.targetScale : entry.scale + ds * scaleLerp;
     }
 
     for (let i = this.clashGroups.length - 1; i >= 0; i--) {
