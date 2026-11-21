@@ -134,12 +134,15 @@ export class GameDirector {
     // Inspection & interactive state
     this.hoveredCard = null;
     this.hoveredInfo = null;
+    this.hoveredHandKey = null;
+    this.handFanOrder = [];
     this._hiddenHoverSprite = null;
     this._inspectAnim = null;
     this.dragState = null;
     this.selectedHandCardId = null;
     this.focusedCharId = null;
     this.focusedDuelNumber = null;
+    this._fighterFloorDrawers = new Map();
 
     // Single-Focus Side Hero Inspector + Independent Dual-Scroll Passive Drawer
     this.activeHeroPanel = null; // { charId, side, tab, scrollY, maxScroll, rect, node }
@@ -340,11 +343,12 @@ export class GameDirector {
   }
 
   _positionPersistentHud() {
-    const { leftWingX, rightWingX, wingW, stageBottom, h } = this.layout;
+    const { leftWingX, rightWingX, wingW, h } = this.layout;
     if (leftWingX === undefined) return;
     const costY = 82;
-    const pileScale = h < 780 ? 0.84 : 0.96;
-    const pileY = stageBottom - Math.round(28 * pileScale);
+    const pileScale = h < 760 ? 0.84 : 0.94;
+    // Anchor diegetic deck piles cleanly at bottom-left / bottom-right table corners (clear of both fighters & center hand fan!)
+    const pileY = h - Math.round(42 * pileScale);
 
     this.costHuds[1].setPosition(leftWingX, costY);
     this.costHuds[2].setPosition(rightWingX + wingW, costY);
@@ -428,16 +432,16 @@ export class GameDirector {
     const arenaX = battleX + fighterBandW + 14;
     const arenaW = Math.max(440, battleW - fighterBandW * 2 - 28);
 
-    // FIXED world vertical stage coordinates across ALL phases (placement -> pre_reveal -> reveal -> combat -> turn_end)!
-    // Hiding the hand tray NEVER shifts fighters or duel slots downward (ZERO layout jump on reveal!).
-    const baseHandStripH = Math.max(264, Math.min(314, Math.round(h * 0.375)));
-    const handStripH = hasHand ? baseHandStripH : 0;
-    const handTop = h - baseHandStripH + 4;
+    // FIXED full-height world vertical stage coordinates across ALL phases (placement -> pre_reveal -> reveal -> combat -> turn_end)!
+    // Diegetic fanned hand floats organically at the lower-center edge — ZERO exclusive web bottom dock bar & ZERO layout jump on reveal!
+    const fanRestBandH = Math.max(132, Math.min(162, Math.round(h * 0.185)));
+    const handStripH = hasHand ? fanRestBandH : 0;
+    const handTop = h - fanRestBandH;
     const rightDockW = 152;
     const arenaTop = 52;
-    const stageBottom = handTop - 12;
-    const arenaH = Math.max(210, stageBottom - arenaTop);
-    const handY = handTop + Math.round((baseHandStripH - 8) / 2);
+    const stageBottom = Math.max(290, h - fanRestBandH - 6);
+    const arenaH = Math.max(220, stageBottom - arenaTop);
+    const handY = h - Math.round(fanRestBandH * 0.56);
 
     this.layout = {
       w, h, pad, wingW, hasHand, rightDockW,
@@ -445,11 +449,11 @@ export class GameDirector {
       rightWingX: w - pad - wingW,
       battleX, battleW, fighterBandW, leftFighterX, rightFighterX,
       arenaX, arenaW, arenaTop, arenaH, stageBottom,
-      actionStripY: handTop - 22,
+      actionStripY: stageBottom - 10,
       showdownBottom: h - 24,
       handStripH, handTop, handY,
-      cardW: 198,
-      cardH: 278,
+      cardW: 192,
+      cardH: 269,
     };
   }
 
@@ -1062,6 +1066,7 @@ export class GameDirector {
     this.actorNodes.clear();
     this.hpWidgets.clear();
     this.passivePlates.clear();
+    this._fighterFloorDrawers.clear();
     this.wingViewports = {};
     this._wingScrollCtl = {};
 
@@ -1129,9 +1134,9 @@ export class GameDirector {
     }
 
     // 3. 10v10+ Multi-Rank Battlefield Formation Layout (`computeFormationLayout`)
-    const pileScale = h < 780 ? 0.84 : 0.96;
+    // Full-height sunlit battlefield wing — deck piles sit cleanly below in the corners!
     const zoneTop = 106;
-    const zoneBottom = Math.max(zoneTop + 140, this.layout.stageBottom - Math.round(58 * pileScale));
+    const zoneBottom = Math.max(zoneTop + 160, this.layout.stageBottom - 12);
 
     const formation = computeFormationLayout({
       side,
@@ -1222,12 +1227,22 @@ export class GameDirector {
             if (ref.charRect) ref.charRect.y = screenRectY;
             const vis = (screenY + ref.actorR + 58) >= zoneTop - 16 && (screenY - ref.actorR - 8) <= zoneBottom + 16;
             ref.hitZone.eventMode = vis ? 'static' : 'none';
+            if (ref.statusOverlayHost) {
+              ref.statusOverlayHost.visible = vis;
+              ref.statusOverlayHost.interactiveChildren = vis;
+            }
           }
           if (thumbG && formation.maxScroll > 0) {
             thumbG.y = trackTop + (clamped / formation.maxScroll) * thumbTravel;
           }
         },
       };
+    }
+  }
+
+  _refreshInspectedRings() {
+    for (const fn of this._fighterFloorDrawers.values()) {
+      fn(false);
     }
   }
 
@@ -1238,6 +1253,7 @@ export class GameDirector {
     this.hoveredCard = null;
     this.hoveredInfo = null;
     this._renderInspection();
+    this._refreshInspectedRings();
     this._rebuildCornerHud();
     this._rebuildSidePanels();
   }
@@ -1255,6 +1271,7 @@ export class GameDirector {
     this.hoveredCard = null;
     this.hoveredInfo = null;
     this._renderInspection();
+    this._refreshInspectedRings();
     this._rebuildCornerHud();
     this._rebuildSidePanels();
     this._rebuildOverlay();
@@ -1324,7 +1341,7 @@ export class GameDirector {
       return;
     }
 
-    // 2. Single Active Side-Docked Hero Inspector (strictly ONE open at a time!)
+    // 2. Single Active Hero Folio anchored BESIDE the fighter wing (NEVER covers any character on the battlefield!)
     if (this.activeHeroPanel) {
       const m = this.activeHeroPanel;
       const side = m.side;
@@ -1334,10 +1351,18 @@ export class GameDirector {
         this.activeHeroPanel = null;
         return;
       }
-      const panelTop = 104;
-      const panelW = Math.min(412, Math.max(326, Math.floor(w * 0.315)));
-      const panelH = Math.max(220, Math.min(520, stageBottom - panelTop - 2));
-      const panelX = side === 1 ? pad : w - pad - panelW;
+      const { leftWingX, rightWingX, wingW, h, cardH = 269, hasHand } = this.layout;
+      const panelW = Math.min(404, Math.max(320, Math.floor(w * 0.305)));
+      const fanClearBottom = hasHand ? Math.min(stageBottom, h - Math.round(cardH * 0.86) - 10) : stageBottom;
+      const maxPanelH = Math.max(220, Math.min(490, fanClearBottom - 56));
+      const panelH = maxPanelH;
+      // Open strictly adjacent to the clicked fighter's wing so ALL characters on both sides stay 100% visible & clickable!
+      const panelX = side === 1
+        ? Math.min(w - pad - panelW, leftWingX + wingW + 10)
+        : Math.max(pad, rightWingX - panelW - 10);
+      const actorNode = this.actorNodes.get(ch.id);
+      const preferredTop = actorNode ? Math.round(actorNode.cy - panelH * 0.38) : 64;
+      const panelTop = Math.max(52, Math.min(Math.max(52, fanClearBottom - panelH - 4), preferredTop));
       const canSetTarget = Boolean(activeSide && activeSide !== side && ch.alive);
       const isDefault = canSetTarget && this.state.default_targets?.[String(activeSide)] === ch.id;
 
@@ -1346,7 +1371,6 @@ export class GameDirector {
         side,
         catalogChar: this._catalogChar(ch.id),
         catalogStatuses: this.state.catalog?.statuses || {},
-        teamChars: pl.characters || [],
         x: panelX,
         y: panelTop,
         width: panelW,
@@ -1355,13 +1379,6 @@ export class GameDirector {
         canSetTarget,
         isDefaultTarget: isDefault,
         scrollY: m.scrollY || 0,
-        onSwitchChar: (cid) => {
-          m.charId = cid;
-          m.scrollY = 0;
-          this.hoveredCard = null;
-          this._renderInspection();
-          this._rebuildSidePanels();
-        },
         onTab: (tab) => {
           m.tab = tab;
           m.scrollY = 0;
@@ -1428,12 +1445,15 @@ export class GameDirector {
     );
 
     const floorMark = new PIXI.Graphics();
+    floorMark.eventMode = 'none';
     const drawFloor = (hovered) => {
+      if (floorMark.destroyed) return;
+      const isInspected = Boolean(this.activeHeroPanel && this.activeHeroPanel.charId === ch.id);
       floorMark.clear();
-      if (hovered || isAttackTargetSelected) {
+      if (hovered || isAttackTargetSelected || isInspected) {
         floorMark.ellipse(cx, localActorY + actorR * 0.66, actorR * 1.24, actorR * 0.37)
-          .fill({ color: isAttackTargetSelected ? 0xfce6df : theme.warmTint, alpha: 0.6 })
-          .stroke({ width: 1.8, color: isAttackTargetSelected ? 0xcf4932 : theme.accent, alpha: 0.85 });
+          .fill({ color: isAttackTargetSelected ? 0xfce6df : isInspected ? INK.goldBg : theme.warmTint, alpha: 0.66 })
+          .stroke({ width: isInspected ? 2.2 : 1.8, color: isAttackTargetSelected ? 0xcf4932 : isInspected ? INK.gold : theme.accent, alpha: 0.92 });
       }
       if (defaultTarget) {
         floorMark.ellipse(cx, localActorY + actorR * 0.66, actorR * 1.18, actorR * 0.34)
@@ -1443,30 +1463,54 @@ export class GameDirector {
       }
     };
     drawFloor(false);
+    this._fighterFloorDrawers.set(ch.id, drawFloor);
     floorHost.addChild(floorMark);
 
     // Living Animated Character Actor standing free on the open battlefield!
+    // Visual-only (eventMode = 'none') so PixiJS v8 NEVER lets actor graphics steal clicks from hitZone!
     const actor = createCharacterActor(ch, side, { radius: actorR });
     actor.position.set(cx, localActorY);
+    actor.eventMode = 'none';
+    actor.interactiveChildren = false;
     actor.tick(this.time, this._getMotion(ch.id), ch);
     actorHost.addChild(actor);
     const actorNode = { actor, liveCh: ch, cx, cy: screenActorY, side };
     this.actorNodes.set(ch.id, actorNode);
 
-    // Hit target rectangle covering the standing figure + underfoot HUD
+    // Generous hit target rectangle covering the full standing figure (crown/weapon/body) + underfoot HUD
     const hudX = Math.round(cx - hudW / 2);
     const localHudY = Math.round(localActorY + actorR * 0.78);
     const screenHudY = scrollable ? (localHudY - scrollY) : localHudY;
-    const rectH = (localHudY + hudCoreH) - localUnitTop;
-    const baseRectY = localUnitTop;
-    const rect = { x: hudX - 6, y: scrollable ? (baseRectY - scrollY) : baseRectY, w: hudW + 12, h: rectH, side };
+    const hitLeft = Math.min(hudX - 8, Math.round(cx - actorR * 1.35));
+    const hitRight = Math.max(hudX + hudW + 8, Math.round(cx + actorR * 1.35));
+    const hitW = hitRight - hitLeft;
+    const hitTop = Math.round(localActorY - actorR * 1.42);
+    const rectH = (localHudY + hudCoreH + 6) - hitTop;
+    const baseRectY = hitTop;
+    const rect = { x: hitLeft, y: scrollable ? (baseRectY - scrollY) : baseRectY, w: hitW, h: rectH, side };
     this.charRects.set(ch.id, rect);
 
+    const triggerFighterTap = (e) => {
+      if (this.dragState) return;
+      if (scrollable && e?.global) {
+        const py = e.global.y;
+        if (py < zoneTop - 8 || py > zoneBottom + 8) return;
+      }
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      if (isAttackTargetSelected) {
+        const cid = this.selectedHandCardId;
+        this.selectedHandCardId = null;
+        this.audio.cardPlace();
+        this._sendAction('attack', { card_id: cid, target: { kind: 'character', id: ch.id } });
+        return;
+      }
+      this._openHeroSheet(ch.id, side);
+    };
+
+    // Place hitZone on actorHost strictly ABOVE both actor graphics & underfoot HUD so every click lands reliably!
     const hitZone = new PIXI.Container();
-    const hitG = new PIXI.Graphics();
-    hitG.rect(hudX - 6, localUnitTop, hudW + 12, rectH).fill({ color: INK.paper, alpha: 0.001 });
-    hitZone.addChild(hitG);
     hitZone.eventMode = (!scrollable || slot.visible) ? 'static' : 'none';
+    hitZone.hitArea = new PIXI.Rectangle(hitLeft, hitTop, hitW, rectH);
     hitZone.cursor = 'pointer';
     hitZone.on('pointerover', () => {
       if (this.dragState) return;
@@ -1486,27 +1530,22 @@ export class GameDirector {
         this.three.setIntentFocus({ active: false });
       }
     });
-    hitZone.on('pointertap', (e) => {
+    hitZone.on('pointerdown', (e) => {
       if (this.dragState) return;
-      if (scrollable) {
+      if (scrollable && e?.global) {
         const py = e.global.y;
         if (py < zoneTop - 8 || py > zoneBottom + 8) return;
       }
       e.stopPropagation();
-      if (isAttackTargetSelected) {
-        const cid = this.selectedHandCardId;
-        this.selectedHandCardId = null;
-        this.audio.cardPlace();
-        this._sendAction('attack', { card_id: cid, target: { kind: 'character', id: ch.id } });
-        return;
-      }
-      this._openHeroSheet(ch.id, side);
     });
-    floorHost.addChild(hitZone);
+    hitZone.on('pointertap', triggerFighterTap);
+    actorHost.addChild(hitZone);
 
-    // Floating Underfoot Battlefield HUD (slim, translucent warm paper plinth — zero heavy card clutter!)
+    // Floating Underfoot Battlefield HUD (visual plinth — eventMode = 'none' so it NEVER blocks hitZone!)
     const hud = new PIXI.Container();
     hud.position.set(hudX, localHudY);
+    hud.eventMode = 'none';
+    hud.interactiveChildren = false;
     const bg = new PIXI.Graphics();
     bg.roundRect(0, 0, hudW, hudBoxH, 6)
       .fill({ color: ch.alive ? INK.paper : 0xede8de, alpha: 0.92 })
@@ -1630,6 +1669,12 @@ export class GameDirector {
 
     const statuses = Object.entries(ch.statuses || {});
     const stBoxSize = compactHud ? 18 : 22;
+    let statusOverlayHost = null;
+    if (statuses.length > 0) {
+      statusOverlayHost = new PIXI.Container();
+      statusOverlayHost.position.set(hudX, localHudY);
+      actorHost.addChild(statusOverlayHost);
+    }
     for (const [name, val] of statuses) {
       if (sx + stBoxSize + 1 > hudW + 6) break;
       const col = STATUS_COLORS[name] || INK.secondary;
@@ -1652,9 +1697,12 @@ export class GameDirector {
       valTxt.position.set(stBoxSize * 0.75, stBoxSize * 0.77);
       iconBox.addChild(valTxt);
 
-      iconBox.eventMode = 'static';
-      iconBox.cursor = 'help';
+      iconBox.eventMode = (!scrollable || slot.visible) ? 'static' : 'none';
+      iconBox.hitArea = new PIXI.Rectangle(0, 0, stBoxSize, stBoxSize);
+      iconBox.cursor = 'pointer';
       iconBox.on('pointerover', () => {
+        if (this.dragState) return;
+        drawFloor(true);
         this.hoveredInfo = {
           kind: 'statuses',
           title: `${ch.name} · 状态效果`,
@@ -1674,10 +1722,15 @@ export class GameDirector {
         this._renderInspection();
       });
       iconBox.on('pointerout', () => {
+        drawFloor(false);
         this.hoveredInfo = null;
         this._renderInspection();
       });
-      hud.addChild(iconBox);
+      iconBox.on('pointerdown', (e) => {
+        if (!this.dragState) e.stopPropagation();
+      });
+      iconBox.on('pointertap', triggerFighterTap);
+      statusOverlayHost.addChild(iconBox);
       sx += stBoxSize + 3;
     }
 
@@ -1713,7 +1766,7 @@ export class GameDirector {
     }
 
     floorHost.addChild(hud);
-    return { charId: ch.id, baseCy: slot.rawY, baseRectY, actorR, actorNode, charRect: rect, hitZone };
+    return { charId: ch.id, baseCy: slot.rawY, baseRectY, actorR, actorNode, charRect: rect, hitZone, statusOverlayHost };
   }
 
   /**
@@ -2422,32 +2475,72 @@ export class GameDirector {
   }
 
   /**
-   * Full-Width Zero-Hover Hand Tray:
-   * Every card in your hand renders directly at full verbatim readable width (228~272px) side-by-side
-   * across the entire bottom of the screen — compare ALL 3~5 cards simultaneously with ZERO hovering!
-   * Hovering simply glides THAT exact Matter.js card smoothly upward & to front if tall or overlapped.
+   * Diegetic Fanned Hand Arc (《杀戮尖塔》/《废墟图书馆》/《炉石》物理扇形手牌):
+   *  - ZERO opaque full-width bottom dock bar & ZERO horizontal web divider!
+   *  - Cards float organically in a curved physical fan anchored at the bottom-center of the open battlefield.
+   *  - Hovering lifts & straightens THAT card cleanly above the fan while smoothly parting neighbors outward via Matter.js springs!
    */
+  _applyHandFanHoverLayout(hoveredKey = null) {
+    this.hoveredHandKey = hoveredKey;
+    const order = this.handFanOrder || [];
+    const hoverIdx = hoveredKey ? order.indexOf(hoveredKey) : -1;
+
+    // Restore natural left-to-right fan z-order, then lift ONLY the hovered (or dragged) card to front
+    for (let i = 0; i < order.length; i++) {
+      const k = order[i];
+      const v = this.handCardViews.get(k);
+      if (!v || v.container.destroyed) continue;
+      if (this.handLayer.children.includes(v.container)) {
+        this.handLayer.setChildIndex(v.container, i);
+      }
+      if (this.dragState?.cardKey === k) continue;
+
+      const isHov = i === hoverIdx;
+      const isSel = this.selectedHandCardId === v.card.id;
+      if (isHov) {
+        v.bodyEntry.targetX = v.baseX;
+        v.bodyEntry.targetY = v.liftY;
+        v.bodyEntry.targetAngle = 0;
+        v.bodyEntry.targetScale = 1.12;
+      } else {
+        let pushX = 0;
+        if (hoverIdx >= 0) {
+          const dist = i - hoverIdx;
+          const sign = dist > 0 ? 1 : -1;
+          pushX = sign * (42 / Math.pow(Math.abs(dist), 0.72));
+        }
+        v.bodyEntry.targetX = v.baseX + pushX;
+        v.bodyEntry.targetY = isSel ? v.selectY : v.baseY;
+        v.bodyEntry.targetAngle = isSel ? 0 : v.baseAngle;
+        v.bodyEntry.targetScale = isSel ? 1.05 : 1.0;
+      }
+    }
+
+    const frontKey = this.dragState?.cardKey || hoveredKey;
+    if (frontKey) {
+      const fv = this.handCardViews.get(frontKey);
+      if (fv && !fv.container.destroyed && this.handLayer.children.includes(fv.container)) {
+        this.handLayer.setChildIndex(fv.container, this.handLayer.children.length - 1);
+      }
+    }
+  }
+
   _rebuildHandFan() {
     clearContainer(this.handLayer);
     this.handCardViews.clear();
+    this.handFanOrder = [];
+    this.hoveredHandKey = null;
 
     const frame = this.state.frame;
     const viewerSide = frame.viewer_side;
     const player = viewerSide ? frame.players.find((p) => p.side === viewerSide) : null;
     const hand = player && Array.isArray(player.hand) ? player.hand : [];
-    const { w, h, pad, handTop, handStripH, hasHand } = this.layout;
-    const cx = w / 2;
+    const { w, h, pad, hasHand } = this.layout;
 
     if (!player || !hasHand || !hand.length) {
       this.physics.pruneHandCards(new Set());
       return;
     }
-
-    // Clean architectural divider separating the upper duel stage from the full-width hand tray
-    const trayG = new PIXI.Graphics();
-    trayG.rect(0, handTop - 6, w, h - handTop + 6).fill({ color: 0xf7f3ea, alpha: 0.72 });
-    trayG.moveTo(pad, handTop - 6).lineTo(w - pad, handTop - 6).stroke({ width: 1, color: INK.line, alpha: 0.85 });
-    this.handLayer.addChild(trayG);
 
     const legalSet = new Set(
       this.state.mode === 'placement'
@@ -2460,33 +2553,46 @@ export class GameDirector {
     const multiChar = (player.characters || []).length > 1;
 
     const count = hand.length;
-    const rightReserve = (this.layout.rightDockW || 152) + 16;
-    const availW = w - pad * 2 - rightReserve;
-    const handZoneCx = pad + availW / 2;
-    const gap = 14;
-    // True Portrait Physical Card Proportions (Width : Height ≈ 1 : 1.40, NEVER landscape tiles!)
-    const maxFitH = Math.max(244, handStripH - 18);
-    const targetWFromH = Math.round(maxFitH / 1.41);
-    const handCardW = Math.max(182, Math.min(208, targetWFromH, Math.floor((availW - Math.max(0, count - 1) * gap) / Math.max(1, count))));
-    const portraitTargetH = Math.round(handCardW * 1.40);
-    const deckOrigin = this.pileCenters.get(`${viewerSide}:draw`) || { x: handZoneCx, y: h - 60 };
+    // Keep the fan centered cleanly in the open lower-center corridor (clear of bottom-left deck piles & bottom-right dock!)
+    const leftSafe = pad + 140;
+    const rightSafe = pad + (this.layout.rightDockW || 152) + 22;
+    const availFanW = Math.max(280, Math.min(w - leftSafe - rightSafe, 720));
+    const fanCenterX = Math.round(leftSafe + (w - leftSafe - rightSafe) * 0.5);
+
+    // Crisp portrait physical card proportions (Width : Height = 1 : 1.40)
+    const handCardW = Math.max(176, Math.min(198, Math.round(h * 0.235)));
+    const uniformH = Math.round(handCardW * 1.40);
+    const deckOrigin = this.pileCenters.get(`${viewerSide}:draw`) || { x: pad + 40, y: h - 42 };
     const validKeys = new Set();
 
-    // Strictly FIXED vertical physical card dimensions (W : H = 1 : 1.40 — NEVER stretched taller by long text!)
-    // Scales smoothly from 1-5 cards up to 6-12+ cards in 10v10 battles without overflowing the viewport!
-    const uniformH = Math.min(maxFitH, portraitTargetH);
+    // True physical fan spacing (cohesive overlapping arc — NEVER a wall-to-wall rectangular grid!)
+    const idealStep = count <= 3
+      ? Math.round(handCardW * 0.78)
+      : count <= 5
+        ? Math.round(handCardW * 0.66)
+        : Math.round(handCardW * 0.54);
     const step = count > 1
-      ? Math.min(handCardW + gap, Math.max(58, (availW - handCardW) / (count - 1)))
+      ? Math.min(idealStep, Math.max(46, (availFanW - handCardW) / (count - 1)))
       : 0;
-    const totalFanW = handCardW + Math.max(0, count - 1) * step;
-    const rightLimit = w - pad - rightReserve;
-    const fanCenterX = totalFanW >= availW
-      ? pad + availW / 2
-      : Math.max(pad + totalFanW / 2, Math.min(cx, rightLimit - totalFanW / 2));
+
+    // Genuine circular fan angle & vertical curve (scales smoothly from 1 card to 12+ cards in 10v10!)
+    const maxAngle = count <= 1
+      ? 0
+      : count === 2
+        ? 0.078
+        : count === 3
+          ? 0.135
+          : Math.min(0.285, 0.135 + (count - 3) * 0.032);
+    const arcDepth = count <= 1
+      ? 0
+      : count === 2
+        ? 8
+        : Math.min(46, 14 + (count - 3) * 7.5);
 
     hand.forEach((card, i) => {
       const cardKey = `hand_${viewerSide}_${card.id}`;
       validKeys.add(cardKey);
+      this.handFanOrder.push(cardKey);
       const isLegal = legalSet.has(card.id);
       const isSelected = this.selectedHandCardId === card.id;
 
@@ -2503,26 +2609,26 @@ export class GameDirector {
       });
       const cardH = spr._boxHeight;
       const norm = count > 1 ? (i / (count - 1)) * 2 - 1 : 0;
-      const baseX = fanCenterX + (i - (count - 1) / 2) * step;
-      // Subtle physical hand-fan arc (scales gently for 6-12+ cards, straightens cleanly on hover!)
-      const angleAmp = count >= 7 ? Math.min(0.045, 0.024 + (count - 5) * 0.003) : 0.024;
-      const baseAngle = count >= 3 ? norm * angleAmp : 0;
-      const arcDrop = count >= 3 ? Math.round(norm * norm * (count >= 7 ? 10 : 5)) : 0;
-      const baseY = h - 10 - cardH / 2 + arcDrop;
-      const liftY = Math.max(cardH / 2 + 48, h - 10 - cardH / 2 - 14);
+      const baseX = Math.round(fanCenterX + (i - (count - 1) / 2) * step);
+      const baseAngle = norm * maxAngle;
+      const arcDrop = Math.round(norm * norm * arcDepth);
+      // Gracefully tucked at the lower edge so the battlefield breathes above, lifting fully into crisp view on hover!
+      const baseY = Math.round(h - cardH * 0.34 + arcDrop);
+      const selectY = Math.max(cardH * 0.54 + 48, Math.round(h - cardH * 0.50 - 12));
+      const liftY = Math.max(cardH * 0.56 + 48, Math.round(h - cardH * 0.56 - 16));
 
       const bodyEntry = this.physics.ensureHandCard(cardKey, deckOrigin.x, deckOrigin.y, handCardW, cardH);
       bodyEntry.targetX = baseX;
-      bodyEntry.targetY = isSelected ? liftY - 8 : baseY;
+      bodyEntry.targetY = isSelected ? selectY : baseY;
       bodyEntry.targetAngle = isSelected ? 0 : baseAngle;
-      bodyEntry.targetScale = isSelected ? 1.03 : 1.0;
+      bodyEntry.targetScale = isSelected ? 1.05 : 1.0;
 
       spr.position.set(bodyEntry.body.position.x, bodyEntry.body.position.y);
       spr.rotation = bodyEntry.body.angle;
       spr.scale.set(bodyEntry.scale);
       spr.eventMode = 'static';
-      // Extend hitArea slightly downward so lifting 14px on hover NEVER leaves the cursor (ZERO hover-bounce loop!)
-      spr.hitArea = new PIXI.Rectangle(-handCardW / 2, -cardH / 2, handCardW, cardH + 26);
+      // Extend hitArea slightly downward so gliding upward on hover NEVER drops the pointer!
+      spr.hitArea = new PIXI.Rectangle(-handCardW / 2, -cardH / 2, handCardW, cardH + 64);
       spr.cursor = isLegal ? 'grab' : 'default';
 
       spr.on('pointerover', () => {
@@ -2532,18 +2638,15 @@ export class GameDirector {
           this._lastHandHoverSfxMs = now;
           this.audio.cardSlide();
         }
-        bodyEntry.targetY = liftY;
-        bodyEntry.targetAngle = 0;
-        bodyEntry.targetScale = 1.025;
-        this.handLayer.setChildIndex(spr, this.handLayer.children.length - 1);
+        this._applyHandFanHoverLayout(cardKey);
         this._setCardIntent(viewerSide, card);
       });
 
       spr.on('pointerout', () => {
         if (this.dragState?.cardKey === cardKey) return;
-        bodyEntry.targetY = this.selectedHandCardId === card.id ? liftY - 8 : baseY;
-        bodyEntry.targetAngle = this.selectedHandCardId === card.id ? 0 : baseAngle;
-        bodyEntry.targetScale = this.selectedHandCardId === card.id ? 1.03 : 1.0;
+        if (this.hoveredHandKey === cardKey) {
+          this._applyHandFanHoverLayout(null);
+        }
         this._clearCardIntent(viewerSide);
       });
 
@@ -2580,14 +2683,18 @@ export class GameDirector {
           moved: false,
         };
         bodyEntry.dragging = true;
-        bodyEntry.targetScale = 1.035;
+        bodyEntry.targetScale = 1.06;
+        this._applyHandFanHoverLayout(null);
         this.handLayer.setChildIndex(spr, this.handLayer.children.length - 1);
         this._setCardIntent(viewerSide, card);
         this.audio.cardSlide();
       });
 
       this.handLayer.addChild(spr);
-      this.handCardViews.set(cardKey, { container: spr, card, side: viewerSide, legal: isLegal, baseX, baseY, baseAngle, bodyEntry });
+      this.handCardViews.set(cardKey, {
+        container: spr, card, side: viewerSide, legal: isLegal,
+        baseX, baseY, selectY, liftY, baseAngle, bodyEntry,
+      });
     });
 
     this.physics.pruneHandCards(validKeys);
@@ -2642,7 +2749,9 @@ export class GameDirector {
     if (!buttons.length) return;
     const dockX = w - pad - rightDockW;
     const gap = 8;
-    let cursorBottom = h - 16;
+    // Anchor cleanly above P2's bottom-right diegetic deck piles (ZERO overlap!)
+    const pileScale = h < 760 ? 0.84 : 0.94;
+    let cursorBottom = h - Math.round(92 * pileScale);
 
     for (const b of buttons) {
       const by = cursorBottom - b.h;
@@ -3073,6 +3182,7 @@ export class GameDirector {
       view.bodyEntry.targetAngle = view.baseAngle;
       view.bodyEntry.targetScale = 1.0;
     }
+    this._applyHandFanHoverLayout(null);
 
     const x = e.global.x;
     const y = e.global.y;

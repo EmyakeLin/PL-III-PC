@@ -435,7 +435,6 @@ export function buildHeroSidePanel({
   side,
   catalogChar,
   catalogStatuses,
-  teamChars = [],
   x,
   y,
   width,
@@ -444,7 +443,6 @@ export function buildHeroSidePanel({
   canSetTarget = false,
   isDefaultTarget = false,
   scrollY = 0,
-  onSwitchChar,
   onTab,
   onHoverSkill,
   onSetFocusTarget,
@@ -470,92 +468,13 @@ export function buildHeroSidePanel({
   // Engraved top faction ribbon bar
   frame.roundRect(14, 1.5, width - 28, 4, 2).fill({ color: theme.accent, alpha: 0.94 });
   frame.eventMode = 'static';
+  frame.on('pointerdown', (e) => e.stopPropagation());
   frame.on('pointertap', (e) => e.stopPropagation());
   root.addChild(frame);
 
   let curY = 12;
 
-  // Scalable Teammate Switcher Strip (clean row for <=4; masked horizontal ribbon with chevrons for 5..10+ squads!)
-  if (teamChars.length > 1) {
-    const stripX = 12;
-    const stripW = width - 24;
-    const pillH = 23;
-    const gap = 5;
-
-    if (teamChars.length <= 4) {
-      const maxPillW = Math.floor((stripW - gap * (teamChars.length - 1)) / teamChars.length);
-      let tx = stripX;
-      for (const tc of teamChars) {
-        const isCur = tc.id === character.id;
-        const btn = makeSealButton(tc.name, {
-          width: maxPillW,
-          height: pillH,
-          accent: theme.accent,
-          solid: isCur,
-          fontSize: 10.8,
-          radius: 6,
-          onClick: isCur ? null : () => onSwitchChar && onSwitchChar(tc.id),
-        });
-        btn.position.set(tx, curY);
-        root.addChild(btn);
-        tx += maxPillW + gap;
-      }
-    } else {
-      const navW = 22;
-      const viewX = stripX + navW + 4;
-      const viewW = Math.max(80, stripW - (navW + 4) * 2);
-
-      const maskG = new PIXI.Graphics();
-      maskG.rect(viewX, curY - 1, viewW, pillH + 5).fill({ color: 0xffffff });
-      root.addChild(maskG);
-
-      const stripBody = new PIXI.Container();
-      stripBody.mask = maskG;
-      root.addChild(stripBody);
-
-      let px = 0;
-      let activeCenter = 0;
-      for (const tc of teamChars) {
-        const isCur = tc.id === character.id;
-        const pw = Math.max(66, Math.min(96, tc.name.length * 12 + 18));
-        const btn = makeSealButton(tc.name, {
-          width: pw,
-          height: pillH,
-          accent: theme.accent,
-          solid: isCur,
-          fontSize: 10.6,
-          radius: 6,
-          onClick: isCur ? null : () => onSwitchChar && onSwitchChar(tc.id),
-        });
-        btn.position.set(px, curY);
-        stripBody.addChild(btn);
-        if (isCur) activeCenter = px + pw / 2;
-        px += pw + gap;
-      }
-      const totalStripW = Math.max(0, px - gap);
-      const maxStripScroll = Math.max(0, totalStripW - viewW);
-      let stripScroll = Math.max(0, Math.min(maxStripScroll, activeCenter - viewW / 2));
-      const applyStripScroll = (nextX) => {
-        stripScroll = Math.max(0, Math.min(maxStripScroll, nextX));
-        stripBody.x = viewX - stripScroll;
-      };
-      applyStripScroll(stripScroll);
-
-      const prevBtn = makeSealButton('‹', {
-        width: navW, height: pillH, accent: INK.secondary, fontSize: 13, radius: 6,
-        onClick: () => applyStripScroll(stripScroll - Math.max(80, viewW * 0.6)),
-      });
-      prevBtn.position.set(stripX, curY);
-      const nextBtn = makeSealButton('›', {
-        width: navW, height: pillH, accent: INK.secondary, fontSize: 13, radius: 6,
-        onClick: () => applyStripScroll(stripScroll + Math.max(80, viewW * 0.6)),
-      });
-      nextBtn.position.set(stripX + stripW - navW, curY);
-      root.addChild(prevBtn, nextBtn);
-    }
-    curY += pillH + 6;
-  }
-
+  // Strictly Single-Character Folio: displays ONLY the clicked character (zero switcher for other characters!)
   // Hero Identity Medallion Header (compass-etched portrait + Name + Faction Ribbon + Live HP/Speed/Duels/Cost)
   const artSize = 56;
   const artX = 12;
@@ -1016,9 +935,11 @@ export function buildPassiveDrawer({
         rowHead._itemBottom = cy + rhH;
         rowHead._interactiveItem = true;
         rowHead.eventMode = 'static';
+        rowHead.hitArea = new PIXI.Rectangle(0, 0, innerColW, rhH);
         rowHead.cursor = 'pointer';
         rowHead.on('pointerover', () => drawRh(true));
         rowHead.on('pointerout', () => drawRh(false));
+        rowHead.on('pointerdown', (e) => e.stopPropagation());
         rowHead.on('pointertap', (e) => {
           e.stopPropagation();
           if (onOpenHeroSheet) onOpenHeroSheet(ch.id, side);
@@ -1066,6 +987,7 @@ export function buildPassiveDrawer({
     diamondColor: INK.gold,
   });
   frame.eventMode = 'static';
+  frame.on('pointerdown', (e) => e.stopPropagation());
   frame.on('pointertap', (e) => e.stopPropagation());
   root.addChild(frame);
 
