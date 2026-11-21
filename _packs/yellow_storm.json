@@ -1,0 +1,818 @@
+{
+  "turn_end_statuses": ["崩裂", "弥合"],
+  "status_rules": {
+    "崩析": {
+      "description": "每3层使进攻骰的直伤部分减1。达到8层时爆发，受到初始生命上限三分之一（向上取整）的超穿甲伤害后移除。受到直伤时下回合获得1虚弱；骰子造成至少1点直伤时传播1崩析，每骰一次。目标已有崩析则立即施加，否则在下回合施加。",
+      "activation": {
+        "label": "崩析爆发", "remove_after": true,
+        "operation": {"op": "program", "code": ["$self", "$original_max_hp", 2, "ADD", 3, "FLOOR_DIV", "concept", "none", "DAMAGE"]}
+      }
+    },
+    "崩裂": {"description": "本回合受到的崩析爆发伤害+X。至少2层时，每次被施加崩析额外增加1层。回合结束时，崩析+X，随后解除。"},
+    "弥合": {"description": "本回合受到的崩析爆发伤害−X。至少2层时，每次被施加崩析减少1层。回合结束时，崩析−X，随后解除。"},
+    "崩离": {"permanent": true, "max_hp_per_stack": -1, "description": "生命上限减少X，无法解除。"}
+  },
+  "status_entries": {
+    "崩析": [
+      {
+        "trigger": "AFTER STATUS", "when": {"status": "崩析", "result_at_least": 8},
+        "operation": {"op": "program", "code": ["$actual_delta", 0, "GT", ["$self", "崩析", "ACTIVATE_STATUS", "POP"], "WHEN"]}
+      },
+      {
+        "trigger": "BEFORE RESOLVE_DAMAGE", "subject": "source", "when": {"damage_part": true},
+        "operation": {"op": "program", "code": ["$damage_die_is_attack", ["$self", "崩析", "STATUS_COUNT", 3, "FLOOR_DIV", "SUB"], "WHEN"]}
+      },
+      {
+        "trigger": "AFTER DAMAGE", "subject": "target", "when": {"damage_received": true},
+        "operation": {"op": "program", "code": ["$self", "$self", "虚弱", 1, "QUEUE_STATUS"]}
+      },
+      {
+        "trigger": "AFTER DAMAGE", "subject": "source", "when": {"damage_amount_at_least": 1},
+        "operation": {"op": "program", "code": [
+          "$damage_die", [
+            "$damage_die", "collapse_spread", "DIE_STATE", "NOT", [
+              "$damage_die", "collapse_spread", true, "SET_DIE_STATE",
+              "$target", "崩析", "STATUS_COUNT", 0, "GT",
+              ["$target", "崩析", 1, "STATUS"], ["$self", "$target", "崩析", 1, "QUEUE_STATUS"], "IF_ELSE"
+            ], "WHEN"
+          ], "WHEN"
+        ]}
+      }
+    ],
+    "崩裂": [
+      {
+        "trigger": "BEFORE RESOLVE_DAMAGE", "subject": "target", "when": {"damage_cause": "崩析爆发"},
+        "operation": {"op": "program", "code": ["$self", "崩裂", "STATUS_COUNT", "ADD"]}
+      },
+      {
+        "trigger": "BEFORE STATUS", "when": {"status": "崩析", "owner_status_at_least": {"崩裂": 2}},
+        "operation": {"op": "program", "code": ["$amount", 0, "GT", [1, "ADD"], "WHEN"]}
+      },
+      {
+        "trigger": "before_turn_end", "operation": {"op": "program", "code": [
+          "$self", "崩析", "$self", "崩裂", "STATUS_COUNT", "STATUS", "$self", "崩裂", "all", "SPEND_STATUS", "POP"
+        ]}
+      }
+    ],
+    "弥合": [
+      {
+        "trigger": "BEFORE RESOLVE_DAMAGE", "subject": "target", "when": {"damage_cause": "崩析爆发"},
+        "operation": {"op": "program", "code": ["$self", "弥合", "STATUS_COUNT", "SUB"]}
+      },
+      {
+        "trigger": "BEFORE STATUS", "when": {"status": "崩析", "owner_status_at_least": {"弥合": 2}},
+        "operation": {"op": "program", "code": ["$amount", 0, "GT", [1, "SUB"], "WHEN"]}
+      },
+      {
+        "trigger": "before_turn_end", "operation": {"op": "program", "code": [
+          "$self", "崩析", "$self", "弥合", "STATUS_COUNT", -1, "MUL", "STATUS", "$self", "弥合", "all", "SPEND_STATUS", "POP"
+        ]}
+      }
+    ]
+  },
+  "faction": "PlanB",
+  "characters": [
+    {
+      "id": "plan_b_sa",
+      "name": "萨",
+      "title": "焦黄风暴",
+      "rank": "BOSS",
+      "max_hp": 15,
+      "passive_skills": [
+        {
+          "name": "S级条目",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": ["$player", 2, "TURN_COST_ADD", "$player", 1, "DRAW", "$self", 2, "HEAL"]
+              },
+              "description": "每回合费用上限+2，回合开始时额外抽1张手牌并回复2生命。"
+            }
+          ]
+        },
+        {
+          "name": "Plan B",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$hand_count", 5, "GE", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
+                ]
+              },
+              "description": "回合开始额外抽牌后，手牌达到5张则本回合增加1交锋、1通用费用。"
+            }
+          ]
+        },
+        {
+          "name": "焦黄风暴",
+          "entries": [
+            {
+              "trigger": "BEFORE FINALIZE_DAMAGE",
+              "subject": "source",
+              "when": {"damage_part": true, "clash_result": "win", "damage_amount": 0},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$damage_die_is_attack", "$damage_die", "zero_burst_replacement", "DIE_STATE", "NOT", "AND",
+                  ["$value_ref", 0, "VALUE_CEILING"], "WHEN"
+                ]
+              },
+              "description": "进攻骰拼点胜利，即将造成0点的直伤部分固定为0。"
+            },
+            {
+              "trigger": "AFTER DAMAGE",
+              "subject": "source",
+              "when": {"damage_part": true, "clash_result": "win", "damage_amount": 0, "damage_dealt": true},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$damage_die_is_attack", "$damage_die", "zero_burst_replacement", "DIE_STATE", "NOT", "AND",
+                  ["$target", "崩析", 1, "STATUS"], "WHEN"
+                ]
+              },
+              "description": "上述0直伤成功结算后视为造成伤害，对该段目标施加1崩析。"
+            },
+            {
+              "trigger": "AFTER DAMAGE",
+              "subject": "any",
+              "when": {"damage_cause": "崩析爆发"},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "$damage_amount", 2, "FLOOR_DIV", "HEAL"]
+              },
+              "description": "场上任何角色发生崩析爆发时，回复爆发伤害量一半的生命，向下取整。"
+            },
+            {
+              "trigger": "BEFORE ACTIVATE_STATUS",
+              "subject": "target",
+              "when": {"status": "崩析"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$in_turn_end", "NOT",
+                  [
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "自身在回合结束前不会触发崩析爆发。"
+            },
+            {
+              "trigger": "before_turn_end",
+              "when": {"owner_status_at_least": {"崩析": 8}},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "崩析", "ACTIVATE_STATUS", "POP"]
+              },
+              "description": "进入回合末时，若自身仍至少有8崩析，立即尝试爆发。"
+            }
+          ]
+        },
+        {
+          "name": "弥合裂隙",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "when": {"owner_status_at_least": {"崩析": 4}},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "弥合", 1, "STATUS", "$self", "虚弱", -2, "STATUS"]
+              },
+              "description": "回合开始，自身崩析不低于4时，获得1弥合并减少2虚弱。"
+            }
+          ]
+        },
+        {
+          "name": "狂暴毁灭",
+          "entries": [
+            {
+              "trigger": "after_dice_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$is_attack", "$did_deal_damage", "NOT", "AND", "$target_alive", "AND",
+                  [
+                    "$self", "崩析", "STATUS_COUNT", 6, "GE",
+                    [{"op": "damage", "amount": 2, "grade": "pierce", "from_die": true}],
+                    [{"op": "damage", "amount": 1, "grade": "pierce", "from_die": true}], "IF_ELSE"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "进攻骰使用后，若本骰未成功造成任何直伤，则对目标造成1穿甲；自身崩析不低于6则改为2穿甲。此追伤仍受远程压制。"
+            }
+          ]
+        },
+        {
+          "name": "崩析灭除",
+          "entries": [
+            {
+              "trigger": "AFTER ACTIVATE_STATUS",
+              "subject": "any",
+              "when": {"status": "崩析", "result": true},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$die_owner", "$self", "EQ",
+                  [
+                    "$is_attack", ["$die", "burst_during_attack", true, "SET_DIE_STATE"], "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "在骰子的攻击期间记录场上发生的崩析爆发。"
+            },
+            {
+              "trigger": "after_dice_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$is_attack", "$die", "burst_during_attack", "DIE_STATE", "AND", "$target_alive", "AND",
+                  ["$self", "$target", "崩离", 1, "QUEUE_STATUS"], "WHEN"
+                ]
+              },
+              "description": "自身这颗进攻骰攻击期间发生过崩析爆发时，下回合对本骰目标施加1崩离。"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "sa_shatter_body",
+          "name": "崩毁肉体",
+          "cost": 1,
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$self", "崩析", 1, "STATUS"]},
+                  "description": "获得1崩析。"
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "operation": {"op": "program", "code": ["$self", "崩析", -1, "STATUS"]},
+                  "description": "拼点失败时失去1崩析。"
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", 1, "normal", "block", "DAMAGE", "$player", 1, "DRAW"]
+                  },
+                  "description": "反震1。招架拼赢时对交锋目标造成1普通伤害，抽1张手牌。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$self", "崩析", 1, "STATUS"]},
+                  "description": "获得1崩析。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sa_lock_will",
+          "name": "意志锁死",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$card", "$self", "崩析", "STATUS_COUNT", 3, "FLOOR_DIV", 2, "MIN", "SKILL_LEVEL_ADD", "$self", "崩析",
+                  1, "STATUS"
+                ]
+              },
+              "description": "使用时，每持有3崩析使本技能骰子等级+1，至多+2。随后获得1崩析。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$self", 1, "HEAL"]},
+                  "description": "回复1生命。"
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", "崩析", 1, "STATUS", "$self", "$target", "骰子等级降低", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "拼赢时施加1崩析，下回合施加1骰子等级降低。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sa_trace_rift",
+          "name": "循隙灭除",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$card", "$self", "崩析", "STATUS_COUNT", 3, "FLOOR_DIV", 2, "MIN", "SKILL_LEVEL_ADD", "$self", "崩析",
+                  1, "STATUS"
+                ]
+              },
+              "description": "使用时，每持有3崩析使本技能骰子等级+1，至多+2。随后获得1崩析。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 1,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$target", "崩析", 2, "STATUS"]},
+                  "description": "施加2崩析。"
+                }
+              ]
+            },
+            {"type": "blunt", "level": 1, "entries": ["1物理"]},
+            {
+              "type": "blunt",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$player", 1, "DRAW"]},
+                  "description": "抽1张手牌。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sa_crush_mind",
+          "name": "彻灭心神",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "when": {"owner_status_at_least": {"崩析": 4}},
+              "operation": {
+                "op": "program",
+                "code": ["$self", "骰子等级降低", 1, "STATUS"]
+              },
+              "description": "使用时，自身崩析不低于4则获得1骰子等级降低。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$target", "崩析", 1, "STATUS"]},
+                  "description": "施加1崩析。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_clash_lose",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$target", "强壮", 2, "QUEUE_STATUS"]
+                  },
+                  "description": "拼点失败时，下回合对目标施加2强壮。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", 2, "pierce", "slash", "DAMAGE"]
+                  },
+                  "description": "命中时追加2穿甲伤害。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sa_flash_rift",
+          "name": "闪进解离",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "program", "code": ["$self", "崩析", 2, "STATUS"]},
+              "description": "使用时获得2崩析。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "崩析", "STATUS_COUNT", 5, "LE", ["$self", "崩析", 1, "STATUS"], "WHEN"
+                    ]
+                  },
+                  "description": "拼赢时，若自身崩析不高于5，获得1崩析。"
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$target", "崩析", 2, "STATUS"]},
+                  "description": "施加2崩析。"
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$next_duel_target", "recipient", "STORE",
+                      "$die", "hit_recipient", {"local": "recipient"}, "SET_DIE_STATE", {"local": "recipient"},
+                      [{"local": "recipient"}, 2, "normal", "blunt", "DAMAGE"], "WHEN"
+                    ]
+                  },
+                  "description": "与当前交锋的骰子拼点，命中时只对下一交锋的目标造成2物理。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$die", "hit_recipient", "DIE_STATE", "recipient", "STORE", {"local": "recipient"},
+                      ["$self", {"local": "recipient"}, "崩裂", 1, "QUEUE_STATUS"], "WHEN"
+                    ]
+                  },
+                  "description": "下回合对下一交锋的目标施加1崩裂。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sa_disintegrate",
+          "name": "分崩离析",
+          "cost": 4,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "崩析", "STATUS_COUNT", 4, "LE", ["$self", "崩析", 2, "STATUS"],
+                  [
+                    "$self", "崩析", "STATUS_COUNT", 7, "GE",
+                    ["$self", "崩析", -2, "STATUS", "$self", "$skill_target", "崩裂", 1, "QUEUE_STATUS"], "WHEN"
+                  ],
+                  "IF_ELSE"
+                ]
+              },
+              "description": "使用时，自身崩析不高于4则获得2崩析，不低于7则失去2崩析并在下回合施加1崩裂。"
+            },
+            {
+              "trigger": "on_turn_end",
+              "scope": "turn",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "sa_disintegrate", "USED_SKILL_THIS_TURN", "$self", "sa_flash_rift", "USED_SKILL_THIS_TURN",
+                  "AND", ["$self", "sa_yellow_wind", "out_of_combat", "FIND_SKILL", "draw", "MOVE_CARD"], "WHEN"
+                ]
+              },
+              "description": "回合结束时，若本回合也使用过闪进解离，将自己战斗外的黄风漫天回收到抽牌堆底。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$target", "骰子等级降低", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "下回合施加1骰子等级降低。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "$target", "崩裂", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "下回合施加1崩裂。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {"op": "program", "code": ["$self", 2, "HEAL"]},
+                  "description": "回复2生命。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "BEFORE FINALIZE_DAMAGE",
+                  "subject": "source",
+                  "when": {"damage_part": true, "clash_result": "win", "damage_amount": 0},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$damage_die", "$owner", "EQ",
+                      [
+                        "$target", "崩析", "ACTIVATE_STATUS", "activated", "STORE", "$owner", "zero_burst_replacement",
+                        {"local": "activated"}, "SET_DIE_STATE", {"local": "activated"},
+                        ["$owner", "MARK_DAMAGE_DEALT"], "WHEN"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "拼点胜利且本伤害部分即将归零时，先强制引爆目标已有的崩析。成功时视为本骰造成伤害。"
+                },
+                {
+                  "trigger": "after_dice_use",
+                  "when": {"clash_result": "win"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$did_deal_damage", "NOT", "$target_alive", "AND",
+                      [
+                        "$target", "崩析", "ACTIVATE_STATUS", ["$die", "MARK_DAMAGE_DEALT"], "WHEN"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "拼点胜利且伤害未能成功结算时，在角色追伤前尝试引爆有崩析的目标。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sa_yellow_wind",
+          "name": "黄风漫天",
+          "cost": 7,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "崩析", "STATUS_COUNT", 5, "LE", ["$self", "崩析", -4, "STATUS", "$card", 2, "SKILL_LEVEL_ADD"],
+                  [
+                    "$card", -2, "SKILL_LEVEL_ADD", "$card", "high_wind", true, "SET_SKILL_STATE", "$card",
+                    "remaining_repeats", 2, "SET_SKILL_STATE"
+                  ],
+                  "IF_ELSE"
+                ]
+              },
+              "description": "使用时，崩析不高于5则失去4崩析并提升2骰级。崩析不低于6则降低2骰级，本交锋锁定自身崩析，所有骰子使用时追加1穿甲，末骰重复使用两次。"
+            },
+            {
+              "trigger": "BEFORE STATUS",
+              "scope": "duel",
+              "subject": "target",
+              "when": {"status": "崩析"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$owner", "high_wind", "SKILL_STATE",
+                  [
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "高崩析分支中，本交锋自身崩析层数保持不变。"
+            },
+            {
+              "trigger": "BEFORE SPEND_STATUS",
+              "scope": "duel",
+              "subject": "target",
+              "when": {"status": "崩析"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$owner", "high_wind", "SKILL_STATE",
+                  [
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "本交锋锁定期间，消耗也不能改变自身崩析层数。"
+            },
+            {
+              "trigger": "on_dice_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$owner", "high_wind", "SKILL_STATE",
+                  [
+                    {"op": "damage", "amount": 1, "grade": "pierce", "from_die": true}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "高崩析分支中，每颗骰子使用时追加1穿甲伤害。"
+            },
+            {
+              "trigger": "after_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "out_of_combat", "MOVE_CARD"]
+              },
+              "description": "使用后将本张实体牌移出战斗。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "before_dice_hit",
+                  "when": {"clash_result": "win"},
+                  "operation": {"op": "damage_add", "amount": 1},
+                  "description": "拼点胜利时，本骰群伤+1。"
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$enemies", ["$target", 2, "normal", "blunt", "DAMAGE"], "FOR_EACH_TARGET"
+                    ]
+                  },
+                  "description": "群伤2物理。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$enemies", ["$target", "崩析", 2, "STATUS"], "FOR_EACH_TARGET"
+                    ]
+                  },
+                  "description": "对全体存活敌方施加2崩析。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$target", "崩析", 1, "STATUS", "$next_duel_enemy_skills", ["$target", "DESTROY"],
+                      "FOR_EACH_TARGET"
+                    ]
+                  },
+                  "description": "拼赢时施加1崩析，摧毁敌方下一交锋内的技能。"
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$target", 1, "normal", "evade", "DAMAGE"]
+                  },
+                  "description": "拼点失败时追加1普通伤害。"
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$value_ref", "$printed_level", "VALUE_FLOOR", "$value_ref", "$printed_level", "VALUE_CEILING"]
+                  },
+                  "description": "骰子等级锁定为印刷等级。"
+                },
+                {
+                  "trigger": "on_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$card", "remaining_repeats", "SKILL_STATE", "remaining", "STORE", {"local": "remaining"}, 0,
+                      "GT",
+                      [
+                        "$die", "REPEAT_DIE", "$card", "remaining_repeats", {"local": "remaining"}, 1, "SUB",
+                        "SET_SKILL_STATE"
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "description": "高崩析分支中，本骰额外使用两次。"
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$target", "崩离", "STATUS_COUNT", "existing", "STORE", {"local": "existing"}, 0, "GT",
+                      ["$target", "崩离", {"local": "existing"}, "STATUS"], "WHEN"
+                    ]
+                  },
+                  "description": "目标每持有1崩离，便再对其施加1崩离。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

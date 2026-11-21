@@ -111,7 +111,7 @@ def replay():
         if game.turn_number == 1 and game.cards_revealed:
             if "before_skill_choice" in node:
                 choose("换卡机会", left, "replace", "点名上场", "对手戏")
-            if lead.statuses.get("置卡机会", 0):
+            if lead.ability_effects.get("置卡机会", 0):
                 choose("置卡机会", left, "place", "谢幕枪")
             if "on_dice_clash" in node:
                 choose("拼点判定前救场", left, "replace", "救场", "点名上场")
@@ -130,7 +130,7 @@ class UnderstudyTests(unittest.TestCase):
             game.start_turn()
             game.context.dispatch_pipeline("on_turn_start")
             self.assertEqual([c.name for c in left.cardspace.hand.content], ["点名上场"])
-            self.assertEqual(actor.statuses.get("换卡机会"), 1)
+            self.assertEqual(actor.ability_effects.get("换卡机会"), 1)
             left.draw_card(1)
             game.auto_place_in_duel(1, left.cardspace.hand.content[0])
             game.reveal_cards()
@@ -140,11 +140,11 @@ class UnderstudyTests(unittest.TestCase):
                     break
                 game.next_step()
             self.assertFalse(game.pipeline.in_duel_phase)
-            self.assertEqual(actor.statuses.get("置卡机会"), 1)
+            self.assertEqual(actor.ability_effects.get("置卡机会"), 1)
             self.assertEqual([c.name for c in left.cardspace.hand.content], ["飞场"])
             game.finish_turn()
-        self.assertNotIn("置卡机会", actor.statuses)
-        self.assertNotIn("换卡机会", actor.statuses)
+        self.assertNotIn("置卡机会", actor.ability_effects)
+        self.assertNotIn("换卡机会", actor.ability_effects)
 
     def test_entrance_can_take_an_open_slot_without_placement_opportunity(self):
         left, right = Player(1, "甲"), Player(2, "乙")

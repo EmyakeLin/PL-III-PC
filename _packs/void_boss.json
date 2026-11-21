@@ -1,0 +1,612 @@
+{
+  "turn_end_statuses": ["本回合已领取档数", "本回合无法死亡"],
+  "ability_rules": {
+    "抽卡资格": {"turn_end": true, "description": "本回合可用于智脑额外抽牌。"},
+    "洞察": {
+      "turn_end": true,
+      "description": "置卡阶段消耗1次，将敌方指定的扣牌翻正并锁定到置卡结束。",
+      "action": {
+        "id": "insight",
+        "name": "洞察",
+        "window": "placement",
+        "target": "enemy_facedown",
+        "ability_cost": {"洞察": 1},
+        "operation": {"op": "reveal_lock"}
+      }
+    }
+  },
+  "status_entries": {
+    "本回合无法死亡": [
+      {
+        "trigger": "BEFORE CHECK_DEATH",
+        "subject": "target",
+        "authority": "最高话语权",
+        "operation": "Cancel",
+        "description": "本回合生命可降至0，角色继续行动。"
+      }
+    ],
+    "待结算护盾": [
+      {
+        "trigger": "on_turn_start",
+        "operation": {"op": "program", "code": ["$self", "normal", "$self", "待结算护盾", "all", "SPEND_STATUS", "SHIELD"]},
+        "description": "回合开始时获得预约的普通护盾。"
+      }
+    ]
+  },
+  "characters": [
+    {
+      "id": "blank_boss",
+      "name": "空白",
+      "rank": "BOSS",
+      "max_hp": 15,
+      "mirror_allowed": true,
+      "speed_die": [1, 6],
+      "passive_skills": [
+        {
+          "name": "亡怒",
+          "entries": [
+            {
+              "trigger": "BEFORE STATUS",
+              "when": {"status": "能源", "amount_at_least": 1},
+              "operation": {"op": "program", "code": ["$hp", 12, "GE", [1, "ADD"], "WHEN"]},
+              "description": "生命不低于12时，每次获得能源额外获得1。"
+            },
+            {
+              "trigger": "on_turn_start",
+              "operation": {"op": "program", "code": ["$hp", 9, "GE", ["$self", "能源", 1, "STATUS"], "WHEN"]},
+              "description": "生命不低于9时，回合开始时回复1能源。"
+            },
+            {
+              "trigger": "BEFORE DAMAGE",
+              "subject": "source",
+              "when": {"owner_hp_at_most": 6},
+              "operation": {
+                "op": "program",
+                "code": [1, 8, "RANDOM_INT", "$hp", "GE", [{"op": "damage_add", "amount": 1}], "WHEN"]
+              },
+              "description": "生命不高于6时，造成伤害前判定1～8。判定值不低于当前生命则该段伤害+1。"
+            },
+            {
+              "trigger": "before_turn_end",
+              "when": {"owner_hp_at_most": 6},
+              "operation": {"op": "program", "code": ["$self", 1, "HEAL"]},
+              "description": "生命不高于6时，回合结束时回复1生命。"
+            }
+          ]
+        },
+        {
+          "name": "疾驰",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$speed_lead", 2, "GE",
+                  ["$self", "洞察", 1, "ABILITY_EFFECT", "$player", 1, "TURN_COST_ADD", "$self", "normal", 2, "SHIELD"],
+                  "WHEN"
+                ]
+              },
+              "description": "自身速度骰为1～6。自身速度高于敌方阵营速度至少2点时，获得1洞察、1通用费用和2普通护盾。本回合置卡阶段可消耗1洞察翻正对方一张扣牌，该牌在本次置卡阶段不能移位或收回。"
+            }
+          ]
+        },
+        {
+          "name": "智脑",
+          "description": "每持有4能源获得1抽卡资格，每回合同一档只发一次。开牌前可花1资格和1能源抽1牌，亦可弃1张手牌获得2能源，每回合至多弃2张。",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", "$self", "本回合已领取档数", "STATUS_COUNT", "SUB",
+                  "new_tiers", "STORE",
+                  {"local": "new_tiers"}, 0, "GT",
+                  [
+                    "$self", "本回合已领取档数", {"local": "new_tiers"}, "STATUS",
+                    "$self", "抽卡资格", {"local": "new_tiers"}, "ABILITY_EFFECT"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "回合开始时每持有4能源获得1抽卡资格。开牌前可支付1抽卡资格和1能源抽1张牌，也可弃1张手牌获得2能源，每回合至多弃2张。"
+            },
+            {
+              "trigger": "AFTER STATUS",
+              "when": {"status": "能源"},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", "$self", "本回合已领取档数", "STATUS_COUNT", "SUB",
+                  "new_tiers", "STORE",
+                  {"local": "new_tiers"}, 0, "GT",
+                  [
+                    "$self", "本回合已领取档数", {"local": "new_tiers"}, "STATUS",
+                    "$self", "抽卡资格", {"local": "new_tiers"}, "ABILITY_EFFECT"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "每首次达到新的4能源档，补足本回合对应的抽卡资格。资格于回合末清空。"
+            }
+          ]
+        },
+        {
+          "name": "空白",
+          "entries": [
+            {
+              "trigger": "AFTER RESOLVE_DAMAGE",
+              "subject": "target",
+              "when": {"damage_amount_at_least": 1},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$in_duel", "$duel_damage_taken", 6, "GE", "AND", "$self", "空白已发动", "STATUS_COUNT", 0, "EQ",
+                  "AND", ["$self", "空白已发动", 1, "STATUS", "$self", "本回合无法死亡", 1, "STATUS"], "WHEN"
+                ]
+              },
+              "description": "每场战斗限一次。同一交锋累计受到至少6伤害时，本回合无法死亡。"
+            },
+            {
+              "trigger": "before_turn_end",
+              "when": {"owner_status_at_least": {"本回合无法死亡": 1}},
+              "operation": {"op": "program", "code": ["$self", "$self", "能源", "all", "SPEND_STATUS", "HEAL"]},
+              "description": "触发空白的回合结束时，消耗全部能源并回复等量生命。"
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "deduce_draw",
+          "name": "智脑·抽牌",
+          "window": "before_reveal",
+          "target": "self",
+          "ability_cost": {"抽卡资格": 1},
+          "cost": {"能源": 1},
+          "requires_draw_pile": true,
+          "operation": {"op": "program", "code": ["$player", 1, "DRAW"]}
+        },
+        {
+          "id": "deduce_discard",
+          "name": "智脑·弃牌",
+          "window": "before_reveal",
+          "target": "own_hand",
+          "per_turn": 2,
+          "operation": {"op": "program", "code": ["$target", "delayed_discard", "MOVE_CARD", "$self", "能源", 2, "STATUS"]}
+        }
+      ],
+      "skills": [
+        {
+          "id": "blank_sequence",
+          "name": "斩·突·闪",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "能源", 2, "SPEND_STATUS_IN_FULL", ["$self", 1, "HEAL"], "WHEN"]
+              },
+              "description": "使用时消耗2能源以回复1生命。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS"]},
+                  "description": "命中时获得1能源。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {"op": "program", "code": ["$player", 1, "DRAW", "$self", "能源", 1, "STATUS"]},
+                  "description": "命中时抽1张牌，获得1能源。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "program", "code": ["$self", "能源", 2, "STATUS"]},
+                  "description": "拼赢时获得2能源。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "blank_offensive",
+          "name": "趁机攻势",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", "STATUS_COUNT", 6, "GE", ["$card", "strong_opening", 1, "SET_SKILL_STATE"],
+                  "WHEN"
+                ]
+              },
+              "description": "使用时若能源不低于6，本技能所有骰子基础值+2。"
+            },
+            {
+              "trigger": "before_dice_use",
+              "operation": {
+                "op": "program",
+                "code": ["$card", "strong_opening", "SKILL_STATE", [{"op": "base_add", "amount": 2}], "WHEN"]
+              },
+              "description": "为符合条件的本次技能骰添加2基础值。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$player", 1, "NEXT_TURN_COST", "$self", "$self", "待结算护盾", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "拼赢时，下回合获得1通用费和1普通护盾。"
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS", "$self", 1, "NEXT_TURN_DUELS"]},
+                  "description": "拼赢时获得1能源，下回合自身交锋数+1。"
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$self", "能源", "STATUS_COUNT", 6, "GE", ["$self", "能源", 2, "SPEND_STATUS_IN_FULL"],
+                      [false], "IF_ELSE",
+                      ["$target", 3, "pierce", "blunt", "DAMAGE"], ["$target", 2, "normal", "blunt", "DAMAGE"],
+                      "IF_ELSE"
+                    ]
+                  },
+                  "description": "命中时造成2物理。自身能源至少6时，消耗2能源以使本段伤害变为3穿甲。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "blank_guard",
+          "name": "全面防守",
+          "cost": 3,
+          "forms": {
+            "爆裂一击": {
+              "name": "爆裂一击",
+              "dice": [
+                {
+                  "type": "blunt",
+                  "level": 4,
+                  "base_value": 6,
+                  "entries": ["4物理"]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "on_card_reveal",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", "STATUS_COUNT", 5, "GE", ["$card", "爆裂一击", "SET_SKILL_FORM"], "WHEN",
+                  "$self", "能源", "STATUS_COUNT", 9, "GE",
+                  [
+                    "$self", "能源", 4, "SPEND_STATUS_IN_FULL", ["$card", "discount", 2, "SET_SKILL_STATE"],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "description": "开牌时，能源至少5则本次变为「爆裂一击」（打击1～12＋6，4物理）。能源至少9则消耗4能源以使本次费用减少2。"
+            },
+            {
+              "trigger": "BEFORE PAY_COST",
+              "operation": {"op": "program", "code": ["$card", "discount", "SKILL_STATE", "SUB"]},
+              "description": "按开牌时已取得的折扣支付。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "program", "code": ["$die", "REPEAT_DIE"]},
+                  "description": "拼点胜利时重复使用本骰。"
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "能源", 2, "STATUS", "$self", "$self", "待结算护盾", 1, "QUEUE_STATUS"]
+                  },
+                  "description": "命中时获得2能源，下回合获得1普通护盾。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "blank_read",
+          "name": "看破",
+          "cost": 2,
+          "pre_reveal": true,
+          "before_duel_attack": true,
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "before_clash_result",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$opponent_clash_score", 12, "GE", ["$die", "SPLIT_CLASH"], "WHEN"]
+                  },
+                  "description": "目标拼点点数至少12时，双方按点数从高到低依次进行单方面攻击。"
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$combat_window", "regular", "EQ",
+                      [
+                        "$opponent_card",
+                        ["$opponent_card", "$card", "TRANSFER_REMAINING_DICE", "$opponent_card", "DESTROY"],
+                        "WHEN"
+                      ],
+                      [
+                        "$target", "$self", "TAKE_HAND_CARD", "stolen", "STORE",
+                        "$combat_window", "before_duel", "EQ", {"local": "stolen"}, "AND",
+                        [
+                          "$own_regular_duels", "slots", "STORE",
+                          "$own_hand_skills", {"local": "stolen"}, "CONTAINS", {"local": "slots"}, "AND",
+                          {"local": "stolen"}, "CARD_COST", "price", "STORE",
+                          "$self", "能源", "STATUS_COUNT", {"local": "price"}, "GE", "AND",
+                          [
+                            {"local": "price"}, 0, "EQ", [true],
+                            ["$self", "能源", {"local": "price"}, "SPEND_STATUS_IN_FULL"], "IF_ELSE",
+                            [
+                              {"local": "stolen"}, {"literal": {"prepaid": true}}, "SKILL_USE", {"local": "slots"},
+                              ["$choice_subject", "$chosen_slot", "slot_tail", "INSERT_AT", "INSERT_SKILL"], "CHOOSE_SLOT"
+                            ], "WHEN"
+                          ], "WHEN"
+                        ], "WHEN"
+                      ],
+                      "IF_ELSE"
+                    ]
+                  },
+                  "description": "常规交锋命中时，接管对阵技能余骰并摧毁该牌。开牌前命中时，从目标手中抽1张牌。交锋开始前命中时，抽其1张牌，若可支付等同其费用的能源，则以此代付本次技能费，并追加至己方指定交锋，否则收入手中。取得的牌使用后归回原持有者牌堆。"
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "能源", 4, "SPEND_STATUS_IN_FULL", ["$opponent_card", "DESTROY"], "WHEN"]
+                  },
+                  "description": "拼输时消耗4能源以摧毁本次对阵技能。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "blank_pin",
+          "name": "牵制射击",
+          "cost": 2,
+          "range_level": 1,
+          "resource_cost": {"status": "能源", "amount": 2},
+          "pre_reveal": true,
+          "pre_reveal_target": "occupied_enemy_slot",
+          "interceptable": false,
+          "entries": [
+            {
+              "trigger": "before_clash_result",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$prospective_result", "lose", "EQ", "$clash_difference", 3, "LE", "AND",
+                  ["$die", "DESTROY", "$opponent_die", "DESTROY"], "WHEN"
+                ]
+              },
+              "description": "即将拼输且双方点差不高于3时，同时摧毁双方骰子。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$target", "虚弱", 2, "STATUS",
+                      "$target", "normal", 0, "$target", "normal", "SHIELD_COUNT", "SUB", "SHIELD",
+                      "$target", "reinforced", 0, "$target", "reinforced", "SHIELD_COUNT", "SUB", "SHIELD",
+                      "$target", "concept", 0, "$target", "concept", "SHIELD_COUNT", "SUB", "SHIELD"
+                    ]
+                  },
+                  "description": "命中时施加2虚弱并解除目标全部护盾。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$opponent_card", ["$opponent_card", "DESTROY"], "WHEN",
+                      "$target", "能源", "STATUS_COUNT", "balance", "STORE",
+                      {"local": "balance"}, 6, "LE", ["$target", "能源", -2, "STATUS"], "WHEN",
+                      {"local": "balance"}, 8, "GE", ["$target", "能源", 2, "STATUS"], "WHEN"
+                    ]
+                  },
+                  "description": "命中时摧毁目标技能。目标能源不高于6则失去2能源，不低于8则获得2能源。"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "blank_sight",
+          "name": "空白准镜",
+          "cost": 3,
+          "range_level": 1,
+          "resource_cost": {"status": "能源", "amount": 2},
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "base_value": 2,
+              "entries": ["3物理"]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "operation": {"op": "program", "code": ["$card", "active", 1, "SET_SKILL_STATE"]},
+                  "description": "拼点胜利时激活本技能的第三、第四骰。"
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "operation": {"op": "program", "code": ["$self", "能源", 2, "STATUS"]},
+                  "description": "拼点失败时回复2能源。"
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "requires_skill_state": "active",
+              "entries": ["1物理"]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "requires_skill_state": "active",
+              "entries": ["1物理"]
+            }
+          ]
+        },
+        {
+          "id": "blank_bloom",
+          "name": "能源绽放",
+          "cost": 4,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "operation": {"op": "program", "code": ["$card", "in_use", 1, "SET_SKILL_STATE"]},
+              "description": "本技能使用期间，能源不低于8时，受到的普通与穿甲伤害-1。"
+            },
+            {
+              "trigger": "BEFORE DAMAGE",
+              "subject": "target",
+              "when": {"owner_status_at_least": {"能源": 8}},
+              "operation": {
+                "op": "program",
+                "code": ["$owner", "in_use", "SKILL_STATE", [{"op": "armor", "amount": 1, "grade": "pierce"}], "WHEN"]
+              },
+              "description": "持有至少8能源时，此效果对普通和穿甲伤害生效。"
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": ["3物理"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+                  "operation": {"op": "program", "code": ["$self", "能源", "STATUS_COUNT", "ADD"]},
+                  "description": "本骰最终点数加上自身当前能源。"
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "when": {"result": true},
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$target", "$target", "能源", "STATUS_COUNT", "pierce", "slash", "DAMAGE",
+                      "$target", "能源", "all", "SPEND_STATUS", "POP"
+                    ]
+                  },
+                  "description": "命中时触发能源爆发。目标承受等同于其当前能源的穿甲伤害，随后清空其能源。"
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "operation": {"op": "program", "code": ["$self", "能源", 4, "STATUS"]},
+                  "description": "拼点失败时获得4能源。"
+                },
+                {
+                  "trigger": "after_dice_use",
+                  "operation": {"op": "program", "code": ["$target_alive", ["$self", "能源", 2, "STATUS"], "WHEN"]},
+                  "description": "本骰结算后若目标仍然存活，获得2能源。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

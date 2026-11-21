@@ -112,6 +112,7 @@
 | 读快照与图鉴 | `side`, `player`, `characterId`, `character`, `actor`, `collection`, `currentHand`, `card`, `printed` | 阵营、玩家、要查找的角色 ID、角色项、当前出战者、该方图鉴、当前私有手牌、具体技能与印刷规则。 |
 | 浮层、战报、规则 | `title`, `build`, `body`, `actions`, `privateReset`, `generation`, `clearContents`, `animation`, `texts`, `list` | 标题、内容构建函数、正文与操作区、切私人视角时立即清空的标记、本次清理代次及函数、退出动画、待列出的词条与列表节点。 |
 | 技能与角色详情 | `die`, `summary`, `row`, `range`, `damage`, `section`, `formula`, `used`, `shields`, `statusList`, `count`, `passives`, `passive`, `skill` | 当前印刷骰、是否为手牌摘要、骰子行、变动点数范围、印刷伤害片段、单骰详情、公式说明、已占交锋、各型护盾、状态与层数、被动清单及条目、正在查看的技能。 |
+| 角色完整度 | `actor.lightcore_hp`, `actor.max_lightcore_hp`, `fighter.max_lightcore_hp`, `lethalHeal` | 出战角色当前的光点生命值与上限，候选角色入场时的完整度上限，以及详情中用于提示回复致死的条件（存活、已到完整度门槛且尚有生命可回）。 |
 | 新对局 | `selectors`, `field`, `select`, `fighter`, `option`, `start`, `roster`, `validate`, `duplicate`, `other`, `item` | 两侧选择框及其标签、出战候选与选项、开局按钮、选定的两人、重复选择校验、是否重名及校验时比对的另一选择框。 |
 | 双方角色栏 | `lead`, `meta`, `bar`, `stats`, `statsField`, `statuses`, `shieldNames`, `kind`, `amount`, `statusesField` | 先手标记、头衔与位阶、生命条、速度及费用文字和容器、状态摘要、盾名称映射、当前盾型与数值、状态容器。 |
 | 槽位与拼点 | `duels`, `slots`, `vacancy`, `slot`, `group`, `cards`, `number`, `combat`, `active`, `info`, `parts` | 已有槽与用于绘制的槽序列、当前方可填入的空槽、具体槽、阵营牌组、可见牌、本槽号码、战斗帧、与该牌相符的活动方数据及其点数文字片段。 |

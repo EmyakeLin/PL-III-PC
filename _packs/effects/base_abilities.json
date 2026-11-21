@@ -1,0 +1,16 @@
+{
+  "pack_type": "ability_effects",
+  "name": "基础能力效果包",
+  "ability_rules": {
+    "置卡机会": {
+      "permission": "place",
+      "turn_end": true,
+      "description": "消耗一次，将自身一张手牌置于友方第一个空常规交锋，占用一次常规交锋额度。"
+    },
+    "换卡机会": {
+      "permission": "replace",
+      "turn_end": true,
+      "description": "自身技能使用前，消耗一次并以自身另一张手牌替换它。"
+    }
+  }
+}

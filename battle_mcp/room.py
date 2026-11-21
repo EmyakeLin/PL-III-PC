@@ -24,7 +24,7 @@ BRIEFING_ARTICLES = (
     "5.2", "5.3", "6.1", "6.3", "6.5", "7.2", "7.3",
 )
 GUIDE = (
-    "双方按需 prepare，再 ready。ready 明确持续预留普通置卡、开牌前攻防及必须回应的迎击。"
+    "双方按需 prepare，再 ready。ready 持续预留普通置卡、开牌前攻防、必须回应的迎击及词条要求的选牌或选交锋。"
     "临场特殊操作须额外提前准备。reserve 到点询问。execute 唯一匹配时执行，多项匹配时由本席选择。"
     "声明默认一次，repeat:true 可重复。一席多条自动声明按登记次序；双方同时命中优先本回合先手。"
     "roll 是原始骰面，scores_ready 是拼点点数就绪、胜负未定。timer 根据公开声明时间触发。"
@@ -39,7 +39,8 @@ def short_frame(frame):
             return [compact(item) for item in value]
         if isinstance(value, dict):
             if "dice" in value and "cost" in value and "id" in value:
-                return {key: value[key] for key in ("id", "name", "cost", "character_id", "state", "play_mode")
+                return {key: value[key] for key in ("id", "action_key", "instance_id", "name", "cost", "character_id",
+                                                   "borrowed", "use_restricted", "state", "play_mode")
                         if key in value}
             return {key: compact(item) for key, item in value.items()}
         return value
@@ -167,8 +168,6 @@ class Room:
             if self._lobby_picks is None or side in self.seated:
                 raise ValueError("本席当前无法更换出战角色。")
             picked = self._lobby_picks
-            if character_id == picked[3 - side]:
-                raise ValueError("对方已选择这名角色。")
             character = next((c for c in self.engine.choices if c["id"] == character_id), None)
             if character is None:
                 raise ValueError("出战角色不在本房间的卡包中。")

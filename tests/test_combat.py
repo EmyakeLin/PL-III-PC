@@ -84,6 +84,124 @@ class CombatTests(unittest.TestCase):
         self.assertEqual((self.a.hp, self.b.hp, c.hp), (50, 50, 46))
         self.assertFalse(any("on_clash_win" in pair for pair in events))
 
+    def test_extra_hit_runs_all_hit_stages_under_one_clash_result(self):
+        repeat = dict(trigger="before_dice_hit", when={"hit_index": 1, "clash_result": "win"},
+                      operation=dict(op="program", code=["$die", "full", "QUEUE_HIT"]))
+        mark = dict(trigger="on_dice_hit", operation="Shield: 1")
+        attack = self.skill(self.a, "连中", [("slash", 20, [repeat, mark, "2"])])
+        defense = self.skill(self.b, "阻挡", [("block", 0, [])])
+        self.slot([attack], [defense])
+        events = self.play()
+        self.assertEqual((self.b.hp, self.a.shield), (46, 2))
+        self.assertEqual(sum(a == "on_clash_win" for a, _ in events), 1)
+        self.assertEqual(sum(a == "before_dice_use" for a, _ in events), 1)
+        for step in ("before_dice_hit", "logic_dice_hit", "on_dice_hit", "after_dice_hit"):
+            self.assertEqual(sum(a == step for a, _ in events), 2)
+
+    def test_losing_hit_can_request_only_printed_damage(self):
+        resident = dict(trigger="on_clash_lose",
+                        operation=dict(op="program", code=["$die", "damage_only", "QUEUE_HIT"]))
+        attack = self.skill(self.a, "驻留", [("slash", 0, ["2穿甲", "Shield: 4", resident,
+                             dict(trigger="on_dice_hit", operation="Shield: 3")])])
+        counter = self.skill(self.b, "还击", [("slash", 20, ["1"])])
+        self.slot([attack], [counter])
+        self.play()
+        self.assertEqual((self.a.hp, self.b.hp, self.a.shield), (49, 48, 0))
+        self.assertEqual(attack.instantiated_dice[0].clash_result, "lose")
+        self.assertFalse(self.a.won_clash_this_turn)
+
+    def test_cancelled_first_hit_drops_extra_hit_and_its_effects(self):
+        first = dict(trigger="before_dice_hit", when={"hit_index": 1},
+                     operation=dict(op="program", code=["$die", "full", "QUEUE_HIT"]))
+        attack = self.skill(self.a, "追加", [("slash", 20, ["3", first,
+                            dict(trigger="on_dice_hit", operation="Shield: 2")])])
+        self.game.context.register_entries(self.b, [dict(
+            trigger="BEFORE RESOLVE_HIT", subject="target", operation="cancel")])
+        self.slot([attack], [])
+        events = self.play()
+        self.assertEqual(attack.instantiated_dice[0].landed_hits, 0)
+        self.assertEqual((self.a.shield, self.b.hp), (0, 50))
+        self.assertEqual(sum(a == "before_dice_hit" for a, _ in events), 1)
+
+    def test_resident_hit_cannot_retarget_after_winner_dies(self):
+        ally = self.character(self.players[1], "幸存者")
+        resident = dict(trigger="on_clash_lose",
+                        operation=dict(op="program", code=["$die", "damage_only", "QUEUE_HIT"]))
+        self_damage = dict(trigger="on_dice_hit", operation=dict(op="program", code=["$self", 80, "LOSE_HP"]))
+        losing = self.skill(self.a, "驻留", [("slash", 0, ["4", resident])])
+        winning = self.skill(self.b, "决死", [("slash", 20, ["1", self_damage])])
+        self.slot([losing], [winning])
+        self.play()
+        self.assertFalse(self.b.is_alive)
+        self.assertEqual(ally.hp, ally.max_hp)
+        self.assertEqual(losing.instantiated_dice[0].landed_hits, 0)
+
+    def test_two_hits_destroy_future_repeat_and_next_die_before_pairing(self):
+        shatter = dict(trigger="on_dice_hit", operation=dict(op="program", code=["$target_next_die", "DESTROY"]))
+        extra = dict(trigger="before_dice_hit", when={"hit_index": 1},
+                     operation=dict(op="program", code=["$die", "full", "QUEUE_HIT"]))
+        again = dict(trigger="on_dice_use", operation=dict(op="program",
+                     code=["$is_repeat", "NOT", ["$die", "REPEAT_DIE"], "WHEN"]))
+        a = self.skill(self.a, "双击", [("slash", 20, [extra, shatter]), ("slash", 20, ["1"])])
+        b = self.skill(self.b, "原骰与重复骰", [("slash", 0, [again]), ("slash", 0, [])])
+        self.slot([a], [b])
+        events = self.play()
+        self.assertEqual([(d.is_repeat, d.destroyed) for d in b.instantiated_dice],
+                         [(False, False), (True, True), (False, True)])
+        self.assertEqual([d.clash_result for d in b.instantiated_dice], ["lose", None, None])
+        self.assertEqual(a.instantiated_dice[1].landed_hits, 1)
+        self.assertIsNone(a.instantiated_dice[1].clash_result)
+        self.assertEqual(sum(a == "on_clash_win" for a, _ in events), 1)
+
+    def test_future_die_selector_uses_only_board_cards_of_target_and_does_not_arm_entries(self):
+        shatter = dict(trigger="on_dice_hit", operation=dict(op="program", code=["$target_next_die", "DESTROY"]))
+        a = self.skill(self.a, "断后", [("slash", 20, [shatter])])
+        b = self.skill(self.b, "当前", [("block", 0, [])])
+        ally = self.character(self.players[1], "队友")
+        other = self.skill(ally, "先到的队友", [("slash", 1, [])])
+        future = self.skill(self.b, "后来者", [("slash", 30, [
+            dict(trigger="AFTER DESTROY", subject="any", scope="global", operation="Shield: 8")])])
+        self.slot([a], [b])
+        self.slot([], [other, future])
+        self.play()
+        self.assertTrue(future.instantiated_dice[0].destroyed)
+        self.assertFalse(future.instantiated_dice[0].entries_registered)
+        self.assertFalse(other.instantiated_dice[0].destroyed)
+        self.assertEqual(self.b.shield, 0)
+        self.assertIsNone(self.game.pipeline.next_planned_die(self.b))
+
+    def test_transferred_tail_keeps_pending_repeat_and_cannot_revive_destroyed_use(self):
+        donor = self.skill(self.b, "被接管", [("slash", 1, []), ("blunt", 2, [])])
+        receiver = self.skill(self.a, "接管", [("pierce", 1, [])])
+        current = donor.get_current_die(self.game)
+        current.request_repeat()
+        repeat, end = donor.planned_dice(self.game, after_current=True)
+        end.destroyed = True
+        receiver.take_remaining_dice(donor)
+        donor.advance_die()
+        receiver.advance_die()
+        transferred = receiver.get_current_die(self.game)
+        self.assertTrue(repeat.is_repeat and transferred.is_repeat)
+        self.assertEqual(transferred.type, "slash")
+        receiver.advance_die()
+        self.assertIsNone(receiver.get_current_die(self.game))
+        self.assertIsNone(donor.get_current_die(self.game))
+
+    def test_printed_skip_and_prospective_skip_advance_both_dice_without_a_hit(self):
+        skip = dict(trigger="before_clash_result", when={"prospective_result": "lose"},
+                    operation=dict(op="program", code=["$die", "SKIP_ROUND"]))
+        marker = dict(trigger="on_clash_skip", operation="Shield: 1")
+        a = self.skill(self.a, "避锋", [("slash", 0, []), ("slash", 0, [skip]), ("slash", 20, ["1"])])
+        a.dice[0] = {"type": "skip"}
+        b = self.skill(self.b, "三击", [("slash", 10, ["4", marker])] * 3)
+        self.slot([a], [b])
+        self.play()
+        self.assertEqual([d.clash_result for d in a.instantiated_dice], ["skip", "skip", "win"])
+        self.assertEqual([d.clash_result for d in b.instantiated_dice], ["skip", "skip", "lose"])
+        self.assertEqual((self.a.hp, self.b.shield), (50, 1))
+        self.assertIsNone(a.instantiated_dice[0].clash_score)
+        self.assertIsNotNone(a.instantiated_dice[1].clash_score)
+
     def test_skill_target_reuses_choice_from_use_for_its_solo_dice(self):
         target = self.character(self.players[0], "选中者")
         lock = {"trigger": "on_skill_use", "operation": {"op": "program", "code": [

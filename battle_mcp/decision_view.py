@@ -6,12 +6,15 @@ def fields(record, *names):
 
 
 def actor_view(actor):
-    data = fields(actor, "id", "name", "hp", "max_hp", "speed", "cost", "duels")
+    data = fields(actor, "id", "name", "hp", "max_hp", "lightcore_hp", "max_lightcore_hp",
+                  "speed", "cost", "duels")
     data["duels"] = fields(data["duels"], "max", "used")
-    for key in ("shields", "statuses"):
-        values = {name: n for name, n in actor[key].items() if n}
+    for key in ("shields", "statuses", "ability_effects", "status_overflow"):
+        values = {name: n for name, n in actor.get(key, {}).items() if n}
         if values:
             data[key] = values
+    if actor.get("reserved_dice"):
+        data["reserved_dice"] = actor["reserved_dice"]
     if actor["bleed_burst"]:
         data["bleed_burst"] = actor["bleed_burst"]
     return data
@@ -20,7 +23,8 @@ def actor_view(actor):
 def card_view(card):
     if card.get("hidden"):
         return {"hidden": True}
-    return fields(card, "id", "name", "cost", "state", "play_mode")
+    return fields(card, "id", "name", "cost", "state", "play_mode", "action_key", "instance_id",
+                  "borrowed", "use_restricted")
 
 
 def player_view(player):

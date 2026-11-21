@@ -1,5 +1,7 @@
+import io
 import random
 import unittest
+from contextlib import redirect_stdout
 
 from game import Game
 from models.card import Card, CardState
@@ -39,6 +41,91 @@ class EffectRules(unittest.TestCase):
         self.assertEqual(self.defender.hp, 20)
         self.assertEqual(self.atk.hp, 20)
         self.assertEqual((self.atk.shield, self.atk.concept_shield), (1, 0))
+
+    def test_damage_reports_modified_amount_separately_from_hp_loss(self):
+        before, after = [], []
+
+        def before_apply(ctx):
+            event = ctx.event
+            target = event["target"]
+            before.append((event["source"], target, event["amount"], event["penetration"],
+                           target.hp, target.shield, target.is_alive))
+
+        def after_damage(ctx):
+            event = ctx.event
+            after.append((event["amount"], event["result"], event["hp_lost"]))
+
+        self.listen(self.atk, "BEFORE DAMAGE", "Damage_Add: 2", subject="source")
+        self.listen(self.defender, "BEFORE RESOLVE_DAMAGE", before_apply, subject="target",
+                    when={"amount_at_least": 7})
+        self.listen(self.atk, "AFTER DAMAGE", after_damage, subject="source",
+                    when={"result_at_least": 7})
+        for hp, shield, expected_loss in ((12, 7, 0), (12, 2, 5), (4, 2, 4)):
+            with self.subTest(hp=hp, shield=shield):
+                self.defender.hp = hp
+                self.defender.shield = shield
+                with redirect_stdout(io.StringIO()) as output:
+                    damage = self.ctx.deal_damage(self.atk, self.defender, 5)
+                self.assertIn("甲 对 乙 造成 7 点伤害", output.getvalue())
+                self.assertEqual(damage, 7)
+                self.assertEqual(before, [(self.atk, self.defender, 7, "normal", hp, shield, True)])
+                self.assertEqual(after, [(7, 7, expected_loss)])
+                self.assertEqual((self.defender.hp, self.defender.shield), (hp - expected_loss, 0))
+                before.clear()
+                after.clear()
+
+    def test_pack_can_read_damage_and_explicit_hp_loss(self):
+        self.listen(self.atk, "AFTER DAMAGE", {"op": "program", "code": [
+            "$self", "累计伤害", "$damage_amount", "STATUS",
+            "$self", "累计扣血", "$hp_lost", "STATUS",
+        ]}, subject="source")
+        self.listen(self.defender, "AFTER DAMAGE", "Status: 掉血次数, 1",
+                    when={"hp_lost_at_least": 1})
+        self.defender.shield = 6
+        self.ctx.deal_damage(self.atk, self.defender, 4)
+        self.ctx.deal_damage(self.atk, self.defender, 4)
+        self.assertEqual(self.atk.statuses, {"累计伤害": 8, "累计扣血": 2})
+        self.assertEqual(self.defender.statuses, {"掉血次数": 1})
+
+    def test_damage_readers_see_the_updated_operand_before_hp_changes(self):
+        self.listen(self.defender, "BEFORE RESOLVE_DAMAGE", {"op": "program", "code": [2, "ADD"]})
+        self.listen(self.defender, "BEFORE RESOLVE_DAMAGE", {"op": "program", "code": [
+            "$self", "判定时伤害", "$damage_amount", "STATUS",
+        ]}, when={"damage_amount_at_least": 7})
+        before_shields = []
+        self.listen(self.defender, "AFTER RESOLVE_DAMAGE", lambda ctx: before_shields.append(
+            (ctx.event["result"], self.defender.hp, self.defender.shield)))
+        self.defender.shield = 7
+        self.assertEqual(self.ctx.deal_damage(self.atk, self.defender, 5), 7)
+        self.assertEqual(self.defender.statuses, {"判定时伤害": 7})
+        self.assertEqual(before_shields, [(7, 20, 7)])
+        self.assertEqual((self.defender.hp, self.defender.shield), (20, 0))
+
+    def test_bleed_damage_is_reported_separately_from_the_hit_that_triggered_it(self):
+        self.defender.shield = 4
+        self.defender.add_status("裂血", 6)
+        parts = []
+        self.listen(self.atk, "AFTER DAMAGE", lambda ctx: parts.append(
+            (ctx.event["penetration"], ctx.event["result"], ctx.event["hp_lost"])), subject="any")
+        damage = self.ctx.deal_damage(self.atk, self.defender, 3, damage_part=True)
+        self.assertEqual(damage, 3)
+        self.assertCountEqual(parts, [("normal", 3, 0), ("pierce", 1, 1)])
+        self.assertEqual((self.defender.hp, self.defender.shield), (19, 0))
+
+    def test_zero_and_cancelled_damage_do_not_meet_a_damage_threshold(self):
+        results = []
+        self.listen(self.defender, "BEFORE DAMAGE", "Armor: 4")
+        self.listen(self.defender, "AFTER DAMAGE", lambda ctx: results.append(ctx.event["result"]))
+        self.listen(self.defender, "AFTER DAMAGE", "Status: 受伤次数, 1",
+                    when={"result_at_least": 1})
+        self.defender.shield = 3
+        self.assertEqual(self.ctx.deal_damage(self.atk, self.defender, 4), 0)
+        self.assertEqual(results, [0])
+        self.listen(self.defender, "BEFORE RESOLVE_DAMAGE", "Cancel")
+        self.assertEqual(self.ctx.deal_damage(self.atk, self.defender, 8), 0)
+        self.assertEqual(results, [0])
+        self.assertEqual((self.defender.hp, self.defender.shield), (20, 3))
+        self.assertNotIn("受伤次数", self.defender.statuses)
 
     def test_direct_life_loss_ignores_shields_and_death_interrupts_own_program(self):
         self.atk.add_shield("normal", 6)

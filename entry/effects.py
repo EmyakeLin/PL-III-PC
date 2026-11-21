@@ -4,6 +4,13 @@ Use {"trigger": "on_clash_win", "operation": "Shield: 1"} on a die, card or
 passive. "BEFORE DAMAGE" and "AFTER STATUS" listen to operation events.
 Operations may be a list in printed order or a dict, e.g.
 {"op":"place_skill","card_id":"reserve","zone":"out_of_combat"}.
+BEFORE DAMAGE accepts modifiers on the incoming base amount. AFTER RESOLVE_DAMAGE
+exposes $damage_amount after modifiers and before shields, HP loss, and death.
+AFTER DAMAGE exposes $damage_dealt (including a settled zero), $damage_received
+(positive damage before shields), $damage_amount and $hp_lost. $damage_die is
+the originating die, if any. At after_dice_use, $did_deal_damage reports whether
+any direct damage from this use settled. A character entry can attribute its own
+follow-up to the current die with {"op":"damage","from_die":true}.
 BEFORE PAY_COST observes the acting card and its proposed amount. AFTER PAY_COST
 also reports result, personal_spent and common_spent. RESET_COST addresses one
 player and supplies the new common and per-character personal budgets.
@@ -25,7 +32,8 @@ from entry.entry import character_of
 from models.opcode import OpCode
 
 
-_DAMAGE_PART = re.compile(r"(\d+)\s*(超穿甲|穿甲|普通|物理)?\Z")
+_DAMAGE_PART = re.compile(r"(\d+)\s*(?:点\s*)?(超穿甲|穿甲|普通|物理)?(?:直伤|伤害)?\Z")
+_INDEPENDENT_DAMAGE_PART = re.compile(r"(\d+)\s*(?:点\s*)?(光点|真实)(?:伤害)?\Z")
 GRADES = {"普通": "normal", "物理": "normal", "穿甲": "pierce", "超穿甲": "concept", "normal": "normal",
           "pierce": "pierce", "concept": "concept"}
 GRADE_RANK = {"normal": 0, "pierce": 1, "concept": 2}
@@ -35,6 +43,13 @@ GRADE_NAMES = {"normal": "普通", "pierce": "穿甲", "concept": "超穿甲"}
 def damage_part(text):
     match = _DAMAGE_PART.fullmatch(str(text).strip())
     return (int(match[1]), GRADES[match[2] or "普通"]) if match else None
+
+
+def independent_damage_part(text):
+    match = _INDEPENDENT_DAMAGE_PART.fullmatch(str(text).strip())
+    if match:
+        opcode = OpCode.LIGHTCORE_DAMAGE if match[2] == "光点" else OpCode.REAL_DAMAGE
+        return int(match[1]), opcode
 
 
 def select_entity(ctx, selector, owner):
@@ -73,15 +88,28 @@ def run_effect(ctx, entry, operation):
         operation(ctx)
         return
     if isinstance(operation, str):
-        name, _, rest = operation.partition(":")
-        args = [x.strip() for x in rest.split(",") if x.strip()]
-        data = {}
+        part = independent_damage_part(operation)
+        if part:
+            amount, opcode = part
+            name, args, data = opcode.name, [], {"amount": amount}
+        else:
+            name, _, rest = operation.partition(":")
+            args = [x.strip() for x in rest.split(",") if x.strip()]
+            data = {}
     elif isinstance(operation, dict):
         data = operation
         name, args = data["op"], data.get("args", [])
     else:
         raise ValueError(f"无效词条操作 {operation!r}")
     name = name.lower().strip().replace("-", "_")
+    if name == "reveal_lock":
+        from models.card import CardState
+        card = ctx.event["target"]
+        if ctx.game.special.window_open("placement") and card.state == CardState.PLACED_FACE_DOWN:
+            card.state = CardState.PLACED_FACE_UP
+            ctx.game.special.locked_cards.add(card)
+            print(f"「{card.name}」翻正，本置卡阶段锁定位置。")
+        return
     if name == "program":
         from entry.program import run_program
         if "damage_part" in data:
@@ -147,10 +175,17 @@ def run_effect(ctx, entry, operation):
         grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
         die = ctx.event.get("die")
         attack_type = data.get("attack_type", getattr(die, "type", "none"))
+        fields = {}
+        if data.get("from_die"):
+            if die is None or character_of(die) is not source:
+                return
+            fields["damage_die"] = die
         ctx.deal_damage(source, target, amount, grade, attack_type,
-                        damage_part=data.get("damage_part", False))
+                        damage_part=data.get("damage_part", False), **fields)
         return
-    if name == "status":
+    if name in ("lightcore_damage", "real_damage"):
+        block = [target, amount, OpCode[name.upper()]]
+    elif name == "status":
         status = data.get("name", args[0] if args else None)
         if not status:
             raise ValueError("Status 需要状态名")
@@ -168,6 +203,21 @@ def run_effect(ctx, entry, operation):
     elif name == "destroy":
         block = [target, OpCode.DESTROY]
     else:
+        # Status packs can publish keywords that invoke their existing settlement
+        # rule on a target, with credit for the damage going to the caller.
+        for status, rule in getattr(target, "status_rules", {}).items():
+            keywords = rule.get("activation", {}).get("keywords", ())
+            if name in keywords:
+                owner = entry.owner
+                if data.get("from_die"):
+                    owner = ctx.event.get("die")
+                    if (owner is None or character_of(owner) is not source
+                            or ctx.range_blocks_target(target, card=owner.card)):
+                        return
+                ctx.stack.extend((target, status))
+                return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
+                                      activation_owner=owner, activation_kind=keywords[0],
+                                      activation_multiplier=data.get("multiplier", 1))
         raise ValueError(f"未知词条操作 {name!r}")
     with ctx.binding(source=source, target=target, authority=entry.authority):
         ctx.eval_block(block)

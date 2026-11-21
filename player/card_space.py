@@ -39,12 +39,13 @@ class CardList():
         self._on_size_changed(before, len(self.content))
         return card
 
-    def remove_character(self, character):
-        removed = [card for card in self.content if card.character is character]
+    def remove_character(self, character, *, notify=True):
+        removed = [card for card in self.content if card.belongs_to(character)]
         if removed:
             before = len(self.content)
-            self.content[:] = [card for card in self.content if card.character is not character]
-            self._on_size_changed(before, len(self.content))
+            self.content[:] = [card for card in self.content if not card.belongs_to(character)]
+            if notify:
+                self._on_size_changed(before, len(self.content))
         return removed
 
 
@@ -75,6 +76,20 @@ class Hand(CardList):
         super().__init__(all_cards)
         self.player = player
 
+    def cost_rank(self, card):
+        # Stable sorting preserves hand order within a tie and excludes teammates' cards.
+        candidates = [other for other in self.content if other.character is card.character]
+        candidates.sort(key=lambda other: other.cost, reverse=True)
+        return candidates.index(card) + 1
+
+    def remember_play_rank(self, card):
+        card.hand_cost_rank = self.cost_rank(card)
+
+    def remove_card(self, index):
+        if 0 <= index < len(self.content):
+            self.remember_play_rank(self.content[index])
+        return super().remove_card(index)
+
     def _on_size_changed(self, before, after):
         if before != after and self.player.game:
             self.player.game.context.dispatch_pipeline(
@@ -94,8 +109,10 @@ class DelayedDiscard(CardList):
         self.player = player
 
     def push_to_draw(self):
-      while len(self.content) > 0:
-          self.move_card_to(0, self.player.cardspace.draw)
+        while self.content:
+            card = self.content[0]
+            card.set_controller(card.printed_owner)
+            self.move_card_to(0, card.player.cardspace.draw)
           
 class OutOfCombat(CardList):
     def __init__(self, player: Player, all_cards = None):

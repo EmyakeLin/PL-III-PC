@@ -111,7 +111,7 @@ class SpecialTableTests(unittest.TestCase):
         self.use("replace", "wen_sheng_duet")
         player = self.table.game.players[0]
         self.assertIn("点名上场", [card.name for card in player.cardspace.hand.content])
-        self.assertEqual(player.characters[0].statuses.get("换卡机会", 0), 0)
+        self.assertEqual(player.characters[0].ability_effects.get("换卡机会", 0), 0)
         self.assertEqual(self.state["mode"], "timing")
         self.assertFalse(self.state["special_options"])
         self.until(lambda: any("使用 对手戏" in event for event in self.state["history"]))
@@ -159,7 +159,7 @@ class SpecialTableTests(unittest.TestCase):
 
     def test_full_regular_quota_hides_special_slot_placement_even_with_permission(self):
         owner = self.table.game.players[0].characters[0]
-        owner.add_status("置卡机会", 1)
+        owner.add_ability_effect("置卡机会", 1)
         owner.used_duels = owner.max_duels
         self.private(1)
         self.assertFalse(any(a["kind"] == "place" for a in self.state["special_options"]))

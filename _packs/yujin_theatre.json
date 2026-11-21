@@ -13,7 +13,7 @@
           "entries": [{
             "trigger": "on_turn_start",
             "operation": {"op": "program", "code": [
-              "$player", 1, "DRAW", "$self", "换卡机会", 1, "STATUS"
+              "$player", 1, "DRAW", "$self", "换卡机会", 1, "ABILITY_EFFECT"
             ]},
             "description": "回合开始时，额外抽1张牌并获得1次换卡机会。"
           }]
@@ -26,7 +26,7 @@
           "cost": 1,
           "entries": [{
             "trigger": "on_skill_use",
-            "operation": {"op": "program", "code": ["$self", "置卡机会", 1, "STATUS"]},
+            "operation": {"op": "program", "code": ["$self", "置卡机会", 1, "ABILITY_EFFECT"]},
             "description": "使用时获得1次置卡机会。"
           }],
           "dice": [

@@ -45,7 +45,7 @@ DECLARATION = {"type": "object", "oneOf": [
     object_schema({
         "mode": enum("reserve", "execute"),
         "event": enum(*EVENTS),
-        "match": object_schema({"kind": enum(*sorted(KINDS)), "card_id": TEXT, "target_card_id": TEXT,
+        "match": object_schema({"kind": enum(*sorted(KINDS)), "card_id": TEXT, "target_card_id": TEXT, "ability_id": TEXT,
                                 "duel_number": NUMBER, "response_number": NUMBER, "character_id": TEXT}),
         "when": object_schema({"duel_kind": TEXT, "duel_number": NUMBER, "die_number": NUMBER,
                                "own_card_id": TEXT, "score": enum("lt", "eq", "gt"), "timing": TEXT,
@@ -69,7 +69,7 @@ TOOLS = [
          ("declaration", "revision", "request_id")),
     tool("ready", STUDY_RULES + "用 prepare 提前预留所需特殊机会。ready 确认准备并预留常规置卡和开牌前攻防决定。",
          {"revision": REVISION, "request_id": REQUEST_ID}, ("revision", "request_id")),
-    tool("act", "在已预约的决策窗口提交当前席位 options 提供的一个选项。",
+    tool("act", "提交本席位 options 中的一项行动，包括词条要求的选牌或选交锋。",
          {"option_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
          ("option_id", "revision", "request_id")),
 ]
