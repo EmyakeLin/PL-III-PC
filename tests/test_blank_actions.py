@@ -72,6 +72,38 @@ class BlankDecisionTests(unittest.TestCase):
         self.assertEqual(self.a.statuses["能源"], 5)
         self.assertTrue(phase.declare_attack(seen, character=self.b).interceptable)
 
+    def test_deduce_draw_only_spends_when_both_costs_can_be_paid(self):
+        self.a.hp = 10
+        self.a.add_status("能源", 1)
+        self.a.add_ability_effect("抽卡资格", 1)
+        ctx = self.game.context
+        move = self.ability(self.a, "deduce_draw")
+        before_hand = list(self.left.cardspace.hand.content)
+        receipts = []
+        for opcode in ("SPEND_STATUS", "SPEND_ABILITY_EFFECT"):
+            ctx.register_entries(self.a, [dict(trigger=f"AFTER {opcode}",
+                operation=lambda current: receipts.append((current.event["opcode"], current.event["result"])))])
+
+        for guard in (
+            dict(trigger="BEFORE SPEND_STATUS", when={"status": "能源"},
+                 operation={"op": "program", "code": [1, "ADD"]}),
+            dict(trigger="BEFORE SPEND_ABILITY_EFFECT", when={"ability": "抽卡资格"}, operation="Cancel"),
+        ):
+            with self.subTest(blocked=guard["trigger"]):
+                listener, = ctx.register_entries(self.a, [guard])
+                self.assertFalse(self.game.special.apply(self.left, move))
+                self.assertEqual(self.a.ability_effects["抽卡资格"], 1)
+                self.assertEqual(self.a.statuses["能源"], 1)
+                self.assertEqual(self.left.cardspace.hand.content, before_hand)
+                self.assertEqual(receipts, [])
+                ctx.entries.remove(listener)
+
+        self.assertTrue(self.game.special.apply(self.left, move))
+        self.assertNotIn("抽卡资格", self.a.ability_effects)
+        self.assertNotIn("能源", self.a.statuses)
+        self.assertEqual(len(self.left.cardspace.hand.content), len(before_hand) + 1)
+        self.assertCountEqual(receipts, [("SPEND_STATUS", 1), ("SPEND_ABILITY_EFFECT", 1)])
+
     def test_forced_shot_only_targets_enemy_occupied_slot_and_cannot_retarget(self):
         target = self.take(self.b, "看破")
         shot = self.take(self.a, "牵制射击")

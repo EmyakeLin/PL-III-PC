@@ -217,7 +217,7 @@ class Character:
     def spend_ability_effect(self, name, amount=1):
         ctx = self._effect_context
         ctx.stack.extend((self, name, amount))
-        return bool(ctx.execute_op(OpCode.SPEND_ABILITY_EFFECT, result_field="paid_in_full"))
+        return bool(ctx.execute_op(OpCode.SPEND_ABILITY_EFFECT, require_full=True, result_field="paid_in_full"))
 
     def expire_turn_abilities(self):
         for name in tuple(self.ability_effects):
@@ -279,14 +279,14 @@ class Character:
         rank = hand.cost_rank(card) if card in hand.content else card.hand_cost_rank
         return rank is not None and rank <= limit
 
-    def apply_status_delta(self, name, amount, *, notify=True):
+    def apply_status_delta(self, name, amount, *, notify=True, defer_effects=False):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
         if not self.is_alive or name in self.ability_rules:
             return 0
         name = self.canonical_status_name(name)
         rule = self.status_rules.get(name, {})
         required = rule.get("requires_status")
-        if required and not self.statuses.get(required):
+        if required and not self.statuses.get(required) and not defer_effects:
             return 0
         amount = int(amount)
         if amount < 0 and rule.get("permanent"):
@@ -298,9 +298,9 @@ class Character:
                 self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
             amount = accepted
         return self._set_status(name, max(0, self._ordinary_status(name) + amount),
-                                self._sustained_stacks.get(name, 0), notify=notify)
+                                self._sustained_stacks.get(name, 0), notify=notify, defer_effects=defer_effects)
 
-    def _set_status(self, name, ordinary, sustained, *, notify=True):
+    def _set_status(self, name, ordinary, sustained, *, notify=True, defer_effects=False):
         previous = self.statuses.get(name, 0)
         if sustained:
             self._ordinary_stacks[name] = ordinary
@@ -329,6 +329,12 @@ class Character:
             self.active_statuses.add(name)
         elif not value:
             self.active_statuses.discard(name)
+        if not defer_effects:
+            self.finish_status_change(name, previous, value, notify=notify)
+        return value
+
+    def finish_status_change(self, name, previous, value, *, notify=True):
+        """Resolve dependent statuses and notify listeners after committing the new balance."""
         cap_delta = (value - previous) * self.status_rules.get(name, {}).get("max_hp_per_stack", 0)
         if cap_delta:
             self._status_max_hp_delta += cap_delta
@@ -347,7 +353,6 @@ class Character:
                         self.clear_status(other)
         if notify:
             self.notify_status_change(name, previous, value)
-        return value
 
     def notify_status_change(self, name, previous, current):
         if previous != current:

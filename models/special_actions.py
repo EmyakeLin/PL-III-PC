@@ -282,13 +282,8 @@ class SpecialActions:
         ctx = self.game.context
         target = action.target_card or actor
         with ctx.binding(source=actor, side=actor.player.side, target=target):
-            for name, count in spec.get("ability_cost", {}).items():
-                if not actor.spend_ability_effect(name, count):
-                    return False
-            for status, count in spec.get("cost", {}).items():
-                ctx.stack.extend((actor, status, count))
-                if not ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"):
-                    return False
+            if not ctx.pay_action_costs(actor, spec.get("ability_cost", {}), spec.get("cost", {})):
+                return False
             key = actor, action.ability_id
             self.ability_uses[key] = self.ability_uses.get(key, 0) + 1
             print(f"{actor.name} 使用「{spec['name']}」。")

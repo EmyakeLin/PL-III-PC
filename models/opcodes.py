@@ -634,6 +634,9 @@ def handle_ability_effect(ctx):
     ctx.event["amount"] = amount
     if ctx.current_op == OpCode.SPEND_ABILITY_EFFECT:
         paid = amount if amount > 0 and old >= amount else 0
+        if not paid and ctx.event["require_full"]:
+            ctx.current_op = None
+            return 0
         total = target.apply_ability_delta(name, -paid)
         ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=-paid, paid_in_full=paid > 0)
         if paid:
@@ -685,15 +688,17 @@ def handle_spend_status(ctx):
         return 0
     paid = min(cost, balance)
     previous = target.statuses.get(name, 0)
-    remaining = target.apply_status_delta(name, -paid, notify=False)
-    ctx.event["paid_in_full"] = paid == cost
+    deferred = ctx.event["defer_spend_effects"]
+    remaining = target.apply_status_delta(name, -paid, notify=False, defer_effects=deferred)
+    ctx.event.update(paid_in_full=paid == cost, previous_stacks=previous, current_stacks=remaining)
     card = ctx.event.get("card")
     if card is not None and card.character is target:
         spent = card.use_state.setdefault("spent_statuses", {})
         spent[name] = spent.get(name, 0) + paid
     shortfall = f"（需 {cost} 层，未付足）" if paid < cost else ""
     print(f"{target.combat_name} 消耗 {paid} 层{name}{shortfall}，剩余 {remaining} 层。")
-    target.notify_status_change(name, previous, remaining)
+    if not deferred:
+        target.notify_status_change(name, previous, remaining)
     return paid
 
 

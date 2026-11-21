@@ -406,7 +406,6 @@
                           "$own_regular_duels", "slots", "STORE",
                           "$own_hand_skills", {"local": "stolen"}, "CONTAINS", {"local": "slots"}, "AND",
                           {"local": "stolen"}, "CARD_COST", "price", "STORE",
-                          "$self", "能源", "STATUS_COUNT", {"local": "price"}, "GE", "AND",
                           [
                             {"local": "price"}, 0, "EQ", [true],
                             ["$self", "能源", {"local": "price"}, "SPEND_STATUS_IN_FULL"], "IF_ELSE",

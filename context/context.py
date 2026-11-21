@@ -170,7 +170,47 @@ class Context:
         """Pay the SPEND_STATUS operands on the stack only if the adjusted cost is affordable."""
         return bool(self.execute_op(OpCode.SPEND_STATUS, require_full=True, result_field="paid_in_full"))
 
-    def execute_op(self, opcode, *, result_field="result", **fields):
+    def pay_action_costs(self, actor, ability_costs, status_costs):
+        """Resolve all price modifiers before charging an action with several costs."""
+        costs = [(OpCode.SPEND_ABILITY_EFFECT, name, amount) for name, amount in ability_costs.items()]
+        costs.extend((OpCode.SPEND_STATUS, name, amount) for name, amount in status_costs.items())
+        pending = [] if len(costs) > 1 else None
+        for opcode, name, amount in costs:
+            self.stack.extend((actor, name, amount))
+            if not self.execute_op(opcode, require_full=True, result_field="paid_in_full", defer_payment=pending):
+                return False
+        if pending is None:
+            return True
+
+        # A later BEFORE hook may change a balance or make two prices refer to the same resource.
+        balances = {}
+        for opcode, (target, name, amount), _ in pending:
+            key = opcode, target, name
+            if key not in balances:
+                balances[key] = (target.spendable_status(name) if opcode == OpCode.SPEND_STATUS
+                                 else target.ability_effects.get(name, 0))
+            count = balances[key] if amount == "all" and opcode == OpCode.SPEND_STATUS else amount
+            if not target.is_alive or not isinstance(count, int) or not 0 < count <= balances[key]:
+                return False
+            balances[key] -= count
+
+        receipts = []
+        for opcode, operands, fields in pending:
+            self.stack.extend(operands)
+            with self.binding(**fields) as event, self._pending(opcode):
+                event["result"] = DISPATCH_TABLE[opcode](self)
+                receipts.append((opcode, event))
+        for opcode, fields in receipts:
+            if opcode == OpCode.SPEND_STATUS:
+                with self.binding(**fields) as event, self._pending(opcode):
+                    event["target"].finish_status_change(event["status"], event["previous_stacks"],
+                                                         event["current_stacks"])
+        for opcode, fields in receipts:
+            with self.binding(**fields), self._pending(opcode):
+                self.dispatch_opcode(opcode, "AFTER")
+        return True
+
+    def execute_op(self, opcode, *, result_field="result", defer_payment=None, **fields):
         """Run one hooked operation and read a result field from its own event."""
         names = OPERANDS.get(opcode, ())
         if len(self.stack) < len(names):
@@ -251,6 +291,7 @@ class Context:
             fields.update(source=actor, side=actor.player.side)
             # A nested spend chooses its own mode, even inside a conditional payment hook.
             fields.setdefault("require_full", False)
+            fields["defer_spend_effects"] = defer_payment is not None
         elif opcode in (OpCode.SKILL_FINAL_ADD, OpCode.SKILL_LEVEL_ADD, OpCode.SET_SKILL_STATE,
                         OpCode.QUEUE_HIT, OpCode.SKIP_ROUND,
                         OpCode.DIE_FINAL_ADD, OpCode.DIE_BASE_ADD, OpCode.DIE_LEVEL_ADD, OpCode.SET_DIE_STATE,
@@ -296,6 +337,10 @@ class Context:
             if self.current_op is None or (originating_entry is not None and originating_entry.cancelled):
                 del self.stack[mark:]
                 return None
+            if defer_payment is not None:
+                defer_payment.append((self.current_op, tuple(self.stack[mark:]), event))
+                del self.stack[mark:]
+                return True
             handler = DISPATCH_TABLE.get(self.current_op)
             if handler is None:
                 raise PipelineSystemError(f"未实现的操作码: {self.current_op}")

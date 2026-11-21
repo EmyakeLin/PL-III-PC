@@ -275,7 +275,7 @@ def run_program(ctx, entry, tokens):
         "STATUS_COUNT": status_count, "ABILITY_COUNT": ability_count, "SPENT_STATUS_COUNT": spent_count,
         "SPEND_ABILITY_EFFECT": lambda vm: vm.push(vm.execute_op(OpCode.SPEND_ABILITY_EFFECT) or 0),
         "SPEND_ABILITY_EFFECT_IN_FULL": lambda vm: vm.push(bool(vm.execute_op(
-            OpCode.SPEND_ABILITY_EFFECT, result_field="paid_in_full"))),
+            OpCode.SPEND_ABILITY_EFFECT, require_full=True, result_field="paid_in_full"))),
         "CHARACTER_STATE": character_state, "SKILL_STATE": skill_state,
         "STORE": store_local, "SPEND_STATUS": spend,
         "USED_SKILL_THIS_TURN": used_skill_this_turn, "FIND_SKILL": find_skill,
