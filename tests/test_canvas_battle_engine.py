@@ -56,11 +56,15 @@ class CanvasBattleEngineTests(unittest.TestCase):
             STATIC_DIR / "app.js",
             *(STATIC_DIR / "engine").glob("*.js"),
         ]
+        # Explicit defense-die blue tokens ordered by the game's die iconography spec
+        allowed_defense_blues = {"2478cc", "eaf4fd", "4ca0eb", "1a5696"}
         hex_pattern = re.compile(r"(?:0x|#)([0-9a-fA-F]{6})\b")
         for path in files:
             text = path.read_text(encoding="utf-8")
             for match in hex_pattern.finditer(text):
-                code = match.group(1)
+                code = match.group(1).lower()
+                if code in allowed_defense_blues:
+                    continue
                 r, g, b = int(code[0:2], 16), int(code[2:4], 16), int(code[4:6], 16)
                 # Exclude non-color bitmasks like 0x0001 (4 hex digits already ignored)
                 self.assertGreaterEqual(max(r, g, b), 40, f"Forbidden black/near-black color {match.group(0)} in {path.name}")
@@ -68,6 +72,51 @@ class CanvasBattleEngineTests(unittest.TestCase):
                     b > r + 15 and b > g + 15,
                     f"Forbidden blue/purple color {match.group(0)} (r={r},g={g},b={b}) in {path.name}",
                 )
+
+    def test_character_colors_pack_override_and_public_card_ownership_without_leaking_content(self):
+        from battle_ui.match import _assign_character_colors
+
+        colors = _assign_character_colors({
+            "configured_hero": {"id": "configured_hero", "color": "#11aa77"},
+            "random_hero_a": {"id": "random_hero_a"},
+            "random_hero_b": {"id": "random_hero_b"},
+        })
+        self.assertEqual(colors["configured_hero"], "#11aa77")
+        self.assertRegex(colors["random_hero_a"], r"^#[0-9a-f]{6}$")
+        self.assertRegex(colors["random_hero_b"], r"^#[0-9a-f]{6}$")
+        self.assertNotEqual(colors["random_hero_a"], colors["random_hero_b"])
+
+        session = BattleSession(seed=37)
+        s = session.state()
+        self.assertIn("character_colors", s)
+        self.assertIn("card_owners", s)
+        # Place 1 card as active side, then advance to opponent's placement view
+        if s["mode"] == "handoff":
+            _, s = session.command({"action": "ready", "revision": s["revision"], "side": s["active_side"]})
+        placer_side = s["active_side"]
+        _, s = session.command({"action": "place", "revision": s["revision"], "card_id": s["legal_cards"][0]})
+        if s["mode"] == "handoff":
+            _, s = session.command({"action": "ready", "revision": s["revision"], "side": s["active_side"]})
+        # Opponent's view keeps the placed card strictly hidden in frame.duels,
+        # while card_owners exposes ONLY public character ownership (no card id/name/cost!)
+        duel1_sides = {entry["side"]: entry["cards"] for entry in s["frame"]["duels"][0]["sides"]}
+        self.assertEqual(duel1_sides[placer_side], [{"hidden": True}])
+        owners = s["card_owners"]["duels"][f"1:{placer_side}"]
+        self.assertEqual(len(owners), 1)
+        self.assertTrue(owners[0]["character_id"])
+        self.assertTrue(owners[0]["character_name"])
+        self.assertNotIn("name", owners[0])
+        self.assertNotIn("cost", owners[0])
+
+    def test_die_icons_uniform_red_hex_attack_and_blue_square_defense(self):
+        ds_src = (STATIC_DIR / "engine" / "design_system.js").read_text(encoding="utf-8")
+        cp_src = (STATIC_DIR / "engine" / "card_print.js").read_text(encoding="utf-8")
+        for atk in ("slash", "pierce", "blunt"):
+            self.assertRegex(ds_src, rf"{atk}:\s*\{{[^}}]*frame:\s*'hex'[^}}]*color:\s*ATTACK_DIE_COLOR")
+        for dfn in ("block", "evade"):
+            self.assertRegex(ds_src, rf"{dfn}:\s*\{{[^}}]*frame:\s*'square'[^}}]*color:\s*DEFENSE_DIE_COLOR")
+        self.assertIn("HP_BAR_COLOR", ds_src)
+        self.assertNotIn("highCost", cp_src)
 
     def test_no_paraphrasing_die_level_labels_or_filler_text(self):
         for name in (

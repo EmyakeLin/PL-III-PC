@@ -429,7 +429,59 @@ def _normalize_roster(roster, pool):
     return teams
 
 
-def _roster_preview(spec):
+_CHARACTER_RANDOM_COLOR_POOL = (
+    "#1c946b", "#c95a2b", "#2478cc", "#c44558",
+    "#5d8f2c", "#c98216", "#1e8a78", "#b5482e",
+    "#2f85a8", "#9e5a28", "#3b8c52", "#b84363",
+    "#7c8a2e", "#bd6820", "#22857a", "#a65632",
+    "#448a6b", "#c26e1d",
+)
+
+
+def _parse_pack_color(raw):
+    if isinstance(raw, int) and 0 <= raw <= 0xFFFFFF:
+        return f"#{raw:06x}"
+    if isinstance(raw, str):
+        text = raw.strip().lower()
+        if text.startswith("0x"):
+            text = text[2:]
+        elif text.startswith("#"):
+            text = text[1:]
+        if len(text) == 6 and all(ch in "0123456789abcdef" for ch in text):
+            return f"#{text}"
+    return None
+
+
+def _assign_character_colors(pool):
+    """Use pack-configured `color`/`card_color` when present; randomly assign distinct colors otherwise."""
+    rng = random.Random()
+    configured = {}
+    used = set()
+    for cid, spec in pool.items():
+        parsed = _parse_pack_color(spec.get("color") or spec.get("card_color"))
+        if parsed:
+            configured[cid] = parsed
+            used.add(parsed)
+
+    available = [c for c in _CHARACTER_RANDOM_COLOR_POOL if c not in used]
+    rng.shuffle(available)
+    fallback = list(_CHARACTER_RANDOM_COLOR_POOL)
+    rng.shuffle(fallback)
+
+    colors = dict(configured)
+    idx = 0
+    for cid in pool:
+        if cid in colors:
+            continue
+        if available:
+            colors[cid] = available.pop()
+        else:
+            colors[cid] = fallback[idx % len(fallback)]
+            idx += 1
+    return colors
+
+
+def _roster_preview(spec, color=None):
     return {
         "id": spec["id"],
         "name": spec["name"],
@@ -438,6 +490,7 @@ def _roster_preview(spec):
         "max_hp": spec["max_hp"],
         "base_duels": Character.base_duels(spec),
         "faction": spec.get("faction", ""),
+        "color": color,
         "passives": _passives(spec.get("passive_skills", ())),
         "faction_passives": _passives(spec.get("faction_passives", ())),
         "skills": [_printed_skill(skill) for skill in spec.get("skills", ())],
@@ -450,11 +503,18 @@ class BattleMatch:
     def __init__(self, roster=None, *, seed=None, initial_handoff=False):
         pool = {spec["id"]: spec for spec in load_characters_from_packs()}
         teams = _normalize_roster(roster, pool)
+        self._character_colors = _assign_character_colors(pool)
         self.choices = [
-            {key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction")}
+            {
+                **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction")},
+                "color": self._character_colors.get(spec["id"]),
+            }
             for spec in pool.values()
         ]
-        self._roster_catalog = [_roster_preview(spec) for spec in pool.values()]
+        self._roster_catalog = [
+            _roster_preview(spec, self._character_colors.get(spec["id"]))
+            for spec in pool.values()
+        ]
         players = [_TablePlayer(1, "玩家一"), _TablePlayer(2, "玩家二")]
         self.game = _TableGame(players, rng=random.Random(seed))
         for team, player in zip(teams, players):
@@ -527,6 +587,32 @@ class BattleMatch:
             if deciding:
                 special_options = self._views[side].special_actions()
         frame = self._views[side if deciding else None].snapshot()
+        card_owners = {
+            "duels": {
+                f"{num}:{p.side}": [
+                    {
+                        "character_id": c.character.id,
+                        "character_name": c.character.name,
+                        "character_color": self._character_colors.get(c.character.id),
+                    }
+                    for c in slot.get_content(p.side)
+                ]
+                for num, slot in enumerate(self.game.duelspace.space, 1)
+                for p in self.game.players
+            },
+            "pre_reveal": {
+                f"{num}:{p.side}": [
+                    {
+                        "character_id": c.character.id,
+                        "character_name": c.character.name,
+                        "character_color": self._character_colors.get(c.character.id),
+                    }
+                    for c in slot.get_content(p.side)
+                ]
+                for num, slot in enumerate(self.game.pre_reveal.space.space, 1)
+                for p in self.game.players
+            },
+        }
         return {
             "mode": mode, "revision": self.revision, "active_side": side,
             "special_available": bool(seats) and self.mode != "draw_select",
@@ -535,6 +621,8 @@ class BattleMatch:
             "special_timing": self._timing,
             "draw_select": self._current_draw_prompt(),
             "speed_rolls": list(self.game.last_speed_rolls),
+            "character_colors": dict(self._character_colors),
+            "card_owners": card_owners,
             "default_targets": {
                 str(p.side): p.default_target_character.id
                 if p.default_target_character and p.default_target_character.is_alive else None

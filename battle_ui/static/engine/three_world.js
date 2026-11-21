@@ -15,11 +15,11 @@ import * as THREE from '../vendor/three.module.js';
 
 const DIE_PALETTES = {
   speed:  { body: 0xf0c75e, edge: 0x8f6618, hex: '#b87d14' },
-  slash:  { body: 0xe86b56, edge: 0x8f291c, hex: '#c73a28' },
-  pierce: { body: 0xf0a63a, edge: 0x8c550d, hex: '#c77710' },
-  blunt:  { body: 0xd95966, edge: 0x7d212b, hex: '#b33442' },
-  block:  { body: 0x3eb09b, edge: 0x166355, hex: '#1b8572' },
-  evade:  { body: 0x62b84f, edge: 0x26631a, hex: '#3d8f2d' },
+  slash:  { body: 0xe65c52, edge: 0x94241e, hex: '#d1382e' },
+  pierce: { body: 0xe65c52, edge: 0x94241e, hex: '#d1382e' },
+  blunt:  { body: 0xe65c52, edge: 0x94241e, hex: '#d1382e' },
+  block:  { body: 0x4ca0eb, edge: 0x1a5696, hex: '#2478cc' },
+  evade:  { body: 0x4ca0eb, edge: 0x1a5696, hex: '#2478cc' },
   blank:  { body: 0xc9bfb0, edge: 0x73695b, hex: '#7a6f62' },
   breath: { body: 0x45ba9c, edge: 0x176b56, hex: '#238c72' },
 };

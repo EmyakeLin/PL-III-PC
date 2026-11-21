@@ -176,6 +176,8 @@ function drawViewportClipCaret(g, x, y, pointsUp, color, alpha = 0.85) {
 export function renderFocusSightlines(graphics, {
   duels = [],
   preDuels = [],
+  cardOwners = null,
+  charColorFn = null,
   regularSlotRects = null,
   preRevealSlotRects = null,
   actorPosFn = null,
@@ -226,9 +228,12 @@ export function renderFocusSightlines(graphics, {
         const well = regMap.get(`${duel.number}:${sEntry.side}`);
         if (!isRectInViewport(well, vp, 6)) continue;
         const cards = sEntry.cards || [];
+        const ownerList = cardOwners?.duels?.[`${duel.number}:${sEntry.side}`] || [];
         for (let ci = 0; ci < cards.length; ci++) {
           const card = cards[ci];
-          if (!card || card.hidden || !card.character_id) continue;
+          if (!card) continue;
+          const resolvedCharId = card.character_id || ownerList[ci]?.character_id || null;
+          if (!resolvedCharId) continue;
           const anchorX = sEntry.side === 1 ? well.x + 5 : well.x + well.w - 5;
           const spreadY = cards.length > 1
             ? ((ci / Math.max(1, cards.length - 1)) - 0.5) * Math.min(26, well.h * 0.34)
@@ -237,13 +242,14 @@ export function renderFocusSightlines(graphics, {
             ? clamp(well.cy + spreadY, vp.top + 8, vp.bottom - 8)
             : well.cy + spreadY;
           const isRelated = Boolean(
-            (effectiveCharId != null && card.character_id === effectiveCharId)
+            (effectiveCharId != null && resolvedCharId === effectiveCharId)
             || (effectiveRegDuel != null && duel.number === effectiveRegDuel)
           );
           visibleEntries.push({
             duelNumber: duel.number,
             side: sEntry.side,
             card,
+            ownerCharId: resolvedCharId,
             well,
             anchorX,
             anchorY,
@@ -261,7 +267,7 @@ export function renderFocusSightlines(graphics, {
   for (let i = 0; i < visibleEntries.length; i++) {
     const item = visibleEntries[i];
     const theme = themes[item.side] || SIDE_THEME[item.side] || SIDE_THEME[1];
-    const col = theme.accent;
+    const col = typeof charColorFn === 'function' ? charColorFn(item.ownerCharId, item.side) : theme.accent;
     const inwardDir = item.side === 1 ? -1 : 1;
 
     if (item.isRelated) {
@@ -295,7 +301,7 @@ export function renderFocusSightlines(graphics, {
     }
 
     // Focused owner-to-card illuminated bezier tether
-    const fp = resolveActorPosition(actorPosFn, item.card.character_id);
+    const fp = resolveActorPosition(actorPosFn, item.ownerCharId);
     if (!fp) {
       drawDiamondPip(graphics, item.anchorX, item.anchorY, 4.2, col, {
         alpha: 0.92,

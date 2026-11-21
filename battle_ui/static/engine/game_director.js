@@ -14,11 +14,14 @@ import {
   FONT_NUM,
   INK,
   SIDE_THEME,
+  HP_BAR_COLOR,
   DIE_STYLE,
   SHIELD_STYLE,
   STATUS_COLORS,
   LEVEL_MAX,
   OFFICIAL_STATUS_RULES,
+  parseHexColor,
+  hexToCss,
   formatDieRange,
   wrapCjkText,
   drawDieIcon,
@@ -384,6 +387,15 @@ export class GameDirector {
   }
 
   _resolveCharColor(charId, side) {
+    const fallback = (SIDE_THEME[side] || SIDE_THEME[1]).accent;
+    const configured = charId ? this.state?.character_colors?.[charId] : null;
+    if (configured !== null && configured !== undefined) {
+      return parseHexColor(configured, fallback);
+    }
+    const rosterItem = charId ? (this.state?.roster_catalog || []).find((c) => c.id === charId) : null;
+    if (rosterItem?.color) {
+      return parseHexColor(rosterItem.color, fallback);
+    }
     const pl = (this.state?.frame?.players || []).find((p) => p.side === side);
     const ch = pl?.characters?.find((c) => c.id === charId);
     if (ch) {
@@ -391,7 +403,11 @@ export class GameDirector {
       if (pal && pal.motif && pal.motif !== 'generic') return pal.primary;
       return resolveInfiniteActorSpec(ch, side).primary;
     }
-    return (SIDE_THEME[side] || SIDE_THEME[1]).accent;
+    return fallback;
+  }
+
+  _resolveCharColorHex(charId, side) {
+    return hexToCss(this._resolveCharColor(charId, side));
   }
 
   _setCardIntent(side, card) {
@@ -1475,6 +1491,7 @@ export class GameDirector {
       const panel = buildHeroSidePanel({
         character: ch,
         side,
+        charColor: this._resolveCharColor(ch.id, side),
         catalogChar: this._catalogChar(ch.id),
         catalogStatuses: this.state.catalog?.statuses || {},
         x: panelX,
@@ -1494,7 +1511,10 @@ export class GameDirector {
         },
         onHoverSkill: (sk, ax, ay) => {
           this.hoveredCard = sk
-            ? { card: sk, side, ownerName: ch.name, anchorX: ax, anchorY: ay, cardH: 310, source: 'hero_panel', sourceSprite: null }
+            ? {
+                card: sk, side, accentColor: this._resolveCharColor(ch.id, side),
+                ownerName: ch.name, anchorX: ax, anchorY: ay, cardH: 310, source: 'hero_panel', sourceSprite: null,
+              }
             : null;
           this._renderInspection();
         },
@@ -1648,6 +1668,7 @@ export class GameDirector {
     actorHost.addChild(hitZone);
 
     // Floating Underfoot Battlefield HUD (visual plinth — eventMode = 'none' so it NEVER blocks hitZone!)
+    const charColor = this._resolveCharColor(ch.id, side);
     const hud = new PIXI.Container();
     hud.position.set(hudX, localHudY);
     hud.eventMode = 'none';
@@ -1656,7 +1677,7 @@ export class GameDirector {
     bg.roundRect(0, 0, hudW, hudBoxH, 6)
       .fill({ color: ch.alive ? INK.paper : 0xede8de, alpha: 0.92 })
       .stroke({ width: defaultTarget ? 1.6 : 0.9, color: defaultTarget ? INK.gold : ch.alive ? INK.line : INK.muted });
-    bg.roundRect(0, 2, 3, hudBoxH - 4, 1.5).fill({ color: ch.alive ? theme.accent : INK.muted });
+    bg.roundRect(0, 2, 3, hudBoxH - 4, 1.5).fill({ color: ch.alive ? charColor : INK.muted });
     hud.addChild(bg);
 
     // Row 1: Name + Duel Quota pips + Speed + Personal Cost crystal
@@ -1704,12 +1725,12 @@ export class GameDirector {
         if (px > pcX - 36) break;
         const used = usedD !== null && i < usedD;
         bg.circle(px, pcY, 3)
-          .fill({ color: usedD === null ? INK.line : used ? INK.paperTint : theme.accent })
-          .stroke({ width: 1, color: usedD === null ? INK.muted : theme.accent });
+          .fill({ color: usedD === null ? INK.line : used ? INK.paperTint : charColor })
+          .stroke({ width: 1.15, color: usedD === null ? charColor : charColor, alpha: usedD === null ? 0.55 : 0.95 });
       }
     }
 
-    // Row 2: Persistent 60fps Delayed White-Trail HP Bar (`createDelayedHpBar`) + Exact Numeral!
+    // Row 2: Persistent 60fps Delayed White-Trail HP Bar (`createDelayedHpBar`) in UNIFORM HP color + Exact Numeral!
     const hpY = compactHud ? 19 : 22;
     const barH = compactHud ? 9 : 11;
     const infoX = compactHud ? 6 : 8;
@@ -1727,7 +1748,7 @@ export class GameDirector {
     const hpBar = createDelayedHpBar({
       width: barW,
       height: barH,
-      accentColor: theme.accent,
+      accentColor: HP_BAR_COLOR,
       maxHp: ch.max_hp,
       hp: initHp,
       radius: compactHud ? 4 : 5,
@@ -2014,12 +2035,14 @@ export class GameDirector {
           const availCardW = Math.max(160, Math.floor((slotW - 14 - (cards.length - 1) * 6) / Math.max(1, cards.length)));
           const availCardH = slotH - 28;
           cards.forEach(({ card, side }, cIdx) => {
+            const ownerColor = this._resolveCharColor(card.character_id, side);
             // Try 1:1 full card first; if space is tighter, use razor-sharp 1:1 buildBoardCardTag (ZERO blurry scaling!)
             let spr = null;
             let isTag = false;
             if (availCardW >= 210 && availCardH >= 120) {
               const fullTry = buildFullCard(card, {
                 side,
+                accentColor: ownerColor,
                 ownerName: charNames[card.character_id] || '',
                 showOwner: multiChar,
                 width: Math.min(254, availCardW),
@@ -2039,6 +2062,7 @@ export class GameDirector {
               const tagW = Math.max(96, Math.min(132, availCardW - 4, Math.floor((availCardH - 4) / 1.40)));
               spr = buildBoardCardTag(card, {
                 side,
+                accentColor: ownerColor,
                 ownerName: charNames[card.character_id] || '',
                 showOwner: multiChar,
                 width: tagW,
@@ -2055,7 +2079,7 @@ export class GameDirector {
               spr.cursor = 'pointer';
               spr.on('pointerover', () => {
                 this.hoveredCard = {
-                  card, side, ownerName: charNames[card.character_id] || '',
+                  card, side, accentColor: ownerColor, ownerName: charNames[card.character_id] || '',
                   anchorX: cxCard, anchorY: cyCard, cardH: drawH, source: 'board', sourceSprite: spr,
                 };
                 this.focusedCharId = card.character_id || null;
@@ -2243,20 +2267,26 @@ export class GameDirector {
           }
         }
 
+        const ownerList = this.state.card_owners?.duels?.[`${number}:${s}`] || [];
         cards.forEach((card, cIdx) => {
           const ox = (cIdx - (cards.length - 1) / 2) * 18;
           const isFaceDown = card.hidden || (!frame.cards_revealed && card.state === 'placed_face_down');
+          const ownerMeta = ownerList[cIdx] || null;
+          const ownerId = ownerMeta?.character_id || card.character_id || null;
+          const ownerName = ownerMeta?.character_name || charNames[ownerId] || '';
+          const ownerColor = this._resolveCharColor(ownerId, s);
           let spr = null;
           let needsHoverFull = false;
 
           if (isFaceDown) {
             const bw = Math.min(effectiveCardW, wellW - 6);
             const bh = Math.round(bw * 1.40);
-            spr = buildCardBack(s, { width: bw, height: bh });
+            spr = buildCardBack(s, { width: bw, height: bh, accentColor: ownerColor });
           } else if (wantsFullReveal && effectiveCardW >= 164) {
             spr = buildFullCard(card, {
               side: s,
-              ownerName: charNames[card.character_id] || '',
+              accentColor: ownerColor,
+              ownerName,
               showOwner: multiChar,
               width: effectiveCardW,
               fixedHeight: Math.round(effectiveCardW * 1.40),
@@ -2268,24 +2298,68 @@ export class GameDirector {
             needsHoverFull = true;
             spr = buildBoardCardTag(card, {
               side: s,
-              ownerName: charNames[card.character_id] || '',
+              accentColor: ownerColor,
+              ownerName,
               showOwner: multiChar,
               width: Math.min(effectiveCardW, wellW - 6),
             });
           }
 
           spr.position.set(wx + wellW / 2 + ox, baseWy + wellH / 2);
-          if (!card.hidden && needsHoverFull) {
+          if (isFaceDown) {
+            spr.eventMode = 'static';
+            spr.cursor = 'pointer';
+            spr.on('pointerover', () => {
+              const gp = spr.getGlobalPosition();
+              if (gp.y < regTop - 20 || gp.y > regTop + regH + 20) return;
+              this.focusedCharId = ownerId;
+              this.focusedDuelNumber = number;
+              if (ownerId) {
+                const pos = this._actorPos(ownerId);
+                this.three.setIntentFocus({ active: true, x: pos.x, y: pos.y, colorHex: ownerColor });
+              }
+              if (card.hidden) {
+                // Opponent's hidden card: reveal ONLY public character ownership, ZERO card content!
+                this.hoveredCard = null;
+                this.hoveredInfo = ownerName
+                  ? {
+                      kind: 'card_owner',
+                      title: ownerName,
+                      color: ownerColor,
+                      side: s,
+                      anchorX: gp.x,
+                      anchorY: gp.y - (spr._boxHeight || 140) * 0.5 - 14,
+                    }
+                  : null;
+              } else {
+                // Player's own face-down card: allow inspecting own placed card in-place!
+                this.hoveredInfo = null;
+                this.hoveredCard = {
+                  card, side: s, accentColor: ownerColor, ownerName,
+                  anchorX: gp.x, anchorY: gp.y, cardH: spr._boxHeight, source: 'board', sourceSprite: spr,
+                };
+              }
+              this._renderInspection();
+            });
+            spr.on('pointerout', () => {
+              this.hoveredCard = null;
+              this.hoveredInfo = null;
+              this.focusedCharId = null;
+              this.focusedDuelNumber = null;
+              this.three.setIntentFocus({ active: false });
+              this._renderInspection();
+            });
+          } else if (!card.hidden && needsHoverFull) {
             spr.eventMode = 'static';
             spr.cursor = 'pointer';
             spr.on('pointerover', () => {
               const gp = spr.getGlobalPosition();
               if (gp.y < regTop - 20 || gp.y > regTop + regH + 20) return;
               this.hoveredCard = {
-                card, side: s, ownerName: charNames[card.character_id] || '',
+                card, side: s, accentColor: ownerColor, ownerName,
                 anchorX: gp.x, anchorY: gp.y, cardH: spr._boxHeight, source: 'board', sourceSprite: spr,
               };
-              this.focusedCharId = card.character_id || null;
+              this.focusedCharId = ownerId;
               this.focusedDuelNumber = number;
               this._renderInspection();
             });
@@ -2525,6 +2599,7 @@ export class GameDirector {
 
       const panel = buildVerbatimCardPanel(card, {
         side,
+        accentColor: this._resolveCharColor(card.character_id, side),
         ownerName: charNames[card.character_id] || '',
         width: colW,
         minHeight: Math.min(cardsAvailH - 4, Math.round(colW * 1.34)),
@@ -2704,6 +2779,7 @@ export class GameDirector {
 
       const spr = buildFullCard(card, {
         side: viewerSide,
+        accentColor: this._resolveCharColor(card.character_id, viewerSide),
         ownerName: charNames[card.character_id] || '',
         showOwner: multiChar,
         width: handCardW,
@@ -2959,8 +3035,12 @@ export class GameDirector {
           }
         },
         onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
+          const cid = card?.character_id || m.hoveredChar?.id || null;
           this.hoveredCard = card
-            ? { card, side, ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 172, source: 'roster', sourceSprite: spr }
+            ? {
+                card, side, accentColor: this._resolveCharColor(cid, side),
+                ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 172, source: 'roster', sourceSprite: spr,
+              }
             : null;
           this._renderInspection();
         },
@@ -2996,6 +3076,7 @@ export class GameDirector {
         tab: m.tab,
         scrollY: m.scrollY,
         catalog: this.state.catalog,
+        characterColors: this.state.character_colors || {},
         history: this.state.history || [],
         onTab: (tab) => { m.tab = tab; m.scrollY = 0; this._rebuildOverlay(); },
         onScrollChange: (val) => { m.scrollY = val; },
@@ -3014,6 +3095,7 @@ export class GameDirector {
         side: m.side,
         cards: m.cards,
         charNames: this._charNameMap(),
+        characterColors: this.state.character_colors || {},
         scrollY: m.scrollY || 0,
         onScrollChange: (val) => { m.scrollY = val; },
         onClose: () => { this.pileModal = null; this._rebuildOverlay(); },
@@ -3037,6 +3119,7 @@ export class GameDirector {
       const ov = buildDrawSelectOverlay(w, h, {
         prompt,
         selectedIds: this.drawSelected,
+        characterColors: this.state.character_colors || {},
         scrollX: this.drawSelectScrollX || 0,
         onToggle: (cid) => {
           if (this.drawSelected.has(cid)) this.drawSelected.delete(cid);
@@ -3052,7 +3135,10 @@ export class GameDirector {
         onConfirm: () => this._sendAction('draw_bottom', { card_ids: Array.from(this.drawSelected) }),
         onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
           this.hoveredCard = card
-            ? { card, side, ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 198, source: 'draw', sourceSprite: spr }
+            ? {
+                card, side, accentColor: this._resolveCharColor(card.character_id, side),
+                ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 198, source: 'draw', sourceSprite: spr,
+              }
             : null;
           this._renderInspection();
         },
@@ -3138,11 +3224,12 @@ export class GameDirector {
     const { w, h } = this.layout;
 
     if (this.hoveredCard) {
-      const { card, side, ownerName, anchorX, anchorY, sourceSprite = null } = this.hoveredCard;
+      const { card, side, accentColor = null, ownerName, anchorX, anchorY, sourceSprite = null } = this.hoveredCard;
       const W = 224;
       const fixedH = Math.min(h - 72, Math.round(W * 1.40));
       const panel = buildFullCard(card, {
         side,
+        accentColor: accentColor ?? this._resolveCharColor(card.character_id, side),
         ownerName,
         showOwner: Boolean(ownerName),
         width: W,
@@ -3182,6 +3269,32 @@ export class GameDirector {
 
     if (this.hoveredInfo) {
       const info = this.hoveredInfo;
+      if (info.kind === 'card_owner') {
+        // Compact diegetic ownership crest pill for hovered hidden opponent cards (ZERO card content leaked!)
+        const col = info.color ?? (SIDE_THEME[info.side] || SIDE_THEME[1]).accent;
+        const label = `归属 · ${info.title}`;
+        const txt = new PIXI.Text({
+          text: label,
+          style: { fontFamily: FONT_UI, fontSize: 12.2, fontWeight: '800', fill: INK.strong },
+        });
+        const pw = Math.max(96, Math.ceil(txt.width) + 30);
+        const ph = 28;
+        const bx = Math.max(12, Math.min(w - pw - 12, (info.anchorX ?? w * 0.5) - pw / 2));
+        const by = Math.max(46, Math.min(h - ph - 12, (info.anchorY ?? h * 0.4) - ph / 2));
+        const pillG = new PIXI.Graphics();
+        pillG.eventMode = 'none';
+        pillG.roundRect(bx + 2, by + 4, pw, ph, 8).fill({ color: INK.shadow, alpha: 0.26 });
+        pillG.roundRect(bx, by, pw, ph, 8)
+          .fill({ color: INK.paper, alpha: 0.99 })
+          .stroke({ width: 1.6, color: col });
+        pillG.roundRect(bx + 1, by + 2, 4, ph - 4, 2).fill({ color: col });
+        pillG.poly([bx + 15, by + ph / 2 - 4, bx + 19, by + ph / 2, bx + 15, by + ph / 2 + 4, bx + 11, by + ph / 2])
+          .fill({ color: col });
+        txt.anchor.set(0, 0.5);
+        txt.position.set(bx + 23, by + ph / 2 + 0.5);
+        this.inspectLayer.addChild(pillG, txt);
+        return;
+      }
       const W = 404;
       const body = new PIXI.Container();
       let cy = 38;
@@ -3578,7 +3691,7 @@ export class GameDirector {
     if (dest && view) {
       const vp = this.duelViewport;
       const clampedY = vp ? Math.max(vp.top + 24, Math.min(vp.bottom - 24, dest.cy)) : dest.cy;
-      this.three.emitShockwave(dest.cx, clampedY, SIDE_THEME[side].accent);
+      this.three.emitShockwave(dest.cx, clampedY, this._resolveCharColor(view.card.character_id, side));
       this.three.spawnCardFlipArc({
         fromX: view.bodyEntry.body.position.x,
         fromY: view.bodyEntry.body.position.y,
@@ -3588,7 +3701,7 @@ export class GameDirector {
         height: 132,
         title: view.card.name,
         cost: view.card.cost,
-        accentHex: SIDE_THEME[side].accentHex,
+        accentHex: this._resolveCharColorHex(view.card.character_id, side),
         flipFromBack: false,
         duration: 0.42,
         peakZ: 115,
@@ -3806,6 +3919,8 @@ export class GameDirector {
     renderFocusSightlines(this.tetherLayer, {
       duels: isCombat ? [] : (this.state?.frame?.duels || []),
       preDuels: isCombat ? [] : (this.state?.frame?.pre_reveal?.duels || []),
+      cardOwners: this.state?.card_owners || null,
+      charColorFn: (cid, s) => this._resolveCharColor(cid, s),
       regularSlotRects: this.regularSlotRects,
       preRevealSlotRects: this.preRevealSlotRects,
       actorPosFn: (idOrName) => this._resolveActorPosForSightline(idOrName),

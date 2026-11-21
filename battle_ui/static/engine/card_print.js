@@ -12,6 +12,7 @@ import {
   FONT_NUM,
   INK,
   SIDE_THEME,
+  HP_BAR_COLOR,
   DIE_STYLE,
   DAMAGE_GRADE_STYLE,
   SHIELD_STYLE,
@@ -23,6 +24,10 @@ import {
   RANK_LABEL,
   RANGE_LABELS,
   OFFICIAL_STATUS_RULES,
+  parseHexColor,
+  hexToCss,
+  mixHexColors,
+  deriveCardPalette,
   wrapCjkText,
   formatDieRange,
   exactSkillTraits,
@@ -47,6 +52,7 @@ export {
   FONT_NUM,
   INK,
   SIDE_THEME,
+  HP_BAR_COLOR,
   DIE_STYLE,
   DAMAGE_GRADE_STYLE,
   SHIELD_STYLE,
@@ -58,6 +64,10 @@ export {
   RANK_LABEL,
   RANGE_LABELS,
   OFFICIAL_STATUS_RULES,
+  parseHexColor,
+  hexToCss,
+  mixHexColors,
+  deriveCardPalette,
   wrapCjkText,
   formatDieRange,
   exactSkillTraits,
@@ -78,10 +88,10 @@ export {
 };
 
 /**
- * Clean Physical Card Back (for face-down enemy placements — matches physical card-edge craft).
+ * Clean Physical Card Back colored in the owning character's signature color.
  */
-export function buildCardBack(side = 1, { width = 82, height = 104 } = {}) {
-  const theme = SIDE_THEME[side] || SIDE_THEME[1];
+export function buildCardBack(side = 1, { width = 82, height = 104, accentColor = null } = {}) {
+  const pal = deriveCardPalette(accentColor, side);
   const root = new PIXI.Container();
   const hw = width / 2;
   const hh = height / 2;
@@ -92,13 +102,13 @@ export function buildCardBack(side = 1, { width = 82, height = 104 } = {}) {
   g.roundRect(-hw, -hh + 2.5, width, height, 7).fill({ color: 0xe3dac9 });
   g.roundRect(-hw, -hh, width, height, 7)
     .fill({ color: INK.paper })
-    .stroke({ width: 1.3, color: theme.accent, alpha: 0.85 });
+    .stroke({ width: 1.55, color: pal.accent, alpha: 0.92 });
   g.roundRect(-hw + 5, -hh + 5, width - 10, height - 10, 4)
-    .fill({ color: theme.softBg })
-    .stroke({ width: 0.85, color: theme.border, alpha: 0.55 });
+    .fill({ color: pal.softBg })
+    .stroke({ width: 0.95, color: pal.border, alpha: 0.72 });
   g.poly([0, -hh + 13, hw - 13, 0, 0, hh - 13, -hw + 13, 0])
-    .stroke({ width: 0.9, color: theme.accent, alpha: 0.3 });
-  drawLightStar(g, 0, 0, Math.min(width, height) * 0.21, theme.accent, 0.85);
+    .stroke({ width: 1.0, color: pal.accent, alpha: 0.42 });
+  drawLightStar(g, 0, 0, Math.min(width, height) * 0.21, pal.accent, 0.92);
   root.addChild(g);
   root._boxWidth = width;
   root._boxHeight = height;
@@ -114,6 +124,7 @@ export function buildCardBack(side = 1, { width = 82, height = 104 } = {}) {
  */
 export function buildBoardCardTag(card, {
   side = 1,
+  accentColor = null,
   ownerName = '',
   showOwner = false,
   width = 114,
@@ -121,11 +132,10 @@ export function buildBoardCardTag(card, {
   playMode = null,
   rangeDeficit = 0,
 } = {}) {
-  const theme = SIDE_THEME[side] || SIDE_THEME[1];
+  const pal = deriveCardPalette(accentColor, side);
   const W = Math.max(96, Math.round(width));
   const H = height ? Math.max(Math.round(W * 1.34), Math.round(height)) : Math.round(W * 1.40);
   const isBlanked = rangeDeficit >= 3;
-  const highCost = (card.cost ?? 0) >= 4;
   const padX = 6;
   const headerH = 26;
 
@@ -133,15 +143,18 @@ export function buildBoardCardTag(card, {
   const sheet = new PIXI.Container();
 
   const bg = new PIXI.Graphics();
-  // Physical card-stock shadow + 2.5px warm edge bevel
+  // Physical card-stock shadow + 2.5px warm edge bevel + character-colored rim & header tint!
   bg.roundRect(2, 5, W, H, 7).fill({ color: INK.shadow, alpha: 0.22 });
   bg.roundRect(0, 2.5, W, H, 7).fill({ color: 0xe3dac9 });
   bg.roundRect(0, 0, W, H, 7)
     .fill({ color: isBlanked ? 0xf3efe8 : INK.paper })
-    .stroke({ width: 1.15, color: isBlanked ? INK.muted : theme.border });
-  bg.roundRect(1, 1, W - 2, 3, 2).fill({ color: isBlanked ? INK.muted : highCost ? INK.gold : theme.accent });
-  bg.moveTo(padX, headerH).lineTo(W - padX, headerH).stroke({ width: 0.85, color: INK.hairline });
-  drawCostCrystal(bg, padX + 9, 3 + (headerH - 3) / 2, 8.2, isBlanked ? INK.muted : highCost ? INK.gold : theme.accent);
+    .stroke({ width: 1.45, color: isBlanked ? INK.muted : pal.accent, alpha: isBlanked ? 0.8 : 0.88 });
+  if (!isBlanked) {
+    bg.roundRect(1, 1, W - 2, headerH - 1, 6).fill({ color: pal.softBg, alpha: 0.72 });
+  }
+  bg.roundRect(1, 1, W - 2, 3.4, 2).fill({ color: isBlanked ? INK.muted : pal.accent });
+  bg.moveTo(padX, headerH).lineTo(W - padX, headerH).stroke({ width: 0.85, color: pal.border, alpha: 0.55 });
+  drawCostCrystal(bg, padX + 9, 3 + (headerH - 3) / 2, 8.2, isBlanked ? INK.muted : pal.accent);
   sheet.addChild(bg);
 
   const cTxt = new PIXI.Text({
@@ -171,7 +184,7 @@ export function buildBoardCardTag(card, {
   if (subBits.length) {
     const subT = new PIXI.Text({
       text: subBits.join(' · '),
-      style: { fontFamily: FONT_UI, fontSize: 8.5, fontWeight: '700', fill: rangeDeficit > 0 ? 0xc93e2b : theme.accent },
+      style: { fontFamily: FONT_UI, fontSize: 8.5, fontWeight: '700', fill: rangeDeficit > 0 ? 0xc93e2b : pal.accent },
     });
     subT.position.set(padX, cursorY);
     sheet.addChild(subT);
@@ -246,7 +259,7 @@ export function buildBoardCardTag(card, {
     rowG.moveTo(padX + 10, fy).lineTo(mid - 7, fy).stroke({ width: 0.75, color: INK.hairline });
     rowG.moveTo(mid + 7, fy).lineTo(W - padX - 10, fy).stroke({ width: 0.75, color: INK.hairline });
     rowG.poly([mid, fy - 2.4, mid + 2.6, fy, mid, fy + 2.4, mid - 2.6, fy])
-      .stroke({ width: 0.8, color: theme.border, alpha: 0.65 });
+      .stroke({ width: 0.8, color: pal.accent, alpha: 0.72 });
   }
 
   sheet.position.set(-W / 2, -H / 2);
@@ -270,6 +283,7 @@ export function buildBoardCardTag(card, {
  */
 export function buildFullCard(card, {
   side = 1,
+  accentColor = null,
   ownerName = '',
   showOwner = false,
   width = 264,
@@ -284,12 +298,11 @@ export function buildFullCard(card, {
   rangeDeficit = 0,
   playMode = null,
 } = {}) {
-  const theme = SIDE_THEME[side] || SIDE_THEME[1];
+  const pal = deriveCardPalette(accentColor, side);
   const W = width;
   const padX = dense ? 9 : 11;
   const innerW = W - padX * 2;
   const isBlanked = rangeDeficit >= 3;
-  const highCost = (card.cost ?? 0) >= 4;
   const tight = dense || compact;
   const headerH = tight ? 36 : 42;
 
@@ -316,7 +329,7 @@ export function buildFullCard(card, {
         variant: 'skill',
         entries: card.entries,
         width: targetInnerW,
-        accentColor: theme.accent,
+        accentColor: pal.accent,
         fontSize: dense ? 10.6 : compact ? 11 : 11.8,
         lineHeight: dense ? 14.6 : compact ? 16 : 17.5,
         compact: tight,
@@ -371,37 +384,45 @@ export function buildFullCard(card, {
   }
   content.position.set(padX, bodyTop);
 
-  // Physical printed card body (soft layered drop shadow + 2.5px warm card-stock edge bevel!)
+  // Physical printed card body — character-colored rim, header tint, cost crystal & pressmark (NO fake gold ultimate rim!)
   const bg = new PIXI.Graphics();
   bg.roundRect(3, 7, W, H, 8).fill({ color: INK.shadow, alpha: selected ? 0.34 : 0.2 });
   bg.roundRect(1, 3, W, H, 8).fill({ color: 0xe3dac9 });
-  const borderCol = isBlanked ? INK.muted : selected ? INK.gold : legal ? INK.line : INK.hairline;
-  const topBarCol = isBlanked ? INK.muted : selected ? INK.gold : highCost ? INK.gold : theme.accent;
+  if (selected && !isBlanked) {
+    bg.roundRect(-2.5, -2.5, W + 5, H + 5, 10).stroke({ width: 2.0, color: pal.accent, alpha: 0.42 });
+  }
+  const borderCol = isBlanked ? INK.muted : legal ? pal.accent : pal.border;
+  const topBarCol = isBlanked ? INK.muted : pal.accent;
   bg.roundRect(0, 0, W, H, 8)
     .fill({ color: isBlanked ? 0xf3efe8 : INK.paper, alpha: 0.995 })
-    .stroke({ width: selected ? 2.2 : 1.15, color: borderCol });
+    .stroke({ width: selected ? 2.4 : 1.45, color: borderCol, alpha: selected ? 1 : legal ? 0.85 : 0.55 });
 
-  // Clean 3px top architectural accent bar
-  bg.roundRect(1, 1, W - 2, 3.2, 2).fill({ color: topBarCol });
+  // Soft character-colored header tint band so card identity reads instantaneously on the front face!
+  if (!isBlanked) {
+    bg.roundRect(1, 1, W - 2, headerH - 1, 7).fill({ color: pal.softBg, alpha: 0.72 });
+  }
+
+  // Clean 3.5px top architectural accent bar in character's own color
+  bg.roundRect(1, 1, W - 2, 3.6, 2).fill({ color: topBarCol });
 
   // Hairline header separator
   bg.moveTo(padX, headerH).lineTo(W - padX, headerH)
-    .stroke({ width: 0.9, color: INK.hairline });
+    .stroke({ width: 0.9, color: pal.border, alpha: 0.65 });
 
   // Subtle printed bottom pressmark on uniform-height cards with breathing space
   if ((minHeight || fixedHeight) && H - (bodyTop + renderedBodyH) > 18) {
     const py = H - 10;
     const mid = W / 2;
-    bg.moveTo(padX + 18, py).lineTo(mid - 9, py).stroke({ width: 0.8, color: INK.hairline });
-    bg.moveTo(mid + 9, py).lineTo(W - padX - 18, py).stroke({ width: 0.8, color: INK.hairline });
+    bg.moveTo(padX + 18, py).lineTo(mid - 9, py).stroke({ width: 0.8, color: pal.border, alpha: 0.55 });
+    bg.moveTo(mid + 9, py).lineTo(W - padX - 18, py).stroke({ width: 0.8, color: pal.border, alpha: 0.55 });
     bg.poly([mid, py - 3, mid + 3.2, py, mid, py + 3, mid - 3.2, py])
-      .stroke({ width: 0.9, color: theme.border, alpha: 0.65 });
+      .fill({ color: pal.accent, alpha: 0.65 });
   }
 
-  // Cost Crystal (top-left)
+  // Cost Crystal (top-left) in character's own color (ZERO gold ultimate override!)
   const cx = padX + 12;
   const cy = 3 + (headerH - 3) / 2;
-  drawCostCrystal(bg, cx, cy, tight ? 11.2 : 12.8, isBlanked ? INK.muted : highCost ? INK.gold : theme.accent);
+  drawCostCrystal(bg, cx, cy, tight ? 11.2 : 12.8, isBlanked ? INK.muted : pal.accent);
   sheet.addChild(bg);
 
   const cTxt = new PIXI.Text({
@@ -429,7 +450,7 @@ export function buildFullCard(card, {
   let rightCursor = W - padX;
   if (playMode || rangeDeficit > 0) {
     const label = rangeDeficit > 0 ? `压制-${rangeDeficit}` : playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动';
-    const col = rangeDeficit > 0 ? 0xc93e2b : playMode === 'pulled' ? INK.gold : theme.accent;
+    const col = rangeDeficit > 0 ? 0xc93e2b : playMode === 'pulled' ? INK.gold : pal.accent;
     const tagT = new PIXI.Text({
       text: label,
       style: { fontFamily: FONT_UI, fontSize: 9.2, fontWeight: '800', fill: INK.paper },
@@ -446,7 +467,7 @@ export function buildFullCard(card, {
   if ((showOwner || !dense) && ownerName) {
     const owTxt = new PIXI.Text({
       text: ownerName,
-      style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '700', fill: theme.accent },
+      style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '800', fill: pal.accent },
     });
     owTxt.anchor.set(1, 0.5);
     if (rightCursor - owTxt.width > padX + 34 + titleTxt.width) {

@@ -11,11 +11,13 @@ import {
   FONT_NUM,
   INK,
   SIDE_THEME,
+  HP_BAR_COLOR,
   RANK_LABEL,
   RANK_COLOR,
   SHIELD_STYLE,
   STATUS_COLORS,
   OFFICIAL_STATUS_RULES,
+  parseHexColor,
   wrapCjkText,
   drawShieldGlyph,
   drawLightStar,
@@ -433,6 +435,7 @@ function makeHorizontalScrollbar({ x, y, width, totalW, viewW, scrollX = 0, acce
 export function buildHeroSidePanel({
   character,
   side,
+  charColor = null,
   catalogChar,
   catalogStatuses,
   x,
@@ -454,6 +457,7 @@ export function buildHeroSidePanel({
   const actors = [];
   const theme = SIDE_THEME[side] || SIDE_THEME[1];
   const pal = actorPalette(character, side);
+  const charAccent = parseHexColor(charColor, pal.primary);
 
   // Illuminated Parchment Folio Frame (engraved double-hairline + corner diamonds + top faction ribbon seal)
   const frame = new PIXI.Graphics();
@@ -530,7 +534,7 @@ export function buildHeroSidePanel({
   hpG.roundRect(infoX, hpY, hpBarW, 10, 5).fill({ color: INK.paperTint }).stroke({ width: 0.85, color: INK.line });
   if (ratio > 0) {
     hpG.roundRect(infoX + 1, hpY + 1, Math.max(5, (hpBarW - 2) * ratio), 8, 4)
-      .fill({ color: ratio < 0.34 ? 0xd13f20 : theme.accent });
+      .fill({ color: HP_BAR_COLOR });
   }
   root.addChild(hpG);
 
@@ -662,7 +666,7 @@ export function buildHeroSidePanel({
 
   if (tab === 'skills') {
     for (const sk of skills) {
-      const row = buildUnifiedSkillRow(sk, { width: innerW, side, active: false });
+      const row = buildUnifiedSkillRow(sk, { width: innerW, side, accentColor: charAccent, active: false });
       row.position.set(padIn, cy);
       row._itemTop = cy;
       row._itemBottom = cy + row._height;
@@ -1171,6 +1175,7 @@ export function buildHandoffOverlay(w, h, { activeSide, eligibleSides, onReady }
 export function buildDrawSelectOverlay(w, h, {
   prompt,
   selectedIds,
+  characterColors = {},
   scrollX = 0,
   onToggle,
   onConfirm,
@@ -1256,6 +1261,7 @@ export function buildDrawSelectOverlay(w, h, {
     const isMarked = selectedIds.has(card.id);
     const spr = buildFullCard(card, {
       side: prompt.side,
+      accentColor: characterColors[card.character_id] || null,
       ownerName: card.character_name || '',
       showOwner: true,
       width: cardW,
@@ -2320,7 +2326,8 @@ export function buildRosterOverlay(w, h, {
     const duelCount = char.base_duels || 1;
     const pipStart = cellW - 10;
     for (let d = 0; d < Math.min(4, duelCount); d++) {
-      drawDuelPip(statG, pipStart - d * 11, sy, 4.5, INK.gold);
+      const duelPipCol = parseHexColor(target.color, pal.primary);
+      drawDuelPip(statG, pipStart - d * 11, sy, 4.5, duelPipCol);
     }
     card.addChild(statG, hpTxt);
 
@@ -2558,6 +2565,7 @@ export function buildRosterOverlay(w, h, {
           const sk = skills[i + c];
           const cardSpr = buildFullCard(sk, {
             side: previewSide,
+            accentColor: parseHexColor(target.color, pal.primary),
             ownerName: target.name,
             showOwner: false,
             width: skW,
@@ -2648,6 +2656,7 @@ export function buildCodexOverlay(w, h, {
   tab = 'rules',
   scrollY = 0,
   catalog,
+  characterColors = {},
   history = [],
   onTab,
   onScrollChange = null,
@@ -2788,16 +2797,17 @@ export function buildCodexOverlay(w, h, {
           body.addChild(plate);
           y += plate._height + 7;
         }
+        const chAccent = characterColors[ch.id] || null;
         const skList = ch.skills || [];
         for (let i = 0; i < skList.length; i += 2) {
-          const leftCard = buildVerbatimCardPanel(skList[i], { side: pl.side, ownerName: ch.name, width: cardW, compact: true });
+          const leftCard = buildVerbatimCardPanel(skList[i], { side: pl.side, accentColor: chAccent, ownerName: ch.name, width: cardW, compact: true });
           leftCard.position.set(4, y);
           leftCard._itemTop = y;
           leftCard._itemBottom = y + leftCard._boxHeight;
           body.addChild(leftCard);
           let rowH = leftCard._boxHeight;
           if (i + 1 < skList.length) {
-            const rightCard = buildVerbatimCardPanel(skList[i + 1], { side: pl.side, ownerName: ch.name, width: cardW, compact: true });
+            const rightCard = buildVerbatimCardPanel(skList[i + 1], { side: pl.side, accentColor: chAccent, ownerName: ch.name, width: cardW, compact: true });
             rightCard.position.set(4 + cardW + colGap, y);
             rightCard._itemTop = y;
             rightCard._itemBottom = y + rightCard._boxHeight;
@@ -2907,6 +2917,7 @@ export function buildPileOverlay(w, h, {
   side,
   cards = [],
   charNames = {},
+  characterColors = {},
   scrollY = 0,
   onScrollChange = null,
   onClose,
@@ -3001,6 +3012,7 @@ export function buildPileOverlay(w, h, {
         const card = cards[i + c];
         const spr = buildFullCard(card, {
           side,
+          accentColor: characterColors[card.character_id] || null,
           ownerName: charNames[card.character_id] || '',
           showOwner: true,
           width: cardW,

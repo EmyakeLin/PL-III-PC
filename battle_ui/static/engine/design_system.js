@@ -49,13 +49,68 @@ export const SIDE_THEME = {
   },
 };
 
+export const HP_BAR_COLOR = 0xd44638;
+
+export const ATTACK_DIE_COLOR = 0xd1382e;
+export const ATTACK_DIE_BG = 0xfdece9;
+export const DEFENSE_DIE_COLOR = 0x2478cc;
+export const DEFENSE_DIE_BG = 0xeaf4fd;
+
+export function parseHexColor(val, fallback = 0x1a825e) {
+  if (typeof val === 'number' && Number.isFinite(val)) return Math.floor(val) & 0xffffff;
+  if (typeof val === 'string') {
+    const clean = val.trim().replace(/^#|^0x/i, '');
+    if (/^[0-9a-f]{6}$/i.test(clean)) return parseInt(clean, 16) & 0xffffff;
+  }
+  return fallback;
+}
+
+export function hexToCss(hex) {
+  return `#${(Math.floor(hex) & 0xffffff).toString(16).padStart(6, '0')}`;
+}
+
+export function mixHexColors(c1, c2, t) {
+  const k = Math.max(0, Math.min(1, t));
+  const r1 = (c1 >> 16) & 255;
+  const g1 = (c1 >> 8) & 255;
+  const b1 = c1 & 255;
+  const r2 = (c2 >> 16) & 255;
+  const g2 = (c2 >> 8) & 255;
+  const b2 = c2 & 255;
+  const r = Math.round(r1 + (r2 - r1) * k);
+  const g = Math.round(g1 + (g2 - g1) * k);
+  const b = Math.round(b1 + (b2 - b1) * k);
+  return (r << 16) | (g << 8) | b;
+}
+
+export function deriveCardPalette(accentColor = null, fallbackSide = 1) {
+  const fallback = SIDE_THEME[fallbackSide] || SIDE_THEME[1];
+  if (accentColor === null || accentColor === undefined) {
+    return {
+      accent: fallback.accent,
+      accentHex: fallback.accentHex,
+      border: fallback.border,
+      softBg: fallback.softBg,
+      warmTint: fallback.warmTint,
+    };
+  }
+  const accent = parseHexColor(accentColor, fallback.accent);
+  return {
+    accent,
+    accentHex: hexToCss(accent),
+    border: mixHexColors(accent, INK.paper, 0.34),
+    softBg: mixHexColors(accent, INK.paper, 0.88),
+    warmTint: mixHexColors(accent, INK.paper, 0.93),
+  };
+}
+
 export const DIE_STYLE = {
-  slash:  { label: '斩击', kind: 'attack',  frame: 'diamond', color: 0xc93e2b, bg: 0xfdf4f2, hex: '#c93e2b' },
-  pierce: { label: '突刺', kind: 'attack',  frame: 'diamond', color: 0xc27110, bg: 0xfef8ec, hex: '#c27110' },
-  blunt:  { label: '砸击', kind: 'attack',  frame: 'diamond', color: 0xa82f3e, bg: 0xfcf2f4, hex: '#a82f3e' },
-  block:  { label: '招架', kind: 'defense', frame: 'hex',     color: 0x177d6b, bg: 0xf0f9f7, hex: '#177d6b' },
-  evade:  { label: '闪避', kind: 'defense', frame: 'circle',  color: 0x3b8c2c, bg: 0xf3faf0, hex: '#3b8c2c' },
-  blank:  { label: '空白', kind: 'blank',   frame: 'square',  color: 0x8a7f71, bg: 0xf6f2ea, hex: '#8a7f71' },
+  slash:  { label: '斩击', kind: 'attack',  frame: 'hex',    color: ATTACK_DIE_COLOR,  bg: ATTACK_DIE_BG,  hex: '#d1382e' },
+  pierce: { label: '突刺', kind: 'attack',  frame: 'hex',    color: ATTACK_DIE_COLOR,  bg: ATTACK_DIE_BG,  hex: '#d1382e' },
+  blunt:  { label: '打击', kind: 'attack',  frame: 'hex',    color: ATTACK_DIE_COLOR,  bg: ATTACK_DIE_BG,  hex: '#d1382e' },
+  block:  { label: '招架', kind: 'defense', frame: 'square', color: DEFENSE_DIE_COLOR, bg: DEFENSE_DIE_BG, hex: '#2478cc' },
+  evade:  { label: '闪避', kind: 'defense', frame: 'square', color: DEFENSE_DIE_COLOR, bg: DEFENSE_DIE_BG, hex: '#2478cc' },
+  blank:  { label: '空白', kind: 'blank',   frame: 'square', color: 0x8a7f71,          bg: 0xf6f2ea,       hex: '#8a7f71' },
 };
 
 export const DAMAGE_GRADE_STYLE = {
@@ -303,50 +358,110 @@ export function extractDieDamageBadge(entries) {
 export function drawDieIcon(g, type, cx, cy, r, colorOverride = null) {
   const col = colorOverride ?? (DIE_STYLE[type]?.color || INK.secondary);
   if (type === 'slash') {
-    g.moveTo(cx - r * 0.7, cy + r * 0.7)
-      .lineTo(cx + r * 0.75, cy - r * 0.75)
-      .stroke({ width: 2.0, color: col, cap: 'round' });
-    g.moveTo(cx - r * 0.25, cy - r * 0.55)
-      .quadraticCurveTo(cx + r * 0.55, cy - r * 0.52, cx + r * 0.55, cy + r * 0.32)
-      .stroke({ width: 1.4, color: col, alpha: 0.82, cap: 'round' });
+    // 斩击：一道凌厉弯曲的刀光（外凸内凹月牙刀弧 + 刃脊高光）
+    const outerPts = [
+      [cx - r * 0.86, cy + r * 0.72],
+      [cx - r * 0.48, cy - r * 0.14],
+      [cx + r * 0.14, cy - r * 0.66],
+      [cx + r * 0.88, cy - r * 0.80],
+      [cx + r * 0.28, cy - r * 0.26],
+      [cx - r * 0.20, cy + r * 0.18],
+    ];
+    const flat = [];
+    for (const [px, py] of outerPts) flat.push(px, py);
+    g.poly(flat).fill({ color: col });
+    // Fine bright gleam along outer cutting edge
+    g.moveTo(cx - r * 0.62, cy + r * 0.44)
+      .quadraticCurveTo(cx - r * 0.12, cy - r * 0.34, cx + r * 0.72, cy - r * 0.68)
+      .stroke({ width: Math.max(0.8, r * 0.14), color: INK.paper, alpha: 0.85, cap: 'round' });
+    // Secondary trailing slash light streak
+    g.moveTo(cx - r * 0.28, cy + r * 0.72)
+      .quadraticCurveTo(cx + r * 0.26, cy + r * 0.26, cx + r * 0.76, cy - r * 0.22)
+      .stroke({ width: Math.max(0.9, r * 0.15), color: col, alpha: 0.58, cap: 'round' });
   } else if (type === 'pierce') {
+    // 突刺：一柄刺剑突刺破空 + 垂直于剑轴的法向激波环
+    // Tapered needle rapier blade thrusting from bottom-left to top-right
+    g.poly([
+      cx + r * 0.90, cy - r * 0.90,
+      cx - r * 0.36, cy + r * 0.14,
+      cx - r * 0.14, cy + r * 0.36,
+    ]).fill({ color: col });
+    // Rapier hilt & cup-crossguard at bottom-left
     g.moveTo(cx - r * 0.68, cy + r * 0.68)
-      .lineTo(cx + r * 0.45, cy - r * 0.45)
-      .stroke({ width: 1.9, color: col, cap: 'round' });
-    g.poly([
-      cx + r * 0.8, cy - r * 0.8,
-      cx + r * 0.08, cy - r * 0.56,
-      cx + r * 0.56, cy - r * 0.08,
-    ]).fill({ color: col });
+      .lineTo(cx - r * 0.24, cy + r * 0.24)
+      .stroke({ width: Math.max(1.2, r * 0.22), color: col, cap: 'round' });
+    g.moveTo(cx - r * 0.52, cy + r * 0.08)
+      .lineTo(cx - r * 0.08, cy + r * 0.52)
+      .stroke({ width: Math.max(1.1, r * 0.20), color: col, cap: 'round' });
+    // 法向激波（垂直于 (+1,-1) 突刺轴的双弧激波环，方向 (-1,-1) <-> (+1,+1)）
+    const swCx = cx + r * 0.22;
+    const swCy = cy - r * 0.22;
+    g.moveTo(swCx - r * 0.50, swCy - r * 0.50)
+      .quadraticCurveTo(swCx + r * 0.18, swCy - r * 0.18, swCx + r * 0.50, swCy + r * 0.50)
+      .stroke({ width: Math.max(1.15, r * 0.20), color: col, alpha: 0.92, cap: 'round' });
+    g.moveTo(swCx - r * 0.34, swCy - r * 0.34)
+      .quadraticCurveTo(swCx - r * 0.16, swCy + r * 0.16, swCx + r * 0.34, swCy + r * 0.34)
+      .stroke({ width: Math.max(0.85, r * 0.14), color: col, alpha: 0.65, cap: 'round' });
+    // Outer Mach shock ring trailing slightly behind
+    const sw2x = cx - r * 0.02;
+    const sw2y = cy + r * 0.02;
+    g.moveTo(sw2x - r * 0.34, sw2y - r * 0.34)
+      .quadraticCurveTo(sw2x + r * 0.10, sw2y - r * 0.10, sw2x + r * 0.34, sw2y + r * 0.34)
+      .stroke({ width: Math.max(0.85, r * 0.14), color: col, alpha: 0.55, cap: 'round' });
   } else if (type === 'blunt') {
-    g.moveTo(cx - r * 0.64, cy + r * 0.64)
-      .lineTo(cx + r * 0.1, cy - r * 0.1)
-      .stroke({ width: 2.0, color: col, cap: 'round' });
+    // 打击：从地面而起的冲击波具象（地面基线 + 震源 + 逐层上涌的半圆冲击波与破土气浪）
+    const gy = cy + r * 0.64;
+    // Ground impact baseline
+    g.moveTo(cx - r * 0.84, gy)
+      .lineTo(cx + r * 0.84, gy)
+      .stroke({ width: Math.max(1.4, r * 0.25), color: col, cap: 'round' });
+    // Impact epicenter dome seated on ground
     g.poly([
-      cx - r * 0.14, cy - r * 0.72,
-      cx + r * 0.72, cy + r * 0.14,
-      cx + r * 0.36, cy + r * 0.48,
-      cx - r * 0.48, cy - r * 0.36,
+      cx - r * 0.34, gy,
+      cx - r * 0.20, gy - r * 0.30,
+      cx, gy - r * 0.42,
+      cx + r * 0.20, gy - r * 0.30,
+      cx + r * 0.34, gy,
     ]).fill({ color: col });
+    // Inner upward shockwave arch rising from ground
+    g.moveTo(cx - r * 0.56, gy - r * 0.04)
+      .quadraticCurveTo(cx, gy - r * 1.12, cx + r * 0.56, gy - r * 0.04)
+      .stroke({ width: Math.max(1.25, r * 0.22), color: col, alpha: 0.92, cap: 'round' });
+    // Outer rising shockwave crest
+    g.moveTo(cx - r * 0.80, gy - r * 0.10)
+      .quadraticCurveTo(cx, gy - r * 1.66, cx + r * 0.80, gy - r * 0.10)
+      .stroke({ width: Math.max(1.0, r * 0.17), color: col, alpha: 0.62, cap: 'round' });
+    // Upward erupting force spikes from epicenter
+    g.moveTo(cx, gy - r * 0.40).lineTo(cx, gy - r * 1.32)
+      .stroke({ width: Math.max(1.05, r * 0.18), color: col, cap: 'round' });
+    g.moveTo(cx - r * 0.24, gy - r * 0.34).lineTo(cx - r * 0.56, gy - r * 1.06)
+      .stroke({ width: Math.max(0.9, r * 0.15), color: col, alpha: 0.85, cap: 'round' });
+    g.moveTo(cx + r * 0.24, gy - r * 0.34).lineTo(cx + r * 0.56, gy - r * 1.06)
+      .stroke({ width: Math.max(0.9, r * 0.15), color: col, alpha: 0.85, cap: 'round' });
   } else if (type === 'block') {
+    // 招架：蓝色硬朗护盾纹章
     g.poly([
-      cx, cy - r * 0.8,
-      cx + r * 0.7, cy - r * 0.44,
-      cx + r * 0.56, cy + r * 0.3,
-      cx, cy + r * 0.84,
-      cx - r * 0.56, cy + r * 0.3,
-      cx - r * 0.7, cy - r * 0.44,
-    ]).fill({ color: col, alpha: 0.16 }).stroke({ width: 1.6, color: col });
-    g.moveTo(cx, cy - r * 0.48).lineTo(cx, cy + r * 0.48).stroke({ width: 1.3, color: col });
+      cx, cy - r * 0.78,
+      cx + r * 0.68, cy - r * 0.44,
+      cx + r * 0.56, cy + r * 0.28,
+      cx, cy + r * 0.82,
+      cx - r * 0.56, cy + r * 0.28,
+      cx - r * 0.68, cy - r * 0.44,
+    ]).fill({ color: col, alpha: 0.20 }).stroke({ width: Math.max(1.3, r * 0.24), color: col, join: 'round' });
+    g.moveTo(cx, cy - r * 0.52).lineTo(cx, cy + r * 0.54)
+      .stroke({ width: Math.max(1.1, r * 0.20), color: col, cap: 'round' });
+    g.moveTo(cx - r * 0.36, cy - r * 0.14).lineTo(cx + r * 0.36, cy - r * 0.14)
+      .stroke({ width: Math.max(0.9, r * 0.16), color: col, alpha: 0.78, cap: 'round' });
   } else if (type === 'evade') {
-    g.moveTo(cx - r * 0.7, cy + r * 0.16)
-      .lineTo(cx, cy - r * 0.54)
-      .lineTo(cx + r * 0.7, cy + r * 0.16)
-      .stroke({ width: 1.9, color: col, cap: 'round', join: 'round' });
-    g.moveTo(cx - r * 0.46, cy + r * 0.58)
-      .lineTo(cx, cy + r * 0.12)
-      .lineTo(cx + r * 0.46, cy + r * 0.58)
-      .stroke({ width: 1.5, color: col, alpha: 0.72, cap: 'round', join: 'round' });
+    // 闪避：蓝色双层迅捷闪身折锋
+    g.moveTo(cx - r * 0.68, cy + r * 0.14)
+      .lineTo(cx, cy - r * 0.56)
+      .lineTo(cx + r * 0.68, cy + r * 0.14)
+      .stroke({ width: Math.max(1.5, r * 0.28), color: col, cap: 'round', join: 'round' });
+    g.moveTo(cx - r * 0.48, cy + r * 0.60)
+      .lineTo(cx, cy + r * 0.10)
+      .lineTo(cx + r * 0.48, cy + r * 0.60)
+      .stroke({ width: Math.max(1.15, r * 0.22), color: col, alpha: 0.74, cap: 'round', join: 'round' });
   } else {
     g.roundRect(cx - r * 0.56, cy - r * 0.56, r * 1.12, r * 1.12, 2)
       .stroke({ width: 1.5, color: col, alpha: 0.8 });
@@ -358,33 +473,40 @@ export function drawDieIcon(g, type, cx, cy, r, colorOverride = null) {
 
 export function drawUnifiedDieFrame(g, type, cx, cy, r, { muted = false, active = false } = {}) {
   const ds = DIE_STYLE[type] || DIE_STYLE.blank;
-  const col = muted ? INK.muted : active ? INK.gold : ds.color;
-  const fill = muted ? INK.paperSoft : active ? INK.goldBg : ds.bg;
+  const col = muted ? INK.muted : ds.color;
+  const fill = muted ? INK.paperSoft : ds.bg;
   const fr = r * 1.32;
 
-  if (ds.frame === 'diamond') {
-    g.poly([cx, cy - fr, cx + fr, cy, cx, cy + fr, cx - fr, cy])
-      .fill({ color: fill })
-      .stroke({ width: active ? 1.6 : 1.2, color: col, alpha: muted ? 0.45 : 0.82 });
-  } else if (ds.frame === 'hex') {
+  if (ds.frame === 'hex') {
+    // 斩击 / 突刺 / 打击：统一红色正六边形框
     const pts = [];
     for (let i = 0; i < 6; i++) {
-      const a = -Math.PI / 6 + (i * Math.PI) / 3;
+      const a = -Math.PI / 2 + (i * Math.PI) / 3;
       pts.push(cx + Math.cos(a) * fr, cy + Math.sin(a) * fr);
+    }
+    if (active && !muted) {
+      const halo = [];
+      for (let i = 0; i < 6; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 3;
+        halo.push(cx + Math.cos(a) * (fr + 2.2), cy + Math.sin(a) * (fr + 2.2));
+      }
+      g.poly(halo).stroke({ width: 1.4, color: col, alpha: 0.35 });
     }
     g.poly(pts)
       .fill({ color: fill })
-      .stroke({ width: active ? 1.6 : 1.2, color: col, alpha: muted ? 0.45 : 0.82 });
-  } else if (ds.frame === 'circle') {
-    g.circle(cx, cy, fr * 0.9)
-      .fill({ color: fill })
-      .stroke({ width: active ? 1.6 : 1.2, color: col, alpha: muted ? 0.45 : 0.82 });
+      .stroke({ width: active ? 1.85 : 1.3, color: col, alpha: muted ? 0.45 : 0.92 });
   } else {
-    g.roundRect(cx - fr * 0.8, cy - fr * 0.8, fr * 1.6, fr * 1.6, 2.5)
+    // 招架 / 闪避（以及空白）：统一正方形框（招架与闪避为统一蓝色）
+    const sq = fr * 0.86;
+    if (active && !muted) {
+      g.roundRect(cx - sq - 2, cy - sq - 2, (sq + 2) * 2, (sq + 2) * 2, 3)
+        .stroke({ width: 1.4, color: col, alpha: 0.35 });
+    }
+    g.roundRect(cx - sq, cy - sq, sq * 2, sq * 2, 1.8)
       .fill({ color: fill })
-      .stroke({ width: 1.1, color: col, alpha: 0.55 });
+      .stroke({ width: active ? 1.85 : 1.3, color: col, alpha: muted ? 0.45 : 0.92 });
   }
-  drawDieIcon(g, type, cx, cy, r * 0.72, muted ? INK.muted : ds.color);
+  drawDieIcon(g, type, cx, cy, r * 0.78, muted ? INK.muted : ds.color);
 }
 
 export function drawStatusIcon(g, name, cx, cy, r, col) {
@@ -976,19 +1098,19 @@ export function buildUnifiedEntryPlate({
 export function buildUnifiedSkillRow(skill, {
   width = 460,
   side = 1,
+  accentColor = null,
   active = false,
 } = {}) {
   const root = new PIXI.Container();
-  const theme = SIDE_THEME[side] || SIDE_THEME[1];
-  const highCost = (skill.cost ?? 0) >= 4;
+  const pal = deriveCardPalette(accentColor, side);
   const rowH = 38;
 
   const g = new PIXI.Graphics();
   g.roundRect(0, 0, width, rowH, 6)
-    .fill({ color: active ? theme.softBg : INK.paper })
-    .stroke({ width: active ? 1.6 : 0.9, color: active ? theme.accent : INK.line });
-  if (active) g.roundRect(0, 3, 3, rowH - 6, 1.5).fill({ color: theme.accent });
-  drawCostCrystal(g, 22, rowH / 2, 11.5, highCost ? INK.gold : theme.accent);
+    .fill({ color: active ? pal.softBg : INK.paper })
+    .stroke({ width: active ? 1.6 : 1.0, color: active ? pal.accent : pal.border });
+  g.roundRect(0, 3, 3, rowH - 6, 1.5).fill({ color: pal.accent, alpha: active ? 1 : 0.72 });
+  drawCostCrystal(g, 22, rowH / 2, 11.5, pal.accent);
   root.addChild(g);
 
   const cTxt = new PIXI.Text({
