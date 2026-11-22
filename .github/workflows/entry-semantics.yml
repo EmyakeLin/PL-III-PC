@@ -1,0 +1,17 @@
+name: 词条语义
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  entry-semantics:
+    name: 词条编译与执行
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest -v tests.entry_semantics
