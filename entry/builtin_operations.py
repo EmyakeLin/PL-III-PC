@@ -281,3 +281,4 @@ def grant_shield(kind, amount, target="$recipient"):
 # Additional vocabularies register ordinary instruction expansions on import.
 from entry import arithmetic_operations
 from entry import status_operations
+from entry import collection_operations

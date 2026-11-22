@@ -127,3 +127,5 @@ class OpCode(Enum):
     PLACE_IN_DUEL = auto()
     PAIR = auto()
     SET_STATUS_OVERFLOW = auto()
+    TRANSFER_HAND_CARD = auto()
+    SAMPLE_INT = auto()

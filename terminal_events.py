@@ -39,7 +39,7 @@ MESSAGES = {
     "cards_revealed": "双方开牌。",
     "slot_revealed": "交锋 {number}　{sides}",
     "status_batch": "{effect}触发，目标为{targets}。",
-    "hand_card_taken": "{receiver} 从对方手中抽取了一张技能。",
+    "hand_card_taken": "{receiver} 接过一张技能牌。",
     "discount_used": "「{card}」本次费用减免 {discount}，实付 {paid} 费。",
     "random_check": "{source} 进行 {low}～{high} 判定，掷出 {roll}。",
     "direct_damage": "{source} 对 {target} 造成 {amount} 点伤害（{grade}，剩余生命 {hp}/{maximum}）。",

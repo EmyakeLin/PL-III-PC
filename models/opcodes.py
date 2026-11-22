@@ -337,14 +337,31 @@ def handle_take_hand_card(ctx):
     receiver, target = ctx.pop(), ctx.pop()
     if target is None or not target.is_alive or not receiver.is_alive:
         return None
-    hand = target.player.cardspace.hand
-    if not hand.content or target.player is receiver.player:
+    from entry.collection_operations import random_item
+    if target.player is receiver.player:
         return None
-    card = ctx.game.rng.choice(hand.content)
-    card.set_controller(receiver)
+    ctx.eval_block(random_item(tuple(target.player.cardspace.hand.content)))
+    if ctx.executions and ctx.executions[-1].cancelled:
+        return None
+    card = ctx.pop()
+    if card is not None:
+        return ctx.eval_block([target.player, card, receiver, OpCode.TRANSFER_HAND_CARD])
+
+
+def handle_transfer_hand_card(ctx):
+    receiver, card, giver = ctx.pop(), ctx.pop(), ctx.pop()
+    if receiver is None or not receiver.is_alive or card is None or card.player is not giver:
+        return None
+    hand = giver.cardspace.hand
+    if card not in hand.content:
+        return None
+    if card.character is receiver:
+        return card
     destination = receiver.player.cardspace.hand
-    hand.move_card_to(card, destination)
-    ctx.record("hand_card_taken", receiver=receiver.combat_name, from_side=target.player.side)
+    card.set_controller(receiver)
+    if hand is not destination:
+        hand.move_card_to(card, destination)
+    ctx.record("hand_card_taken", receiver=receiver.combat_name, from_side=giver.side)
     return card
 
 
@@ -658,8 +675,9 @@ def handle_check_death(ctx):
 def handle_random_int(ctx):
     high, low = ctx.pop(), ctx.pop()
     roll = ctx.game.rng.randint(low, high)
-    source = ctx.event.get("source")
-    ctx.record("random_check", source=getattr(source, "combat_name", None), low=low, high=high, roll=roll)
+    if ctx.current_op == OpCode.RANDOM_INT:
+        source = ctx.event.get("source")
+        ctx.record("random_check", source=getattr(source, "combat_name", None), low=low, high=high, roll=roll)
     ctx.push(roll)
 
 
@@ -929,6 +947,8 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.SAMPLE_INT: handle_random_int,
+    OpCode.TRANSFER_HAND_CARD: handle_transfer_hand_card,
     OpCode.SET_STATUS_OVERFLOW: handle_set_status_overflow,
     OpCode.UPDATE_ROLL: handle_roll_update, OpCode.QUEUE_ROLL_UPDATE: handle_roll_update,
     OpCode.ADD_DAMAGE_MODIFIER: handle_damage_modifier,
@@ -997,6 +1017,8 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.SAMPLE_INT: ("low", "high"),
+    OpCode.TRANSFER_HAND_CARD: ("giver", "card", "receiver"),
     OpCode.SET_STATUS_OVERFLOW: ("target", "status", "amount"),
     OpCode.UPDATE_ROLL: ("die", "mode", "amount"), OpCode.QUEUE_ROLL_UPDATE: ("die", "mode", "amount"),
     OpCode.ADD_DAMAGE_MODIFIER: ("target", "channel", "kind", "amount", "grade"),

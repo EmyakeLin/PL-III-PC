@@ -272,6 +272,53 @@ class CommandTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未知牌区"):
             run_program(vm, entry, ["$self", "x", "missing", "FIND_SKILL", "POP"])
 
+    def test_random_selection_and_transferring_a_specific_card_are_independent(self):
+        from unittest.mock import Mock
+        vm = TracedContext()
+        vm.game = SimpleNamespace(rng=Mock())
+        left, right = Player(-2, "甲"), Player(7, "乙")
+        giver = SimpleNamespace(player=left, is_alive=True, combat_name="a")
+        ally = SimpleNamespace(player=left, is_alive=True, combat_name="b")
+        enemy = SimpleNamespace(player=right, is_alive=True, combat_name="c")
+        cards = [Card(left, {"id": str(i), "name": str(i), "cost": 1}, giver) for i in range(4)]
+        left.cardspace.hand.content.extend(cards)
+        entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})
+        for sample in ([], ["only"], [None, 0, False, -1, 2**107, "last"]):
+            for index in range(max(1, len(sample))):
+                vm.game.rng.randint.reset_mock()
+                vm.game.rng.randint.return_value = index
+                with vm.binding(sample=sample):
+                    run_program(vm, entry, ["RANDOM_ITEM $event.sample", "POP"])
+                self.assertEqual(vm.trace[-2][2][-1], sample[index] if sample else None)
+                if sample:
+                    vm.game.rng.randint.assert_called_once_with(0, len(sample) - 1)
+                else:
+                    vm.game.rng.randint.assert_not_called()
+        vm.game.rng.randint.reset_mock()
+        moved = vm.eval_block([left, cards[2], ally, OpCode.TRANSFER_HAND_CARD])
+        self.assertIs(moved, cards[2])
+        self.assertIs(moved.character, ally)
+        self.assertEqual(cards, left.cardspace.hand.content)
+        vm.game.rng.randint.assert_not_called()
+        vm.game.rng.randint.return_value = 1
+        vm.trace.clear()
+        with vm.collect_facts() as facts:
+            self.assertIs(vm.eval_block([giver, enemy, OpCode.TAKE_HAND_CARD]), cards[1])
+        self.assertEqual([kind for kind, _ in facts], ["hand_card_taken"])
+        with vm.collect_facts() as public:
+            vm.eval_block([1, 4, OpCode.RANDOM_INT])
+            vm.pop()
+        self.assertEqual([kind for kind, _ in public], ["random_check"])
+        self.assertIs(cards[1].character, enemy)
+        self.assertIs(cards[1].printed_owner, giver)
+        steps = [op for op, timing, _ in vm.trace if timing == "BEFORE"]
+        self.assertLess(steps.index(OpCode.SAMPLE_INT), steps.index(OpCode.TRANSFER_HAND_CARD))
+        self.assertEqual(right.cardspace.hand.content, [cards[1]])
+        self.assertIsNone(vm.eval_block([left, cards[1], ally, OpCode.TRANSFER_HAND_CARD]))
+        self.assertIsNone(vm.eval_block([giver, ally, OpCode.TAKE_HAND_CARD]))
+        self.assertEqual([call.args for call in vm.game.rng.randint.call_args_list], [(0, 3), (1, 4)])
+        self.assertEqual(vm.stack, [])
+
     def test_skill_copy_separates_the_printed_source_from_the_new_controller(self):
         from entry.compiler import compile_program
         from models.special_actions import SkillCopy
@@ -1062,6 +1109,7 @@ class ExecutionBoundaryTests(unittest.TestCase):
             "entry/commands.py", "entry/compiler.py", "entry/entry.py", "entry/effects.py", "entry/program.py",
             "entry/field_aliases.py", "entry/predicates.py", "entry/references.py", "entry/stack_words.py",
             "entry/legacy_operations.py", "entry/arithmetic_operations.py", "entry/status_operations.py",
+            "entry/collection_operations.py",
             "models/card.py", "models/character.py", "models/conditions.py", "models/damage.py", "models/dice.py",
             "models/duel.py", "models/identities.py", "models/opcode.py", "models/opcodes.py", "models/pre_reveal.py",
             "models/roster.py", "models/special_actions.py", "models/turn_history.py", "models/values.py",
