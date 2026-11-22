@@ -23,9 +23,15 @@ class EffectDefinitions:
 
 
 def _add_effects(definitions, pack):
+    for character in pack.get("characters", ()):
+        for action in character.get("actions", ()):
+            _validate_action(action)
     for name, rule in pack.get("status_rules", {}).items():
         if name in definitions.status_rules:
             raise ValueError(f"重复的状态规则 {name}")
+        retired = {"restrict_highest_hand_cost", "overflow_batch"} & rule.keys()
+        if retired:
+            raise ValueError(f"{name} 含有已移除的状态字段 {sorted(retired)}，请在 skill_use 或 global_entries 中声明规则")
         cap = rule.get("cap")
         if "cap" in rule and (type(cap) is not int or cap < 0):
             raise ValueError(f"{name} 的上限须为非负整数")
@@ -55,7 +61,17 @@ def _add_effects(definitions, pack):
     for name, rule in pack.get("ability_rules", {}).items():
         if name in definitions.ability_rules:
             raise ValueError(f"重复的能力效果 {name}")
+        if "action" in rule:
+            _validate_action(rule["action"])
         definitions.ability_rules[name] = rule
+
+
+def _validate_action(action):
+    from entry.predicates import compile_when
+
+    if "requires_draw_pile" in action:
+        raise ValueError("主动能力的牌堆条件须在 when 中声明")
+    compile_when(action.get("when", []), None, None)
 
 
 def _read_pack(path, definitions):

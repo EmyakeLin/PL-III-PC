@@ -90,6 +90,22 @@ class PrintedCountingTests(unittest.TestCase):
                                    "operation": {"op": "program", "code": []}})
         self.assertEqual(compile_program([{"literal": "DAMAGE_ADD"}]).instructions, ("DAMAGE_ADD",))
 
+    def test_removed_configuration_cannot_silently_enable_an_action_or_erase_a_restriction(self):
+        from loader import EffectDefinitions, _add_effects
+
+        for flag in ("restrict_highest_hand_cost", "overflow_batch"):
+            with self.subTest(flag=flag), self.assertRaisesRegex(ValueError, flag):
+                _add_effects(EffectDefinitions(), {"status_rules": {"例": {flag: True}}})
+        action = {"requires_draw_pile": True}
+        for pack in ({"characters": [{"actions": [action]}]}, {"ability_rules": {"例": {"action": action}}}):
+            with self.assertRaisesRegex(ValueError, "when"):
+                _add_effects(EffectDefinitions(), pack)
+
+        for name in ("plan_b_heck.json", "plan_b_heris.json", "plan_b_li_ling.json",
+                     "wind_plan_b.json", "xinxing_lin_qiu.json"):
+            with self.subTest(pack=name):
+                _add_effects(EffectDefinitions(), json.loads((PACKS / name).read_text(encoding="utf-8")))
+
     def test_a_public_keyword_named_after_a_structured_operation_activates_its_status(self):
         for keyword in ("damage", "cancel", "program"):
             ctx = TraceContext()
