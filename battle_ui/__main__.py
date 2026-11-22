@@ -9,16 +9,20 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
 
+from loader import PACKS
+
 from .match import BattleMatch
 
 
 STATIC_DIR = Path(__file__).with_name("static").resolve()
+SPRITES_DIR = (PACKS / "sprites").resolve()
 CONTENT_TYPES = {
     ".html": "text/html",
     ".css": "text/css",
     ".js": "text/javascript",
     ".mjs": "text/javascript",
     ".json": "application/json",
+    ".svg": "image/svg+xml",
 }
 
 
@@ -68,6 +72,19 @@ class BattleSession:
 
 
 def _resolve_static(path):
+    if path.startswith("/sprites/"):
+        rel = path[len("/sprites/"):]
+        if not rel or "\\" in rel or ".." in rel.split("/") or not rel.lower().endswith(".svg"):
+            return None
+        target = (SPRITES_DIR / rel).resolve()
+        try:
+            target.relative_to(SPRITES_DIR)
+        except ValueError:
+            return None
+        if not target.is_file():
+            return None
+        return target, CONTENT_TYPES[".svg"]
+
     rel = "index.html" if path == "/" else path.lstrip("/")
     if not rel or "\\" in rel or ".." in rel.split("/"):
         return None

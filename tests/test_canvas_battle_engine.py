@@ -301,3 +301,44 @@ class CanvasBattleEngineTests(unittest.TestCase):
             <= seen_kinds,
             seen_kinds,
         )
+
+    def test_svg_sprites_discovery_static_serving_and_bone_schema(self):
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        from battle_ui.__main__ import _resolve_static, SPRITES_DIR
+
+        session = BattleSession(seed=37)
+        s = session.state()
+        sprites = s.get("character_sprites", {})
+        self.assertIn("plan_b_annolin", sprites)
+        self.assertEqual(sprites["plan_b_annolin"], "/sprites/plan_b_annolin.svg")
+        self.assertIn("iron_qi_zheng", sprites)
+        self.assertIn("blank_boss", sprites)
+
+        # Roster catalog and choices carry matching sprite_url
+        by_id = {c["id"]: c for c in s["roster_catalog"]}
+        self.assertEqual(by_id["plan_b_annolin"]["sprite_url"], "/sprites/plan_b_annolin.svg")
+
+        # Static resolver serves valid SVG and blocks path traversal / non-SVG files
+        resolved = _resolve_static("/sprites/plan_b_annolin.svg")
+        self.assertIsNotNone(resolved)
+        file_path, ctype = resolved
+        self.assertEqual(ctype, "image/svg+xml")
+        self.assertTrue(file_path.is_file())
+        self.assertIsNone(_resolve_static("/sprites/../wind_plan_b.json"))
+        self.assertIsNone(_resolve_static("/sprites/nonexistent.svg"))
+
+        # Every SVG in _packs/sprites/ must parse cleanly with 160x160 viewBox & bone_* groups
+        svg_files = sorted(Path(SPRITES_DIR).glob("*.svg"))
+        self.assertGreaterEqual(len(svg_files), 6)
+        for svg_path in svg_files:
+            root = ET.fromstring(svg_path.read_text(encoding="utf-8"))
+            self.assertEqual(root.attrib.get("viewBox"), "0 0 160 160", svg_path.name)
+            bone_ids = [
+                el.attrib.get("id", "")
+                for el in root.iter()
+                if el.tag.endswith("g") and el.attrib.get("id", "").startswith("bone_")
+            ]
+            self.assertIn("bone_torso", bone_ids, svg_path.name)
+            self.assertIn("bone_head", bone_ids, svg_path.name)
+            self.assertIn("bone_weapon", bone_ids, svg_path.name)

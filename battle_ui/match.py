@@ -8,7 +8,7 @@ from context.context import Context
 from displayer import Displayer, _passives, _printed_skill, hand_key, special_seats, timing_label
 from entry.entry import Entry, character_of
 from game import Game
-from loader import load_characters_from_packs
+from loader import PACKS, load_characters_from_packs
 from models.card import CardState
 from models.character import Character, DAMAGE_GRADES
 from models.dice import TYPE_NAMES
@@ -471,7 +471,33 @@ def _assign_character_colors(pool):
     return colors
 
 
-def _roster_preview(spec, color=None):
+def _discover_character_sprites(pool, sprites_dir=None):
+    """Auto-discover convention-based `_packs/sprites/<char_id>.svg` (or optional `sprite_svg`)."""
+    root = (sprites_dir if sprites_dir is not None else (PACKS / "sprites")).resolve()
+    if not root.is_dir():
+        return {}
+    found = {}
+    for cid, spec in pool.items():
+        candidates = []
+        explicit = spec.get("sprite_svg")
+        if isinstance(explicit, str) and explicit.strip():
+            candidates.append(explicit.strip().lstrip("/"))
+        candidates.append(f"{cid}.svg")
+        for rel in candidates:
+            if "\\" in rel or ".." in rel.split("/") or not rel.lower().endswith(".svg"):
+                continue
+            target = (root / rel).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            if target.is_file():
+                found[cid] = f"/sprites/{target.relative_to(root).as_posix()}"
+                break
+    return found
+
+
+def _roster_preview(spec, color=None, sprite_url=None):
     return {
         "id": spec["id"],
         "name": spec["name"],
@@ -481,6 +507,7 @@ def _roster_preview(spec, color=None):
         "base_duels": Character.base_duels(spec),
         "faction": spec.get("faction", ""),
         "color": color,
+        "sprite_url": sprite_url,
         "passives": _passives(spec.get("passive_skills", ())),
         "faction_passives": _passives(spec.get("faction_passives", ())),
         "skills": [_printed_skill(skill) for skill in spec.get("skills", ())],
@@ -494,16 +521,18 @@ class BattleMatch:
         pool = {spec["id"]: spec for spec in load_characters_from_packs()}
         teams = _normalize_roster(roster, pool)
         self._character_colors = _assign_character_colors(pool)
+        self._character_sprites = _discover_character_sprites(pool)
         self.choices = [
             {
                 **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")},
                 "max_lightcore_hp": Character.initial_lightcore_max(spec["max_hp"]),
                 "color": self._character_colors.get(spec["id"]),
+                "sprite_url": self._character_sprites.get(spec["id"]),
             }
             for spec in pool.values()
         ]
         self._roster_catalog = [
-            _roster_preview(spec, self._character_colors.get(spec["id"]))
+            _roster_preview(spec, self._character_colors.get(spec["id"]), self._character_sprites.get(spec["id"]))
             for spec in pool.values()
         ]
         players = [_TablePlayer(1, "玩家一"), _TablePlayer(2, "玩家二")]
@@ -617,6 +646,7 @@ class BattleMatch:
             "draw_select": self._current_draw_prompt(),
             "speed_rolls": list(self.game.last_speed_rolls),
             "character_colors": dict(self._character_colors),
+            "character_sprites": dict(self._character_sprites),
             "card_owners": card_owners,
             "default_targets": {
                 str(p.side): p.default_target_character.id

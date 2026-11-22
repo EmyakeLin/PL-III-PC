@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
+  <defs>
+    <linearGradient id="sa_body" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#BA3444"/>
+      <stop offset="100%" stop-color="#781C28"/>
+    </linearGradient>
+    <linearGradient id="sa_gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FAD978"/>
+      <stop offset="100%" stop-color="#C78A1C"/>
+    </linearGradient>
+    <clipPath id="sa_tc"><path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z"/></clipPath>
+    <clipPath id="sa_hc"><circle cx="80" cy="56" r="13.5"/></clipPath>
+  </defs>
+
+  <!-- 1. PlanB Boss Dominance Halo -->
+  <g id="bone_back_hair" data-pivot="80,86">
+    <circle cx="80" cy="86" r="44" fill="#FBECEF" fill-opacity="0.74" stroke="url(#sa_gold)" stroke-width="1.5" stroke-opacity="0.54"/>
+    <polygon points="80,35 84,43 76,43" fill="url(#sa_gold)"/>
+    <polygon points="30,86 38,82 38,90" fill="url(#sa_gold)"/>
+    <polygon points="130,86 122,82 122,90" fill="url(#sa_gold)"/>
+  </g>
+
+  <!-- 2. Sweeping Ceremonial Boss Cloak -->
+  <g id="bone_cape_back" data-pivot="70,82">
+    <path d="M 74 80 Q 44 88 28 132 Q 52 134 74 128 Z" fill="#6E1924" opacity="0.86"/>
+    <path d="M 35 126 Q 54 127 72 123" fill="none" stroke="url(#sa_gold)" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- 3. Grounded Ceremonial Crimson-Gold Overcoat (Clip-Perfect Unbroken Border!) -->
+  <g id="bone_torso" data-pivot="80,136">
+    <path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z" fill="url(#sa_body)"/>
+    <g clip-path="url(#sa_tc)">
+      <rect x="80" y="70" width="24" height="68" fill="#6B1822" opacity="0.72"/>
+      <line x1="58" y1="126" x2="102" y2="126" stroke="url(#sa_gold)" stroke-width="2.4"/>
+      <polygon points="80,92 86,100 80,108 74,100" fill="url(#sa_gold)"/>
+    </g>
+    <path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z" fill="none" stroke="#FFFDF7" stroke-width="2.2" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 4. Ivory Head + Clipped Crimson Visor + Boss Crown -->
+  <g id="bone_head" data-pivot="80,68">
+    <circle cx="80" cy="56" r="13.5" fill="#FFFDF7"/>
+    <g clip-path="url(#sa_hc)">
+      <rect x="76" y="53" width="20" height="5.5" rx="2.4" fill="#A82E3C"/>
+    </g>
+    <circle cx="80" cy="56" r="13.5" fill="none" stroke="#3B322A" stroke-width="1.8"/>
+    <polygon points="70,45 75,35 80,41 85,35 90,45" fill="url(#sa_gold)" stroke="#3B322A" stroke-width="1.2" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 5. Gilded Ritual Dominance Blade -->
+  <g id="bone_weapon" data-pivot="98,102">
+    <polygon points="97,102 146,52 138,84 102,109" fill="#FFFDF7" stroke="#A82E3C" stroke-width="1.9" stroke-linejoin="round"/>
+    <line x1="101" y1="101" x2="140" y2="60" stroke="url(#sa_gold)" stroke-width="2.4" stroke-linecap="round"/>
+    <polygon points="98,96 105,103 98,110 91,103" fill="url(#sa_gold)"/>
+  </g>
+</svg>

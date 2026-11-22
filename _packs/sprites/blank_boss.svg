@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
+  <defs>
+    <linearGradient id="bl_ivory" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#FFFDF8"/>
+      <stop offset="100%" stop-color="#E8DEC8"/>
+    </linearGradient>
+    <linearGradient id="bl_gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FAE08C"/>
+      <stop offset="100%" stop-color="#C29024"/>
+    </linearGradient>
+    <clipPath id="bl_tc"><path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z"/></clipPath>
+    <clipPath id="bl_hc"><circle cx="80" cy="56" r="13.5"/></clipPath>
+  </defs>
+
+  <!-- 1. Blank Geometric Mirror Halo -->
+  <g id="bone_back_hair" data-pivot="80,86">
+    <circle cx="80" cy="86" r="44" fill="#FCF8EC" fill-opacity="0.78" stroke="url(#bl_gold)" stroke-width="1.5" stroke-opacity="0.65"/>
+    <polygon points="80,41 124,86 80,131 36,86" fill="none" stroke="url(#bl_gold)" stroke-width="1.1" opacity="0.55"/>
+  </g>
+
+  <!-- 2. Flowing Parchment Veil -->
+  <g id="bone_cape_back" data-pivot="70,82">
+    <path d="M 74 80 Q 44 88 28 132 Q 52 134 74 128 Z" fill="#E3D9C3" opacity="0.84"/>
+    <path d="M 35 126 Q 54 127 72 123" fill="none" stroke="url(#bl_gold)" stroke-width="2.0" stroke-linecap="round"/>
+  </g>
+
+  <!-- 3. Grounded Kintsugi Porcelain Figurine Robe (Clip-Perfect Gold Seam) -->
+  <g id="bone_torso" data-pivot="80,136">
+    <path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z" fill="url(#bl_ivory)"/>
+    <g clip-path="url(#bl_tc)">
+      <path d="M 74 78 L 84 96 L 74 114 L 90 134 M 96 92 L 84 96" fill="none" stroke="url(#bl_gold)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      <polygon points="80,94 86,102 80,110 74,102" fill="url(#bl_gold)"/>
+    </g>
+    <path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z" fill="none" stroke="#9E927E" stroke-width="1.8" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 4. Pure Blank Porcelain Sphere + Floating Gold Halo Crown -->
+  <g id="bone_head" data-pivot="80,68">
+    <circle cx="80" cy="56" r="13.5" fill="#FFFDF8"/>
+    <g clip-path="url(#bl_hc)">
+      <circle cx="84" cy="56" r="5.0" fill="none" stroke="url(#bl_gold)" stroke-width="1.5"/>
+    </g>
+    <circle cx="80" cy="56" r="13.5" fill="none" stroke="#8C7E68" stroke-width="1.7"/>
+    <ellipse cx="80" cy="36" rx="16" ry="3.6" fill="none" stroke="url(#bl_gold)" stroke-width="2.0"/>
+  </g>
+
+  <!-- 5. Floating Gilded Prism Blade (Cleanly on Front Flank) -->
+  <g id="bone_weapon" data-pivot="98,102">
+    <polygon points="97,100 146,50 150,56 102,108" fill="#FFFFFF" stroke="#B89132" stroke-width="1.8" stroke-linejoin="round"/>
+    <line x1="101" y1="100" x2="142" y2="57" stroke="url(#bl_gold)" stroke-width="2.2" stroke-linecap="round"/>
+    <polygon points="98,96 105,103 98,110 91,103" fill="url(#bl_gold)"/>
+  </g>
+</svg>

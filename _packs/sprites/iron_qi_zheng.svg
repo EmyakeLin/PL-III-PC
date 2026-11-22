@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
+  <defs>
+    <linearGradient id="qz_body" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#B0362F"/>
+      <stop offset="100%" stop-color="#7A1F1B"/>
+    </linearGradient>
+    <linearGradient id="qz_steel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#9A8F82"/>
+      <stop offset="100%" stop-color="#61584E"/>
+    </linearGradient>
+    <linearGradient id="qz_gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F7CF65"/>
+      <stop offset="100%" stop-color="#C98718"/>
+    </linearGradient>
+    <clipPath id="qz_tc"><path d="M 62 76 L 98 76 L 102 136 L 58 136 Z"/></clipPath>
+    <clipPath id="qz_hc"><path d="M 80 42 L 92 49 L 92 63 L 80 70 L 68 63 L 68 49 Z"/></clipPath>
+  </defs>
+
+  <!-- 1. Boss Sunburst Halo -->
+  <g id="bone_back_hair" data-pivot="80,86">
+    <circle cx="80" cy="86" r="44" fill="#FBEBEA" fill-opacity="0.72" stroke="#D99B26" stroke-width="1.5" stroke-opacity="0.48"/>
+    <polygon points="80,35 84,43 76,43" fill="#D99B26" opacity="0.85"/>
+    <polygon points="30,86 38,82 38,90" fill="#D99B26" opacity="0.85"/>
+    <polygon points="130,86 122,82 122,90" fill="#D99B26" opacity="0.85"/>
+  </g>
+
+  <!-- 2. Flowing Crimson Commander Banner Cloak -->
+  <g id="bone_cape_back" data-pivot="70,82">
+    <path d="M 74 80 Q 44 88 28 132 Q 52 134 74 128 Z" fill="#7A1F1B" opacity="0.84"/>
+    <path d="M 35 126 Q 54 127 72 123" fill="none" stroke="url(#qz_gold)" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- 3. Grounded Armored Iron-Pact Commander Torso + Clipped Plate & Fitted Pauldron -->
+  <g id="bone_torso" data-pivot="80,136">
+    <path d="M 62 76 L 98 76 L 102 136 L 58 136 Z" fill="url(#qz_body)"/>
+    <g clip-path="url(#qz_tc)">
+      <polygon points="70,76 92,76 90,110 81,118 72,110" fill="url(#qz_steel)" stroke="#FFFDF7" stroke-width="1.3"/>
+      <polygon points="81,84 86,95 81,106 76,95" fill="url(#qz_gold)"/>
+      <line x1="58" y1="126" x2="102" y2="126" stroke="url(#qz_gold)" stroke-width="2.4"/>
+    </g>
+    <path d="M 62 76 L 98 76 L 102 136 L 58 136 Z" fill="none" stroke="#FFFDF7" stroke-width="2.2" stroke-linejoin="round"/>
+    <rect x="54" y="74" width="18" height="12" rx="4.5" fill="url(#qz_steel)" stroke="url(#qz_gold)" stroke-width="1.6"/>
+  </g>
+
+  <!-- 4. Hexagonal Visored Commander Helm + Clipped Crimson Visor + Gold Crown -->
+  <g id="bone_head" data-pivot="80,68">
+    <path d="M 80 42 L 92 49 L 92 63 L 80 70 L 68 63 L 68 49 Z" fill="#FFFDF7"/>
+    <g clip-path="url(#qz_hc)">
+      <rect x="76" y="53" width="20" height="5.5" rx="2.4" fill="#9C322C"/>
+    </g>
+    <path d="M 80 42 L 92 49 L 92 63 L 80 70 L 68 63 L 68 49 Z" fill="none" stroke="#3B322A" stroke-width="1.8" stroke-linejoin="round"/>
+    <polygon points="80,33 85,43 80,48 75,43" fill="url(#qz_gold)"/>
+  </g>
+
+  <!-- 5. Heavy Hooked Commander Saber -->
+  <g id="bone_weapon" data-pivot="98,102">
+    <path d="M 98 104 C 116 86 132 68 144 50 C 151 56 150 68 140 78 L 132 74 L 135 83 C 124 94 112 103 101 110 Z"
+          fill="#FFFDF7" stroke="#9C322C" stroke-width="1.9" stroke-linejoin="round"/>
+    <line x1="102" y1="102" x2="139" y2="62" stroke="url(#qz_gold)" stroke-width="2.1" stroke-linecap="round"/>
+  </g>
+</svg>

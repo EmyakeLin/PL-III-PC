@@ -10,6 +10,9 @@
 import * as PIXI from '../vendor/pixi.min.mjs';
 import { INK, SIDE_THEME, SHIELD_STYLE, STATUS_COLORS } from './card_print.js';
 import { resolveInfiniteActorSpec } from './formation.js';
+import { createSkeletalSvgRig, setCharacterSpriteUrls, getCharacterSpriteUrl } from './svg_rig.js';
+
+export { setCharacterSpriteUrls, getCharacterSpriteUrl };
 
 const VALID_ARCHETYPES = new Set(['blade', 'lance', 'staff', 'shield', 'dual', 'cannon', 'tome']);
 const VALID_CRESTS = new Set(['diamond', 'hex', 'star', 'chevron', 'sunburst', 'octagram', 'shield_crest']);
@@ -60,6 +63,33 @@ const HANDCRAFTED_PALETTES = {
   },
   drill_engine: {
     primary: 0x9e5828, secondary: 0xe39e24, highlight: 0xfaeee2, metal: 0x6b6052, trim: 0x3b322a, motif: 'drill_engine',
+  },
+  plan_b_heck: {
+    primary: 0xc94e24, secondary: 0xeb9b28, highlight: 0xfef0df, metal: 0x6e5d4f, trim: 0x3b322a, motif: 'heck',
+  },
+  plan_b_heris: {
+    primary: 0xd1542a, secondary: 0xeaa42e, highlight: 0xfef1e2, metal: 0x7a6856, trim: 0x3b322a, motif: 'heris',
+  },
+  plan_b_li_ling: {
+    primary: 0x208578, secondary: 0xdba228, highlight: 0xe8f6f2, metal: 0x6d685e, trim: 0x3b322a, motif: 'li_ling',
+  },
+  plan_b_sa: {
+    primary: 0xa82e3c, secondary: 0xd9a028, highlight: 0xfbecef, metal: 0x736256, trim: 0x3b322a, motif: 'sa',
+  },
+  iron_qi_zheng: {
+    primary: 0x9c322c, secondary: 0xd99b26, highlight: 0xfbebea, metal: 0x6b6258, trim: 0x3b322a, motif: 'qi_zheng',
+  },
+  nova_lin_qiu: {
+    primary: 0x2b7e82, secondary: 0xe0a832, highlight: 0xedf6f5, metal: 0x8c7c66, trim: 0x3b322a, motif: 'lin_qiu',
+  },
+  blank_boss: {
+    primary: 0xc29838, secondary: 0xe3be5e, highlight: 0xfcf8ec, metal: 0x9e927e, trim: 0x453b31, motif: 'blank_boss',
+  },
+  bellfounder_que_ming: {
+    primary: 0x3d826e, secondary: 0xd4962c, highlight: 0xedf5f0, metal: 0x877250, trim: 0x3b322a, motif: 'que_ming',
+  },
+  shipbreaker_shen_li: {
+    primary: 0x2f7578, secondary: 0xc9682e, highlight: 0xeaf3f2, metal: 0x6b645c, trim: 0x3b322a, motif: 'shen_li',
   },
 };
 
@@ -1228,20 +1258,27 @@ export function createCharacterActor(ch, side, { radius = 38 } = {}) {
   const root = new PIXI.Container();
   const pal = actorPalette(ch, side);
   const facing = side === 1 ? 1 : -1;
+  const useCustomDrawHook = typeof pal.draw === 'function';
 
   const floorG = new PIXI.Graphics();
   const auraG = new PIXI.Graphics();
   const afterimageG = new PIXI.Graphics();
+  const bodyHolder = new PIXI.Container();
+  const svgRig = useCustomDrawHook ? null : createSkeletalSvgRig(ch, pal, radius);
   const bodyG = new PIXI.Graphics();
   const shieldG = new PIXI.Graphics();
   const flareG = new PIXI.Graphics();
 
-  bodyG.scale.x = facing;
+  if (svgRig) {
+    bodyHolder.addChild(svgRig);
+  }
+  bodyHolder.addChild(bodyG);
+  bodyHolder.scale.x = facing;
   afterimageG.scale.x = facing;
 
-  root.addChild(floorG, auraG, afterimageG, bodyG, shieldG, flareG);
+  root.addChild(floorG, auraG, afterimageG, bodyHolder, shieldG, flareG);
 
-  root._actorData = { ch, side, pal, radius, facing };
+  root._actorData = { ch, side, pal, radius, facing, svgRig };
 
   let lastTime = null;
   let focusSmooth = 0;
@@ -1252,6 +1289,20 @@ export function createCharacterActor(ch, side, { radius = 38 } = {}) {
   root.setFocusState = ({ focusBoost = 0, dimFactor = 0 } = {}) => {
     manualFocus = typeof focusBoost === 'boolean' ? (focusBoost ? 1 : 0) : clamp01(Number(focusBoost) || 0);
     manualDim = typeof dimFactor === 'boolean' ? (dimFactor ? 1 : 0) : clamp01(Number(dimFactor) || 0);
+  };
+
+  /**
+   * Return the stage-space coordinates of any named bone (`bone_weapon`, `bone_head`, `bone_torso`, etc.)
+   * so FX hooks (PR #2) can bind trails, flares, and projectiles directly to skeletal joints.
+   */
+  root.getBoneWorldPos = (boneId = 'bone_torso') => {
+    const local = svgRig ? svgRig.getBoneLocalPos(boneId) : { x: 0, y: -radius * 0.1 };
+    const sx = bodyHolder.scale.x || facing;
+    const sy = bodyHolder.scale.y || 1;
+    return {
+      x: root.x + bodyHolder.x + local.x * sx,
+      y: root.y + bodyHolder.y + local.y * sy,
+    };
   };
 
   root.tick = (time, motion, liveCh) => {
@@ -1293,10 +1344,10 @@ export function createCharacterActor(ch, side, { radius = 38 } = {}) {
     const scaleMag = 1 + (alive ? focusSmooth * 0.065 : 0) - dimSmooth * 0.03;
     const animAmp = 1 - dimSmooth * 0.55;
 
-    bodyG.position.set(offsetX, liftY);
-    bodyG.scale.set(facing * scaleMag, scaleMag);
-    bodyG.rotation = tilt;
-    bodyG.alpha = 1 - dimSmooth * 0.42;
+    bodyHolder.position.set(offsetX, liftY);
+    bodyHolder.scale.set(facing * scaleMag, scaleMag);
+    bodyHolder.rotation = tilt;
+    bodyHolder.alpha = 1 - dimSmooth * 0.42;
 
     floorG.alpha = 1 - dimSmooth * 0.42;
     auraG.alpha = 1 - dimSmooth * 0.52;
@@ -1341,22 +1392,36 @@ export function createCharacterActor(ch, side, { radius = 38 } = {}) {
     }
     drawStatusAuras(auraG, cur, r, time);
 
-    // 3. Evade wind-afterimages
+    // 3. Evade wind-afterimages (sleek translucent speed silhouettes)
     afterimageG.clear();
     afterimageG.scale.set(facing * scaleMag, scaleMag);
     if (evade > 0.03) {
       for (let k = 1; k <= 2; k++) {
         afterimageG.position.set(offsetX + facing * k * 16, liftY);
         afterimageG.alpha = evade * (0.45 / k);
-        drawCharacterBody(afterimageG, { ...pal, primary: 0x459934, secondary: 0x82cf6b }, cur, r, time, animAmp);
+        afterimageG.ellipse(0, -r * 0.1, r * 0.36, r * 0.62)
+          .fill({ color: 0x3b8f6e, alpha: 0.45 })
+          .stroke({ width: 1.8, color: 0x7dd4a8, alpha: 0.75 });
       }
     } else {
       afterimageG.alpha = 0;
     }
 
-    // 4. Sculpted animated fighter body
-    bodyG.clear();
-    drawCharacterBody(bodyG, pal, cur, r, time, animAmp);
+    // 4. High-Craft 9-Bone SVG Character Rig (O(1) per-frame bone animation; custom draw hook still honored!)
+    if (svgRig && svgRig.isReady()) {
+      if (bodyG.visible) {
+        bodyG.clear();
+        bodyG.visible = false;
+      }
+      svgRig.animate(time, m, alive, animAmp);
+    } else if (useCustomDrawHook) {
+      bodyG.visible = true;
+      bodyG.clear();
+      drawCharacterBody(bodyG, pal, cur, r, time, animAmp);
+    } else if (svgRig) {
+      // Wait for 2ms first-time SVG decode; animate immediately once mounted
+      svgRig.animate(time, m, alive, animAmp);
+    }
 
     // 5. Concentric shield domes
     shieldG.clear();
