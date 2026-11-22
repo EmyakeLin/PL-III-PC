@@ -8,6 +8,7 @@ MODULES = (
     "tests.test_die_response_semantics",
     "tests.test_range_amount_semantics",
     "tests.test_scheduled_effect_semantics",
+    "tests.test_shared_status_entries",
 )
 
 
