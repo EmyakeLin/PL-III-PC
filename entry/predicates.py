@@ -13,14 +13,16 @@ class Reference:
     path: tuple
     key: object = None
     default: object = None
+    size: bool = False
 
-    def read(self, ctx, entry):
+    def read(self, owner, event):
         root, *fields = self.path
-        owner = character_of(entry.owner) if root == "self" else ctx.event
-        value = read_path(owner, fields, missing=None)
+        value = read_path(owner if root == "self" else event, fields, missing=None)
         if self.key is not None:
-            return value.get(self.key, self.default) if isinstance(value, dict) else self.default
-        return self.default if value is None else value
+            value = value.get(self.key, self.default) if isinstance(value, dict) else self.default
+        if value is None:
+            return self.default
+        return len(value) if self.size else value
 
 
 @dataclass(frozen=True)
@@ -38,10 +40,13 @@ class Comparison:
     def matches(self, ctx, entry, ordering):
         if ordering and (isinstance(self.left, Operand) or isinstance(self.right, Operand)):
             return True
+        return self.evaluate(character_of(entry.owner), ctx.event, ctx.peek)
+
+    def evaluate(self, owner, event, peek=None):
         def read(value):
             if isinstance(value, Reference):
-                return value.read(ctx, entry)
-            return ctx.peek(value.offset) if isinstance(value, Operand) else value
+                return value.read(owner, event)
+            return peek(value.offset) if isinstance(value, Operand) else value
         left, right = read(self.left), read(self.right)
         if self.numeric and not isinstance(left, (int, float)):
             return False
@@ -68,7 +73,7 @@ def compile_when(when, trigger, timing):
             return Operand(len(operands) - operands.index(parts[0]) - 1)
         if root not in ("self", "event") or any(not key.isidentifier() or key.startswith("_") for key in parts):
             raise ValueError(f"无效的条件字段 {field!r}")
-        return Reference((root, *parts), options.get("key"), options.get("default"))
+        return Reference((root, *parts), options.get("key"), options.get("default"), options.get("size", False))
 
     if isinstance(when, list):
         result = []

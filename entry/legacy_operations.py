@@ -54,6 +54,16 @@ WORD_ALIASES = {
 }
 
 
+def compile_ability_requirements(spec):
+    from entry.predicates import compile_when
+
+    conditions = compile_when(spec.get("when", ()), None, None) if spec.get("when") else ()
+    if spec.get("requires_draw_pile"):
+        conditions += compile_when([{"left": {"field": "$self.player.cardspace.draw.content", "size": True},
+                                     "op": "gt", "right": 0}], None, None)
+    return conditions
+
+
 def overflow_followup(batch):
     if "reduce_to" in batch:
         return {"op": "program", "code": ["$targets", [

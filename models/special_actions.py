@@ -4,6 +4,7 @@ from dataclasses import dataclass, field, replace
 
 from entry.entry import Entry, TriggerType, character_of
 from entry.effects import run_effect
+from entry.legacy_operations import compile_ability_requirements
 from models.card import Card, CardState
 from models.character import Character
 from models.opcode import OpCode
@@ -71,6 +72,7 @@ class SpecialActions:
         self.duels = []
         self._declarations = []
         self.ability_uses = {}
+        self._ability_conditions = {}
         self.locked_cards = set()
         self._slot_choices = []
         self._card_choices = []
@@ -263,7 +265,11 @@ class SpecialActions:
                     continue
                 if any(actor.ability_effects.get(name, 0) < count for name, count in spec.get("ability_cost", {}).items()):
                     continue
-                if spec.get("requires_draw_pile") and not player.cardspace.draw.content:
+                cached = self._ability_conditions.get(key)
+                if cached is None or cached[0] is not spec:
+                    cached = spec, compile_ability_requirements(spec)
+                    self._ability_conditions[key] = cached
+                if not all(test.evaluate(actor, {"player": player}) for test in cached[1]):
                     continue
                 choice = SpecialAction("ability", character=actor, ability_id=spec["id"])
                 if spec["target"] == "self":

@@ -1294,5 +1294,43 @@ class PreRevealBindingTests(unittest.TestCase):
                         self.assertIs(duel.resolved_target, actors[1] if succeeds else None)
 
 
+class AbilityConditionTests(unittest.TestCase):
+    def test_eligibility_reads_current_zone_and_is_rechecked_before_payment(self):
+        from models.special_actions import SpecialActions
+        from unittest.mock import Mock
+        vm = Context()
+        player = Player(2, "乙")
+        game = vm.game = player.game = SimpleNamespace(context=vm, is_over=False, players=[player], turn_count=0, turn_number=1,
+                                                       pre_reveal=SimpleNamespace(playable_hand=lambda *args: [],
+                                                           opponent=lambda *_: None))
+        special = SpecialActions(game)
+        special.window_open = lambda _: True
+        actor = Character.__new__(Character)
+        actor.is_alive, actor.player, actor.statuses, actor.ability_effects = True, player, {}, {}
+        player.characters.append(actor)
+        base = {"target": "self", "window": "turn_start", "operation": [], "name": "示例", "id": "a"}
+        specs = []
+        actor.action_specs = lambda: iter(specs)
+        vm.pay_action_costs = Mock(return_value=True)
+        for zone in ("draw", "hand", "delayed_discard", "out_of_combat"):
+            cards = player.cardspace.zone(zone).content
+            for op, compare in COMPARISONS.items():
+                for threshold in (-2**100, 0, 1, 2, 2**97):
+                    specs[:] = [{**base, "when": [{"left": {"field": "$self.player.cardspace." + zone + ".content",
+                                                           "size": True}, "op": op, "right": threshold}]}]
+                    for n in range(3):
+                        cards[:] = [object()] * n
+                        self.assertEqual(bool(special.ability_options(player)), compare(n, threshold))
+            cards.clear()
+        specs[:] = [{**base, "requires_draw_pile": True}]
+        player.cardspace.draw.content.append(object())
+        action, = special.ability_options(player)
+        player.cardspace.draw.content.clear()
+        with self.assertRaises(ValueError):
+            special.apply(player, action)
+        vm.pay_action_costs.assert_not_called()
+        self.assertFalse(special.ability_uses)
+
+
 if __name__ == "__main__":
     unittest.main()
