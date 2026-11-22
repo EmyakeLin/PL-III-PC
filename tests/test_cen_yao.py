@@ -68,10 +68,10 @@ class SurveyorTests(unittest.TestCase):
         self.assertEqual(self.surveyor.statuses["校准"], 1)
         self.assertEqual(self.target.hp, 30 - 1 - 3 - 2)
 
-    def test_horizon_empties_the_last_stack_without_damage_bonus(self):
+    def test_horizon_keeps_the_last_stack_without_damage_bonus(self):
         self.surveyor.add_status("校准", 1)
         self.play("地平线回声")
-        self.assertNotIn("校准", self.surveyor.statuses)
+        self.assertEqual(self.surveyor.statuses["校准"], 1)
         self.assertEqual(self.target.hp, 30 - 2 - 1)
 
     def test_only_the_three_survey_shots_can_open_a_pre_reveal_duel(self):

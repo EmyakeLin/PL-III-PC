@@ -184,7 +184,7 @@ export const OFFICIAL_STATUS_RULES = {
   虚弱: '每层使持有者的非空白骰最终点数 −1。进攻骰、招架和闪避均适用。生效回合结束时清除。',
   迅捷: '每层使持有角色的速度 +1。先修正各角色速度，再计算阵营速度。生效回合结束时清除。',
   束缚: '每层使持有角色的速度 −1。先修正各角色速度，再计算阵营速度。生效回合结束时清除。',
-  烧伤: '回合结束时，将层数除以 4 向下取整记作 N，承受 min(N, 3) 点普通伤害。若实际受到伤害，烧伤减少 N + 2 层；若全被护盾吸收，则保留全部层数。',
+  烧伤: '回合末持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。',
   裂血: '上限 9 层。持有至少 3 层时，每场实际开始结算的交锋开始时承受 1 点穿甲伤害。达到 6 层后进入爆发，直到归零或被解除；爆发期间每被一个伤害部分命中且仍存活，额外承受 1 点穿甲伤害并减少 2 层。',
   呼吸: '上限 6 层。持有者的进攻骰命中时掷 1 枚六面骰，结果不高于层数则触发「暴击时」词条。',
   失衡: '上限 20 层。被「失衡爆发」词条命中时掷 1 枚二十面骰；结果不高于现有层数则获得 1 层致命失衡并减少 5 层失衡，否则增加 2 层失衡。',
@@ -293,25 +293,20 @@ export function formatDieRange(die) {
 }
 
 export function exactSkillTraits(card) {
-  const traits = [];
-  if (card.range_level) traits.push(RANGE_LABELS[card.range_level]);
-  if (card.ignore_range) traits.push(`无视 ${card.ignore_range} 级远程`);
-  if (card.pre_reveal) traits.push('开牌前打出');
-  if (card.anytime_play && card.anytime_play.length) {
-    const modeNames = { attack: '主动进攻', place: '置于空交锋', custom: '依卡面执行' };
-    traits.push(`任意时刻打出（${card.anytime_play.map((m) => modeNames[m] || m).join('、')}）`);
-  }
-  if (card.anytime_replace) traits.push('任意时刻替换');
-  if (card.interceptable === false) traits.push('不可拦截');
-  if (card.starts_out_of_combat) traits.push('战斗外');
-  return traits;
+  return exactSkillTraitSpecs(card).map(({ label }) => label);
 }
 
 export function exactSkillTraitSpecs(card) {
   const specs = [];
   if (card.range_level) specs.push({ label: RANGE_LABELS[card.range_level], style: TRAIT_STYLE.range });
   if (card.ignore_range) specs.push({ label: `无视 ${card.ignore_range} 级远程`, style: TRAIT_STYLE.ignore_range });
-  if (card.pre_reveal) specs.push({ label: '开牌前打出', style: TRAIT_STYLE.pre_reveal });
+  const earlyConditions = Object.entries(card.pre_reveal_requires_status || {});
+  if (earlyConditions.length) {
+    const terms = earlyConditions.map(([name, count]) => `${name}达到${count}层`);
+    specs.push({ label: `${terms.join('、')}时可在开牌前进攻`, style: TRAIT_STYLE.pre_reveal });
+  } else if (card.pre_reveal) {
+    specs.push({ label: '开牌前打出', style: TRAIT_STYLE.pre_reveal });
+  }
   if (card.anytime_play && card.anytime_play.length) {
     const modeNames = { attack: '主动进攻', place: '置于空交锋', custom: '依卡面执行' };
     specs.push({

@@ -72,6 +72,38 @@ class BlankDecisionTests(unittest.TestCase):
         self.assertEqual(self.a.statuses["能源"], 5)
         self.assertTrue(phase.declare_attack(seen, character=self.b).interceptable)
 
+    def test_deduce_draw_only_spends_when_both_costs_can_be_paid(self):
+        self.a.hp = 10
+        self.a.add_status("能源", 1)
+        self.a.add_ability_effect("抽卡资格", 1)
+        ctx = self.game.context
+        move = self.ability(self.a, "deduce_draw")
+        before_hand = list(self.left.cardspace.hand.content)
+        receipts = []
+        for opcode in ("SPEND_STATUS", "SPEND_ABILITY_EFFECT"):
+            ctx.register_entries(self.a, [dict(trigger=f"AFTER {opcode}",
+                operation=lambda current: receipts.append((current.event["opcode"], current.event["result"])))])
+
+        for guard in (
+            dict(trigger="BEFORE SPEND_STATUS", when={"status": "能源"},
+                 operation={"op": "program", "code": [1, "ADD"]}),
+            dict(trigger="BEFORE SPEND_ABILITY_EFFECT", when={"ability": "抽卡资格"}, operation="Cancel"),
+        ):
+            with self.subTest(blocked=guard["trigger"]):
+                listener, = ctx.register_entries(self.a, [guard])
+                self.assertFalse(self.game.special.apply(self.left, move))
+                self.assertEqual(self.a.ability_effects["抽卡资格"], 1)
+                self.assertEqual(self.a.statuses["能源"], 1)
+                self.assertEqual(self.left.cardspace.hand.content, before_hand)
+                self.assertEqual(receipts, [])
+                ctx.entries.remove(listener)
+
+        self.assertTrue(self.game.special.apply(self.left, move))
+        self.assertNotIn("抽卡资格", self.a.ability_effects)
+        self.assertNotIn("能源", self.a.statuses)
+        self.assertEqual(len(self.left.cardspace.hand.content), len(before_hand) + 1)
+        self.assertCountEqual(receipts, [("SPEND_STATUS", 1), ("SPEND_ABILITY_EFFECT", 1)])
+
     def test_forced_shot_only_targets_enemy_occupied_slot_and_cannot_retarget(self):
         target = self.take(self.b, "看破")
         shot = self.take(self.a, "牵制射击")
@@ -128,6 +160,26 @@ class BlankDecisionTests(unittest.TestCase):
         self.assertTrue(self.game.pipeline.before_duel_start)
         self.game.next_step()
         self.assertFalse(self.game.pipeline.before_duel_start)
+
+    def test_web_status_animation_follows_committed_payments(self):
+        game = BattleMatch(["blank_boss", "iron_qi_zheng"], seed=11).game
+        actor = game.players[0].characters[0]
+        actor.add_status("能源", 2)
+        actor.add_ability_effect("抽卡资格", 1)
+        energy = actor.statuses["能源"]
+        permits = actor.ability_effects["抽卡资格"]
+        game.fx_events.clear()
+        pay = game.context.pay_action_costs
+
+        self.assertTrue(pay(actor, {}, {"能源": 1}))
+        self.assertFalse(pay(actor, {"抽卡资格": 1}, {"能源": energy}))
+        self.assertEqual(actor.ability_effects["抽卡资格"], permits)
+        self.assertTrue(pay(actor, {"抽卡资格": 1}, {"能源": 1}))
+        self.assertEqual(actor.ability_effects.get("抽卡资格", 0), permits - 1)
+        self.assertEqual(actor.statuses.get("能源", 0), energy - 2)
+        energy_changes = [(event["before"], event["after"]) for event in game.fx_events
+                          if event["kind"] == "status_change" and event["status"] == "能源"]
+        self.assertEqual(energy_changes, [(energy, energy - 1), (energy - 1, energy - 2)])
 
     def test_web_mirror_can_select_second_copy_of_same_printed_card(self):
         table = BattleMatch(["blank_boss", "blank_boss"], seed=11)

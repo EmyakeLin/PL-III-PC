@@ -179,13 +179,13 @@ class WAACombatTests(unittest.TestCase):
         self.assertEqual(tech.statuses, {"充能": 8, "纯能": 1})
         self.assertEqual(ally.statuses["充能"], 2)
 
-    def test_dissipate_spends_the_last_charge_without_granting_the_skill_bonus(self):
+    def test_dissipate_keeps_the_last_charge_without_granting_the_skill_bonus(self):
         tech, = self.team("厄尔克斯")
         tech.add_status("充能", 1)
         card = self.use(tech, "能源逸散")
         self.assertEqual(card.final_bonus, 0)
-        self.assertEqual(card.use_state["spent_statuses"], {"充能": 1})
-        self.assertNotIn("充能", tech.statuses)
+        self.assertNotIn("充能", card.use_state.get("spent_statuses", {}))
+        self.assertEqual(tech.statuses["充能"], 1)
 
     def test_dissipate_must_cover_the_surcharge_to_gain_the_skill_bonus(self):
         tech, = self.team("厄尔克斯")
@@ -193,7 +193,8 @@ class WAACombatTests(unittest.TestCase):
         tech.add_status("纯能", 3)
         card = self.use(tech, "能源逸散")
         self.assertEqual(card.final_bonus, 0)
-        self.assertEqual(card.use_state["spent_statuses"], {"充能": 4, "纯能": 2})
+        self.assertEqual(card.use_state["spent_statuses"], {"纯能": 2})
+        self.assertEqual(tech.statuses["充能"], 9)
 
     def test_burst_with_eight_charge_upgrades_pierce_and_keeps_charge_from_repeats(self):
         tech, ally = self.team("厄尔克斯", "格罗琳娜")

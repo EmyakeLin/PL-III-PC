@@ -328,7 +328,7 @@ class Game:
         if old_zone is not None and content not in old_zone.content:
             return False
         space = self.duelspace if special or queued else self.active_duelspace
-        if queued and (content not in zones.hand.content or duel_idx >= len(space.space)
+        if queued and ((content not in zones.hand.content and not content.temporary) or duel_idx >= len(space.space)
                        or not self.pipeline.can_join(space.space[duel_idx])):
             return False
         with self.context.binding(special_placement=content if special else None,
@@ -460,4 +460,5 @@ class Game:
             return False
         self.is_over = True
         self.winner = alive[0] if alive else None
+        self.pipeline.end_battle()
         return True

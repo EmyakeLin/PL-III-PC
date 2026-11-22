@@ -163,7 +163,7 @@ class MatchTests(unittest.TestCase):
         self.assertTrue(actor.trigger_stagger())
         self.assertEqual((actor.statuses["失衡"],actor.statuses["致命失衡"]), (15, 1))
 
-    def test_burn_and_fatal_stagger_consume_on_positive_damage_even_with_full_shields(self):
+    def test_burn_loses_stacks_at_zero_damage_while_fatal_stagger_requires_positive_damage(self):
         self.roster(1)
         actor = self.game.players[0].characters[0]
         actor.add_status("烧伤", 20)
@@ -176,7 +176,8 @@ class MatchTests(unittest.TestCase):
         actor.begin_dice_round()
         self.game.context.register_entries(actor, [{"trigger": "BEFORE DAMAGE", "operation": "Armor: 6"}])
         actor.on_turn_end()
-        self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (13, 1))
+        self.assertEqual(actor.hp, actor.max_hp)
+        self.assertEqual((actor.statuses["烧伤"], actor.statuses["致命失衡"]), (8, 1))
 
     def test_pack_levels_formula_and_guard_alias(self):
         known_roster = {"铁壁先锋", "绯红决斗者", "演练斥候", "演练医护", "演练队长", "演练重装机",

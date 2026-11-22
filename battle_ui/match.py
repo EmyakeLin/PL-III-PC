@@ -135,31 +135,20 @@ class _TableCharacter(Character):
                     )
         return val
 
-    def apply_status_delta(self, name, amount, *, notify=True):
-        before = dict(self.statuses)
-        val = super().apply_status_delta(name, amount, notify=notify)
-        if self.game and hasattr(self.game, "emit_fx"):
-            # Resolve canonical key that changed
-            changed = None
-            for k in set(before) | set(self.statuses):
-                if before.get(k, 0) != self.statuses.get(k, 0):
-                    changed = k
-                    break
-            if changed is not None:
-                prev_v = before.get(changed, 0)
-                cur_v = self.statuses.get(changed, 0)
-                self.game.emit_fx(
-                    "status_change",
-                    side=self.player.side,
-                    character_id=self.id,
-                    character_name=self.name,
-                    status=changed,
-                    before=prev_v,
-                    after=cur_v,
-                    delta=cur_v - prev_v,
-                    burst=(changed == "裂血" and self.bleed_burst),
-                )
-        return val
+    def notify_status_change(self, name, previous, current):
+        if previous != current and self.game and hasattr(self.game, "emit_fx"):
+            self.game.emit_fx(
+                "status_change",
+                side=self.player.side,
+                character_id=self.id,
+                character_name=self.name,
+                status=name,
+                before=previous,
+                after=current,
+                delta=current - previous,
+                burst=(name == "裂血" and self.bleed_burst),
+            )
+        super().notify_status_change(name, previous, current)
 
     def _die(self):
         was_alive = self.is_alive

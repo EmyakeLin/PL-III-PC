@@ -113,7 +113,7 @@ class Dice:
         ctx = self.game.context
         with ctx.binding(source=actor, side=actor.player.side, card=self.card, die=self):
             ctx.stack.extend((actor, cost["status"], cost["amount"]))
-            self.resource_paid = bool(ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"))
+            self.resource_paid = ctx.pay_status_cost()
         return self.resource_paid
 
     def can_afford_use(self):

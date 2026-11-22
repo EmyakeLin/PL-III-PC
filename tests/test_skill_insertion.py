@@ -107,6 +107,37 @@ class SkillInsertionTests(unittest.TestCase):
         self.assertIsNone(self.game.special.decision_owner)
         self.assertFalse(hidden.destroyed)
 
+    def test_copied_immediate_attacks_can_nest_and_resume_without_deck_changes(self):
+        def attack(name):
+            return ["$self", name, "COPY_SKILL", 1, "SKILL_USE",
+                    "$target", "immediate_attack", "INSERT_AT", "INSERT_SKILL"]
+
+        def on_hit(code):
+            return {"trigger": "on_dice_hit", "operation": {"op": "program", "code": code}}
+
+        parent = self.card("母牌", [die(1, on_hit(attack("甲锤") + attack("乙锤"))), die(2)])
+        turn_end = {"trigger": "on_turn_end", "scope": "turn", "operation": {
+            "op": "program", "code": ["$self", "余响", 1, "STATUS"]}}
+        first = self.card("甲锤", [die(3, on_hit(attack("子锤")))], cost=2, entries=[turn_end], hand=True)
+        second = self.card("乙锤", [die(4)], cost=2, hand=True)
+        child = self.card("子锤", [die(1)], cost=1, hand=True)
+        self.game.pipeline.start_duel_combat()
+        self.run_to_choice_or_end()
+        self.assertFalse(self.game.pipeline.in_duel_phase)
+        self.assertEqual([card.name for card in self.game.used_cards], ["母牌", "甲锤", "子锤", "乙锤"])
+        self.assertEqual(self.foe.hp, 35 - 1 - 3 - 1 - 4 - 2)
+        self.assertEqual((self.actor.used_independent_cost, self.left.used_cost), (1, 1))
+        self.assertEqual(self.left.cardspace.hand.content, [first, second, child])
+        copies = self.game.used_cards[1:]
+        self.assertTrue(all(card.temporary and card.destroyed for card in copies))
+        self.assertTrue(all(not slot.get_content(self.left.side) for slot in self.game.special.duels))
+        self.game.finish_turn()
+        self.game.context.dispatch_pipeline("on_turn_end")
+        self.assertEqual(self.actor.statuses.get("余响"), 1)
+        self.assertEqual(self.left.cardspace.draw.content, [parent])
+        self.assertEqual(self.left.cardspace.hand.content, [first, second, child])
+        self.assertFalse(any(entry.owning_card in copies for entry in self.game.context.entries))
+
     def test_skill_and_slot_anchors_follow_the_ordinary_use_pipeline(self):
         first = self.card("原牌", [die(1)])
         before, after, tail = [self.card(name, [die(1)], hand=True) for name in ("前", "后", "末")]

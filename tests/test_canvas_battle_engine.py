@@ -1,7 +1,10 @@
 """Verification for pure-WebGL battle engine backend features and zero-DOM shell."""
 
 import io
+import json
 import re
+import shutil
+import subprocess
 import unittest
 from contextlib import redirect_stdout
 from http import HTTPStatus
@@ -117,6 +120,32 @@ class CanvasBattleEngineTests(unittest.TestCase):
             self.assertRegex(ds_src, rf"{dfn}:\s*\{{[^}}]*frame:\s*'square'[^}}]*color:\s*DEFENSE_DIE_COLOR")
         self.assertIn("HP_BAR_COLOR", ds_src)
         self.assertNotIn("highCost", cp_src)
+
+    @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
+    def test_webgl_pre_reveal_labels_and_burn_fallback_match_the_catalog(self):
+        state = BattleSession(seed=37).state()
+        cards = {card["name"]: card for actor in state["roster_catalog"] for card in actor["skills"]}
+        selection = [cards[name] for name in ("机动·贯彻长空", "抽刀", "开锋")]
+        script = """
+            import {readFileSync} from 'node:fs';
+            import {exactSkillTraits, exactSkillTraitSpecs, OFFICIAL_STATUS_RULES}
+                from './engine/design_system.js';
+            const cards = JSON.parse(readFileSync(0, 'utf8'));
+            console.log(JSON.stringify({
+                traits: cards.map(exactSkillTraits),
+                badges: cards.map(card => exactSkillTraitSpecs(card).map(spec => spec.label)),
+                burn: OFFICIAL_STATUS_RULES['烧伤'],
+            }));
+        """
+        result = subprocess.run(
+            [shutil.which("node"), "--input-type=module", "-e", script], cwd=STATIC_DIR,
+            input=json.dumps(selection), capture_output=True, encoding="utf-8", check=True,
+        )
+        rendered = json.loads(result.stdout)
+        expected = [["凝聚达到3层时可在开牌前进攻"], ["开牌前打出"], []]
+        self.assertEqual(rendered["traits"], expected)
+        self.assertEqual(rendered["badges"], expected)
+        self.assertIn(rendered["burn"], state["catalog"]["statuses"]["烧伤"])
 
     def test_no_paraphrasing_die_level_labels_or_filler_text(self):
         for name in (
@@ -242,11 +271,12 @@ class CanvasBattleEngineTests(unittest.TestCase):
     def test_full_match_emits_reveal_clash_and_recycle_fx_events(self):
         session = BattleSession(seed=37)
         s = session.state()
-        # Use two high-HP characters so Turn 1 definitely reaches turn_end & recycling
+        # Keep the pair fixed so an addition to the roster cannot end the fight
+        # before the first turn's cards are recycled.
         status, s = session.command({
             "action": "new",
             "revision": s["revision"],
-            "roster": [s["choices"][0]["id"], s["choices"][1]["id"]],
+            "roster": ["plan_b_heck", "char_iron_vanguard"],
         })
         self.assertEqual(status, HTTPStatus.OK)
         seen_kinds = set()

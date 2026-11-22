@@ -241,7 +241,7 @@ class BlankBossTests(unittest.TestCase):
         self.place("空白准镜")
         self.fight()
         self.assertEqual(self.enemy.hp, 30)
-        self.assertNotIn("能源", self.actor.statuses)
+        self.assertEqual(self.actor.statuses["能源"], 1)
         self.assertEqual(self.actor.used_independent_cost + self.left.used_cost, 0)
 
     def test_bloom_burns_opponents_energy_and_keeps_own(self):

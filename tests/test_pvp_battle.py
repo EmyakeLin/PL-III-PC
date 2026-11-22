@@ -57,7 +57,7 @@ class PlayerMatchTests(WireClient, unittest.TestCase):
         initial = self.observe()
         self.assertEqual(initial["lobby"]["picks"], {"1": "ember_wen_sheng", "2": "waa_lake"})
         choices = {c["id"] for c in initial["lobby"]["characters"]}
-        self.assertTrue({"mistport_cen_yao", "plan_b_annolin"} <= choices)
+        self.assertTrue({"mistport_cen_yao", "plan_b_annolin", "iron_qi_zheng"} <= choices)
         args = {"character_id": "mistport_cen_yao", "revision": self.observe(1)["revision"], "request_id": "pick"}
         self.assertEqual(self.request("/api/select_character", args)[0], 403)
         self.assertEqual(self.request("/api/select_character", {**args, "side": 2}, side=1)[0], 400)

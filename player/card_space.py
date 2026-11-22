@@ -9,6 +9,9 @@ class CardList():
 
     def add_card(self, card, position = -1):
         """Do not pass `position` to let card append in the end of the list (latest)"""
+        if isinstance(card, Card) and card.temporary:
+            card.dissolve()
+            return
         before = len(self.content)
         if position == -1:
             self.content.append(card)

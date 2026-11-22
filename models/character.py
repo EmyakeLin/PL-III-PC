@@ -3,7 +3,9 @@ from math import prod
 import random
 
 from models.card import Card
+from models.dice import Dice, DiceLevel, dice_value_range
 from models.opcode import OpCode
+from models.values import ValueBounds
 
 
 class CharacterRank(Enum):
@@ -13,13 +15,13 @@ class CharacterRank(Enum):
     EMPOWERED_BOSS = auto()
 
 
-class SpeedDie:
-    """An unprinted die used only to determine initiative."""
-    card = None
+class SpeedDie(Dice):
+    """An initiative die uses the same level ladder as combat dice."""
 
-    def __init__(self, owner):
-        self.owner = owner
-        self.value = 0
+    def __init__(self, owner, high):
+        grade = next((level for level, bounds in dice_value_range.items() if bounds[1] >= high), DiceLevel.D20)
+        super().__init__({"type": "blank", "level": grade.value, "roll_max": high}, owner.game)
+        self.owner = self.character = owner
 
 
 RANK_DUEL_MAP = dict(zip(CharacterRank, (1, 2, 3, 4)))
@@ -136,10 +138,16 @@ class Character:
             self.game.next_turn_statuses.append((source, self, name, amount, authority))
 
     def roll_speed(self):
-        die = SpeedDie(self)
         low, high = self.data.get("speed_die", (1, 4))
-        with self.game.context.binding(roll_kind="speed"):
-            rolled = self.game.context.eval_block([low, high, 0, die, OpCode.ROLL])
+        die = SpeedDie(self, high)
+        ctx = self.game.context
+        minimum = ValueBounds()
+        ctx.dispatch_pipeline("before_speed_roll", source=self, side=self.player.side, die=die,
+                              value_ref=minimum, printed_min=low, roll_kind="speed")
+        high = die.roll_max
+        low = min(high, max(1, minimum.apply(low)))
+        with ctx.binding(roll_kind="speed"):
+            rolled = ctx.eval_block([low, high, 0, die, OpCode.ROLL])
         raw = min(high, max(low, die.value)) if rolled is not None else 0
         self.speed = raw + self.status_modifier("speed")
         return self.speed
@@ -209,7 +217,7 @@ class Character:
     def spend_ability_effect(self, name, amount=1):
         ctx = self._effect_context
         ctx.stack.extend((self, name, amount))
-        return bool(ctx.execute_op(OpCode.SPEND_ABILITY_EFFECT, result_field="paid_in_full"))
+        return bool(ctx.execute_op(OpCode.SPEND_ABILITY_EFFECT, require_full=True, result_field="paid_in_full"))
 
     def expire_turn_abilities(self):
         for name in tuple(self.ability_effects):
@@ -271,14 +279,14 @@ class Character:
         rank = hand.cost_rank(card) if card in hand.content else card.hand_cost_rank
         return rank is not None and rank <= limit
 
-    def apply_status_delta(self, name, amount, *, notify=True):
+    def apply_status_delta(self, name, amount, *, notify=True, defer_effects=False):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
         if not self.is_alive or name in self.ability_rules:
             return 0
         name = self.canonical_status_name(name)
         rule = self.status_rules.get(name, {})
         required = rule.get("requires_status")
-        if required and not self.statuses.get(required):
+        if required and not self.statuses.get(required) and not defer_effects:
             return 0
         amount = int(amount)
         if amount < 0 and rule.get("permanent"):
@@ -290,9 +298,9 @@ class Character:
                 self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
             amount = accepted
         return self._set_status(name, max(0, self._ordinary_status(name) + amount),
-                                self._sustained_stacks.get(name, 0), notify=notify)
+                                self._sustained_stacks.get(name, 0), notify=notify, defer_effects=defer_effects)
 
-    def _set_status(self, name, ordinary, sustained, *, notify=True):
+    def _set_status(self, name, ordinary, sustained, *, notify=True, defer_effects=False):
         previous = self.statuses.get(name, 0)
         if sustained:
             self._ordinary_stacks[name] = ordinary
@@ -321,6 +329,12 @@ class Character:
             self.active_statuses.add(name)
         elif not value:
             self.active_statuses.discard(name)
+        if not defer_effects:
+            self.finish_status_change(name, previous, value, notify=notify)
+        return value
+
+    def finish_status_change(self, name, previous, value, *, notify=True):
+        """Resolve dependent statuses and notify listeners after committing the new balance."""
         cap_delta = (value - previous) * self.status_rules.get(name, {}).get("max_hp_per_stack", 0)
         if cap_delta:
             self._status_max_hp_delta += cap_delta
@@ -339,10 +353,13 @@ class Character:
                         self.clear_status(other)
         if notify:
             self.notify_status_change(name, previous, value)
-        return value
 
     def notify_status_change(self, name, previous, current):
         if previous != current:
+            duel = self.game.resolving_duel if self.game is not None else None
+            if duel is not None and current < previous:
+                key = self.player.side, name
+                duel.status_lost[key] = duel.status_lost.get(key, 0) + previous - current
             self._status_event("on_status_changed", status=name, previous_stacks=previous,
                                current_stacks=current, actual_delta=current - previous)
 

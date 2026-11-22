@@ -68,7 +68,7 @@ class WaaResources(unittest.TestCase):
         self.assertEqual(self.actor.skills[2].use_state["spent_statuses"], {"充能": 7})
         self.assertEqual(self.ctx.stack, [])
 
-    def test_partial_vortex_spend_only_gates_the_conditional_followup(self):
+    def test_charge_drains_for_and_but_requires_full_payment_for_a_conditional_effect(self):
         self.game.start_turn()
         schedule = ["$self", "$self", "骰子等级降低", 1, "QUEUE_STATUS"]
         for owner, balance, followup in (
@@ -76,22 +76,24 @@ class WaaResources(unittest.TestCase):
             (self.ally, 1, ["SPEND_STATUS_IN_FULL", schedule, "WHEN"]),
             (self.enemy, 2, ["SPEND_STATUS_IN_FULL", schedule, "WHEN"]),
         ):
-            owner.add_status("涡流", balance)
+            owner.add_status("充能", balance)
             self.ctx.register_entries(owner, [{
                 "trigger": "on_turn_end",
-                "operation": {"op": "program", "code": ["$self", "涡流", 2, *followup]},
+                "operation": {"op": "program", "code": ["$self", "充能", 2, *followup]},
             }])
         self.game.finish_turn()
         self.ctx.dispatch_pipeline("on_turn_end")
+        self.assertNotIn("充能", self.actor.statuses)
+        self.assertEqual(self.ally.statuses["充能"], 1)
+        self.assertNotIn("充能", self.enemy.statuses)
         for owner in (self.actor, self.ally, self.enemy):
-            self.assertNotIn("涡流", owner.statuses)
             self.assertNotIn("骰子等级降低", owner.statuses)
         self.game.start_turn()
         self.assertEqual(self.actor.statuses["骰子等级降低"], 1)
         self.assertNotIn("骰子等级降低", self.ally.statuses)
         self.assertEqual(self.enemy.statuses["骰子等级降低"], 1)
 
-    def test_partial_pure_spend_triggers_diffusion_and_preserves_its_own_receipt(self):
+    def test_only_funded_pure_payment_triggers_diffusion_and_nested_spending(self):
         self.gain("纯能", 1)
         self.gain("涡流", 1)
         self.ctx.register_entries(self.actor, [
@@ -99,15 +101,20 @@ class WaaResources(unittest.TestCase):
              "operation": {"op": "program", "code": [
                  "$self", "涡流", 1, "SPEND_STATUS_IN_FULL", ["$self", "迅捷", 1, "STATUS"], "WHEN",
              ]}},
-            {"trigger": "on_turn_start", "operation": {"op": "program", "code": [
+            {"trigger": "on_test_payment", "operation": {"op": "program", "code": [
                 "$self", "纯能", 2, "SPEND_STATUS_IN_FULL", ["$self", "强壮", 1, "STATUS"], "WHEN",
             ]}},
         ])
         card = self.actor.skills[1]
-        self.ctx.dispatch_pipeline("on_turn_start", source=self.actor, card=card)
-        self.assertEqual(self.actor.statuses, {"充能": 1, "迅捷": 1})
+        self.ctx.dispatch_pipeline("on_test_payment", source=self.actor, card=card)
+        self.assertEqual(self.actor.statuses, {"纯能": 1, "涡流": 1})
+        self.assertNotIn("充能", self.ally.statuses)
+        self.assertNotIn("spent_statuses", card.use_state)
+        self.gain("纯能", 1)
+        self.ctx.dispatch_pipeline("on_test_payment", source=self.actor, card=card)
+        self.assertEqual(self.actor.statuses, {"充能": 1, "迅捷": 1, "强壮": 1})
         self.assertEqual(self.ally.statuses["充能"], 1)
-        self.assertEqual(card.use_state["spent_statuses"], {"纯能": 1, "涡流": 1})
+        self.assertEqual(card.use_state["spent_statuses"], {"纯能": 2, "涡流": 1})
         self.assertEqual(self.ctx.stack, [])
 
     def test_gain_block_and_surcharge_can_be_removed_independently_in_the_pack(self):

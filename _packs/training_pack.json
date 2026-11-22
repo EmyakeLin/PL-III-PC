@@ -227,12 +227,11 @@
           "entries": [
             {
               "trigger": "before_dice_hit",
-              "when": {"owner_status_at_least": {"能源": 2}},
-              "operation": [
-                {"op": "status", "name": "能源", "amount": -2, "target": "self"},
-                "Damage_Add: 1"
-              ],
-              "description": "命中前若有至少 2 层能源，消耗 2 层，本次伤害部分 +1"
+              "operation": {
+                "op": "program",
+                "code": ["$self", "能源", 2, "SPEND_STATUS_IN_FULL", [{"op": "damage_add", "amount": 1}], "WHEN"]
+              },
+              "description": "命中前消耗 2 层能源以使本次伤害部分 +1"
             }
           ],
           "dice": [

@@ -23,10 +23,22 @@ class SpecialAction:
 
 
 @dataclass(frozen=True)
+class SkillCopy:
+    """A printed skill to instantiate only when an insertion is attempted."""
+    owner: Character
+    data: dict
+
+
+@dataclass(frozen=True)
 class SkillUse:
-    card: Card
+    card: Card | SkillCopy
     discount: int = 0
     prepaid: bool = False
+
+    def set_price(self):
+        self.card.use_state["use_discount"] = max(0, self.discount)
+        if self.prepaid:
+            self.card.use_state["cost_prepaid"] = True
 
 
 @dataclass
@@ -149,9 +161,20 @@ class SpecialActions:
         return True
 
     def insert_skill(self, use, anchor, ctx):
-        if isinstance(use, Card):
+        if isinstance(use, (Card, SkillCopy)):
             use = SkillUse(use)
-        if not isinstance(use, SkillUse) or not isinstance(use.card, Card):
+        if not isinstance(use, SkillUse):
+            return False
+        if isinstance(use.card, SkillCopy):
+            spec = use.card
+            if not spec.owner.is_alive or self.game.is_over:
+                return False
+            copy = Card(spec.owner.player, spec.data, spec.owner, temporary=True)
+            inserted = self.game.pipeline.insert_skill(replace(use, card=copy), anchor, ctx.event)
+            if not inserted:
+                copy.dissolve()
+            return inserted
+        if not isinstance(use.card, Card):
             return False
         return self.game.pipeline.insert_skill(use, anchor, ctx.event)
 
@@ -259,13 +282,8 @@ class SpecialActions:
         ctx = self.game.context
         target = action.target_card or actor
         with ctx.binding(source=actor, side=actor.player.side, target=target):
-            for name, count in spec.get("ability_cost", {}).items():
-                if not actor.spend_ability_effect(name, count):
-                    return False
-            for status, count in spec.get("cost", {}).items():
-                ctx.stack.extend((actor, status, count))
-                if not ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"):
-                    return False
+            if not ctx.pay_action_costs(actor, spec.get("ability_cost", {}), spec.get("cost", {})):
+                return False
             key = actor, action.ability_id
             self.ability_uses[key] = self.ability_uses.get(key, 0) + 1
             print(f"{actor.name} 使用「{spec['name']}」。")
@@ -391,7 +409,7 @@ class SpecialActions:
                 slot.intercept_card = card
                 slot.target_character = slot.target_duel_index = None
                 print(f"{player.name} 用「{card.name}」迎击即时交锋 {action.response_number}。")
-                game.pre_reveal.play_from_hand(slot, card, slot.attack_card.character)
+                game.pre_reveal.play_declared_skill(slot, card, slot.attack_card.character)
             else:
                 print(f"{player.name} 放行即时交锋 {action.response_number}。")
             self._resolve_ready()
@@ -412,20 +430,27 @@ class SpecialActions:
         if phase.can_attack(card.player) and game.pipeline.interrupt_space is None and not self._declarations:
             phase.declare_attack(card, character=action.character, duel_index=action.duel_index)
             return
-        slot = PreRevealDuel(game, card, action.character, action.duel_index, pre_reveal=False)
+        self.declare_field_attack(card, action.character, action.duel_index)
+
+    def declare_field_attack(self, card, target, duel_index=None, *, deferred=False):
+        game = self.game
+        slot = PreRevealDuel(game, card, target, duel_index, pre_reveal=False)
         if self.window_open("before_duel"):
             slot.origin = "before_duel"
         self.duels.append(slot)
         self._declarations.append(slot)
-        label = action.character.name if action.character else f"常规交锋 {action.duel_index + 1}"
+        label = target.name if target else f"常规交锋 {duel_index + 1}"
         print(f"即时交锋 {len(self.duels)}：{card.player.name} 以「{card.name}」进攻 {label}。")
-        phase.play_from_hand(slot, card, action.character)
-        self._resolve_ready()
+        game.pre_reveal.play_declared_skill(slot, card, target)
+        self._resolve_ready(deferred=deferred)
 
-    def _resolve_ready(self):
+    def _resolve_ready(self, *, deferred=False):
         if not self.game.is_over and self._declarations and self.pending_attack is None:
             slots, self._declarations = self._declarations, []
-            self.game.pipeline.start_special_duels(slots)
+            if deferred:
+                self.game.pipeline.queue_special_duels(slots)
+            else:
+                self.game.pipeline.start_special_duels(slots)
 
     def exchange(self, card, old):
         """Commit both zone changes together; hand size never crosses a threshold."""
@@ -450,18 +475,26 @@ class SpecialActions:
         cards = slot.get_content(player.side)
         cards[cards.index(old)] = card
         hand.remember_play_rank(card)
-        hand.content[hand.content.index(card)] = old
+        if old.temporary:
+            hand.content.remove(card)
+        else:
+            hand.content[hand.content.index(card)] = old
         card.state = old.state
         if isinstance(slot, PreRevealDuel):
             for field in ("attack_card", "intercept_card", "pulled_card"):
                 if getattr(slot, field) is old:
                     setattr(slot, field, card)
         self.game.used_cards[:] = [used for used in self.game.used_cards if used is not old]
-        old.reset_for_draw()
-        if card.state == CardState.PLACED_FACE_DOWN:
-            print(f"{player.name} 调换了一张扣置技能，原牌回手。")
+        if old.temporary:
+            old.dissolve()
+            hand._on_size_changed(len(hand.content) + 1, len(hand.content))
         else:
-            print(f"{card.character.name} 换入「{card.name}」，「{old.name}」回手。")
+            old.reset_for_draw()
+        destination = "消失" if old.temporary else "回手"
+        if card.state == CardState.PLACED_FACE_DOWN:
+            print(f"{player.name} 调换了一张扣置技能，原牌{destination}。")
+        else:
+            print(f"{card.character.name} 换入「{card.name}」，「{old.name}」{destination}。")
         self.game.context.dispatch_pipeline("on_skill_replaced", source=card.character, side=player.side,
                                             card=card, replaced_card=old, duel=slot)
         return True

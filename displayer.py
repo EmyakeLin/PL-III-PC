@@ -40,6 +40,7 @@ def _printed_skill(data, *, include_forms=False):
     return {
         "id": data["id"], "name": data["name"], "cost": data["cost"],
         "pre_reveal": data.get("pre_reveal", False),
+        "pre_reveal_requires_status": dict(data.get("pre_reveal_requires_status", {})),
         "before_duel_attack": data.get("before_duel_attack", False),
         "pre_reveal_target": data.get("pre_reveal_target"),
         "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
@@ -72,7 +73,8 @@ def _passives(specs):
 
 def _visible_card(card):
     details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
-    return {**details, "character_id": card.character.id, "borrowed": card.printed_owner is not card.character,
+    return {**details, "pre_reveal": card.can_open_pre_reveal,
+            "character_id": card.character.id, "borrowed": card.printed_owner is not card.character,
             "instance_id": card.instance_id, "cost": card.cost, "state": card.state.name.lower()}
 
 

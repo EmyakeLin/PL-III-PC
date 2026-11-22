@@ -123,7 +123,7 @@ def handle_reserve_die(ctx):
 
 def handle_queue_hit(ctx):
     mode, die = ctx.pop(), ctx.pop()
-    if mode not in ("full", "damage_only"):
+    if mode not in ("full", "damage_only", "effects_only"):
         raise ValueError(f"未知命中结算方式 {mode!r}")
     if die is not None and die.is_attack and _usable_component(die):
         die.queued_hits.append(mode)
@@ -282,7 +282,7 @@ def handle_pay_cost(ctx):
     extra = card.data.get("resource_cost")
     if extra and card.range_deficit < 3:
         ctx.stack.extend((character, extra["status"], extra["amount"]))
-        if not ctx.execute_op(OpCode.SPEND_STATUS, result_field="paid_in_full"):
+        if not ctx.pay_status_cost():
             return False
         if not character.is_alive or card.destroyed or card.state == CardState.NEGATED:
             return False
@@ -433,6 +433,8 @@ def handle_finalize_damage(ctx):
     amount = ctx.pop()
     ctx.pop()  # target
     final = max(0, int(ctx.event["value_ref"].apply(amount)))
+    divisor = ctx.event.get("damage_final_divisor", 1)
+    final = (final + divisor - 1) // divisor
     ctx.event.update(amount=final, damage_amount=final)
     return final
 
@@ -590,13 +592,11 @@ def handle_activate_status(ctx):
     if not (spec and target.is_alive and target.statuses.get(name) and name not in target.activating_statuses):
         ctx.current_op = None
         return
-    owner = ctx.event.get("activation_owner")
-    if owner is None:
-        owner, origin, status_name = target, "status", name
-    else:
-        caller = ctx.executions[-1].entry
-        origin = caller.origin if owner is caller.owner else kind_of(owner)
-        status_name = caller.status_name if origin == "status" else None
+    owner = ctx.event.get("activation_owner") or target
+    origin = ctx.event["activation_origin"]
+    status_name = None
+    if origin == "status":
+        status_name = ctx.executions[-1].entry.status_name if ctx.event.get("activation_owner") else name
     entry = Entry(owner, TriggerType.PIPELINE, "activate_status", spec["operation"],
                   origin=origin, damage_cause=spec.get("label", name), status_name=status_name)
     target.activating_statuses.add(name)
@@ -634,6 +634,9 @@ def handle_ability_effect(ctx):
     ctx.event["amount"] = amount
     if ctx.current_op == OpCode.SPEND_ABILITY_EFFECT:
         paid = amount if amount > 0 and old >= amount else 0
+        if not paid and ctx.event["require_full"]:
+            ctx.current_op = None
+            return 0
         total = target.apply_ability_delta(name, -paid)
         ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=-paid, paid_in_full=paid > 0)
         if paid:
@@ -667,34 +670,35 @@ def handle_status(ctx):
 
 
 def handle_spend_status(ctx):
-    """Drain up to the adjusted cost and report the actual debit and its sufficiency."""
+    """Apply a spend after price modifiers, preserving the balance on a failed conditional payment."""
     requested, name, target = ctx.pop(), ctx.pop(), ctx.pop()
     ctx.event.update(amount=requested, paid_in_full=False)
     balance = target.spendable_status(name)
-    if requested == "all" and balance and not target.is_alive:
+    require_full = ctx.event["require_full"]
+    if requested == "all" and balance and not target.is_alive and not require_full:
         target.clear_status(name)
         ctx.event["paid_in_full"] = True
         print(f"{target.combat_name} 清空剩余 {balance} 层{name}。")
         return balance
-    if not target.is_alive or not balance:
-        return 0
-    if requested == "all":
-        cost = balance
-    elif isinstance(requested, int) and requested > 0:
-        cost = requested
-    else:
+    cost = balance if requested == "all" else requested
+    if (not target.is_alive or not balance or not isinstance(cost, int) or cost <= 0
+            or (require_full and balance < cost)):
+        if require_full:
+            ctx.current_op = None
         return 0
     paid = min(cost, balance)
     previous = target.statuses.get(name, 0)
-    remaining = target.apply_status_delta(name, -paid, notify=False)
-    ctx.event["paid_in_full"] = paid == cost
+    deferred = ctx.event["defer_spend_effects"]
+    remaining = target.apply_status_delta(name, -paid, notify=False, defer_effects=deferred)
+    ctx.event.update(paid_in_full=paid == cost, previous_stacks=previous, current_stacks=remaining)
     card = ctx.event.get("card")
     if card is not None and card.character is target:
         spent = card.use_state.setdefault("spent_statuses", {})
         spent[name] = spent.get(name, 0) + paid
     shortfall = f"（需 {cost} 层，未付足）" if paid < cost else ""
     print(f"{target.combat_name} 消耗 {paid} 层{name}{shortfall}，剩余 {remaining} 层。")
-    target.notify_status_change(name, previous, remaining)
+    if not deferred:
+        target.notify_status_change(name, previous, remaining)
     return paid
 
 

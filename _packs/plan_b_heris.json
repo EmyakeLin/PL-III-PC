@@ -1,0 +1,199 @@
+{
+  "faction": "PlanB",
+  "characters": [
+    {
+      "id": "plan_b_heris", "name": "赫里斯", "title": "B级条目",
+      "rank": "NORMAL", "max_hp": 6, "base_max_duels": 2,
+      "passive_skills": [
+        {
+          "name": "PlanB 组织",
+          "entries": [{
+            "trigger": "on_turn_start",
+            "description": "回合开始时，若自己的三张技能集满，本回合额外获得1交锋和1通用费。",
+            "operation": {"op": "program", "code": [
+              "$own_skills_in_hand", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
+            ]}
+          }]
+        },
+        {
+          "name": "B级条目",
+          "entries": [{
+            "trigger": "on_turn_start",
+            "description": "初始交锋上限为2。回合开始时回复1生命。",
+            "operation": "Heal: 1", "target": "self"
+          }]
+        },
+        {
+          "name": "火焰之锤",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "description": "每回合重新累计火焰之锤的两次触发。",
+              "operation": {"op": "program", "code": ["$self", "火焰之锤次数", 0, "SET_CHARACTER_STATE"]}
+            },
+            {
+              "trigger": "before_dice_hit", "when": {"die_type": "blunt"},
+              "description": "打击命中前记录目标是否已有烧伤。本回合已触发两次后，目标每8烧伤使这次命中的骰子伤害+1，至多+2。",
+              "operation": {"op": "program", "code": [
+                "$die", "命中前持有烧伤", "$target", "烧伤", "STATUS_COUNT", 0, "GT", "SET_DIE_STATE",
+                "$self", "火焰之锤次数", "CHARACTER_STATE", 2, "GE", "$has_damage_part", "AND",
+                ["$target", "烧伤", "STATUS_COUNT", 8, "FLOOR_DIV", 2, "MIN", "DAMAGE_ADD"], "WHEN"
+              ]}
+            },
+            {
+              "trigger": "on_dice_hit", "when": {"die_type": "blunt"},
+              "description": "打击命中原本带有烧伤的目标时，施加1烧伤，每回合2次。",
+              "operation": {"op": "program", "code": [
+                "$die", "命中前持有烧伤", "DIE_STATE", "$self", "火焰之锤次数", "CHARACTER_STATE", 2, "LT", "AND",
+                ["$self", "火焰之锤次数", "$self", "火焰之锤次数", "CHARACTER_STATE", 1, "ADD", "SET_CHARACTER_STATE",
+                 "$target", "烧伤", 1, "STATUS"], "WHEN"
+              ]}
+            }
+          ]
+        },
+        {
+          "name": "爆燃清算",
+          "entries": [{
+            "trigger": "AFTER ACTIVATE_STATUS", "subject": "ally",
+            "when": {"status": "烧伤", "activation_kind": "ignite", "result": true},
+            "description": "其他友方角色的攻击触发引燃时，对同一目标发起一次「重锤！」追击。调用技能副本，减免1费，【使用时】照常结算。每位队友每回合至多触发一次。",
+            "operation": {"op": "program", "code": [
+              "$activation_owner", "CHARACTER_OF", "ally", "STORE",
+              "$activation_origin", "die", "EQ", "$activation_origin", "card", "EQ", "ADD",
+              {"local": "ally"}, "$self", "EQ", "NOT", "AND", "$in_duel", "AND", "$target_alive", "AND",
+              "$self", {"local": "ally"}, "CHARACTER_STATE", "$turn_number", "EQ", "NOT", "AND",
+              ["$self", {"local": "ally"}, "$turn_number", "SET_CHARACTER_STATE",
+               "$self", "heris_heavy_hammer", "COPY_SKILL", 1, "SKILL_USE",
+               "$target", "immediate_attack", "INSERT_AT", "INSERT_SKILL"], "WHEN"
+            ]}
+          }]
+        },
+        {
+          "name": "能源聚集",
+          "entries": [{
+            "trigger": "on_status_changed", "subject": "target", "when": {"status": "能源"},
+            "description": "每累计实际消耗8能源，获得1凝聚。余数跨回合保留。",
+            "operation": {"op": "program", "code": [
+              "$actual_delta", 0, "LT", [
+                "$self", "能源消耗余量", "CHARACTER_STATE", "$actual_delta", "SUB", "total", "STORE",
+                {"local": "total"}, 8, "FLOOR_DIV", "earned", "STORE",
+                "$self", "能源消耗余量", {"local": "total"}, {"local": "earned"}, 8, "MUL", "SUB", "SET_CHARACTER_STATE",
+                {"local": "earned"}, 0, "GT", ["$self", "凝聚", {"local": "earned"}, "STATUS"], "WHEN"
+              ], "WHEN"
+            ]}
+          }]
+        }
+      ],
+      "skills": [
+        {
+          "id": "heris_heavy_hammer", "name": "重锤！", "cost": 1,
+          "entries": [{
+            "trigger": "on_skill_use",
+            "description": "使用时消耗2能源。",
+            "operation": {"op": "program", "code": ["$self", "能源", 2, "SPEND_STATUS", "POP"]}
+          }],
+          "dice": [
+            {"type": "blunt", "level": 3, "entries": [
+              "1物理",
+              {"trigger": "on_dice_hit", "description": "施加1烧伤，凝聚至少3层时引燃。",
+               "operation": {"op": "program", "code": [
+                 "$target", "烧伤", 1, "STATUS",
+                 "$self", "凝聚", "STATUS_COUNT", 3, "GE", [{"op": "ignite"}], "WHEN"
+               ]}}
+            ]}
+          ]
+        },
+        {
+          "id": "heris_flame_conversion", "name": "烈火化能", "cost": 2,
+          "entries": [
+            {"trigger": "on_skill_use", "description": "使用时，若自身能源不高于4层，则获得2能源。",
+             "operation": {"op": "program", "code": [
+               "$self", "能源", "STATUS_COUNT", 4, "LE", ["$self", "能源", 2, "STATUS"], "WHEN"
+             ]}},
+            {"trigger": "on_skill_use", "description": "使用时，目标每有4烧伤，自身获得1能源，至多4层。",
+             "operation": {"op": "program", "code": [
+               "$skill_target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", 4, "MIN", "energy", "STORE",
+               {"local": "energy"}, 0, "GT", ["$self", "能源", {"local": "energy"}, "STATUS"], "WHEN"
+             ]}}
+          ],
+          "dice": [
+            {"type": "blunt", "level": 1, "entries": [
+              {"trigger": "on_dice_hit", "description": "获得1能源，施加1烧伤。",
+               "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS", "$target", "烧伤", 1, "STATUS"]}}
+            ]},
+            {"type": "blunt", "level": 2, "entries": [
+              {"trigger": "on_dice_hit", "when": {"target_status_at_least": {"烧伤": 8}},
+               "description": "若目标烧伤至少8层，获得2能源并抽1张牌。",
+               "operation": {"op": "program", "code": ["$self", "能源", 2, "STATUS", "$player", 1, "DRAW"]}}
+            ]}
+          ]
+        },
+        {
+          "id": "heris_crush", "name": "击溃！", "cost": 3,
+          "ignore_range_when": {"status": "凝聚", "minimum": 2, "snapshot": "使用时凝聚", "amount": 2},
+          "entries": [
+            {"trigger": "on_skill_use",
+             "description": "使用时消耗全部能源。每消耗4层，本技能骰级+1。每消耗2层，首骰命中时额外施加1烧伤。",
+             "operation": {"op": "program", "code": [
+               "$self", "能源", "all", "SPEND_STATUS", "paid", "STORE",
+               "$card", {"local": "paid"}, 4, "FLOOR_DIV", "SKILL_LEVEL_ADD",
+               "$card", "首骰额外烧伤", {"local": "paid"}, 2, "FLOOR_DIV", "SET_SKILL_STATE"
+             ]}},
+            {"trigger": "on_skill_use",
+             "description": "使用时，凝聚至少1层则本技能骰子基础值+2，至少2层无视2级远程，至少3层令首骰驻留。首骰拼输仍可命中，跳过伤害部分。",
+             "operation": {"op": "program", "code": [
+               "$card", "使用时凝聚", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"
+             ]}},
+            {"trigger": "before_dice_use",
+             "operation": {"op": "program", "code": [
+               "$card", "使用时凝聚", "SKILL_STATE", 1, "GE", ["$die", 2, "DIE_BASE_ADD"], "WHEN"
+             ]}}
+          ],
+          "dice": [
+            {"type": "blunt", "level": 3, "entries": [
+              "2物理",
+              {"trigger": "on_clash_lose", "description": "驻留时拼输仍可命中，跳过伤害部分。",
+               "operation": {"op": "program", "code": [
+                 "$card", "使用时凝聚", "SKILL_STATE", 3, "GE", ["$die", "effects_only", "QUEUE_HIT"], "WHEN"
+               ]}},
+              {"trigger": "on_dice_hit", "description": "施加2烧伤及使用时取得的额外烧伤，然后引燃。",
+               "operation": {"op": "program", "code": [
+                 "$target", "烧伤", 2, "$card", "首骰额外烧伤", "SKILL_STATE", "ADD", "STATUS", {"op": "ignite"}
+               ]}},
+              {"trigger": "AFTER STATUS", "subject": "source", "when": {"status": "烧伤", "activation_kind": "ignite"},
+               "description": "本骰引燃每实际移除1烧伤，自身获得1能源。",
+               "operation": {"op": "program", "code": [
+                 "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
+                 ["$self", "能源", 0, "$actual_delta", "SUB", "STATUS"], "WHEN"
+               ]}}
+            ]},
+            {"type": "blunt", "level": 4, "entries": [
+              "1物理",
+              {"trigger": "on_dice_hit", "description": "触发引燃。", "operation": {"op": "ignite"}},
+              {"trigger": "AFTER STATUS", "subject": "source", "when": {"status": "烧伤", "activation_kind": "ignite"},
+               "description": "本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
+               "operation": {"op": "program", "code": [
+                 "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
+                 ["$self", "能源", 0, "$actual_delta", "SUB", 2, "FLOOR_DIV", "TEAM_STATUS"], "WHEN"
+               ]}}
+            ]},
+            {"type": "blunt", "level": 1, "multiplier": 2, "entries": [
+              {"trigger": "on_dice_hit", "description": "触发引燃。", "operation": {"op": "ignite"}},
+              {"trigger": "AFTER STATUS", "subject": "source", "when": {"status": "烧伤", "activation_kind": "ignite"},
+               "description": "本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
+               "operation": {"op": "program", "code": [
+                 "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND", [
+                   0, "$actual_delta", "SUB", 3, "FLOOR_DIV", "stacks", "STORE",
+                   {"local": "stacks"}, 0, "GT", [
+                     "$self", "$target", "虚弱", {"local": "stacks"}, "QUEUE_STATUS",
+                     "$self", "$target", "束缚", {"local": "stacks"}, "QUEUE_STATUS"
+                   ], "WHEN"
+                 ], "WHEN"
+               ]}}
+            ]}
+          ]
+        }
+      ]
+    }
+  ]
+}
