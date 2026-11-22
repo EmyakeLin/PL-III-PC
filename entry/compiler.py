@@ -98,7 +98,10 @@ def compile_program(tokens, *, expand=expand_command):
 
 def prepare_effect(operation):
     if isinstance(operation, list) and all(isinstance(item, (str, dict)) for item in operation):
-        return [prepare_effect(item) for item in operation]
+        prepared = [prepare_effect(item) for item in operation]
+        if prepared and all(isinstance(item, Program) for item in prepared):
+            return Program(tuple(instruction for part in prepared for instruction in part.instructions))
+        return prepared
     if isinstance(operation, dict) and operation.get("op", "").lower() == "program":
         return {**operation, "code": compile_program(operation["code"])}
     if isinstance(operation, str):

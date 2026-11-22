@@ -90,10 +90,7 @@
           "entries": [
             {
               "trigger": "on_dice_clash",
-              "operation": {
-                "op": "program",
-                "code": ["$self", "羽流·林秋", 1, "STATUS"]
-              },
+              "operation": "STATUS 羽流·林秋 1 $self",
               "description": "每实际参与一次拼点，获得1羽流·林秋（至多12）。"
             },
             {
@@ -188,10 +185,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "operation": {
-                "op": "program",
-                "code": ["$self", "隧道", 1, "STATUS", "$player", 1, "DRAW", "$skill_target", "星结", 1, "STATUS"]
-              },
+              "operation": ["STATUS 隧道 1 $self", "DRAW 1", "STATUS 星结 1 $skill_target"],
               "description": "获得1隧道，抽1卡，施加1星结。"
             }
           ],
@@ -203,10 +197,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "隧道", 1, "STATUS", "$target", "星结", 1, "STATUS"]
-                  },
+                  "operation": ["STATUS 隧道 1 $self", "STATUS 星结 1 $target"],
                   "description": "获得1隧道，施加1星结。"
                 }
               ]
@@ -217,10 +208,7 @@
               "entries": [
                 {
                   "trigger": "on_clash_win",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$player", 1, "DRAW", "$self", "隧道", 1, "STATUS", "$die", "REPEAT_DIE"]
-                  },
+                  "operation": ["DRAW 1", "STATUS 隧道 1 $self", "REPEAT_DIE $die"],
                   "description": "抽1卡，获得1隧道，重复使用本骰。"
                 }
               ]
@@ -234,10 +222,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "operation": {
-                "op": "program",
-                "code": ["$self", "隧道", 2, "STATUS"]
-              },
+              "operation": "STATUS 隧道 2 $self",
               "description": "获得2隧道。"
             }
           ],
@@ -249,10 +234,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "隧道", 2, "STATUS"]
-                  },
+                  "operation": "STATUS 隧道 2 $self",
                   "description": "获得2隧道。"
                 }
               ]
@@ -263,10 +245,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", 1, "HEAL", "$target", "星结", 1, "STATUS"]
-                  },
+                  "operation": ["HEAL 1", "STATUS 星结 1 $target"],
                   "description": "回复1生命，施加1星结。"
                 }
               ]
@@ -391,10 +370,7 @@
                 "0物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target", "星结", 2, "STATUS", "$self", "隧道", 1, "STATUS"]
-                  },
+                  "operation": ["STATUS 星结 2 $target", "STATUS 隧道 1 $self"],
                   "description": "施加2星结，获得1隧道。"
                 }
               ]
@@ -406,10 +382,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "$target", "虚弱", 1, "QUEUE_STATUS"]
-                  },
+                  "operation": "QUEUE_STATUS $self $target 虚弱 1",
                   "description": "下回合施加1虚弱。"
                 }
               ]
@@ -501,10 +474,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target_next_die", "DESTROY"]
-                  },
+                  "operation": "DESTROY $target_next_die",
                   "description": "立即摧毁目标下一颗待用骰，然后按剩余骰序配对。"
                 },
                 {
@@ -561,10 +531,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "when": {"owner_status_at_least": {"隧道开启": 1}},
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "$target", "限制", 2, "QUEUE_STATUS"]
-                  },
+                  "operation": "QUEUE_STATUS $self $target 限制 2",
                   "description": "隧道开启时，下回合施加2限制。"
                 }
               ]

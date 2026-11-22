@@ -83,21 +83,21 @@
               "trigger": "on_clash_lose",
               "when": {"die_type": "evade"},
               "turn_limit": {"key": "drifting_evade", "count": 2},
-              "operation": {"op": "program", "code": ["$self", 1, "HEAL", "$self", "涡流", 1, "STATUS"]},
+              "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
               "description": "自身闪避骰拼点失败、打平或跳过拼点时，回复1生命值并获得1层涡流，每回合合计至多2次。"
             },
             {
               "trigger": "on_clash_draw",
               "when": {"die_type": "evade"},
               "turn_limit": {"key": "drifting_evade", "count": 2},
-              "operation": {"op": "program", "code": ["$self", 1, "HEAL", "$self", "涡流", 1, "STATUS"]},
+              "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
               "description": "自身闪避骰拼点打平时同样触发翠流漂泊。"
             },
             {
               "trigger": "on_clash_skip",
               "when": {"die_type": "evade"},
               "turn_limit": {"key": "drifting_evade", "count": 2},
-              "operation": {"op": "program", "code": ["$self", 1, "HEAL", "$self", "涡流", 1, "STATUS"]},
+              "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
               "description": "自身闪避骰跳过拼点时同样触发翠流漂泊。"
             }
           ]
@@ -126,7 +126,7 @@
                "description": "命中时获得1层涡流。"}
             ]},
             {"type": "evade", "level": 2, "entries": [
-              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "slash", "level": 2, "entries": [
               {"trigger": "before_dice_pair", "operation": {"op": "program", "code": [
@@ -172,7 +172,7 @@
           ],
           "dice": [
             {"type": "slash", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": ["$self", 1, "LOSE_HP"]},
+              {"trigger": "on_dice_hit", "operation": "LOSE_HP $self 1",
                "description": "命中时自身失去1生命值。"}
             ]},
             {"type": "block", "level": 3, "entries": [
@@ -209,10 +209,10 @@
           ],
           "dice": [
             {"type": "evade", "level": 1, "entries": [
-              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "evade", "level": 1, "entries": [
-              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "slash", "level": 3, "entries": ["0物理",
               {"trigger": "before_dice_hit", "when": {"owner_status_at_least": {"涡流": 3}},
@@ -282,17 +282,13 @@
           ],
           "dice": [
             {"type": "evade", "level": 3, "entries": [
-              {"trigger": "on_clash_win", "operation": "Heal: 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "pierce", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": [
-                "$self", "$self", "涡流", 1, "QUEUE_STATUS"
-              ]}, "description": "命中时在下回合获得1层涡流。"}
+              {"trigger": "on_dice_hit", "operation": "QUEUE_STATUS $self $self 涡流 1", "description": "命中时在下回合获得1层涡流。"}
             ]},
             {"type": "blunt", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": [
-                "$self", "$self", "涡流", 1, "QUEUE_STATUS"
-              ]}, "description": "命中时在下回合获得1层涡流。"}
+              {"trigger": "on_dice_hit", "operation": "QUEUE_STATUS $self $self 涡流 1", "description": "命中时在下回合获得1层涡流。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
               {"trigger": "AFTER RESOLVE_HIT", "operation": {"op": "program", "damage_part": true, "code": [

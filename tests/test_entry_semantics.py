@@ -168,6 +168,32 @@ class CommandTests(unittest.TestCase):
                     self.assertEqual(vm.stack, [])
                     self.assertIn(OpCode.WITH_BINDINGS, compile_program([operation]).instructions)
 
+    def test_author_lines_compile_in_printed_order_for_both_permitted_factions(self):
+        import json
+        from pathlib import Path
+        from entry.compiler import Field, Program
+        root = Path(__file__).resolve().parents[1] / "_packs"
+        files = ("wind_plan_b", "plan_b_heck", "plan_b_heris", "plan_b_li_ling", "xinxing_lin_qiu")
+        compiled = {}
+        def visit(node):
+            if isinstance(node, dict):
+                if "operation" in node and "trigger" in node:
+                    entry = Entry.from_spec(None, node)
+                    if "description" in node:
+                        compiled[node["description"]] = entry.compiled_operation
+                for child in node.values():
+                    visit(child)
+            elif isinstance(node, list):
+                for child in node:
+                    visit(child)
+        for filename in files:
+            visit(json.loads((root / (filename + ".json")).read_text(encoding="utf-8")))
+        self.assertEqual(compiled["获得1隧道，抽1卡，施加1星结。"], Program((
+            Field("self"), "隧道", 1, OpCode.STATUS, Field("recipient_player"), 1, OpCode.DRAW,
+            Field("skill_target"), "星结", 1, OpCode.STATUS)))
+        self.assertEqual(compiled["下回合获得2迅捷。"], Program((
+            Field("self"), Field("self"), "迅捷", 2, OpCode.QUEUE_STATUS)))
+
     def test_operand_types_and_extension(self):
         vocabulary = CommandSet()
 

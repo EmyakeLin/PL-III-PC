@@ -23,10 +23,7 @@
           "entries": [
             {
               "trigger": "on_turn_start",
-              "operation": {
-                "op": "program",
-                "code": ["$player", 1, "DRAW", "$self", 2, "HEAL"]
-              },
+              "operation": ["DRAW 1", "HEAL 2"],
               "description": "初始交锋上限为3；回合开始时额外抽1张手牌并回复2生命值。"
             }
           ]
@@ -211,10 +208,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target", "烧伤", 1, "STATUS"]
-                  },
+                  "operation": "STATUS 烧伤 1 $target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -266,10 +260,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target", "烧伤", 2, "STATUS"]
-                  },
+                  "operation": "STATUS 烧伤 2 $target",
                   "description": "施加2烧伤。"
                 }
               ]
@@ -298,10 +289,7 @@
                 "1穿甲",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target", "烧伤", 1, "STATUS"]
-                  },
+                  "operation": "STATUS 烧伤 1 $target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -369,10 +357,7 @@
                     "1穿甲",
                     {
                       "trigger": "on_dice_hit",
-                      "operation": {
-                        "op": "program",
-                        "code": ["$target", "烧伤", 1, "STATUS"]
-                      },
+                      "operation": "STATUS 烧伤 1 $target",
                       "description": "施加1烧伤。"
                     }
                   ]
@@ -385,10 +370,7 @@
                     "1穿甲",
                     {
                       "trigger": "on_dice_hit",
-                      "operation": {
-                        "op": "program",
-                        "code": ["$target", "烧伤", 1, "STATUS"]
-                      },
+                      "operation": "STATUS 烧伤 1 $target",
                       "description": "施加1烧伤。"
                     }
                   ]
@@ -399,10 +381,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "operation": {
-                "op": "program",
-                "code": ["$self", "弹药", 2, "STATUS"]
-              },
+              "operation": "STATUS 弹药 2 $self",
               "description": "获得2弹药。"
             },
             {
@@ -421,10 +400,7 @@
               "entries": [
                 {
                   "trigger": "on_clash_win",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "能源", 1, "STATUS"]
-                  },
+                  "operation": "STATUS 能源 1 $self",
                   "description": "拼点胜利时获得1能源。"
                 }
               ]
@@ -435,10 +411,7 @@
               "entries": [
                 {
                   "trigger": "on_clash_win",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "能源", 1, "STATUS"]
-                  },
+                  "operation": "STATUS 能源 1 $self",
                   "description": "拼点胜利时获得1能源。"
                 }
               ]
@@ -469,10 +442,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$self", "能源", 3, "STATUS"]
-                  },
+                  "operation": "STATUS 能源 3 $self",
                   "description": "获得3能源。"
                 }
               ]
@@ -689,10 +659,7 @@
                 "0物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target", "烧伤", 1, "STATUS"]
-                  },
+                  "operation": "STATUS 烧伤 1 $target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -705,10 +672,7 @@
                 "0物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$target", "烧伤", 1, "STATUS"]
-                  },
+                  "operation": "STATUS 烧伤 1 $target",
                   "description": "施加1烧伤。"
                 }
               ]
