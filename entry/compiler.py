@@ -25,6 +25,15 @@ class Field:
 
 
 @dataclass(frozen=True)
+class Access:
+    path: tuple
+
+    def execute(self, vm):
+        from entry.references import read_path
+        vm.push(read_path(vm.pop(), self.path))
+
+
+@dataclass(frozen=True)
 class Local:
     name: str
 
@@ -74,6 +83,8 @@ def compile_program(tokens, *, expand=expand_command):
                     if not isinstance(options, dict) or {"result_field", "defer_payment", "opcode", "authority", "execution"} & options.keys():
                         raise ValueError("调用参数不能覆盖执行栈或词条话语权")
                     yield Invocation(opcode, tuple(options.items()), result, token.get("default"))
+                elif "field" in token:
+                    yield Access(tuple(token["field"].split(".")))
                 elif "local" in token:
                     yield Local(token["local"])
                 else:
@@ -83,11 +94,16 @@ def compile_program(tokens, *, expand=expand_command):
                 yield token
                 continue
             if token.startswith("$"):
-                body = FIELD_ALIASES.get(token[1:])
+                root, *suffix = token[1:].split(".")
+                if any(not part.isidentifier() or part.startswith("_") for part in (root, *suffix)):
+                    raise ValueError(f"无效的词条字段 {token!r}")
+                body = FIELD_ALIASES.get(root)
                 if body is None:
                     yield Field(token[1:])
                     continue
-                name = token
+                name = "$" + root
+                if suffix:
+                    body = [*body, {"field": ".".join(suffix)}]
             elif token in WORD_ALIASES:
                 name, body = token, WORD_ALIASES[token]
             elif token in WORDS or token in ("STORE", "DAMAGE_ADD"):

@@ -146,6 +146,45 @@ class CommandTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compile_program([{"call": "DRAW", "with": {"authority": 2}}])
 
+    def test_board_queries_preserve_seat_member_slot_order_and_exclude_destroyed_cards(self):
+        from models.duel import DuelSlot
+        left, right = Player(3, "甲"), Player(9, "乙")
+        a, b, c = [SimpleNamespace(is_alive=True, player=p) for p in (left, left, right)]
+        a.name, b.name, c.name = "a", "b", "c"
+        left.characters, right.characters = [a, b], [c]
+        slots = [DuelSlot(), DuelSlot()]
+        for slot, owner, name, broken in [(slots[0], b, "B", False), (slots[1], a, "A", False),
+                                          (slots[0], a, "gone", True), (slots[1], c, "C", False)]:
+            slot.add_content(owner.player.side, SimpleNamespace(character=owner, id=name, destroyed=broken))
+        vm = TracedContext()
+        vm.game = SimpleNamespace(players=[left, right], board_slots=lambda: iter(slots))
+        entry = Entry.from_spec(a, {"trigger": "tick", "operation": []})
+        for field, expected in (("$own_board_skills", ["A"]), ("$target_board_skills", ["C"]),
+                                ("$board_skills", ["A", "B", "C"])):
+            vm.trace.clear()
+            with vm.binding(target=c, bindings={"holder": "outside"}):
+                run_program(vm, entry, [field, "POP"])
+                self.assertEqual(vm.event["bindings"], {"holder": "outside"})
+            self.assertEqual([card.id for card in vm.trace[-2][2][-1]], expected)
+        c.is_alive = False
+        with vm.binding(target=c):
+            run_program(vm, entry, ["$target_board_skills", "POP"])
+        self.assertEqual(vm.trace[-2][2][-1], [])
+
+    def test_duel_slot_offset_and_remaining_cards_vary_independently(self):
+        from models.duel import DuelSlot
+        vm = Context()
+        slots = [DuelSlot() for _ in range(3)]
+        space = SimpleNamespace(space=slots, current_duel_index=1)
+        for side in (-3, 0, 7):
+            slots[2].content[side] = [side, "middle", "last"]
+            for offset in (-2**81, -1, 0, 1, 2**81):
+                for start in range(5):
+                    slots[2].current_card_index[side] = start
+                    vm.eval_block([space, offset, OpCode.SLOT_AT_OFFSET, side, OpCode.REMAINING_CARDS])
+                    expected = [side, "middle", "last"][start:] if offset == 1 else []
+                    self.assertEqual(vm.pop(), expected)
+
     def test_inline_native_instructions_preserve_every_declared_operand(self):
         from entry.compiler import Field, compile_program
         from models.opcodes import OPERANDS

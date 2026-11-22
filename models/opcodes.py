@@ -29,7 +29,7 @@ def handle_clamp(ctx):
 
 
 _BINARY_OPERATIONS = {
-    OpCode.FLOOR_DIV: operator.floordiv, OpCode.MIN: min,
+    OpCode.IS: operator.is_, OpCode.FLOOR_DIV: operator.floordiv, OpCode.MIN: min,
     OpCode.COALESCE: lambda value, default: default if value is None else value,
     OpCode.ALL_IN: lambda members, collection: all(item in collection for item in members),
     OpCode.LT: operator.lt, OpCode.LE: operator.le, OpCode.GT: operator.gt,
@@ -175,26 +175,57 @@ def handle_set_character_state(ctx):
         return value
 
 
-def handle_filter(ctx):
-    predicate, items = ctx.pop(), ctx.pop()
-    selected = []
-    for item in items:
+def handle_map_or_filter(ctx):
+    block, items = ctx.pop(), ctx.pop()
+    filtering = ctx.current_op == OpCode.FILTER
+    result = []
+    for item in tuple(items):
         if ctx.executions and ctx.executions[-1].cancelled:
             break
         surrounding, ctx.stack = ctx.stack, []
         try:
             with ctx.binding(item=item):
-                ctx.eval_block(predicate)
+                ctx.eval_block(block)
             if ctx.executions and ctx.executions[-1].cancelled:
                 break
             if len(ctx.stack) != 1:
-                raise ValueError("筛选条件必须产生一个结果")
-            keep = ctx.pop()
+                raise ValueError("集合表达式必须产生一个结果")
+            value = ctx.pop()
         finally:
             ctx.stack = surrounding
-        if keep:
-            selected.append(item)
-    ctx.push(selected)
+        if not filtering or value:
+            result.append(item if filtering else value)
+    ctx.push(result)
+
+
+def handle_lookup(ctx):
+    default, key, source = ctx.pop(), ctx.pop(), ctx.pop()
+    if source is None:
+        ctx.push(default)
+        return
+    try:
+        ctx.push(source[key])
+    except (KeyError, IndexError):
+        ctx.push(default)
+
+
+def handle_slot_cards(ctx):
+    side, slot = ctx.pop(), ctx.pop()
+    cards = slot.get_content(side) if slot is not None else []
+    if ctx.current_op == OpCode.REMAINING_CARDS and slot is not None:
+        cards = cards[slot.current_card_index.get(side, 0):]
+    ctx.push(cards)
+
+
+def handle_slot_offset(ctx):
+    offset, space = ctx.pop(), ctx.pop()
+    index = space.current_duel_index + offset
+    ctx.push(space.space[index] if 0 <= index < len(space.space) else None)
+
+
+def handle_skill_restricted(ctx):
+    card, character = ctx.pop(), ctx.pop()
+    ctx.push(character.skill_restricted(card))
 
 
 def handle_with_bindings(ctx):
@@ -847,7 +878,17 @@ DISPATCH_TABLE = {
     OpCode.WINDOW_OPEN: lambda ctx: ctx.push(ctx.game.special.window_open(ctx.pop())),
     OpCode.SET_CARD_FACE: handle_set_card_face, OpCode.SET_PLACEMENT_LOCK: handle_placement_lock,
     OpCode.WITH_BINDINGS: handle_with_bindings,
-    OpCode.SIZE: lambda ctx: ctx.push(len(ctx.pop())), OpCode.FILTER: handle_filter,
+    OpCode.FILTER: handle_map_or_filter, OpCode.MAP: handle_map_or_filter,
+    OpCode.FLATTEN: lambda ctx: ctx.push([item for group in ctx.pop() for item in group]),
+    OpCode.FIRST: lambda ctx: ctx.push(next(iter(ctx.pop()), None)), OpCode.LOOKUP: handle_lookup,
+    OpCode.OPPONENT: lambda ctx: ctx.push(ctx.game.pre_reveal.opponent(ctx.pop())),
+    OpCode.BOARD_SLOTS: lambda ctx: ctx.push(tuple(ctx.game.board_slots())),
+    OpCode.SLOT_CARDS: handle_slot_cards, OpCode.REMAINING_CARDS: handle_slot_cards,
+    OpCode.SLOT_AT_OFFSET: handle_slot_offset, OpCode.SKILL_RESTRICTED: handle_skill_restricted,
+    OpCode.CAN_JOIN_DUEL: lambda ctx: ctx.push(ctx.game.pipeline.can_join(ctx.pop())),
+    OpCode.NEXT_PLANNED_DIE: lambda ctx: ctx.push(ctx.game.pipeline.next_planned_die(ctx.pop())),
+    OpCode.DIE_VALUE: lambda ctx: ctx.push(ctx.pop().get_value()),
+    OpCode.SIZE: lambda ctx: ctx.push(len(ctx.pop())),
     OpCode.EACH: handle_each, OpCode.FIRST_IN_ORDER: handle_first_in_order,
     OpCode.SKILL_USE_COUNT: handle_skill_use_count, OpCode.CLASH_COUNT: handle_clash_count,
     OpCode.DUEL_OFFSET: handle_duel_offset,
@@ -900,6 +941,11 @@ DISPATCH_TABLE = {
 OPERANDS = {
     OpCode.WINDOW_OPEN: ("window",), OpCode.SET_CARD_FACE: ("card", "face"),
     OpCode.SET_PLACEMENT_LOCK: ("card", "locked"), OpCode.WITH_BINDINGS: ("names", "block"),
+    OpCode.MAP: ("collection", "expression"), OpCode.FLATTEN: ("collection",), OpCode.FIRST: ("collection",),
+    OpCode.LOOKUP: ("collection", "key", "default"), OpCode.OPPONENT: ("seat",), OpCode.BOARD_SLOTS: (),
+    OpCode.SLOT_CARDS: ("slot", "side"), OpCode.REMAINING_CARDS: ("slot", "side"),
+    OpCode.SLOT_AT_OFFSET: ("space", "offset"), OpCode.SKILL_RESTRICTED: ("holder", "skill"),
+    OpCode.CAN_JOIN_DUEL: ("slot",), OpCode.NEXT_PLANNED_DIE: ("holder",), OpCode.DIE_VALUE: ("component",),
     OpCode.SIZE: ("collection",), OpCode.FILTER: ("collection", "predicate"),
     OpCode.EACH: ("collection", "block"), OpCode.FIRST_IN_ORDER: ("collection", "first"),
     OpCode.SKILL_USE_COUNT: ("actor", "skill_id"), OpCode.CLASH_COUNT: ("subject", "outcome", "position"),

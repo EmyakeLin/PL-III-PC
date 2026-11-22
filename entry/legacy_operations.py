@@ -10,6 +10,11 @@ def _team_status(action):
 
 
 WORD_ALIASES = {
+    "BOARD_SKILLS_OF": [{"literal": ["holder"]},
+                       ["$bindings.holder.is_alive",
+                        ["BOARD_SLOTS", ["$item", "$bindings.holder.player.side", "SLOT_CARDS"], "MAP", "FLATTEN",
+                         ["$item.character", "$bindings.holder", "IS", "$item.destroyed", "NOT", "AND"], "FILTER"],
+                        [{"literal": []}], "IF_ELSE"], "WITH_BINDINGS"],
     "DAMAGE_AMOUNT": [{"call": "DAMAGE", "result": "result", "default": 0}],
     "ACTIVATE_STATUS": [{"call": "ACTIVATE_STATUS", "result": "result", "default": False}],
     "TAKE_HAND_CARD": [{"call": "TAKE_HAND_CARD", "result": "result"}],
