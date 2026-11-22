@@ -4,7 +4,8 @@ from displayer import Displayer, special_action_label, special_seats, timing_lab
 from pre_reveal_cli import _choose
 
 
-def offer_actions(game):
+def offer_actions(bridge):
+    game = bridge.game
     seats = special_seats(game)
     if not seats:
         return
@@ -14,8 +15,8 @@ def offer_actions(game):
         if not timing:
             return
         print(f"〔即时交锋 · {timing}〕")
-    previous = game._private_player
-    game.close_private_view()
+    previous = bridge._private_player
+    bridge.close_private_view()
     try:
         while seats and not game.is_over:
             pending = game.special.pending_attack
@@ -34,7 +35,7 @@ def offer_actions(game):
                 if index is None:
                     return
                 player = seats[index]
-            game.begin_private_view(player)
+            bridge.begin_private_view(player)
             actions = game.special.options(player)
             if actions:
                 choice = Displayer(game, viewer_side=player.side).effect_choice()
@@ -60,9 +61,9 @@ def offer_actions(game):
                         continue
             else:
                 input("当前没有可执行的特殊行动，按回车返回公开桌面 ")
-            game.close_private_view()
+            bridge.close_private_view()
             seats = special_seats(game)
     finally:
-        game.close_private_view()
+        bridge.close_private_view()
         if previous is not None and not game.is_over:
-            game.begin_private_view(previous)
+            bridge.begin_private_view(previous)

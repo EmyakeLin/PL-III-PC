@@ -1,5 +1,8 @@
 """Hot-seat presentation and input at the application's composition root."""
 
+import sys
+
+from pre_reveal_cli import run_declarations
 from models.card import describe_entry, describe_skill_traits
 from models.character import Character, CharacterRank
 from models.dice import describe_die
@@ -7,8 +10,10 @@ from models.roster import RosterDraft
 
 
 class TerminalBridge:
-    def __init__(self, game):
+    def __init__(self, game, *, special_prompt=None):
         self.game = game
+        self.special_prompt = special_prompt
+        self._private_player = None
 
     def select_character(self, characters):
         draft = RosterDraft(characters, len(self.game.players), self.game.gamerule.MAX_CHAR_COUNT)
@@ -77,7 +82,7 @@ class TerminalBridge:
             choice = self.game.pending_draw
             player = choice.player
             candidates, discard_count = choice.candidates, choice.discard_count
-            self.game.begin_private_view(player)
+            self.begin_private_view(player)
             print(f"{player.name} 从 {len(candidates)} 张候选牌中选 {discard_count} 张置于牌堆底。")
             for number, card in enumerate(candidates, 1):
                 print(f"  [{number}] {card.character.name} · {card.describe()}")
@@ -90,3 +95,109 @@ class TerminalBridge:
                         break
                 print(f"请选择 {discard_count} 个不同的有效编号。")
             self.game.complete_draw(choice, [candidates[index] for index in indices])
+
+    def begin_private_view(self, player):
+        """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
+        if self._private_player is player:
+            return
+        self._private_player = player
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            print("\033[2J\033[3J\033[H", end="", flush=True)
+            input(f"请把终端交给 {player.name}，接手后按回车查看自己的牌。")
+
+    def close_private_view(self):
+        if self._private_player is not None and sys.stdin.isatty() and sys.stdout.isatty():
+            print("\033[2J\033[3J\033[H", end="", flush=True)
+        self._private_player = None
+
+    def offer_special_actions(self):
+        """Blocking decisions inside the CLI's otherwise synchronous placement loops."""
+        game = self.game
+        if self.special_prompt is None or game.is_over:
+            return
+        self.special_prompt(self)
+        while not game.is_over and (game.special.pending_attack is not None or game.special.decision_owner is not None
+                                    or game.pipeline.interrupt_space is not None):
+            if game.special.pending_attack is None and game.special.decision_owner is None:
+                self.advance()
+            if not game.is_over:
+                self.special_prompt(self)
+
+    def advance(self):
+        game = self.game
+        action = game.next_step()
+        if action == "logic_draw_cards":
+            self.settle_draws()
+            self.close_private_view()
+        elif action == "logic_start_placement":
+            while game.placing is not None and not game.is_over:
+                player = game.placing
+                self.begin_private_view(player)
+                self.offer_special_actions()
+                if game.is_over:
+                    break
+                self.begin_private_view(player)
+                self.place_card(player)
+            self.close_private_view()
+        elif action == "logic_before_reveal_declarations":
+            self.declare_attacks()
+        return action
+
+    def declare_attacks(self):
+        if self.game.pre_reveal.actor is not None:
+            run_declarations(self)
+
+    def place_card(self, player):
+        game = self.game
+        hand = player.cardspace.hand.content
+        if not game.legal_placements():
+            print(f"{player.name} 没有可置入的牌，结束本轮置卡。")
+            return game.submit_placement(player, after="end")
+        slot_number = game.duelspace.locate_nearest_empty_duel(player.side) + 1
+        print(f"\n{player.name} 置卡 · 交锋 {slot_number}　通用费 {player.available_cost}")
+        opposing = next(p for p in game.players if p is not player)
+        for seat in (player, opposing):
+            status = "；".join(f"{c.combat_summary()}，交锋 {c.used_duels}/{c.max_duels}"
+                              for c in seat.characters if c.is_alive)
+            print(f"{seat.name}（牌堆 {len(seat.cardspace.draw.content)}，手牌 {len(seat.cardspace.hand.content)}）：{status}")
+        for number, slot in enumerate(game.duelspace.space, 1):
+            own = "、".join(card.name for card in slot.content.get(player.side, ())) or "空"
+            opposing_cards = slot.content.get(opposing.side, ())
+            opposing_count = len(opposing_cards)
+            hidden = f"扣置 {opposing_count} 张" if opposing_count else "空"
+            public = [c.name for c in opposing_cards if c.state.name == "PLACED_FACE_UP"]
+            if public:
+                hidden = "、".join(public + ["扣置牌"] * (opposing_count - len(public)))
+            print(f"交锋 {number}　己方 {own}　对方 {hidden}")
+        for number, card in enumerate(hand, 1):
+            char = card.character
+            print(f"  [{number}] {char.name} · {card.describe()}　个人费 {char.available_cost}")
+        while True:
+            extra = "，pass 暂交置卡权" if game.placed_this_window else ""
+            answer = input(f"输入手牌编号，回车结束本轮置卡{extra} ").strip().lower()
+            if answer == "pass" and game.placed_this_window:
+                return game.submit_placement(player, after="pass")
+            if answer in ("", "end"):
+                if not input("再按回车确认结束本轮置卡，输入其他内容取消 ").strip():
+                    print(f"{player.name} 结束本轮置卡。")
+                    return game.submit_placement(player, after="end")
+                continue
+            if not answer.isdecimal() or not 1 <= int(answer) <= len(hand):
+                print("请输入有效的手牌编号。")
+                continue
+            card = hand[int(answer) - 1]
+            if not card.meets_use_requirements():
+                print("尚未满足这张技能的使用条件。")
+                continue
+            if not card.character.is_alive or card.character.used_duels >= card.character.max_duels:
+                print("该角色已阵亡或已用完交锋数，请选其他牌。")
+                continue
+            confirm = input("输入 y 扣置、pass 扣置并交权、end 扣置并结束本轮，回车取消 ").strip().lower()
+            if confirm not in ("y", "yes", "pass", "end"):
+                continue
+            after = confirm if confirm in ("pass", "end") else "continue"
+            if not game.submit_placement(player, card, after=after):
+                print("此次置卡未生效。")
+                return
+            print(f"{player.name} 已在第 {slot_number} 交锋扣置一张牌。")
+            return

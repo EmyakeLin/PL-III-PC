@@ -33,8 +33,8 @@ class PipelineNode:
 
 
 class PipelineTriggerNode(PipelineNode):
-    def __init__(self, trigger_id):
-        super().__init__(trigger_id, self.broadcast)
+    def __init__(self, trigger_id, *, ready=None):
+        super().__init__(trigger_id, self.broadcast, ready=ready)
 
     @staticmethod
     def broadcast(node):

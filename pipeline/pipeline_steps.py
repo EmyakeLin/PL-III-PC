@@ -18,7 +18,7 @@ turn_start_steps = [
 placement_phase = [logic_start_placement]
 
 reveal_phase = [
-    PipelineTriggerNode("before_reveal"),
+    PipelineTriggerNode("before_reveal", ready=lambda node: node.game.placing is None),
     PipelineNode("logic_before_reveal_phase", lambda node: None),
     PipelineTriggerNode("on_before_reveal_phase_start"),
     PipelineTriggerNode("after_before_reveal_phase_start"),

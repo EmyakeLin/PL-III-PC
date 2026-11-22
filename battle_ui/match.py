@@ -282,7 +282,6 @@ class _TableGame(Game):
 
     def determine_first_player(self):
         self.prepare_turn()
-        self.close_private_view()
         self.last_speed_rolls = []
         left, right = self.players
         attempt = 0
@@ -359,14 +358,6 @@ class _TableGame(Game):
                 per_side[card.player.side]["board_count"] += 1
         super().finish_turn()
         self.emit_fx("turn_recycle", sides=list(per_side.values()))
-
-    def run_placement(self):
-        """Open the first placement window. The client supplies each decision."""
-        self.placing = self.first_player
-        self.placed_this_window = 0
-
-    def run_pre_reveal_declarations(self):
-        """The client supplies each attack and interception separately."""
 
 
 def _normalize_roster(roster, pool):
@@ -524,7 +515,6 @@ class BattleMatch:
             player.cardspace.draw.shuffle(self.game.rng)
         self._views = {side: Displayer(self.game, viewer_side=side) for side in (None, 1, 2)}
         self._history = deque(maxlen=100)
-        self._window_size = 1
         self._require_handoff = initial_handoff
         self._pre_seat = None
         self._draw_seat = None
@@ -538,10 +528,7 @@ class BattleMatch:
         self._advance()
 
     def _legal_cards(self):
-        player = self.game.placing
-        return [card for card in player.cardspace.hand.content
-                if card.character.is_alive and card.character.used_duels < card.character.max_duels
-                and card.meets_use_requirements()]
+        return self.game.legal_placements()
 
     def _current_draw_prompt(self):
         if self.game.pending_draw is None:
@@ -650,7 +637,7 @@ class BattleMatch:
             "eligible_sides": [p.side for p in seats] if self._special_open else frame["pre_reveal"]["eligible_sides"],
             "response_times": [dict(timing) for timing in self._response_times],
             "can_pass": self.mode == "placement" and self.game.placed_this_window > 0,
-            "window_remaining": self._window_size - self.game.placed_this_window if self.mode == "placement" else 0,
+            "window_remaining": self.game.placement_capacity - self.game.placed_this_window if self.mode == "placement" else 0,
             "history": list(self._history),
         }
 
@@ -906,26 +893,14 @@ class BattleMatch:
             card = next((c for c in self._legal_cards() if hand_key(c) == card_id), None)
             if card is None:
                 raise ValueError("这张手牌当前无法扣置。")
-            if game.auto_place_in_duel(player.side, card):
-                game.placed_this_window += 1
-                if game.is_over:
-                    self._finish()
-                    return
-                if game.placed_this_window < self._window_size:
-                    if self._legal_cards():
-                        return
-                    game.ended_player.append(player)
-        elif action == "pass":
-            if not game.placed_this_window:
-                raise ValueError("本次至少扣置一张后可以交权。")
+            game.submit_placement(player, card)
         else:
-            game.ended_player.append(player)
+            game.submit_placement(player, after=action)
         if game.is_over:
             self._finish()
             return
-        game.switch_place_right()
-        self._window_size = game.gamerule.PLACE_CAPACITY
-        game.placed_this_window = 0
+        if game.placing is player and game.placed_this_window and self._legal_cards():
+            return
         self._open_window(previous=player)
         if game.placing is None:
             self._advance()
@@ -935,9 +910,7 @@ class BattleMatch:
         # The terminal automatically ends a player's placement when no card fits.
         while (game.placing is not None and not self._legal_cards()
                and not game.special.ability_options(game.placing)):
-            game.ended_player.append(game.placing)
-            game.switch_place_right()
-            self._window_size = game.gamerule.PLACE_CAPACITY
+            game.submit_placement(game.placing, after="end")
         if game.placing is not None:
             switching = previous is not None and game.placing is not previous
             self.mode = "handoff" if self._require_handoff or switching else "placement"
@@ -981,7 +954,6 @@ class BattleMatch:
                 self._require_handoff = False
                 return
             if node == "logic_start_placement":
-                self._window_size = 1
                 self._history.append(f"第 {game.turn_number} 回合，{game.first_player.name}先手。")
                 self._open_window()
                 if game.placing is not None:

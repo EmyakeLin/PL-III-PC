@@ -10,6 +10,7 @@ import random
 from game import Game
 from loader import load_characters_from_packs
 from main import play_game
+from terminal_bridge import TerminalBridge
 from models.character import Character
 from models.dice import Dice
 from player.player import Player
@@ -68,11 +69,10 @@ class ReplayPlayer(Player):
                     best, best_score = selection, score
         regular = [c for c in best if not c.can_open_pre_reveal]
         if not regular:
-            return "ended"
+            return game.submit_placement(self, after="end")
         card = max(regular, key=values.get)
-        if not game.auto_place_in_duel(self.side, card):
+        if not game.submit_placement(self, card):
             raise RuntimeError(f"{self.name} 无法扣置「{card.name}」。")
-        return "placed"
 
     def choose_one_sided_target(self, enemy_player):
         alive = (c for c in enemy_player.characters if c.is_alive)
@@ -102,6 +102,14 @@ def declare_attacks(game):
                     phase.pass_intercept(number, player)
 
 
+class ReplayBridge(TerminalBridge):
+    def place_card(self, player):
+        return player.place_card(self.game)
+
+    def declare_attacks(self):
+        declare_attacks(self.game)
+
+
 def simulate(matchup, seed, pool):
     rosters = MATCHUPS[matchup]
     players = [ReplayPlayer(i, "＋".join(pool[key]["name"] for key in roster))
@@ -114,8 +122,7 @@ def simulate(matchup, seed, pool):
             character.init_cards()
             character.setup_deck()
         player.cardspace.draw.shuffle(game.rng)
-    game.run_pre_reveal_declarations = lambda: declare_attacks(game)
-    play_game(game)
+    play_game(game, bridge=ReplayBridge(game))
     return game
 
 

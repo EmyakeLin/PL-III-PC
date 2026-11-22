@@ -12,13 +12,13 @@ from special_actions_cli import offer_actions
 from terminal_bridge import TerminalBridge
 
 
-def play_game(game, step=False):
-    """Drive one match to victory. Human decisions are made by the active Player."""
-    bridge = TerminalBridge(game)
+def play_game(game, step=False, *, bridge=None):
+    """Drive one match to victory. The host owns interaction between pipeline steps."""
+    if bridge is None:
+        bridge = TerminalBridge(game)
     while not game.is_over:
         try:
-            action = game.next_step()
-            bridge.settle_draws()
+            action = bridge.advance()
         except PipelineFinished:
             if game.is_over:
                 break
@@ -26,10 +26,10 @@ def play_game(game, step=False):
             game.pipeline.is_finished = False
             continue
         timing = timing_label(action)
-        if (timing or game.special.decision_owner is not None) and game.special_prompt and not game.is_over:
+        if (timing or game.special.decision_owner is not None) and bridge.special_prompt and not game.is_over:
             if special_seats(game):
                 print(f"〔{timing}〕")
-                game.offer_special_actions()
+                bridge.offer_special_actions()
         if step and not game.is_over:
             if input(f"{action}  [回车继续 / q 退出] ").strip().lower() == "q":
                 return
@@ -52,9 +52,9 @@ def main(argv=None):
         print("光点计划 III · 本地双人对局")
         print("每方选择 1～3 名角色。双方扣置后先处理开牌前交锋，再统一开牌。消灭对方所有角色获胜。")
         game = Game([Player(1, "玩家一"), Player(2, "玩家二")], rng=random.Random(args.seed))
-        game.special_prompt = offer_actions
-        TerminalBridge(game).select_character(characters)
-        play_game(game, step=args.step)
+        bridge = TerminalBridge(game, special_prompt=offer_actions)
+        bridge.select_character(characters)
+        play_game(game, step=args.step, bridge=bridge)
     except (EOFError, KeyboardInterrupt):
         print("\n已退出对局。")
 

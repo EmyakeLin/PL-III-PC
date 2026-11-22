@@ -9,6 +9,7 @@ from entry.commands import CommandSet, expand_command
 from entry.entry import Entry
 from entry.effects import run_effect
 from entry.program import run_program
+from game import Game
 from models.character import Character
 from models.opcode import OpCode
 from models.roster import RosterDraft
@@ -159,6 +160,38 @@ class DrawExecutorTests(unittest.TestCase):
         draw.content.reverse()
         with self.assertRaises(ValueError):
             choice.settle(("a", "b"))
+
+
+class PlacementExecutorTests(unittest.TestCase):
+    def test_only_confirmed_placements_consume_the_current_window(self):
+        for capacity in (1, 2, 3, 8):
+            game = Game.__new__(Game)
+            left, right = SimpleNamespace(side=1), SimpleNamespace(side=2)
+            game.first_player, game.players = left, [left, right]
+            game.ended_player, game.is_over = [], False
+            game.gamerule = SimpleNamespace(PLACE_CAPACITY=capacity)
+            card = object()
+            moves = []
+            game.legal_placements = lambda: [card]
+            def place(side, selected):
+                moves.append((side, selected))
+                return True
+            game.auto_place_in_duel = place
+            game.run_placement()
+            for who, choice, after in ((right, card, "continue"), (left, object(), "continue"),
+                                       (left, None, "pass"), (left, card, "unknown")):
+                with self.assertRaises(ValueError):
+                    game.submit_placement(who, choice, after=after)
+            self.assertEqual(moves, [])
+            game.submit_placement(left, card)
+            self.assertIs(game.placing, right)
+            for _ in range(capacity):
+                game.submit_placement(right, card)
+            self.assertIs(game.placing, left)
+            self.assertEqual(moves, [(1, card)] + [(2, card)] * capacity)
+            game.submit_placement(left, after="end")
+            game.submit_placement(right, after="end")
+            self.assertIsNone(game.placing)
 
 
 if __name__ == "__main__":

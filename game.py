@@ -1,5 +1,4 @@
 import random
-import sys
 from types import SimpleNamespace
 
 from context.context import Context
@@ -28,6 +27,7 @@ class Game:
         self.placing = None
         self.ended_player = []
         self.placed_this_window = 0
+        self.placement_capacity = 1
         self.used_cards = []
         self.used_skill_ids = set()
         self.pending_draw = None
@@ -47,13 +47,11 @@ class Game:
         self.turn_end_statuses = set(effects.turn_end_statuses)
         self.is_over = False
         self.winner = None
-        self._private_player = None
         self.context = Context(game=self)
         self.duelspace = DuelSpace(self)
         self.pre_reveal = PreRevealPhase(self)
         self.pipeline = Pipeline(self, step_list)
         self.special = SpecialActions(self)
-        self.special_prompt = None
         self.last_step = None
         self.tmp = SimpleNamespace()
 
@@ -65,20 +63,6 @@ class Game:
                 character.init_cards()
                 character.setup_deck()
             player.cardspace.draw.shuffle(self.rng)
-
-    def begin_private_view(self, player):
-        """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
-        if self._private_player is player:
-            return
-        self._private_player = player
-        if sys.stdin.isatty() and sys.stdout.isatty():
-            print("\033[2J\033[3J\033[H", end="", flush=True)
-            input(f"请把终端交给 {player.name}，接手后按回车查看自己的牌。")
-
-    def close_private_view(self):
-        if self._private_player is not None and sys.stdin.isatty() and sys.stdout.isatty():
-            print("\033[2J\033[3J\033[H", end="", flush=True)
-        self._private_player = None
 
     def next_step(self):
         if self.pending_draw is not None and not self.is_over:
@@ -99,18 +83,6 @@ class Game:
             self.pipeline.start_duel_combat()
         self.last_step = self.pipeline.next_step()
         return self.last_step
-
-    def offer_special_actions(self):
-        """Blocking decisions inside the CLI's otherwise synchronous placement loops."""
-        if self.special_prompt is None or self.is_over:
-            return
-        self.special_prompt(self)
-        while not self.is_over and (self.special.pending_attack is not None or self.special.decision_owner is not None
-                                    or self.pipeline.interrupt_space is not None):
-            if self.special.pending_attack is None and self.special.decision_owner is None:
-                self.next_step()
-            if not self.is_over:
-                self.special_prompt(self)
 
     @property
     def active_duelspace(self):
@@ -141,12 +113,6 @@ class Game:
 
     def start_pre_reveal_declarations(self):
         self.pre_reveal.start()
-        self.run_pre_reveal_declarations()
-
-    def run_pre_reveal_declarations(self):
-        if self.pre_reveal.actor is not None:
-            from pre_reveal_cli import run_declarations
-            run_declarations(self)
 
     def open_turn(self):
         number = self.turn_count + 1
@@ -184,7 +150,6 @@ class Game:
         self.prepare_turn()
         print(f"\n第 {self.turn_count + 1} 回合")
         self.cards_revealed = False
-        self._private_player = None
         self._drawing_players = iter(self.players)
         self._continue_drawing()
 
@@ -211,7 +176,6 @@ class Game:
 
     def determine_first_player(self):
         self.prepare_turn()
-        self.close_private_view()
         left, right = self.players
         while True:
             for player in self.players:
@@ -232,29 +196,42 @@ class Game:
 
     def run_placement(self):
         self.placing = self.first_player
-        capacity = 1
-        while self.placing is not None and not self.is_over:
-            player = self.placing
-            self.placed_this_window = 0
-            self.begin_private_view(player)
-            for _ in range(capacity):
-                self.offer_special_actions()
-                if self.is_over:
-                    return
-                self.begin_private_view(player)
-                action = player.place_card(self)
-                if action == "ended":
-                    self.ended_player.append(player)
-                    break
-                if action == "passed":
-                    break
-                if action != "placed":
-                    raise ValueError(f"未知置卡动作 {action!r}")
-                self.placed_this_window += 1
-                if self.is_over:
-                    break
-            self.switch_place_right()
-            capacity = self.gamerule.PLACE_CAPACITY
+        self.placement_capacity = 1
+        self.placed_this_window = 0
+
+    def legal_placements(self):
+        if self.placing is None:
+            return []
+        return [card for card in self.placing.cardspace.hand.content
+                if card.character.is_alive and card.character.used_duels < card.character.max_duels
+                and card.meets_use_requirements()]
+
+    def submit_placement(self, player, card=None, *, after="continue"):
+        """Apply a seat's decision; return whether a card actually entered the slot."""
+        if self.is_over or player is None or player is not self.placing:
+            raise ValueError("当前不属于该玩家的常规置卡窗口。")
+        if after not in ("continue", "pass", "end"):
+            raise ValueError("未知的置卡后决定。")
+        if card is None and (after == "continue" or after == "pass" and not self.placed_this_window):
+            raise ValueError("先置入一张牌才能交出此次置卡权。")
+        placed = False
+        if card is not None:
+            if card not in self.legal_placements():
+                raise ValueError("这张手牌当前无法扣置。")
+            placed = self.auto_place_in_duel(player.side, card)
+            self.placed_this_window += int(placed)
+            if self.is_over:
+                return placed
+        if after != "continue" or not placed or self.placed_this_window >= self.placement_capacity:
+            self.finish_placement_window(end=after == "end")
+        return placed
+
+    def finish_placement_window(self, *, end=False):
+        if end:
+            self.ended_player.append(self.placing)
+        self.switch_place_right()
+        self.placement_capacity = self.gamerule.PLACE_CAPACITY
+        self.placed_this_window = 0
 
     def auto_place_in_duel(self, side, content):
         owner = content.character
@@ -302,7 +279,6 @@ class Game:
         if self.cards_revealed:
             return
         self.cards_revealed = True
-        self.close_private_view()
         if not self.duelspace.space:
             print("双方空过。")
             return

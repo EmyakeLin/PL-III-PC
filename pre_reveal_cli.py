@@ -47,11 +47,12 @@ def _attack(game, player, card):
         game.pre_reveal.declare_attack(card, character=character, duel_index=duel_index)
 
 
-def run_declarations(game):
+def run_declarations(bridge):
+    game = bridge.game
     phase = game.pre_reveal
-    game.close_private_view()
+    bridge.close_private_view()
     while phase.actor is not None and not game.is_over:
-        game.offer_special_actions()
+        bridge.offer_special_actions()
         if phase.actor is None or game.is_over:
             break
         _show_duels(phase)
@@ -64,7 +65,7 @@ def run_declarations(game):
             phase.end_attack(player)
             continue
 
-        game.begin_private_view(player)
+        bridge.begin_private_view(player)
         try:
             cards = phase.attack_cards(player) if action == "attack" else phase.intercept_cards(player)
             labels = [f"{c.character.name} · {c.describe()}　个人费 {c.character.available_cost}" for c in cards]
@@ -83,4 +84,4 @@ def run_declarations(game):
                 else:
                     phase.intercept(cards[index], duel_number=number)
         finally:
-            game.close_private_view()
+            bridge.close_private_view()
