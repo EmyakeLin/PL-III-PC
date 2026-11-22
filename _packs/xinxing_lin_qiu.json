@@ -103,14 +103,19 @@
             },
             {
               "trigger": "before_dice_hit",
-              "when": {"owner_status_at_least": {"羽流·林秋": 1}},
+              "when": {"owner_status_at_least":{"羽流·林秋":1}},
               "operation": {
                 "op": "program",
                 "code": [
-                  "$hit_index", 1, "EQ", "$clash_result", "win", "EQ", "AND",
+                  "$event.die.use_state", "羽流额外命中", false, "LOOKUP", "NOT", "$event.die.clash_result",
+                  "win", "EQ", "AND",
                   [
                     1, 12, "RANDOM_INT", "$self", "羽流·林秋", "STATUS_COUNT", "LE",
-                    ["$die", "full", "QUEUE_HIT", "$self", "本回合羽流判定成功", 1, "STATUS"], "WHEN"
+                    [
+                      "$event.die", "羽流额外命中", true, "SET_DIE_STATE", "$event.die", "full", "羽流",
+                      "QUEUE_HIT", "$self", "本回合羽流判定成功", 1, "STATUS"
+                    ],
+                    "WHEN"
                   ],
                   "WHEN"
                 ]
@@ -153,16 +158,19 @@
               "trigger": "on_clash_lose",
               "operation": {
                 "op": "program",
-                "code": ["$card", "resident_die", "SKILL_STATE", "$die", "EQ", ["$die", "damage_only", "QUEUE_HIT"], "WHEN"]
+                "code": [
+                  "$card", "resident_die", "SKILL_STATE", "$die", "EQ",
+                  ["$die","damage_only","星结标定剑柄","QUEUE_HIT"], "WHEN"
+                ]
               },
               "description": "驻留骰拼输仍命中，只结算伤害部分，伤害−1。"
             },
             {
               "trigger": "before_dice_hit",
-              "when": {"hit_mode": "damage_only"},
+              "when": [{"left":"$event.hit_origin","op":"eq","right":"星结标定剑柄"}],
               "operation": {
                 "op": "program",
-                "code": [{"op": "damage_add", "amount": -1, "grade": "concept"}]
+                "code": ["$event.target","$event.hit_modifiers","damage_add",-1,"concept","ADD_DAMAGE_MODIFIER"]
               },
               "description": "驻留败方的伤害部分−1。"
             }
@@ -363,11 +371,17 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$hit_index", 1, "EQ", "$card", "first_hit_bonus", "SKILL_STATE", "AND",
-                  [{"op": "damage_add", "amount": 1}], "WHEN"
+                  "$event.damage_die.card", "$owner", "IS", "$owner.use_state.first_hit_bonus", "AND",
+                  ["$event.target","$event.modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"],
+                  "WHEN"
                 ]
               },
-              "description": "各骰第一次命中造成的伤害+1。"
+              "description": "各骰第一次命中造成的伤害+1。",
+              "when": [
+                {"left":"$event.hit_index","op":"eq","right":1},
+                {"left":"$event.damage_die","op":"eq","right":"$event.die"},
+                {"left":"$event.damage_die.card","op":"eq","right":"$event.card"}
+              ]
             }
           ],
           "dice": [
@@ -554,12 +568,12 @@
                 "1超穿甲",
                 {
                   "trigger": "on_dice_use",
-                  "when": {"owner_status_at_least": {"隧道开启": 1}},
+                  "when": {"owner_status_at_least":{"隧道开启":1}},
                   "operation": {
                     "op": "program",
-                    "code": ["$self", "隧道", 2, "SPEND_STATUS", "POP", "$card", "sever_die", "$die", "SET_SKILL_STATE"]
+                    "code": ["$self","隧道",2,"SPEND_STATUS","POP","$card","sever_die","$die","SET_SKILL_STATE"]
                   },
-                  "description": "隧道开启时，用骰时消耗2隧道，激活本骰拼点、命中效果。"
+                  "description": "隧道开启时，用骰时消耗至多2隧道，并激活本骰拼点、命中效果。"
                 },
                 {
                   "trigger": "on_dice_clash",
@@ -577,16 +591,17 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$card", "sever_die", "SKILL_STATE", "$die", "EQ", "$card", "duel_penalties", "SKILL_STATE", 2, "LT",
-                      "AND", "$target", "星结", "STATUS_COUNT", 5, "GE", "AND",
+                      "$card", "sever_die", "SKILL_STATE", "$die", "EQ", "$card", "duel_penalties",
+                      "SKILL_STATE", 2, "LT", "AND", "$target", "星结", "STATUS_COUNT", 5, "GE", "AND",
                       [
-                        "$target", 0, "$target", "星结", "STATUS_COUNT", 5, "FLOOR_DIV", "SUB", "NEXT_TURN_DUELS", "$card",
-                        "duel_penalties", "$card", "duel_penalties", "SKILL_STATE", 1, "ADD", "SET_SKILL_STATE"
+                        "$target", 0, "$target", "星结", "STATUS_COUNT", 5, "FLOOR_DIV", "SUB",
+                        "NEXT_TURN_DUELS", "$card", "duel_penalties", "$card", "duel_penalties",
+                        "SKILL_STATE", 1, "ADD", "SET_SKILL_STATE"
                       ],
                       "WHEN", "$target", "星结", -2, "STATUS"
                     ]
                   },
-                  "description": "激活时，目标每5星结，下回合减少1交锋。本技能至多触发两次。随后目标减少2星结。"
+                  "description": "激活时，目标每5星结，下回合减少1交锋，本技能至多触发两次。本骰每次命中都使目标减少2星结。"
                 }
               ]
             }

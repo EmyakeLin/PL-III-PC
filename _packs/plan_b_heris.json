@@ -152,10 +152,14 @@
           "dice": [
             {"type": "blunt", "level": 3, "entries": [
               "2物理",
-              {"trigger": "on_clash_lose", "description": "驻留时拼输仍可命中，跳过伤害部分。",
-               "operation": {"op": "program", "code": [
-                 "$card", "使用时凝聚", "SKILL_STATE", 3, "GE", ["$die", "effects_only", "QUEUE_HIT"], "WHEN"
-               ]}},
+              {
+                "trigger": "on_clash_lose",
+                "description": "驻留时拼输仍可命中，跳过伤害部分。",
+                "operation": {
+                  "op": "program",
+                  "code": ["$card","使用时凝聚","SKILL_STATE",3,"GE",["$die","effects_only",null,"QUEUE_HIT"],"WHEN"]
+                }
+              },
               {"trigger": "on_dice_hit", "description": "施加2烧伤及使用时取得的额外烧伤，然后引燃。",
                "operation": {"op": "program", "code": [
                  "$target", "烧伤", 2, "$card", "首骰额外烧伤", "SKILL_STATE", "ADD", "STATUS", {"op": "ignite"}

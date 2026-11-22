@@ -80,6 +80,7 @@ class Dice:
         self.is_repeat = False
         self.queued_hits = deque()
         self.hit_mode = None
+        self.hit_origin = None
         self.hit_target = None
         self.hit_index = 0
         self.landed_hits = 0

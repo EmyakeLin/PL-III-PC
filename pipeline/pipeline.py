@@ -988,17 +988,17 @@ class Pipeline:
         die = pipe.die
         die.hit_target = target
         if automatic:
-            die.queued_hits.appendleft("full")
+            die.queued_hits.appendleft(("full", None))
         try:
             while die.queued_hits and self._die_live(pipe) and target.is_alive and not self.game.is_over:
-                die.hit_mode = die.queued_hits.popleft()
+                die.hit_mode, die.hit_origin = die.queued_hits.popleft()
                 die.hit_index = die.landed_hits + 1
                 pipe.push_pack(steps.HIT)
                 yield from self._run_to([pipe], "after_dice_hit")
                 if die.landed_hits < die.hit_index:
                     break
         finally:
-            die.hit_mode = die.hit_target = None
+            die.hit_mode = die.hit_origin = die.hit_target = None
             die.queued_hits.clear()
 
     def _run_to(self, pipes, stops):
@@ -1045,6 +1045,7 @@ class Pipeline:
                     simultaneous_solo=bool(self.current_clash_pair and self.current_clash_pair.split),
                     one_sided=self.current_clash_pair is None or self.current_clash_pair.split,
                     hit_mode=getattr(pipe.die, "hit_mode", None),
+                    hit_origin=getattr(pipe.die, "hit_origin", None),
                     hit_index=getattr(pipe.die, "hit_index", 0),
                     clash_result=getattr(pipe.die, "clash_result", None),
                     is_repeat=getattr(pipe.die, "is_repeat", False),

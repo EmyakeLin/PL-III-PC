@@ -126,11 +126,11 @@ def handle_reserve_die(ctx):
 
 
 def handle_queue_hit(ctx):
-    mode, die = ctx.pop(), ctx.pop()
+    origin, mode, die = ctx.pop(), ctx.pop(), ctx.pop()
     if mode not in ("full", "damage_only", "effects_only"):
         raise ValueError(f"未知命中结算方式 {mode!r}")
     if die is not None and die.is_attack and _usable_component(die):
-        die.queued_hits.append(mode)
+        die.queued_hits.append((mode, origin))
         return True
     return False
 
@@ -1054,7 +1054,7 @@ OPERANDS = {
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
-    OpCode.QUEUE_HIT: ("die", "mode"), OpCode.SKIP_ROUND: ("die",),
+    OpCode.QUEUE_HIT: ("die", "mode", "origin"), OpCode.SKIP_ROUND: ("die",),
     OpCode.QUEUE_DIE_EFFECT: ("target", "block"),
     OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
