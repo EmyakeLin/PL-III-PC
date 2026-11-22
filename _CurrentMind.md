@@ -182,3 +182,22 @@
 - 唯一运行的测试文件为 `tests/test_entry_semantics.py`。56 个测试方法通过，其中包含循环枚举和执行轨迹断言。五份获准的角色 JSON 中带 trigger 的词条经过编译，39 个指定内核文件经过输入输出及依赖方向检查。没有启动游戏，也没有读取原有测试和战斗日志。由此验证的是具体执行器和适配边界；整局体验及其他角色的实战行为未覆盖。
 - 基线与本次提交相比，`entry/` 加 `models/opcode.py`、`models/opcodes.py` 增加 1154 行、删除 459 行，净增 695 行，统计包含简写、兼容展开和新增指令。五份已迁移 JSON 的物理行总数净减 64 行。两项统计都不能直接换算为单个词条的长度或执行速度。
 - 工作树已有用户进行中的前端、房间、机器人及旧测试改动。房间读取桌面事件和机器人声明目标优先级两处接线依赖这些尚未提交的代码，随其留在工作树。本次提交仅纳入可以独立归属本轮的修改。
+
+## 用户提出的五处遗漏及静态核对
+
+> 状态发动的 activation_multiplier / activation_final_divisor（effects.py 第 142-159 行、context.py 第 359-365 行、opcodes.py 第 656-657 行）：在通用 DAMAGE 里特判 trigger == "activate_status"，并把向上取整除数 (final + divisor - 1) // divisor 硬塞进通用最终伤害结算。
+> canonical_status_name 硬编码 if name == "energy": return "能源"（character.py 第 258-268 行，以及注明为快照兼容的 bleed_burst 和 displayer.py 第 451 行）：已有通用 aliases 查表却仍硬写具体状态名。
+> restrict_highest_hand_cost（character.py 第 283-293 行、card_space.py 第 82-94 行）：为“限制手牌中费用最高的 N 张技能”这一个具体状态规则，把费用排名记账直接焊进 Hand、Card、Character。
+> pre_reveal_target == "occupied_enemy_slot"（pre_reveal.py 第 124-127、194-195 行）：字面只说选“有敌方置牌的交锋”，实际在同一个字符串分支里暗中绑死了 slot.required_card（那张牌离场则跳过整场交锋）。
+> ability_options 里的 requires_draw_pile（special_actions.py 第 266 行）：在通用主动能力分发器里，单为“牌堆非空”硬加一个专属布尔开关。
+>
+> ---
+>
+> 上述这几个问题是真的吗？
+
+- 赫克的本次引燃翻倍、李凌的重复引燃最终伤害折半向上取整有不同结算时点。Context.execute_op 以触发器名字选取修正，FINALIZE_DAMAGE 在数值边界之后统一读取专用除数。规则应能指定作用范围、阶段和运算。
+- `energy` 在查正式名和 aliases 前就固定映射到能源。`bleed_burst` 是按通用 active_statuses 推导的旧输出字段，可在快照生成处保持原协议。裂血的爆发持续至归零，显示时应读取激活状态。
+- 正式规则 7.3 明文要求出牌时留存费用顺位、使用时才按层数判定。专用排序与记账散落在 Hand.remove_card、Card.hand_cost_rank 和 Character.skill_restricted，后者还固定对多个同类标志取最大层数。
+- `occupied_enemy_slot` 同时过滤可选编号并存下当时的下一张可用牌。放行后这张牌失效时，即使同位置有后继牌也会跳过本场。成功迎击另走迎击牌分支。正式规则 3.5 的通常处理是结算时才查该位置。
+- `requires_draw_pile` 把行动方、抽牌堆、张数大于零写在能力候选生成中。提交时会重新生成候选，随后才支付与执行；若改为通用条件，应保留这个先后关系。
+- 本轮仅静态核对并补记工作记录。
