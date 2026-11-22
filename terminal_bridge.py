@@ -267,11 +267,8 @@ class TerminalBridge:
                 print("请输入有效的手牌编号。")
                 continue
             card = hand[int(answer) - 1]
-            if not card.meets_use_requirements():
-                print("尚未满足这张技能的使用条件。")
-                continue
-            if not card.character.is_alive or card.character.used_duels >= card.character.max_duels:
-                print("该角色已阵亡或已用完交锋数，请选其他牌。")
+            if card not in game.legal_placements():
+                print("这张手牌当前无法扣置，请选其他牌。")
                 continue
             confirm = input("输入 y 扣置、pass 扣置并交权、end 扣置并结束本轮，回车取消 ").strip().lower()
             if confirm not in ("y", "yes", "pass", "end"):

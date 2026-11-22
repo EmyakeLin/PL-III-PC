@@ -146,6 +146,7 @@ class ArenaEngine(BattleMatch):
         return options
 
     def _event(self, kind):
+        self.presentation.flush()
         event = {"kind": kind, "turn": self.game.turn_number, "timing": self._timing}
         if self.game.pipeline.in_duel_phase:
             combat = self._views[None].snapshot()["combat"]

@@ -384,6 +384,14 @@ class CommandTests(unittest.TestCase):
 
 
 class RosterExecutorTests(unittest.TestCase):
+    def test_missing_or_extra_rosters_are_rejected_before_creating_any_character(self):
+        game = Game.__new__(Game)
+        game.players = [Player(1, "甲"), Player(2, "乙")]
+        for teams in ([], [[{}]], [[{}], []], [[{}], [{}], [{}]]):
+            with self.assertRaisesRegex(ValueError, "席位"):
+                game.deploy_rosters(teams)
+            self.assertTrue(all(not player.characters for player in game.players))
+
     def test_rejected_choices_leave_both_teams_and_pool_intact(self):
         members = [{"id": key} for key in "abcd"]
         draft = RosterDraft(members, seats=2, maximum=7)
@@ -432,6 +440,27 @@ class DrawExecutorTests(unittest.TestCase):
                         self.assertEqual(calls, [("bottom", card) for card in bottom]
                                          + [("draw", min(keep, len(candidates)))])
                         self.assertEqual(draw.content, [card for card in deck if card not in bottom] + list(bottom))
+
+    def test_draw_listeners_cannot_submit_the_same_decision_again(self):
+        game = Game.__new__(Game)
+        game.is_over = False
+        draw = SimpleNamespace(content=["a", "b"], move_card_to=lambda *_: None)
+        player = SimpleNamespace(cardspace=SimpleNamespace(draw=draw))
+        choice = game.pending_draw = DrawChoice.from_deck(player, 2, 1)
+        trace = []
+        game._continue_drawing = lambda: trace.append("next")
+        def draw_cards(n):
+            trace.append(n)
+            with self.assertRaisesRegex(ValueError, "已经结束"):
+                game.complete_draw(choice, ["a"])
+        player.draw_card = draw_cards
+        for invalid in (None, [], [["foreign"]]):
+            with self.assertRaises(ValueError):
+                game.complete_draw(choice, invalid)
+            self.assertIs(game.pending_draw, choice)
+        game.complete_draw(choice, ["b"])
+        self.assertEqual(trace, [1, "next"])
+        self.assertIsNone(game.pending_draw)
 
     def test_rejects_stale_foreign_duplicate_and_wrong_count_before_moving(self):
         draw = SimpleNamespace(content=list("abcd"))

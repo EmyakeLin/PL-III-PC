@@ -11,6 +11,7 @@ from models.opcode import OpCode
 from models.pre_reveal import PreRevealPhase
 from models.special_actions import SpecialActions
 from models.turn_history import TurnHistory
+from player.draw_choice import InvalidBottomSelection
 from pipeline.pipeline import Pipeline
 from pipeline.pipeline_steps import step_list
 
@@ -57,6 +58,9 @@ class Game:
         self.tmp = SimpleNamespace()
 
     def deploy_rosters(self, rosters):
+        rosters = tuple(rosters)
+        if len(rosters) != len(self.players) or any(not roster for roster in rosters):
+            raise ValueError("每个席位都需要一份非空出战阵容")
         for player, roster in zip(self.players, rosters):
             for data in roster:
                 character = Character(data, player)
@@ -162,8 +166,12 @@ class Game:
     def complete_draw(self, choice, bottom):
         if self.is_over or choice is None or choice is not self.pending_draw:
             raise ValueError("此次选牌已经结束。")
-        choice.settle(bottom)
         self.pending_draw = None
+        try:
+            choice.settle(bottom)
+        except InvalidBottomSelection:
+            self.pending_draw = choice
+            raise
         self._continue_drawing()
 
     def start_turn(self):
@@ -200,7 +208,9 @@ class Game:
         if self.placing is None:
             return []
         return [card for card in self.placing.cardspace.hand.content
-                if card.character.is_alive and card.character.used_duels < card.character.max_duels
+                if not card.destroyed and card.state != CardState.NEGATED
+                and card.player is self.placing and card.character.is_alive
+                and card.character.used_duels < card.character.max_duels
                 and card.meets_use_requirements()]
 
     def submit_placement(self, player, card=None, *, after="continue"):
