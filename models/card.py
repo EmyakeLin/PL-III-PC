@@ -1,5 +1,6 @@
 from enum import Enum, auto
 
+from entry.predicates import Calculation, Conditional, Rank, Reference, compile_value, read_value
 from models.conditions import matches_value, skill_state_allows, validate_skill_gate
 from models.opcode import OpCode
 
@@ -20,14 +21,15 @@ def range_trait(data, key, card):
             active = target is not None and card.character.speed - target.speed >= condition["speed_lead"]
         else:
             stacks = card.character.statuses.get(condition["status"], 0) if card.character else 0
-            if "snapshot" in condition:
-                stacks = card.use_state.get(condition["snapshot"], stacks)
             active = stacks >= condition.get("minimum", 1)
         if active:
             value = max(value, condition["amount"])
-    per_stack = data.get(key + "_per_stack")
-    if per_stack and card is not None and card.character is not None:
-        value = max(value, min(3, card.character.statuses.get(per_stack, 0)))
+    amount = data.get(key + "_amount")
+    if amount is not None and card is not None:
+        result = read_value(compile_value(amount["value"]), card.character, {"card": card})
+        if type(result) is not int or not 0 <= result <= 3:
+            raise ValueError(f"{key}_amount 的计算结果须为 0 到 3 的整数，实际为 {result!r}")
+        value = max(value, result)
     return value
 
 
@@ -40,6 +42,18 @@ def validate_range_trait(data, key):
     value = data.get(key, 0)
     if type(value) is not int or not 0 <= value <= 3:
         raise ValueError(f"{key} 必须是 0 到 3 的整数")
+    for name in data:
+        if name.startswith(key + "_") and name not in (key + "_when", key + "_amount"):
+            raise ValueError(f"未知的远程属性 {name!r}")
+    if key + "_amount" in data:
+        amount = data[key + "_amount"]
+        if (not isinstance(amount, dict) or "value" not in amount or set(amount) - {"value", "description"}
+                or "description" in amount and not isinstance(amount["description"], str)):
+            raise ValueError(f"{key}_amount 须给出取值表达式")
+        expression = compile_value(amount["value"])
+        if not isinstance(expression, (Calculation, Conditional, Reference, Rank)) and not (
+                type(expression) is int and 0 <= expression <= 3):
+            raise ValueError(f"{key}_amount 需要整数或只读数值表达式")
     if key + "_when" in data:
         condition = data[key + "_when"]
         if not isinstance(condition, dict) or type(condition.get("amount")) is not int or not 0 <= condition["amount"] <= 3:
@@ -47,11 +61,6 @@ def validate_range_trait(data, key):
         gates = set(condition) - {"amount"}
         if gates == {"speed_lead"} and type(condition["speed_lead"]) is int:
             return
-        if "snapshot" in gates:
-            snapshot = condition["snapshot"]
-            if "status" not in gates or not isinstance(snapshot, str) or not snapshot.strip():
-                raise ValueError(f"{key}_when 的状态快照须指定技能内的记录名称")
-            gates.remove("snapshot")
         if gates == {"skill_state"}:
             validate_skill_gate(condition["skill_state"])
             return
@@ -96,13 +105,12 @@ def describe_range_traits(data):
                 gate = condition["skill_state"]
                 when = f"本技能记录「{gate['key']}」{COMPARISON_SIGNS[gate['op']]}{gate['value']}时"
             elif "minimum" in condition:
-                timing = "使用时" if "snapshot" in condition else ""
-                when = f"{timing}{condition['status']}至少{condition['minimum']}层，"
+                when = f"{condition['status']}至少{condition['minimum']}层，"
             else:
                 when = f"【{condition['status']}】" if "status" in condition else "本技能相应词条生效时"
             traits.append(when + label(condition["amount"]))
-        if per_stack := data.get(key + "_per_stack"):
-            traits.append(f"每层{per_stack}提供1级" + ("远程" if key == "range_level" else "无视远程"))
+        if (amount := data.get(key + "_amount")) and amount.get("description"):
+            traits.append(amount["description"])
     return traits
 
 
@@ -179,6 +187,7 @@ class Card:
         self.final_bonus = 0
         self.level_bonus = 0
         self.use_state = {}
+        self.use_effects_resolved = False
         self.destroyed = False
         self._printed_listeners = game.context.register_entries(self, self.entries) if game else []
         if character is not None and "form_when" in data:
@@ -407,6 +416,7 @@ class Card:
         self.range_opponent = None
         self.range_deficit = 0
         self.use_state.clear()
+        self.use_effects_resolved = False
         self.state = CardState.DEFAULT
         self.destroyed = False
 

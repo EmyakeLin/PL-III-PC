@@ -1,6 +1,7 @@
 """Read-only comparisons evaluated before ordering listeners and again before invocation."""
 
 from dataclasses import dataclass
+import operator
 
 from entry.entry import character_of
 from entry.references import read_path
@@ -50,6 +51,35 @@ class Operand:
 
 
 @dataclass(frozen=True)
+class Calculation:
+    operation: object
+    left: object
+    right: object
+
+    def read(self, owner, event):
+        return self.operation(read_value(self.left, owner, event), read_value(self.right, owner, event))
+
+
+@dataclass(frozen=True)
+class Conditional:
+    condition: object
+    yes: object
+    no: object
+
+    def read(self, owner, event):
+        branch = self.yes if read_value(self.condition, owner, event) else self.no
+        return read_value(branch, owner, event)
+
+
+def read_value(value, owner, event):
+    return value.read(owner, event) if isinstance(value, (Reference, Rank, Calculation, Conditional)) else value
+
+
+_VALUE_OPERATIONS = {**COMPARISONS, "add": operator.add, "sub": operator.sub, "mul": operator.mul,
+                     "floor_div": operator.floordiv, "min": min, "max": max}
+
+
+@dataclass(frozen=True)
 class Comparison:
     left: object
     op: str
@@ -63,9 +93,7 @@ class Comparison:
 
     def evaluate(self, owner, event, peek=None):
         def read(value):
-            if isinstance(value, (Reference, Rank)):
-                return value.read(owner, event)
-            return peek(value.offset) if isinstance(value, Operand) else value
+            return peek(value.offset) if isinstance(value, Operand) else read_value(value, owner, event)
         left, right = read(self.left), read(self.right)
         if self.numeric and not isinstance(left, (int, float)):
             return False
@@ -77,6 +105,14 @@ class Comparison:
 
 def compile_value(value, operands=()):
     options = value if isinstance(value, dict) else {}
+    if "if" in options:
+        if set(options) != {"if", "then", "else"}:
+            raise ValueError("条件取值需要 if、then 和 else")
+        return Conditional(*(compile_value(options[key]) for key in ("if", "then", "else")))
+    if "op" in options:
+        if set(options) != {"op", "left", "right"} or options["op"] not in _VALUE_OPERATIONS:
+            raise ValueError(f"无效的只读取值表达式 {options!r}")
+        return Calculation(_VALUE_OPERATIONS[options["op"]], compile_value(options["left"]), compile_value(options["right"]))
     if "rank_of" in options:
         descending = options.get("descending", False)
         fields = [compile_value(options[key]) for key in ("rank_of", "in", "by")]

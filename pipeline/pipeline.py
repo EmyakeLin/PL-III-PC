@@ -587,6 +587,8 @@ class Pipeline:
 
     def _start_skills(self, pipes, entrants):
         current = [p for p in pipes if self._card_live(p)]
+        for pipe in entrants:
+            pipe.card.use_effects_resolved = False
         for pipe in current:
             pipe.card.set_range_opponent(None)
             pipe.range_pairing = None

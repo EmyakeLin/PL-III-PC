@@ -160,7 +160,20 @@
         },
         {
           "id": "heris_crush", "name": "击溃！", "cost": 3,
-          "ignore_range_when": {"status": "凝聚", "minimum": 2, "snapshot": "使用时凝聚", "amount": 2},
+          "ignore_range_amount": {
+            "value": {
+              "if": {
+                "left": {
+                  "if": "$event.card.use_effects_resolved",
+                  "then": {"field": "$event.card.use_state", "key": "使用时凝聚", "default": 0},
+                  "else": {"field": "$self.statuses", "key": "凝聚", "default": 0}
+                },
+                "op": "ge", "right": 2
+              },
+              "then": 2, "else": 0
+            },
+            "description": "使用前按当前凝聚判断射程。使用时凝聚至少2层，本技能无视2级远程。"
+          },
           "entries": [
             {"trigger": "on_skill_use",
              "description": "使用时消耗全部能源。每消耗4层，本技能骰级+1。每消耗2层，首骰命中时额外施加1烧伤。",
@@ -172,7 +185,7 @@
             {"trigger": "on_skill_use",
              "description": "使用时，凝聚至少1层则本技能骰子基础值+2，至少2层无视2级远程，至少3层令首骰驻留。首骰拼输仍可命中，跳过伤害部分。",
              "operation": {"op": "program", "code": [
-               "$card", "使用时凝聚", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"
+               "$event.card", "使用时凝聚", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"
              ]}},
             {"trigger": "before_dice_use",
              "operation": {"op": "program", "code": [

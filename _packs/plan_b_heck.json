@@ -473,7 +473,10 @@
             {
               "type": "pierce",
               "level": 2,
-              "ignore_range_per_stack": "凝聚",
+              "ignore_range_amount": {
+                "value": {"left": {"field": "$self.statuses", "key": "凝聚", "default": 0}, "op": "min", "right": 3},
+                "description": "按当前凝聚层数无视等量远程，至多3级。"
+              },
               "entries": [
                 "0物理",
                 {
