@@ -2,8 +2,7 @@
 
 import sys
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor
-from queue import Queue
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from player.target_order import TargetOrder
 
@@ -38,7 +37,6 @@ class TerminalBridge:
         """Drive a synchronous kernel command, answering target reservations on the terminal thread."""
         if self._executor is None:
             return command(*args, **kwargs)
-        notifications = Queue()
         orders = {}
         previous = {player: player.target_order for player in self.game.players}
 
@@ -46,23 +44,25 @@ class TerminalBridge:
             order = TargetOrder()
             orders[player] = order
             player.target_order = order
-            order.offered.add_done_callback(lambda _: notifications.put((player, order)))
 
         for player in self.game.players:
             reserve(player)
         try:
             task = self._executor.submit(command, *args, **kwargs)
-            task.add_done_callback(lambda _: notifications.put(None))
-            while (request := notifications.get()) is not None:
-                player, order = request
-                try:
-                    target = self.choose_target(player, order.offered.result())
-                    reserve(player)
-                    order.submit(target)
-                except BaseException:
-                    order.cancel()
-                    raise
-            return task.result()
+            while True:
+                offers = {order.offered: (player, order) for player, order in orders.items()}
+                ready, _ = wait([task, *offers], return_when=FIRST_COMPLETED)
+                if task in ready:
+                    return task.result()
+                for offer in ready:
+                    player, order = offers[offer]
+                    try:
+                        target = self.choose_target(player, offer.result())
+                        reserve(player)
+                        order.submit(target)
+                    except BaseException:
+                        order.cancel()
+                        raise
         finally:
             for player, order in orders.items():
                 order.cancel()

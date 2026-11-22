@@ -725,6 +725,27 @@ class TargetExecutorTests(unittest.TestCase):
         self.assertIsNone(player.target_order)
         self.assertIs(player.choose_one_sided_target(enemy), enemies[1])
 
+    def test_interrupted_target_question_restores_the_prior_declaration(self):
+        from threading import get_ident
+        player = Player(3, "甲")
+        original = player.target_order = TargetOrder()
+        enemy = SimpleNamespace(characters=[SimpleNamespace(is_alive=True, hp=n) for n in (3, 5)])
+        bridge = TerminalBridge(SimpleNamespace(players=[player], context=Context()))
+        threads = []
+        def command():
+            threads.append(get_ident())
+            player.choose_one_sided_target(enemy)
+        def decline(seat, choice):
+            threads.append(get_ident())
+            raise KeyboardInterrupt
+        bridge.choose_target = decline
+        with bridge.session(), self.assertRaises(KeyboardInterrupt):
+            bridge.execute(command)
+        self.assertNotEqual(*threads)
+        self.assertEqual(threads[-1], get_ident())
+        self.assertIs(player.target_order, original)
+        self.assertFalse(original.offered.done())
+
     def test_zero_and_single_targets_preserve_the_next_reservation(self):
         player = Player(7, "甲")
         order = player.target_order = TargetOrder()
