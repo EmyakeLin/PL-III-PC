@@ -89,7 +89,9 @@ class TerminalBridge:
 
     def flush(self):
         while self._facts:
-            print(format_fact(*self._facts.popleft()))
+            message = format_fact(*self._facts.popleft())
+            if message:
+                print(message)
 
     def select_character(self, characters):
         draft = RosterDraft(characters, len(self.game.players), self.game.gamerule.MAX_CHAR_COUNT)

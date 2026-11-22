@@ -63,6 +63,13 @@ MESSAGES = {
 
 def format_fact(kind, fields):
     values = dict(fields)
+    if kind == "hit":
+        if values["mode"] == "full":
+            if values["index"] <= 1:
+                return ""
+            return "{source}「{card}」追加命中 {target}。".format_map(values)
+        values["part"] = {"effects_only": "效果", "damage_only": "伤害"}[values["mode"]]
+        return "{source}「{card}」命中 {target}，仅结算{part}部分。".format_map(values)
     if "source" in values and values["source"] is None:
         values["source"] = "效果"
     if "series" in values:

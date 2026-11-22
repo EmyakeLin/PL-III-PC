@@ -199,6 +199,23 @@ class PlacementExecutorTests(unittest.TestCase):
 
 
 class BattleFactTests(unittest.TestCase):
+    def test_each_hit_mode_records_one_hit_before_its_effects(self):
+        for mode in ("full", "damage_only", "effects_only"):
+            for index in (1, 2, 25):
+                vm = Context()
+                source = SimpleNamespace(combat_name="甲", is_alive=True)
+                target = SimpleNamespace(combat_name="乙", is_alive=True)
+                card = SimpleNamespace(character=source, name="技能", destroyed=False)
+                die = SimpleNamespace(is_attack=True, card=card, entries=[], destroyed=False)
+                source.on_attack_hit = lambda *_: vm.record("checked_critical")
+                with vm.binding(hit_mode=mode, hit_index=index), vm.collect_facts() as facts:
+                    self.assertTrue(vm.execute_hit_parts(die, target))
+                self.assertEqual(list(facts), [
+                    ("hit", {"mode": mode, "index": index, "source": "甲", "target": "乙", "card": "技能"}),
+                    ("checked_critical", {}),
+                ])
+                self.assertEqual(bool(format_fact(*facts[0])), mode != "full" or index > 1)
+
     def test_observers_receive_completed_facts_in_order_and_can_detach(self):
         vm = Context()
         vm.record("outside", sample=0)

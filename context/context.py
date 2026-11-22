@@ -783,12 +783,9 @@ class Context:
                 or not target.is_alive or not source.is_alive or die.destroyed or card.destroyed):
             return False
         mode = self.event.get("hit_mode")
-        if mode == "effects_only":
-            print(f"{source.combat_name}「{card.name}」命中 {target.combat_name}，仅结算效果部分。")
-        elif mode == "damage_only":
-            print(f"{source.combat_name}「{card.name}」命中 {target.combat_name}，仅结算伤害部分。")
-        elif (self.event.get("hit_index") or 0) > 1:
-            print(f"{source.combat_name}「{card.name}」追加命中 {target.combat_name}。")
+        index = self.event.get("hit_index") or 1
+        self.record("hit", source=source.combat_name, target=target.combat_name, card=card.name,
+                    mode=mode or "full", index=index)
         source.on_attack_hit(die, target)
         for text in die.entries or ():
             if not target.is_alive or not source.is_alive or die.destroyed or card.destroyed:
