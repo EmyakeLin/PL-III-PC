@@ -187,3 +187,78 @@ class HitOriginTests(unittest.TestCase):
                 self.assertEqual(target.statuses.get("星结", 0), max(0, marks - 2))
                 self.assertEqual(target.next_turn_duels, -(marks // 5) if active and uses < 2 else 0)
                 self.assertEqual(ctx.operations.count(OpCode.STATUS), 1)
+
+
+class CollectionAndTargetTests(unittest.TestCase):
+    def test_known_and_missing_targets_do_not_request_a_second_selection(self):
+        from unittest.mock import Mock
+
+        printed = printed_skill("xinxing_lin_qiu.json", "lin_qiu_plume_sword")
+        spec = printed["entries"][0]
+        for known, selectable, stacks in itertools.product((False, True), (False, True), (0, 5, 6, 12, 10**9)):
+            ctx = TraceContext()
+            actor, enemy = actor_for(ctx, 1), actor_for(ctx, 2)
+            enemy.statuses["星结"] = stacks
+            card = Card(None, printed, actor)
+            select = Mock(return_value=enemy if selectable else None)
+            ctx.game = SimpleNamespace(pipeline=SimpleNamespace(resolve_skill_target=select))
+            resolve_entry(ctx, card, spec, source=actor, target=enemy if known else None, card=card)
+            self.assertEqual(select.call_count, int(not known))
+            self.assertEqual(ctx.operations.count(OpCode.SELECT_SKILL_TARGET), int(not known))
+            self.assertEqual(card.level_bonus, min(2, stacks // 6) if known or selectable else 0)
+
+    def test_hand_threshold_is_printed_and_other_peoples_cards_do_not_count(self):
+        for pack, needed in (("plan_b_heck.json", 5), ("plan_b_heris.json", 3), ("plan_b_li_ling.json", 3),
+                             ("wind_plan_b.json", 5), ("xinxing_lin_qiu.json", 7)):
+            char_spec = json.loads((PACKS / pack).read_text(encoding="utf-8"))["characters"][0]
+            specs = [e for p in char_spec["passive_skills"] for e in p["entries"]]
+            spec = next(e for e in specs if "集满" in e.get("description", "") or "均在手中" in e.get("description", "")
+                        or "都在手中" in e.get("description", ""))
+            for count in (0, needed-1, needed, needed+1):
+                ctx = TraceContext()
+                actor = actor_for(ctx, 1)
+                class Skill:
+                    pass
+                regular = [Skill() for _ in range(needed + 1)]
+                outside = Skill()
+                for card in regular:
+                    card.out_of_combat = False
+                outside.out_of_combat = True
+                actor.skills = regular + [outside]
+                actor.player.cardspace = SimpleNamespace(hand=SimpleNamespace(content=regular[:count]+[outside, Skill()]))
+                actor.player.available_cost = 6
+                actor.player.turn_cost_adjustment = 0
+                resolve_entry(ctx, actor, spec, source=actor)
+                self.assertIn(OpCode.FILTER, ctx.operations)
+                self.assertIn(OpCode.SIZE, ctx.operations)
+                if pack.startswith("xinxing"):
+                    self.assertEqual(actor.statuses["隧道"], 1+int(count >= needed))
+                else:
+                    self.assertEqual(actor.turn_duel_bonus, int(count >= needed))
+
+    def test_group_damage_visits_primary_first_only_after_a_landed_hit(self):
+        printed = printed_skill("wind_plan_b.json", "annolin_burst")
+        spec = printed["dice"][1]["entries"][0]
+        for landed, primary_index in itertools.product((False, True), range(3)):
+            class DamageTrace(TraceContext):
+                def execute_op(self, opcode, **fields):
+                    if opcode == OpCode.DAMAGE:
+                        attack, grade, amount, target = self.pop(), self.pop(), self.pop(), self.pop()
+                        visits.append((target, amount, grade, attack))
+                        return amount
+                    return super().execute_op(opcode, **fields)
+            ctx = DamageTrace()
+            actor = actor_for(ctx, 1)
+            enemies = [actor_for(ctx, 2) for _ in range(3)]
+            opposing = enemies[0].player
+            opposing.characters = enemies
+            ctx.game = SimpleNamespace(players=[actor.player, opposing])
+            actor.statuses["涡流"] = 6
+            card = Card(None, printed, actor)
+            die = Dice(printed["dice"][1])
+            die.card = card
+            primary = enemies[primary_index]
+            visits = []
+            resolve_entry(ctx, die, spec, source=actor, target=primary, card=card, die=die, result=landed)
+            order = [primary] + [e for e in enemies if e is not primary]
+            self.assertEqual(visits, [(e, 6 if e is primary else 4, "normal", "slash") for e in order] if landed else [])

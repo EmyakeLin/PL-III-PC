@@ -36,7 +36,13 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$own_skills_in_hand", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
+                  "$self.skills",
+                  [
+                    "$event.item.out_of_combat", "NOT", "$player.cardspace.hand.content", "$event.item",
+                    "CONTAINS", "AND"
+                  ],
+                  "FILTER", "SIZE", 5, "GE", ["$self",1,"TURN_DUELS_ADD","$player",1,"TURN_COST_ADD"],
+                  "WHEN"
                 ]
               },
               "description": "额外抽牌后，若自己的五张常规技能集满，获得1交锋并提升1通用费。"
@@ -48,18 +54,34 @@
           "entries": [
             {
               "trigger": "on_turn_start",
-              "when": {
-                "owner_status_at_least": {"能源":12}
-              },
+              "when": {"owner_status_at_least":{"能源":12}},
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self", "全开", 1, "STATUS", "$player", 2, "TURN_COST_ADD", "$self", 1, "TURN_DUELS_ADD",
-                  "$self", "首次全开", "CHARACTER_STATE", "NOT",
+                  "$self", "全开", 1, "STATUS", "$player", 2, "TURN_COST_ADD", "$self", 1,
+                  "TURN_DUELS_ADD", "$self", "首次全开", "CHARACTER_STATE", "NOT",
                   [
                     "$self", "首次全开", true, "SET_CHARACTER_STATE", "$self", "heck_decisive_thrust",
-                    "out_of_combat", "FIND_SKILL", "hand", "MOVE_CARD", "$self", "heck_gunblade_salvo",
-                    "out_of_combat", "FIND_SKILL", "hand", "MOVE_CARD"
+                    "out_of_combat", {"literal":["holder","skill_id","zone"]},
+                    [
+                      "$event.bindings.holder.player", "$event.bindings.zone", "ZONE_CARDS",
+                      [
+                        "$event.item.id", "$event.bindings.skill_id", "EQ", "$event.item.character",
+                        "$event.bindings.holder", "IS", "AND", "$event.item.destroyed", "NOT", "AND"
+                      ],
+                      "FILTER", "FIRST"
+                    ],
+                    "WITH_BINDINGS", "hand", "MOVE_CARD", "$self", "heck_gunblade_salvo",
+                    "out_of_combat", {"literal":["holder","skill_id","zone"]},
+                    [
+                      "$event.bindings.holder.player", "$event.bindings.zone", "ZONE_CARDS",
+                      [
+                        "$event.item.id", "$event.bindings.skill_id", "EQ", "$event.item.character",
+                        "$event.bindings.holder", "IS", "AND", "$event.item.destroyed", "NOT", "AND"
+                      ],
+                      "FILTER", "FIRST"
+                    ],
+                    "WITH_BINDINGS", "hand", "MOVE_CARD"
                   ],
                   "WHEN"
                 ]

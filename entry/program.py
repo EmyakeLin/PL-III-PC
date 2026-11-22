@@ -32,8 +32,6 @@ def run_program(ctx, entry, tokens):
             value = ctx.game
         elif root == "event":
             value = event
-        elif root == "skill_target":
-            value = event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
         elif root in event:
             value = event[root]
         else:

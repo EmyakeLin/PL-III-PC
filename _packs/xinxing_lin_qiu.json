@@ -36,7 +36,14 @@
               "trigger": "on_turn_start",
               "operation": {
                 "op": "program",
-                "code": ["$self", "隧道", 1, "$own_skills_in_hand", [1, "ADD"], "WHEN", "STATUS"]
+                "code": [
+                  "$self", "隧道", 1, "$self.skills",
+                  [
+                    "$event.item.out_of_combat", "NOT", "$player.cardspace.hand.content", "$event.item",
+                    "CONTAINS", "AND"
+                  ],
+                  "FILTER", "SIZE", 7, "GE", [1,"ADD"], "WHEN", "STATUS"
+                ]
               },
               "description": "回合开始时获得1隧道，自己的七张牌集满时本次获得量+1。"
             }
@@ -184,8 +191,9 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$targets", ["$target", "星结", 2, "STATUS"], "FOR_EACH_TARGET", "$allies", ["$target", 1, "HEAL"],
-                  "FOR_EACH_TARGET", "$self", "隧道", 3, "STATUS"
+                  "$targets", ["$target","星结",2,"STATUS"], "FOR_EACH_TARGET", "$player.characters",
+                  ["$event.item.is_alive"], "FILTER", ["$target",1,"HEAL"], "FOR_EACH_TARGET", "$self",
+                  "隧道", 3, "STATUS"
                 ]
               },
               "description": "星结锁定时，对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。"
@@ -277,7 +285,15 @@
               "trigger": "on_skill_use",
               "operation": {
                 "op": "program",
-                "code": ["$card", "$skill_target", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN", "SKILL_LEVEL_ADD"]
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN",
+                  "skill_recipient", "STORE", "$local.skill_recipient",
+                  [
+                    "$card", "$local.skill_recipient", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN",
+                    "SKILL_LEVEL_ADD"
+                  ],
+                  "WHEN"
+                ]
               },
               "description": "目标每有6星结，本技能骰级+1，至多+2。"
             },
@@ -352,7 +368,15 @@
               "trigger": "on_skill_use",
               "operation": {
                 "op": "program",
-                "code": ["$card", "$skill_target", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN", "SKILL_LEVEL_ADD"]
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN",
+                  "skill_recipient", "STORE", "$local.skill_recipient",
+                  [
+                    "$card", "$local.skill_recipient", "星结", "STATUS_COUNT", 6, "FLOOR_DIV", 2, "MIN",
+                    "SKILL_LEVEL_ADD"
+                  ],
+                  "WHEN"
+                ]
               },
               "description": "目标每有6星结，本技能骰级+1，至多+2。"
             },
@@ -438,7 +462,12 @@
               "trigger": "on_skill_use",
               "operation": {
                 "op": "program",
-                "code": ["$skill_target", "星结", "STATUS_COUNT", 6, "GE", ["$card", 1, "SKILL_LEVEL_ADD"], "WHEN"]
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN",
+                  "skill_recipient", "STORE", "$local.skill_recipient",
+                  ["$local.skill_recipient","星结","STATUS_COUNT",6,"GE",["$card",1,"SKILL_LEVEL_ADD"],"WHEN"],
+                  "WHEN"
+                ]
               },
               "description": "目标至少6星结时，技能骰级+1。"
             },
@@ -506,16 +535,24 @@
                     "code": [
                       "$hit_index", 1, "EQ",
                       [
-                        "$own_hand_skills",
+                        "$player.cardspace.hand.content",
+                        [
+                          "$event.item.character", "$self", "IS", "$event.item.destroyed", "NOT", "AND",
+                          "$self", "$event.item", "SKILL_RESTRICTED", "NOT", "AND"
+                        ],
+                        "FILTER",
                         {
                           "literal": {
                             "optional": true,
                             "require_playable_hand": true,
-                            "bindings": {"discount": 2},
-                            "preview": {"skill_discount": "discount"},
+                            "bindings": {"discount":2},
+                            "preview": {"skill_discount":"discount"},
                             "then": {
                               "op": "program",
-                              "code": ["$chosen_card", "$bindings.discount", "SKILL_USE", {"literal": {"at": "after_die"}}, "INSERT_SKILL"]
+                              "code": [
+                                "$chosen_card", "$bindings.discount", "SKILL_USE",
+                                {"literal":{"at":"after_die"}}, "INSERT_SKILL"
+                              ]
                             }
                           }
                         },
@@ -644,10 +681,19 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$card", "destroy_chosen", "SKILL_STATE", "NOT", "$target_board_skills", "AND",
+                      "BOARD_SLOTS", ["$event.item","$event.target.player.side","SLOT_CARDS"], "MAP",
+                      "FLATTEN",
                       [
-                        "$card", "destroy_chosen", 1, "SET_SKILL_STATE", "$target_board_skills",
-                        {"literal": {"optional": false, "then": {"op": "program", "code": ["$chosen_card", "DESTROY"]}}},
+                        "$event.item.character", "$event.target", "IS", "$event.item.destroyed", "NOT",
+                        "AND", "$event.item.character.is_alive", "AND"
+                      ],
+                      "FILTER", "candidates", "STORE", "$card", "destroy_chosen", "SKILL_STATE", "NOT",
+                      "$local.candidates", "AND",
+                      [
+                        "$card", "destroy_chosen", 1, "SET_SKILL_STATE", "$local.candidates",
+                        {
+                          "literal": {"optional":false,"then":{"op":"program","code":["$chosen_card","DESTROY"]}}
+                        },
                         "CHOOSE_CARD"
                       ],
                       "WHEN"

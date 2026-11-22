@@ -63,16 +63,7 @@ def select_entity(ctx, selector, owner):
         return owner
     if selector == "execution":
         return ctx.event.get("execution")
-    selected = ctx.event.get(selector)
-    if selected is None and selector == "target":
-        actor = character_of(owner)
-        player = getattr(actor, "player", None)
-        if player is not None:
-            enemy = next((op for op in ctx.game.players if op is not player), None)
-            if enemy is not None:
-                selected = player.choose_one_sided_target(enemy)
-                ctx.event["target"] = selected
-    return selected
+    return ctx.event.get(selector)
 
 
 def run_effect(ctx, entry, operation):

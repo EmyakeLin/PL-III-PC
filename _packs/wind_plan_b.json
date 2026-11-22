@@ -50,9 +50,18 @@
           "name": "PlanB 组织",
           "entries": [{
             "trigger": "on_turn_start",
-            "operation": {"op": "program", "code": [
-              "$own_skills_in_hand", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
-            ]},
+            "operation": {
+              "op": "program",
+              "code": [
+                "$self.skills",
+                [
+                  "$event.item.out_of_combat", "NOT", "$player.cardspace.hand.content", "$event.item",
+                  "CONTAINS", "AND"
+                ],
+                "FILTER", "SIZE", 5, "GE", ["$self",1,"TURN_DUELS_ADD","$player",1,"TURN_COST_ADD"],
+                "WHEN"
+              ]
+            },
             "description": "回合开始时，在A级条目的额外抽牌后，若自己的5张技能均在手中，本回合自身交锋数+1，己方获得1通用费。"
           }]
         },
@@ -129,9 +138,22 @@
               {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "slash", "level": 2, "entries": [
-              {"trigger": "before_dice_pair", "operation": {"op": "program", "code": [
-                "$die", "$next_duel_target", "ROUTE_DIE_ATTACK"
-              ]}, "description": "对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"},
+              {
+                "trigger": "before_dice_pair",
+                "operation": {
+                  "op": "program",
+                  "code": [
+                    "$die", "$game.active_duelspace", 1, "SLOT_AT_OFFSET", "$player", "OPPONENT",
+                    {"field":"side"}, "REMAINING_CARDS",
+                    [
+                      "$event.item.character.is_alive", "$event.item.destroyed", "NOT", "AND",
+                      "$event.item.state.name", {"literal":"NEGATED"}, "EQ", "NOT", "AND"
+                    ],
+                    "FILTER", "FIRST", "CHARACTER_OF", "ROUTE_DIE_ATTACK"
+                  ]
+                },
+                "description": "对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"
+              },
               "1物理",
               {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "骰子等级降低", "amount": 1},
                "description": "命中时施加1层骰子等级降低。"}
@@ -145,13 +167,22 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "operation": {"op": "program", "code": [
-                "$skill_target", "enemy", "STORE",
-                {"local": "enemy"}, [
-                  {"local": "enemy"}, "涡流", "STATUS_COUNT", 1, "GE",
-                  ["$card", "vortex_target", {"local": "enemy"}, "SET_SKILL_STATE"], "WHEN"
-                ], "WHEN"
-              ]},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN",
+                  "skill_recipient", "STORE", "$local.skill_recipient",
+                  [
+                    "$local.skill_recipient", "enemy", "STORE", {"local":"enemy"},
+                    [
+                      {"local":"enemy"}, "涡流", "STATUS_COUNT", 1, "GE",
+                      ["$card","vortex_target",{"local":"enemy"},"SET_SKILL_STATE"], "WHEN"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
               "description": "使用时，若目标带有涡流，本技能骰子伤害+1，并在技能使用后消耗该目标1层涡流。"
             },
             {
@@ -248,13 +279,25 @@
               ]}, "description": "命中时自身失去4生命值，以使下骰最终点数+15。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
-              {"trigger": "AFTER RESOLVE_HIT", "operation": {"op": "program", "damage_part": true, "code": [
-                "$self", "涡流", "STATUS_COUNT", 3, "FLOOR_DIV", 2, "MIN", "primary_bonus", "STORE",
-                "$enemies", [
-                  "$target", 4, "$is_primary_target", [{"local": "primary_bonus"}, "ADD"], "WHEN",
-                  "normal", "slash", "DAMAGE"
-                ], "FOR_EACH_TARGET"
-              ]}, "description": "群伤4物理。自身每持有3层涡流，对主要目标的伤害+1（至多+2）。"}
+              {
+                "trigger": "AFTER RESOLVE_HIT",
+                "operation": {
+                  "op": "program",
+                  "damage_part": true,
+                  "code": [
+                    "$self", "涡流", "STATUS_COUNT", 3, "FLOOR_DIV", 2, "MIN", "primary_bonus", "STORE",
+                    "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                    "$event.target", "FIRST_IN_ORDER",
+                    [
+                      "$target", 4, "$is_primary_target", [{"local":"primary_bonus"},"ADD"], "WHEN",
+                      "normal", "slash", "DAMAGE"
+                    ],
+                    "FOR_EACH_TARGET"
+                  ]
+                },
+                "description": "群伤4物理。自身每持有3层涡流，对主要目标的伤害+1（至多+2）。",
+                "when": [{"left":"$event.result","op":"eq","right":true}]
+              }
             ]}
           ]
         },
@@ -291,12 +334,21 @@
               {"trigger": "on_dice_hit", "operation": "QUEUE_STATUS $self $self 涡流 1", "description": "命中时在下回合获得1层涡流。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
-              {"trigger": "AFTER RESOLVE_HIT", "operation": {"op": "program", "damage_part": true, "code": [
-                "$enemies", [
-                  "$target", 2, "normal", "slash", "DAMAGE",
-                  "$self", "$target", "骰子等级降低", 1, "QUEUE_STATUS"
-                ], "FOR_EACH_TARGET"
-              ]}, "description": "群伤2物理，并在下回合对全体敌方施加1层骰子等级降低。"}
+              {
+                "trigger": "AFTER RESOLVE_HIT",
+                "operation": {
+                  "op": "program",
+                  "damage_part": true,
+                  "code": [
+                    "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                    "$event.target", "FIRST_IN_ORDER",
+                    ["$target",2,"normal","slash","DAMAGE","$self","$target","骰子等级降低",1,"QUEUE_STATUS"],
+                    "FOR_EACH_TARGET"
+                  ]
+                },
+                "description": "群伤2物理，并在下回合对全体敌方施加1层骰子等级降低。",
+                "when": [{"left":"$event.result","op":"eq","right":true}]
+              }
             ]}
           ]
         }

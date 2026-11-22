@@ -634,6 +634,11 @@ def handle_route_die_attack(ctx):
     return True
 
 
+def handle_select_skill_target(ctx):
+    card = ctx.pop()
+    ctx.push(ctx.game.pipeline.resolve_skill_target(card))
+
+
 def handle_for_each_target(ctx):
     block, targets = ctx.pop(), ctx.pop()
     primary = ctx.event.get("primary_target", ctx.event.get("target"))
@@ -1022,6 +1027,7 @@ DISPATCH_TABLE = {
     OpCode.DRAW: handle_draw, OpCode.PLACE: handle_place, OpCode.ROLL: handle_roll,
     OpCode.REPLACE_SKILL: handle_replace_skill,
     OpCode.MOVE_CARD: handle_move_card, OpCode.ROUTE_DIE_ATTACK: handle_route_die_attack,
+    OpCode.SELECT_SKILL_TARGET: handle_select_skill_target,
     OpCode.FOR_EACH_TARGET: handle_for_each_target,
     OpCode.RESET_COST: handle_reset_cost, OpCode.PAY_COST: handle_pay_cost,
     OpCode.NEXT_TURN_COST: handle_next_turn_cost,
@@ -1095,6 +1101,7 @@ OPERANDS = {
     OpCode.PLACE: ("side", "duel_index", "card"), OpCode.ROLL: ("low", "high", "bonus", "die"),
     OpCode.REPLACE_SKILL: ("card", "target"),
     OpCode.MOVE_CARD: ("card", "zone"), OpCode.ROUTE_DIE_ATTACK: ("die", "target"),
+    OpCode.SELECT_SKILL_TARGET: ("card",),
     OpCode.FOR_EACH_TARGET: ("targets", "block"),
     OpCode.DAMAGE: ("target", "amount", "penetration", "attack_type"),
     OpCode.LIGHTCORE_DAMAGE: ("target", "amount"), OpCode.REAL_DAMAGE: ("target", "amount"),

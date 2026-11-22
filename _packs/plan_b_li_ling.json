@@ -8,9 +8,18 @@
         "name": "PlanB 组织",
         "entries": [{
           "trigger": "on_turn_start",
-          "operation": {"op": "program", "code": [
-            "$own_skills_in_hand", ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"], "WHEN"
-          ]},
+          "operation": {
+            "op": "program",
+            "code": [
+              "$self.skills",
+              [
+                "$event.item.out_of_combat", "NOT", "$player.cardspace.hand.content", "$event.item",
+                "CONTAINS", "AND"
+              ],
+              "FILTER", "SIZE", 3, "GE", ["$self",1,"TURN_DUELS_ADD","$player",1,"TURN_COST_ADD"],
+              "WHEN"
+            ]
+          },
           "description": "回合开始时，若自己的三张技能都在手中，本回合自身交锋数+1，己方获得1通用费。"
         }]
       },
@@ -26,13 +35,34 @@
             "$die", "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_LEVEL_ADD",
             "$value_ref", "$printed_min", "$self", "凝聚", "STATUS_COUNT", "ADD", "VALUE_FLOOR"
           ]}, "description": "每持有4能源，速度骰提升1级（至多2级）。每持有1凝聚，速度骰最小值+1。"},
-          {"trigger": "BEFORE RESOLVE_DIE_LEVEL", "operation": {"op": "program", "code": [
-            "$target_speed_lead", 2, "FLOOR_DIV", 0, 3, "CLAMP", "ADD"
-          ]}, "description": "个人速度每领先目标2点，骰子等级+1（至多+3）。"},
-          {"trigger": "BEFORE STATUS", "subject": "source", "when": {"status": "烧伤", "amount_at_least": 1},
-           "operation": {"op": "program", "code": [
-             "$target_speed_lead", 2, "FLOOR_DIV", 0, 3, "CLAMP", "ADD"
-           ]}, "description": "个人速度每领先目标2点，本次施加的烧伤+1（至多+3）。"},
+          {
+            "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+            "operation": {
+              "op": "program",
+              "code": [
+                "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN",
+                "skill_recipient", "STORE", "$local.skill_recipient",
+                ["$self.speed","$local.skill_recipient.speed","SUB",2,"FLOOR_DIV",0,3,"CLAMP","ADD"],
+                "WHEN"
+              ]
+            },
+            "description": "个人速度每领先目标2点，骰子等级+1（至多+3）。"
+          },
+          {
+            "trigger": "BEFORE STATUS",
+            "subject": "source",
+            "when": {"status":"烧伤","amount_at_least":1},
+            "operation": {
+              "op": "program",
+              "code": [
+                "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN",
+                "skill_recipient", "STORE", "$local.skill_recipient",
+                ["$self.speed","$local.skill_recipient.speed","SUB",2,"FLOOR_DIV",0,3,"CLAMP","ADD"],
+                "WHEN"
+              ]
+            },
+            "description": "个人速度每领先目标2点，本次施加的烧伤+1（至多+3）。"
+          },
           {"trigger": "on_dice_hit", "when": {"one_sided": true}, "operation": "QUEUE_STATUS $self $self 迅捷 1", "description": "自身骰子单方面攻击命中时，下回合获得1迅捷。"},
           {"trigger": "AFTER ACTIVATE_STATUS", "subject": "source",
            "when": {"status": "烧伤", "activation_kind": "ignite", "result": true},
