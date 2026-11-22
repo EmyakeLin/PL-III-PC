@@ -511,7 +511,7 @@ class Context:
                     OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE,
                     OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.ACTIVATE_STATUS, OpCode.SHIELD,
                     OpCode.ABILITY_EFFECT, OpCode.SPEND_ABILITY_EFFECT,
-                    OpCode.DESTROY, OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
+                    OpCode.DESTROY, OpCode.SET_STATUS_OVERFLOW, OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
                 subject = "target"
             else:
                 subject = "source"

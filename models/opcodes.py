@@ -168,6 +168,20 @@ def handle_set_component_state(ctx):
         return value
 
 
+def handle_set_status_overflow(ctx):
+    value, name, holder = ctx.pop(), ctx.pop(), ctx.pop()
+    if type(value) is not int or value < 0:
+        raise ValueError("状态累计溢出量须为非负整数")
+    if holder is None:
+        return
+    name = holder.canonical_status_name(name)
+    if value:
+        holder.status_overflow[name] = value
+    else:
+        holder.status_overflow.pop(name, None)
+    return value
+
+
 def handle_set_character_state(ctx):
     value, key, actor = ctx.pop(), ctx.pop(), ctx.pop()
     if actor is not None and actor.is_alive:
@@ -915,6 +929,7 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.SET_STATUS_OVERFLOW: handle_set_status_overflow,
     OpCode.UPDATE_ROLL: handle_roll_update, OpCode.QUEUE_ROLL_UPDATE: handle_roll_update,
     OpCode.ADD_DAMAGE_MODIFIER: handle_damage_modifier,
     OpCode.WINDOW_OPEN: lambda ctx: ctx.push(ctx.game.special.window_open(ctx.pop())),
@@ -982,6 +997,7 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.SET_STATUS_OVERFLOW: ("target", "status", "amount"),
     OpCode.UPDATE_ROLL: ("die", "mode", "amount"), OpCode.QUEUE_ROLL_UPDATE: ("die", "mode", "amount"),
     OpCode.ADD_DAMAGE_MODIFIER: ("target", "channel", "kind", "amount", "grade"),
     OpCode.WINDOW_OPEN: ("window",), OpCode.SET_CARD_FACE: ("card", "face"),

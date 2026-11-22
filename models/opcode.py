@@ -126,3 +126,4 @@ class OpCode(Enum):
     ZONE_CARDS = auto()
     PLACE_IN_DUEL = auto()
     PAIR = auto()
+    SET_STATUS_OVERFLOW = auto()

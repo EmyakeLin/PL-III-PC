@@ -2,6 +2,8 @@ import random
 from types import SimpleNamespace
 
 from context.context import Context
+from entry.entry import Entry
+from entry.legacy_operations import overflow_followup
 from gamerule import GameRule
 from loader import base_effects
 from models.card import CardState
@@ -328,13 +330,13 @@ class Game:
             if self.is_over:
                 break
             self.context.record("status_batch", effect=batch.get("label", name), targets=tuple(c.combat_name for c in targets))
-            self.context.dispatch_pipeline(batch["event"], source=None, target=None, card=None, die=None,
-                                           side=None, targets=targets, status=name)
-            for char in targets:
-                char.status_overflow.pop(name, None)
-                excess = char.statuses.get(name, 0) - batch["reduce_to"]
-                if char.is_alive and excess > 0:
-                    char.add_status(name, -excess)
+            event = dict(source=None, target=None, card=None, die=None, side=None, targets=targets, status=name)
+            self.context.dispatch_pipeline(batch["event"], **event)
+            followup = overflow_followup(batch)
+            if followup is not None:
+                entry = Entry.from_spec(None, {"trigger": batch["event"], "operation": followup})
+                with self.context.binding(**event):
+                    self.context._invoke(entry)
 
     def finish_turn(self):
         if not self.turn_ending:

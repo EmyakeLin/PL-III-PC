@@ -49,6 +49,15 @@ WORD_ALIASES = {
 }
 
 
+def overflow_followup(batch):
+    if "reduce_to" in batch:
+        return {"op": "program", "code": ["$targets", [
+            "SET_STATUS_OVERFLOW $item $event.status 0",
+            "$item.is_alive", [f"CAP_STATUS $item $event.status {batch['reduce_to']}"], "WHEN",
+        ], "EACH"]}
+    return batch.get("then")
+
+
 def compile_targeted_action(name, data, args):
     from entry.compiler import Field, Program, TargetedProgram, compile_program
 

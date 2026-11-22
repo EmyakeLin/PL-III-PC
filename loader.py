@@ -22,12 +22,16 @@ def _add_effects(definitions, pack):
         cap = rule.get("cap")
         if "cap" in rule and (type(cap) is not int or cap < 0):
             raise ValueError(f"{name} 的上限须为非负整数")
+        if type(rule.get("track_overflow", False)) is not bool:
+            raise ValueError(f"{name} 的溢出累计标记须为布尔值")
         batch = rule.get("overflow_batch")
         if batch is not None and (cap is None or type(batch.get("threshold")) is not int
                 or batch["threshold"] <= 0 or not isinstance(batch.get("event"), str)
-                or not batch["event"] or type(batch.get("reduce_to")) is not int
-                or not 0 <= batch["reduce_to"] <= cap):
-            raise ValueError(f"{name} 的溢出事件须有阈值、事件名及结算后上限")
+                or not batch["event"]
+                or "then" in batch and not isinstance(batch["then"], (str, dict, list))
+                or "reduce_to" in batch and ("then" in batch or type(batch["reduce_to"]) is not int
+                                             or not 0 <= batch["reduce_to"] <= cap)):
+            raise ValueError(f"{name} 的溢出事件需要正整数阈值、事件名和有效的后续操作")
         if any(target == name or type(amount) is not int or amount <= 0
                for target, amount in rule.get("sustain", {}).items()):
             raise ValueError(f"{name} 的持续加成须指定其他状态及正整数层数")

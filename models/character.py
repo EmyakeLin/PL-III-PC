@@ -189,8 +189,9 @@ class Character:
                 label = self.status_rules[label].get("active_label", label)
             parts.append(f"{label} {value}")
         for name, amount in self.status_overflow.items():
-            threshold = self.status_rules[name]["overflow_batch"]["threshold"]
-            parts.append(f"{name}溢出 {amount}/{threshold}")
+            threshold = self.status_rules.get(name, {}).get("overflow_batch", {}).get("threshold")
+            balance = str(amount) if threshold is None else f"{amount}/{threshold}"
+            parts.append(f"{name}溢出 {balance}")
         parts.extend(f"能力 {label} {count}次" for label, count in self.ability_effects.items())
         parts.extend(f"迎击「{reply.card.name}」第{reply.position}骰 ×{reply.remaining}"
                      for reply in self.reserved_dice)
@@ -306,7 +307,7 @@ class Character:
         cap = self.status_cap(name)
         if amount > 0 and cap is not None:
             accepted = min(amount, max(0, cap - self.statuses.get(name, 0)))
-            if accepted < amount and "overflow_batch" in rule:
+            if accepted < amount and (rule.get("track_overflow") or "overflow_batch" in rule):
                 self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
             amount = accepted
         return self._set_status(name, max(0, self._ordinary_status(name) + amount),

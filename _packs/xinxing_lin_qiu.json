@@ -5,7 +5,15 @@
     "隧道": {"description": "新星组织资源。林秋在回合开始时持有至少8层即可开启隧道。"},
     "星结": {
       "cap": 12,
-      "overflow_batch": {"threshold": 6, "event": "on_star_lock", "label": "星结锁定", "reduce_to": 6},
+      "overflow_batch": {
+        "threshold": 6, "event": "on_star_lock", "label": "星结锁定",
+        "then": {"op": "program", "code": [
+          "$targets", [
+            "SET_STATUS_OVERFLOW $item $event.status 0",
+            "$item.is_alive", ["CAP_STATUS $item $event.status 6"], "WHEN"
+          ], "EACH"
+        ]}
+      },
       "description": "上限12。累计溢出跨回合保留。达到6点溢出的角色在回合结束前一同成为锁定目标，结算完毕清零累计，各目标星结至多保留6层。"
     },
     "羽流·林秋": {"cap": 12, "description": "上限12。拼赢即将命中时，d12不高于层数则追加一次命中。本回合判定至少成功三次，回合末清空。"},

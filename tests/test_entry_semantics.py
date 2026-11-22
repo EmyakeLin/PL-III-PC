@@ -913,6 +913,97 @@ class ConditionExecutorTests(unittest.TestCase):
             self.assertEqual(rng.randint.call_count, 2)
 
 
+class OverflowBatchTests(unittest.TestCase):
+    def test_threshold_freezes_recipients_then_executes_only_the_printed_followup(self):
+        import json
+        from pathlib import Path
+        from loader import EffectDefinitions, _add_effects
+
+        pack = Path(__file__).resolve().parents[1] / "_packs" / "xinxing_lin_qiu.json"
+        printed = json.loads(pack.read_text(encoding="utf-8-sig"))["status_rules"]["星结"]["overflow_batch"]
+        clear = "SET_STATUS_OVERFLOW $item $event.status 0"
+        cap = "CAP_STATUS $item $event.status 6"
+        options = [
+            ({}, [], (12, 6)),
+            ({"then": {"op": "program", "code": ["$targets", [clear], "EACH"]}},
+             [OpCode.SET_STATUS_OVERFLOW] * 2, (12, 0)),
+            ({"then": {"op": "program", "code": ["$targets", [cap], "EACH"]}},
+             [OpCode.STATUS], (6, 6)),
+            ({"reduce_to": 6}, [OpCode.SET_STATUS_OVERFLOW, OpCode.STATUS, OpCode.SET_STATUS_OVERFLOW], (6, 0)),
+            (printed, [OpCode.SET_STATUS_OVERFLOW, OpCode.STATUS, OpCode.SET_STATUS_OVERFLOW], (6, 0)),
+        ]
+        for options_for_rule, expected_ops, expected_balance in options:
+            with self.subTest(batch=options_for_rule):
+                batch = {"threshold": 6, "event": "observe", **options_for_rule}
+                definitions = EffectDefinitions()
+                _add_effects(definitions, {"status_rules": {"星结": {"cap": 12, "overflow_batch": batch}}})
+                vm = TracedContext()
+                left, right = Player(3, "甲"), Player(9, "乙")
+                game = SimpleNamespace(context=vm, players=[left, right], first_player=right, is_over=False,
+                                       _overflow_settled_turn=-1, turn_count=8, status_rules=definitions.status_rules,
+                                       status_entries={}, ability_rules={}, turn_end_statuses=set(), resolving_duel=None)
+                vm.game = left.game = right.game = game
+                def make_actor(seat, name, stacks, overflow):
+                    actor = Character({"id": name, "name": name, "rank": "NORMAL", "skills": [], "max_hp": 4}, seat)
+                    seat.characters.append(actor)
+                    actor.statuses["星结"] = stacks
+                    actor.status_overflow["星结"] = overflow
+                    return actor
+                first = make_actor(right, "first", 7, 6)
+                second = make_actor(left, "second", 4, 7)
+                late = make_actor(left, "late", 9, 5)
+                observed = []
+                def observe(ctx):
+                    observed.append((ctx.event["targets"], first.status_overflow["星结"]))
+                    first.statuses["星结"] = 12
+                    late.status_overflow["星结"] = 9
+                vm.register_entries(None, [{"trigger": batch["event"], "operation": observe}])
+                Game.resolve_status_batches(game)
+                Game.resolve_status_batches(game)
+                self.assertEqual(observed, [((first, second), 6)])
+                writes = [op for op, timing, _ in vm.trace if timing == "BEFORE"
+                          and op in (OpCode.SET_STATUS_OVERFLOW, OpCode.STATUS)]
+                self.assertEqual(writes, expected_ops)
+                self.assertEqual((first.statuses["星结"], first.status_overflow.get("星结", 0)), expected_balance)
+                self.assertEqual((second.statuses["星结"], late.statuses["星结"], late.status_overflow["星结"]), (4, 9, 9))
+                self.assertEqual(vm.stack, [])
+
+    def test_overflow_balance_is_independent_of_threshold_and_ordinary_stacks(self):
+        actor = SimpleNamespace(status_overflow={"other": 14}, statuses={"λ": 2}, canonical_status_name=lambda n: n,
+                                status_rules={"λ": {"overflow_batch": {"threshold": 37}}})
+        vm = Context()
+        for value in (1, 36, 37, 38, 2**173, 0):
+            vm.eval_block([actor, "λ", value, OpCode.SET_STATUS_OVERFLOW])
+            self.assertEqual(actor.status_overflow.get("λ", 0), value)
+            self.assertEqual(actor.status_overflow["other"], 14)
+            self.assertEqual(actor.statuses, {"λ": 2})
+        for invalid in (-1, 1.5, True):
+            with self.assertRaises(ValueError):
+                vm.eval_block([actor, "λ", invalid, OpCode.SET_STATUS_OVERFLOW])
+        self.assertNotIn("λ", actor.status_overflow)
+        vm.eval_block([actor, "manually recorded", 19, OpCode.SET_STATUS_OVERFLOW])
+        self.assertEqual(actor.status_overflow["manually recorded"], 19)
+
+    def test_tracking_a_capped_status_can_be_enabled_without_scheduling_a_batch(self):
+        from loader import EffectDefinitions, _add_effects
+        vm = Context()
+        player = Player(1, "甲")
+        definitions = EffectDefinitions()
+        _add_effects(definitions, {"status_rules": {
+            "a": {"cap": 4, "track_overflow": True}, "b": {"cap": 4}
+        }})
+        vm.game = player.game = SimpleNamespace(context=vm, status_rules=definitions.status_rules, status_entries={},
+                                                ability_rules={}, turn_end_statuses=set(), resolving_duel=None,
+                                                players=[player])
+        actor = Character({"id": "one", "name": "甲", "rank": "NORMAL", "max_hp": 4, "skills": []}, player)
+        for name in ("a", "b"):
+            for amount in (4, 0, 2**90, -2, 2, 3):
+                actor.apply_status_delta(name, amount)
+        self.assertEqual(actor.status_overflow, {"a": 2**90 + 3})
+        self.assertEqual(actor.statuses, {"a": 4, "b": 4})
+        self.assertIn(str(2**90 + 3), actor.combat_summary())
+
+
 class ExecutionBoundaryTests(unittest.TestCase):
     def test_cancelling_the_invocation_restores_the_stack_and_skips_its_next_instruction(self):
         vm = TracedContext()
@@ -947,7 +1038,7 @@ class ExecutionBoundaryTests(unittest.TestCase):
             "game.py", "loader.py", "gamerule.py", "context/context.py",
             "entry/commands.py", "entry/compiler.py", "entry/entry.py", "entry/effects.py", "entry/program.py",
             "entry/field_aliases.py", "entry/predicates.py", "entry/references.py", "entry/stack_words.py",
-            "entry/legacy_operations.py", "entry/arithmetic_operations.py",
+            "entry/legacy_operations.py", "entry/arithmetic_operations.py", "entry/status_operations.py",
             "models/card.py", "models/character.py", "models/conditions.py", "models/damage.py", "models/dice.py",
             "models/duel.py", "models/identities.py", "models/opcode.py", "models/opcodes.py", "models/pre_reveal.py",
             "models/roster.py", "models/special_actions.py", "models/turn_history.py", "models/values.py",
