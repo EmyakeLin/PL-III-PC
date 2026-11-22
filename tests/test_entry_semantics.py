@@ -1074,6 +1074,29 @@ class OverflowBatchTests(unittest.TestCase):
         self.assertIn(str(2**90 + 3), actor.combat_summary())
 
 
+class RangeConditionTests(unittest.TestCase):
+    def test_skill_and_die_range_gates_compare_the_actual_skill_value(self):
+        from models.card import describe_range_traits
+        from models.dice import Dice
+
+        for trait, field in (("range_level", "effective_range"), ("ignore_range", "effective_ignore_range")):
+            for operator, compare in COMPARISONS.items():
+                for level in range(4):
+                    condition = {"skill_state": {"key": "计数", "op": operator, "value": 2}, "amount": level}
+                    spec = {trait + "_when": condition}
+                    base = {"id": "skill", "name": "牌", "cost": 1}
+                    card = Card(None, {**base, **spec})
+                    die = Dice({"type": "blunt", "level": 1, **spec})
+                    die.card = Card(None, base)
+                    self.assertIn("计数", describe_range_traits(spec)[0])
+                    for value in (None, -2**90, 0, 1, 2, 3, 2**90):
+                        for owner in (card, die.card):
+                            owner.use_state = {} if value is None else {"计数": value}
+                        expected = level if compare(0 if value is None else value, 2) else 0
+                        self.assertEqual(getattr(card, field), expected)
+                        self.assertEqual(getattr(die, field), expected)
+
+
 class ExecutionBoundaryTests(unittest.TestCase):
     def test_cancelling_the_invocation_restores_the_stack_and_skips_its_next_instruction(self):
         vm = TracedContext()

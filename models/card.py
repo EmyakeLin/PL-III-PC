@@ -1,10 +1,11 @@
 from enum import Enum, auto
 
-from models.conditions import matches_value, skill_state_allows
+from models.conditions import matches_value, skill_state_allows, validate_skill_gate
 from models.opcode import OpCode
 
 
 RANGE_NAMES = ("近战", "普通远程", "强化远程", "极限远程")
+COMPARISON_SIGNS = {"lt": "<", "le": "≤", "eq": "=", "ne": "≠", "ge": "≥", "gt": ">"}
 
 
 def range_trait(data, key, card):
@@ -13,7 +14,7 @@ def range_trait(data, key, card):
     condition = data.get(key + "_when")
     if condition and card is not None:
         if "skill_state" in condition:
-            active = card.use_state.get(condition["skill_state"])
+            active = skill_state_allows(card.use_state, condition["skill_state"])
         elif "speed_lead" in condition:
             target = card.range_target()
             active = target is not None and card.character.speed - target.speed >= condition["speed_lead"]
@@ -51,8 +52,11 @@ def validate_range_trait(data, key):
             if "status" not in gates or not isinstance(snapshot, str) or not snapshot.strip():
                 raise ValueError(f"{key}_when 的状态快照须指定技能内的记录名称")
             gates.remove("snapshot")
-        if gates in ({"status"}, {"status", "minimum"}, {"skill_state"}):
-            name = condition.get("status", condition.get("skill_state"))
+        if gates == {"skill_state"}:
+            validate_skill_gate(condition["skill_state"])
+            return
+        if gates in ({"status"}, {"status", "minimum"}):
+            name = condition["status"]
             minimum = condition.get("minimum", 1)
             if isinstance(name, str) and name.strip() and type(minimum) is int and minimum > 0:
                 return
@@ -86,6 +90,9 @@ def describe_range_traits(data):
         if condition := data.get(key + "_when"):
             if "speed_lead" in condition:
                 when = f"个人速度领先目标至少{condition['speed_lead']}时"
+            elif isinstance(condition.get("skill_state"), dict):
+                gate = condition["skill_state"]
+                when = f"本技能记录「{gate['key']}」{COMPARISON_SIGNS[gate['op']]}{gate['value']}时"
             elif "minimum" in condition:
                 timing = "使用时" if "snapshot" in condition else ""
                 when = f"{timing}{condition['status']}至少{condition['minimum']}层，"
@@ -113,7 +120,7 @@ def describe_skill_traits(data):
         traits.extend(f"须持有{count}层{name}" for name, count in requirements.items())
     if condition := data.get("form_when"):
         if "op" in condition:
-            sign = {"lt": "<", "le": "≤", "eq": "=", "ne": "≠", "ge": "≥", "gt": ">"}[condition["op"]]
+            sign = COMPARISON_SIGNS[condition["op"]]
             traits.append(f"{condition['status']}{sign}{condition['value']}时使用「{condition['form']}」形态")
         else:
             traits.append(f"持有{condition['status']}时使用「{condition['form']}」形态")
