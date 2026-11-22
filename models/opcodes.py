@@ -197,6 +197,18 @@ def handle_filter(ctx):
     ctx.push(selected)
 
 
+def handle_with_bindings(ctx):
+    block, names = ctx.pop(), ctx.pop()
+    if (not isinstance(names, (list, tuple))
+            or not all(isinstance(name, str) and name.isidentifier() and not name.startswith("_") for name in names)
+            or len(set(names)) != len(names)):
+        raise ValueError("绑定需要一组互不重复的公开字段名")
+    values = [ctx.pop() for _ in names]
+    bindings = {**ctx.event.get("bindings", {}), **dict(zip(names, reversed(values)))}
+    with ctx.binding(bindings=bindings):
+        return ctx.eval_block(block)
+
+
 def handle_each(ctx):
     action, items = ctx.pop(), ctx.pop()
     for item in tuple(items):
@@ -808,6 +820,7 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.WITH_BINDINGS: handle_with_bindings,
     OpCode.SIZE: lambda ctx: ctx.push(len(ctx.pop())), OpCode.FILTER: handle_filter,
     OpCode.EACH: handle_each, OpCode.FIRST_IN_ORDER: handle_first_in_order,
     OpCode.SKILL_USE_COUNT: handle_skill_use_count, OpCode.CLASH_COUNT: handle_clash_count,
@@ -859,6 +872,7 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.WITH_BINDINGS: ("names", "block"),
     OpCode.SIZE: ("collection",), OpCode.FILTER: ("collection", "predicate"),
     OpCode.EACH: ("collection", "block"), OpCode.FIRST_IN_ORDER: ("collection", "first"),
     OpCode.SKILL_USE_COUNT: ("actor", "skill_id"), OpCode.CLASH_COUNT: ("subject", "outcome", "position"),

@@ -59,17 +59,6 @@ def find_skill(vm):
     vm.push(next((card for card in cards if card.id == skill_id
                   and card.character is character and not card.destroyed), None))
 
-def team_status(vm, delayed):
-    amount, name, source = vm.pop(), vm.pop(), vm.pop()
-    if amount <= 0:
-        return
-    for member in source.player.characters:
-        if member.is_alive:
-            if delayed:
-                vm.eval_block([source, member, name, amount, OpCode.QUEUE_STATUS])
-            else:
-                vm.eval_block([member, name, amount, OpCode.STATUS])
-
 def skill_use(vm):
     from models.special_actions import SkillUse
     terms, card = vm.pop(), vm.pop()
@@ -114,6 +103,4 @@ WORDS = {
     "SPEND_STATUS": spend,
     "FIND_SKILL": find_skill,
     "SPEND_STATUS_IN_FULL": spend_in_full,
-    "TEAM_STATUS": lambda vm: team_status(vm, False),
-    "NEXT_TEAM_STATUS": lambda vm: team_status(vm, True),
 }

@@ -101,3 +101,4 @@ class OpCode(Enum):
     EACH = auto()
     FIRST_IN_ORDER = auto()
     COALESCE = auto()
+    WITH_BINDINGS = auto()

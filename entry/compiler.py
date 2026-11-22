@@ -31,7 +31,17 @@ class Word:
     name: str
 
 
+def _team_status(action):
+    return [{"literal": ["subject", "status", "amount"]},
+            ["$bindings.amount", 0, "GT",
+             ["$bindings.subject.player.characters", ["$item.is_alive", action, "WHEN"], "EACH"], "WHEN"],
+            "WITH_BINDINGS"]
+
+
 COMPATIBILITY = {
+    "TEAM_STATUS": _team_status(["$item", "$bindings.status", "$bindings.amount", "STATUS"]),
+    "NEXT_TEAM_STATUS": _team_status(["$bindings.subject", "$item", "$bindings.status",
+                                     "$bindings.amount", "QUEUE_STATUS"]),
     "USED_SKILL_THIS_TURN": ["SKILL_USE_COUNT", 0, "GT"],
     "ONCE_PER_ROUND": ["DUP", "$self", "SWAP", "ROUND_TRIGGER_COUNT", 1, "LT", "SWAP",
                        "$self", "SWAP", "RECORD_ROUND_TRIGGER"],

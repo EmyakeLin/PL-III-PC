@@ -124,6 +124,50 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(vm.stack, ["outer"])
             self.assertEqual(vm.event, {})
 
+    def test_inline_native_instructions_preserve_every_declared_operand(self):
+        from entry.compiler import Field, compile_program
+        from models.opcodes import OPERANDS
+        from entry.commands import builtins
+        for opcode, names in OPERANDS.items():
+            if opcode.name in builtins.definitions or not names:
+                continue
+            args = ["$event." + name for name in names]
+            line = " ".join((opcode.name, *args))
+            self.assertEqual(compile_program([line]).instructions,
+                             (*[Field(arg[1:]) for arg in args], opcode))
+            with self.assertRaises(ValueError):
+                compile_program([line + " 7"])
+
+    def test_team_status_visits_members_and_keeps_outer_bindings(self):
+        from entry.compiler import compile_program
+        vm = TracedContext()
+        source = SimpleNamespace(is_alive=True)
+        targets = [SimpleNamespace(is_alive=alive, id=i) for i, alive in enumerate([True, False, True])]
+        source.player = SimpleNamespace(characters=targets)
+        entry = Entry.from_spec(source, {"trigger": "tick", "operation": []})
+        for name in ("s", "未知 状态"):
+            for quantity in (-1, 0, 1, 2**70):
+                for operation in ("TEAM_STATUS", "NEXT_TEAM_STATUS"):
+                    target_opcode = OpCode.STATUS if operation == "TEAM_STATUS" else OpCode.QUEUE_STATUS
+                    calls = []
+                    execute = Context.execute_op.__get__(vm)
+                    def capture(opcode, **kwargs):
+                        if opcode == target_opcode:
+                            params = [vm.pop() for _ in range(3 if opcode == OpCode.STATUS else 4)][::-1]
+                            calls.append(params)
+                            return
+                        return execute(opcode, **kwargs)
+                    vm.execute_op = capture
+                    outer = {"subject": "outer"}
+                    with vm.binding(bindings=outer):
+                        run_program(vm, entry, ["$self", {"literal": name}, quantity, operation])
+                        self.assertIs(vm.event["bindings"], outer)
+                    prefix = [] if operation == "TEAM_STATUS" else [source]
+                    self.assertEqual(calls, [prefix + [target, name, quantity] for target in targets
+                                             if target.is_alive and quantity > 0])
+                    self.assertEqual(vm.stack, [])
+                    self.assertIn(OpCode.WITH_BINDINGS, compile_program([operation]).instructions)
+
     def test_operand_types_and_extension(self):
         vocabulary = CommandSet()
 

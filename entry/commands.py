@@ -65,4 +65,18 @@ def expand_command(line):
     # have finished initialising, before resolving the first command line.
     from entry import builtin_operations
 
-    return builtins.expand(line)
+    expansion = builtins.expand(line)
+    if expansion is not None:
+        return expansion
+    from models.opcode import OpCode
+    from models.opcodes import OPERANDS
+
+    parts = line.split(maxsplit=1)
+    if len(parts) != 2 or parts[0] not in OpCode.__members__:
+        return None
+    opcode = OpCode[parts[0]]
+    operands = list(read_operands(parts[1]))
+    names = OPERANDS.get(opcode, ())
+    if len(operands) != len(names):
+        raise ValueError(f"{opcode.name} 需要 {len(names)} 个操作数：{', '.join(names)}")
+    return [*operands, opcode]
