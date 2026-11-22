@@ -518,9 +518,10 @@
                         {
                           "literal": {
                             "optional": true,
+                            "use_discount": 2,
                             "then": {
                               "op": "program",
-                              "code": ["$chosen_card", 2, "SKILL_USE", {"literal": {"at": "after_die"}}, "INSERT_SKILL"]
+                              "code": ["$chosen_card", "$choice_discount", "SKILL_USE", {"literal": {"at": "after_die"}}, "INSERT_SKILL"]
                             }
                           }
                         },

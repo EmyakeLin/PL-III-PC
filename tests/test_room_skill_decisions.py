@@ -1,12 +1,15 @@
 """New character choices through the independent seats and their public journal."""
 import io
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from itertools import count
 
-from battle_mcp.room import Room
+from battle_mcp.decision_view import decision_view
+from battle_mcp.room import Room, move_id
 from displayer import hand_key
 from entry.entry import Entry
+from models.card import Card
 from models.opcode import OpCode
 
 
@@ -34,6 +37,68 @@ class RoomSkillDecisionTests(unittest.TestCase):
         move = next(m for m in moves if m["kind"] == kind and all(m.get(k) == v for k, v in fields.items()))
         return self.command(side, "act", option_id=move["id"])
 
+    def test_human_can_pause_live_play_without_a_declaration_and_only_owner_can_resume(self):
+        self.create(("ember_wen_sheng", "plan_b_annolin"), 37)
+        # Deliver each scheduled room beat deterministically. The HTTP regression
+        # exercises the same callback on the real timer.
+        self.enterContext(patch("battle_mcp.room.threading.Timer"))
+        self.command(1, "ready", human=True)
+        self.command(2, "ready")
+        view = self.command(1, "pause")
+        self.assertEqual(view["paused_by"], 1)
+        self.assertEqual(view["declarations"], [])
+        self.assertIsNone(self.room._beat_timer)
+        with self.assertRaises(ValueError):
+            self.command(2, "resume")
+        self.assertFalse(self.room.observe(2)["options"])
+        self.command(1, "resume")
+        stale_revision = self.room.observe(1)["revision"]
+        for _ in range(160):
+            if self.room.engine._mode() == "combat":
+                break
+            required = self.room.engine.required_sides()
+            if required:
+                side = required[0]
+                moves = self.room.observe(side)["options"]
+                move = next((m for m in moves if m["kind"] == "place" and m["card_id"] == "wen_sheng_call"),
+                            None) or next(m for m in moves if m["kind"] in ("end", "end_attack"))
+                self.command(side, "act", option_id=move["id"])
+            else:
+                self.assertIsNotNone(self.room._beat_timer)
+                with patch("battle_mcp.room.threading.current_thread", return_value=self.room._beat_timer):
+                    self.room._advance_beat()
+        else:
+            self.fail("未进入交锋")
+        view = self.room.pause(1, stale_revision, "pause-in-combat")
+        self.assertEqual(view["frame"]["mode"], "combat")
+        attack = next(move for move in view["options"] if move["kind"] == "special_attack")
+        self.command(1, "act", option_id=attack["id"])
+        self.assertIsNone(self.room.paused_by)
+        self.assertIsNotNone(self.game.pipeline.interrupt_space)
+
+    def test_turn_start_effect_requests_a_concealed_board_target_before_placement(self):
+        self.create(("nova_lin_qiu", "waa_lake"), 4)
+        lin, lake = (p.characters[0] for p in self.game.players)
+        first, second = lake.skills[:2]
+        for card in (first, second):
+            self.assertTrue(self.game.place_in_duel(2, card, 0))
+        self.game.context.register_entries(lin, [{"trigger": "on_turn_start",
+            "choice_prompt": "指定一张已置卡牌。", "operation": {"op": "program", "code": [
+                "$board_skills", {"literal": {"then": {"op": "program", "code": ["$chosen_card", "DESTROY"]}}},
+                "CHOOSE_CARD",
+            ]}}])
+        self.start()
+        view = self.room.observe(1)
+        self.assertEqual(self.game.last_step, "on_turn_start")
+        self.assertEqual(view["frame"]["effect_choice"]["description"], "指定一张已置卡牌。")
+        self.assertEqual([move["effect_target"]["position"] for move in view["options"]], [1, 2])
+        self.assertFalse(self.room.observe(2)["options"])
+        self.assertNotIn(first.id, str(view["options"]))
+        self.command(1, "act", option_id=view["options"][1]["id"])
+        self.assertTrue(second.destroyed)
+        self.assertFalse(first.destroyed)
+        self.assertEqual(self.room.engine._mode(), "placement")
+
     def reach_surprise_hit(self, seed):
         self.create(("nova_lin_qiu", "waa_lake"), seed)
         self.start()
@@ -54,6 +119,24 @@ class RoomSkillDecisionTests(unittest.TestCase):
     def test_surprise_hit_prompts_only_lin_and_resumes_with_the_chosen_skill(self):
         self.reach_surprise_hit(8)
         view = self.room.observe(1)
+        prompt = view["frame"]["effect_choice"]
+        self.assertEqual((prompt["source_name"], prompt["source_card_id"], prompt["die_position"],
+                          prompt["selection"], prompt["optional"]), ("出其不意", "lin_qiu_surprise", 3, "hand", True))
+        self.assertIn("通常费用减2", prompt["description"])
+        compact = decision_view(view)
+        self.assertEqual(compact["frame"]["effect_choice"], prompt)
+        self.assertNotIn("effect_choice", self.room.observe(2)["frame"])
+        self.assertNotIn("effect_choice", self.room.observe(None)["frame"])
+        moves = {option.get("target_card_id"): option for option in view["options"]}
+        blade = moves["lin_qiu_draw_blade"]
+        self.assertEqual(blade["use_preview"], {"base_cost": 1, "discount": 2, "cost": 0, "resource_cost": None})
+        cut = moves["lin_qiu_void_cut"]
+        self.assertEqual(cut["use_preview"], {"base_cost": 4, "cost": 2, "discount": 2,
+                                               "resource_cost": {"status": "隧道", "amount": 2, "available": 1}})
+        self.assertEqual(cut["effect_target"]["card"]["name"], "空断")
+        self.assertEqual((cut["effect_target"]["zone"], cut["effect_target"]["side"]), ("hand", 1))
+        old_fields = {k: v for k, v in cut.items() if k not in ("id", "effect_target", "use_preview")}
+        self.assertEqual(cut["id"], move_id(1, old_fields))
         self.assertEqual(self.room.engine.required_sides(), [1])
         self.assertEqual(self.room.observe(1, view["cursor"])["options"], view["options"])
         self.assertFalse(self.room.observe(None)["options"])
@@ -89,6 +172,9 @@ class RoomSkillDecisionTests(unittest.TestCase):
         choices = self.room.observe(1)["options"]
         self.assertEqual([m["kind"] for m in choices], ["special_choose_card"] * 2)
         self.assertNotEqual(choices[0]["id"], choices[1]["id"])
+        self.assertEqual([move["effect_target"] for move in choices],
+                         [{"zone": "board", "kind": "regular", "side": 2, "number": 1, "position": number}
+                          for number in (1, 2)])
         for card in (first, second):
             self.assertNotIn(card.name, str(choices))
             self.assertNotIn(card.id, str(choices))
@@ -111,7 +197,10 @@ class RoomSkillDecisionTests(unittest.TestCase):
             ["$choice_subject", "$chosen_slot", "slot_tail", "INSERT_AT", "INSERT_SKILL"], "CHOOSE_SLOT",
         ]}})
         self.game.context._invoke(rule)
-        self.assertEqual([m["duel_number"] for m in self.room.observe(1)["options"]], [1, 2])
+        request = self.room.observe(1)
+        self.assertEqual(request["frame"]["effect_choice"]["selection"], "slot")
+        self.assertEqual([m["effect_target"] for m in request["options"]],
+                         [{"zone": "board", "kind": "regular", "side": 1, "number": number} for number in (1, 2)])
         self.assertFalse(self.room.observe(2)["options"])
         self.act(1, "special_choose_slot", duel_number=2)
         self.assertEqual(self.game.duelspace.space[1].get_content(1), [second, extra])
@@ -173,6 +262,9 @@ class RoomSkillDecisionTests(unittest.TestCase):
         options = [m for m in self.room.engine.options(1) if m.get("ability_id") == "insight"]
         self.assertEqual(len(options), 2)
         self.assertNotEqual(options[0]["choice_key"], options[1]["choice_key"])
+        self.assertEqual([m["effect_target"] for m in options],
+                         [{"zone": "board", "side": 2, "kind": "regular", "number": 1, "position": n}
+                          for n in (1, 2)])
         for c in (first, second):
             self.assertNotIn(c.id, str(options))
             self.assertNotIn(c.name, str(options))
@@ -180,3 +272,24 @@ class RoomSkillDecisionTests(unittest.TestCase):
         slot = self.room.observe(None)["frame"]["duels"][0]["sides"][1]["cards"]
         self.assertEqual(slot[0], {"hidden": True})
         self.assertEqual(slot[1]["name"], second.name)
+
+    def test_replacement_distinguishes_same_named_face_down_targets(self):
+        self.create(("ember_wen_sheng", "plan_b_annolin"), 1125)
+        self.start()
+        actor = self.game.players[0].characters[0]
+        original = next(c for c in actor.skills if c.id == "wen_sheng_duet")
+        incoming = next(c for c in actor.skills if c.id == "wen_sheng_understudy")
+        duplicate = Card(actor.player, original.printed_data, actor)
+        actor.skills.append(duplicate)
+        for target in (original, duplicate):
+            self.assertTrue(self.game.place_in_duel(1, target, 0))
+        options = [m for m in self.room.engine.options(1)
+                   if m.get("card_id") == incoming.id and m["kind"] == "special_replace"]
+        self.assertEqual([m["effect_target"]["position"] for m in options], [1, 2])
+        self.assertEqual([m["effect_target"]["card"]["instance_id"] for m in options],
+                         [original.instance_id, duplicate.instance_id])
+        self.assertNotEqual(move_id(1, options[0]), move_id(1, options[1]))
+        self.assertIn("常规交锋 1 · 第 2 张", options[1]["label"])
+        self.assertEqual(self.room.observe(None)["frame"]["duels"][0]["sides"][0]["cards"], [{"hidden": True}] * 2)
+        self.room.engine.apply(1, options[1])
+        self.assertEqual(self.game.duelspace.space[0].get_content(1), [original, incoming])

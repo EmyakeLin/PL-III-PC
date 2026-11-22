@@ -11,22 +11,11 @@ const kinds = {
     special_custom: "按牌面打出", special_ability: "使用能力", special_choose_card: "依词条选牌",
     special_decline_card: "放弃此次选牌", special_choose_slot: "依词条选择交锋", decline: "让过此次机会"
 };
-const triggers = {
-    decision: "下个席位决策", placement: "取得常规置卡权", pre_reveal: "开牌前声明或迎击",
-    roll: "双方刚掷出骰面", scores_ready: "拼点点数就绪、尚未判胜", action: "有人采取行动后", timing: "管线行动时点",
-    combat: "交锋结算时", reveal: "统一开牌", turn_end: "回合结束", timer: "等待指定时间"
-};
 const phaseNames = {setup: "准备阶段", turn_start: "回合开始", draw: "抽牌", placement: "常规置卡",
     pre_reveal: "开牌前交锋", reveal: "统一开牌", combat: "交锋结算", turn_end: "回合结束", finished: "终局"};
 const battles = {regular: "常规", pre_reveal: "开牌前", instant: "即时"};
-const scores = {lt: "己方点数较低", eq: "双方同点", gt: "己方点数较高"};
-const dieNames = {slash: "斩击", pierce: "突刺", blunt: "打击", block: "招架", evade: "闪避", blank: "空白"};
+const dieNames = {slash: "斩击", pierce: "突刺", blunt: "砸击", block: "招架", evade: "闪避", blank: "空白骰", skip: "跳过"};
 const results = {win: "胜", lose: "负", draw: "平", skip: "跳过"};
-const actionFilters = {kind: "action-kind", card_id: "card", target_card_id: "replace-card", ability_id: "ability",
-    character_id: "target", duel_number: "target-duel", response_number: "response"};
-const eventFilters = {duel_kind: "duel-kind", duel_number: "duel", die_number: "die",
-    own_card_id: "using-card", score: "score", pending_number: "pending", turn: "turn",
-    action_kind: "observed-kind", actor_side: "actor", timing: "timing"};
 const printed = new Map();
 let catalog = null;
 let catalogRequest = null;
@@ -47,15 +36,6 @@ function make(tag, label) {
 function setText(node, label) {
     if (node.textContent !== label) node.textContent = label;
 }
-function selectItems(id, entries, first) {
-    const field = byId(id);
-    const saved = field.value;
-    const items = first ? [["", first], ...entries] : entries;
-    if (field.options.length === items.length && items.every(([value, label], i) =>
-        field.options[i].value === value && field.options[i].text === label)) return;
-    field.replaceChildren(...items.map(([value, label]) => new Option(label, value)));
-    if (items.some(([value]) => value === saved)) field.value = saved;
-}
 function button(label, invoke) {
     const node = make("button", label);
     node.type = "button";
@@ -75,12 +55,6 @@ function fillRows(list, items, key, create, update) {
     remaining.forEach(node => node.remove());
 }
 const seatName = side => side === 1 ? "席位一" : "席位二";
-function titleOf(id) {
-    const hand = room?.frame.players.find(p => p.side === room.side)?.hand || [];
-    const card = hand.find(c => c.action_key === id);
-    return card ? card.name + (card.borrowed ? "（取自对手）" : "") : printed.get(id)?.name || id;
-}
-
 async function api(method, body = {}) {
     const headers = {"Content-Type": "application/json"};
     if (token) headers.Authorization = "Bearer " + token;
@@ -177,24 +151,36 @@ function updateBoard(frame) {
     }, duelRow);
     byId("empty-board").hidden = !!slots.length;
     const combat = frame.combat;
-    const showClash = !!(combat && combat.sides.some(side => side.die?.rolled_value != null));
+    const suspended = combat?.suspended || [];
+    const hasScores = combat?.sides.some(side => side.die?.rolled_value != null);
+    const showClash = hasScores || suspended.length > 0;
     byId("clash").hidden = !showClash;
     if (showClash) {
-        const dice = combat.sides.map(side => {
+        const dice = hasScores ? combat.sides.map(side => {
             const die = side.die;
             if (!die) return seatName(side.side) + " 空轮";
             const value = die.clash_score ?? "待定";
-            if (room.event?.kind === "roll") return seatName(side.side) + " 第" + side.die_number + "骰 · 骰面 " + die.rolled_value;
+            const position = die.position || side.die_number;
+            const hit = die.hit_index > 1 ? " · 第 " + die.hit_index + " 次命中" : "";
+            const owner = seatName(side.side) + " 第" + position + "骰";
+            if (room.event?.kind === "roll") return owner + " · 骰面 " + die.rolled_value;
             const result = results[die.result] || "胜负待定";
-            return seatName(side.side) + " 第" + side.die_number + "骰 · 拼点 " + value + "（" + result + "）";
-        });
-        setText(byId("clash"), battles[combat.kind] + " " + combat.duel_number + "　" + dice.join(" / "));
+            return owner + hit + " · 拼点 " + value + "（" + result + "）";
+        }) : [];
+        const prior = suspended.at(-1);
+        let context = "";
+        if (prior) {
+            const parent = [battles[prior.kind] || phaseNames[prior.kind], prior.duel_number, prior.card_name,
+                prior.die_position ? "第 " + prior.die_position + " 骰" : ""].filter(Boolean).join(" ");
+            context = [prior.source_name, "结算后续行 " + parent].filter(Boolean).join(" · ");
+        }
+        const current = battles[combat.kind] + " " + combat.duel_number;
+        setText(byId("clash"), [current, dice.join(" / "), context].filter(Boolean).join("　"));
     }
     const owner = frame.players.find(player => player.side === room.side);
     byId("board-area").hidden = Boolean(room.lobby);
     byId("hand-area").hidden = !owner || Boolean(room.lobby);
     const hand = owner?.hand || [];
-    if (owner && catalog) bindHandFilter(hand);
     byId("empty-hand").hidden = !!hand.length;
     fillRows(byId("hand"), hand, card => card.instance_id, card => {
         const node = make("li"); node.append(button("", () => showCard(card.id))); return node;
@@ -202,32 +188,6 @@ function updateBoard(frame) {
         + (card.borrowed ? " · 取自对手" : "") + (card.use_restricted ? " · 当前无法使用" : "")));
 }
 
-function describePlan(plan) {
-    const match = plan.match || {}, when = plan.when || {};
-    const details = [triggers[plan.event], plan.mode === "execute" ? "自动执行" : "留给我决定"];
-    if (match.kind) details.push(kinds[match.kind] || match.kind);
-    if (match.card_id) details.push(titleOf(match.card_id));
-    if (match.ability_id) details.push(catalog?.actions?.[match.ability_id] || match.ability_id);
-    if (match.target_card_id) details.push("目标技能 " + titleOf(match.target_card_id));
-    if (match.character_id) {
-        const actors = room.frame.players.flatMap(player => player.characters);
-        details.push("目标 " + (actors.find(actor => actor.id === match.character_id)?.name || match.character_id));
-    }
-    if (match.duel_number) details.push("目标常规 " + match.duel_number);
-    if (match.response_number) details.push("回应 " + match.response_number);
-    if (when.duel_kind || when.duel_number) details.push((battles[when.duel_kind] || "交锋") + " " + (when.duel_number || ""));
-    if (when.own_card_id) details.push(titleOf(when.own_card_id) + "进行中");
-    if (when.die_number) details.push("第 " + when.die_number + " 骰");
-    if (when.score) details.push(scores[when.score]);
-    if (when.after_ms) details.push(when.after_ms + " 毫秒");
-    if (when.pending_number) details.push("编号 " + when.pending_number + " 待迎击");
-    if (when.turn) details.push("回合 " + when.turn);
-    if (when.actor_side) details.push(seatName(when.actor_side));
-    if (when.action_kind) details.push("观察 " + (kinds[when.action_kind] || when.action_kind));
-    if (when.timing) details.push(when.timing);
-    if (plan.repeat) details.push("每次触发");
-    return details.filter(Boolean).join(" · ");
-}
 function updateLobby(isReady, busy) {
     const lobby = room.lobby;
     const picking = Boolean(lobby && room.side);
@@ -246,7 +206,7 @@ function updateLobby(isReady, busy) {
     byId("lobby-ready").disabled = busy || isReady;
     setText(byId("lobby-ready"), isReady ? "已准备" : "确认角色并准备");
     const note = isReady ? "角色已锁定，等待另一席准备。" :
-        "双方各选一名角色，允许镜像的角色可同选。准备会锁定你的角色并预留常规置卡、进攻与迎击，特殊时机可在下方提前声明。";
+        "双方各选一名角色，允许镜像的角色可同选。准备后锁定角色。对局中可以随时暂停查看场内行动。";
     setText(byId("lobby-note"), note);
 }
 function updateControls() {
@@ -260,26 +220,38 @@ function updateControls() {
     byId("prepared").textContent = ready.length + " / 2 席准备";
     byId("ready").hidden = isReady || room.started || Boolean(room.lobby);
     byId("ready").disabled = busy;
-    setText(byId("prepare-note"), room.started ?
-        "声明从登记后的新事件起生效。可以先登记下一次行动，再处理当前选择。" :
-        isReady ? "已预留常规置卡、进攻与迎击，正在等对方准备。" :
-        "准备时会预留常规置卡、进攻与迎击。特殊操作可在这里单独登记。");
-    fillRows(byId("plans"), room.declarations || [], plan => plan.id, plan => {
-        const node = make("li");
-        node.append(make("span"), button("撤销", () => write("prepare", {declaration: {cancel: plan.id}})));
-        return node;
-    }, (node, plan) => {
-        setText(node.firstChild, describePlan(plan));
-        node.lastChild.disabled = busy;
-    });
+    const ownPause = room.paused_by === room.side && mine;
+    const playback = byId("pause-game");
+    playback.hidden = !room.started || (!room.can_pause && !ownPause);
+    playback.disabled = busy;
+    setText(playback, ownPause ? "继续对局" : "暂停并行动");
+    const pausedText = ownPause ? (options.length ? "已暂停，选择行动或继续对局。" : "此时没有可执行的场内行动。")
+        : room.paused_by ? seatName(room.paused_by) + " 正在决策。" : "";
+    setText(byId("pause-note"), pausedText);
     byId("decision").hidden = !options.length;
-    setText(byId("decision-note"), room.event?.timing || "选择本次声明允许的行动。");
-    fillRows(byId("options"), options, option => option.id, option =>
-        button("", () => write("act", {option_id: option.id})), (node, option) => {
-        setText(node, option.label || kinds[option.kind] || option.kind);
-        node.disabled = busy;
+    const choice = room.frame.effect_choice;
+    const die = choice?.die_position ? " · 第 " + choice.die_position + " 骰" : "";
+    setText(byId("decision").querySelector("h2"), choice ? choice.source_name + die : "轮到你决定");
+    setText(byId("decision-note"), choice?.description || room.event?.timing || "选择当前行动。");
+    fillRows(byId("options"), options, option => option.id, option => {
+        const row = make("div");
+        row.className = "choice-option";
+        row.append(button("", () => write("act", {option_id: option.id})));
+        const inspect = button("查看卡面", () => {
+            const current = room.options.find(move => move.id === option.id);
+            const card = current?.effect_target?.card;
+            if (card) showCard(card.id, card, current.use_preview);
+        });
+        row.append(inspect);
+        return row;
+    }, (row, option) => {
+        const select = row.firstChild, inspect = row.lastChild;
+        setText(select, option.label || kinds[option.kind] || option.kind);
+        select.disabled = busy;
+        const card = option.effect_target?.card;
+        inspect.hidden = !card;
+        if (card) inspect.setAttribute("aria-label", "查看" + card.name + "卡面");
     });
-    byId("plan-form").querySelector("button").disabled = busy || room.finished;
 }
 function consume(data) {
     for (const event of data.events || []) if (event.text) records.set(event.id, event);
@@ -297,6 +269,7 @@ function consume(data) {
     const outcome = room.winner_side ? seatName(room.winner_side) + "获胜" : "平局";
     let phase = room.started ? phaseNames[frame.phase] || "对局进行中" : "等待双方准备";
     if (frame.mode === "placement" && frame.placing_side) phase = seatName(frame.placing_side) + " 常规置卡";
+    if (frame.mode === "timing" || frame.mode === "combat") phase = frame.timing || phase;
     if (frame.mode === "skill_choice") phase = frame.timing || "等待技能选择";
     if (frame.mode === "pre_reveal") {
         const attack = frame.pre_reveal.attacking_side;
@@ -329,78 +302,22 @@ async function write(method, fields) {
             }
         }
         consume(data);
-        notice(method === "prepare" ? (fields.declaration.cancel ? "已撤销声明。" : "声明已登记。") : "");
+        notice("");
     } catch (error) {
         notice(error.message);
         try { consume(await api("observe", {cursor: room.cursor})); } catch { /* Keep the last frame. */ }
     } finally { writing = false; updateControls(); }
 }
 
-function fieldsOf(mapping) {
-    const fields = {};
-    for (const [key, id] of Object.entries(mapping)) {
-        const input = byId(id), value = input.value.trim();
-        if (value) fields[key] = input.type === "number" || id === "actor" ? Number(value) : value;
-    }
-    return fields;
-}
-function syncForm() {
-    const execute = byId("mode").value === "execute";
-    byId("auto-note").hidden = !execute;
-    byId("action-kind").required = execute;
-    byId("action-kind").options[0].textContent = execute ? "选择动作" : "任意合法动作";
-    const timer = byId("event").value === "timer";
-    byId("timer-field").hidden = !timer;
-    byId("delay").disabled = !timer;
-    byId("pending").required = timer;
-    if (timer) byId("filters").open = true;
-}
-byId("mode").addEventListener("change", syncForm);
-byId("event").addEventListener("change", syncForm);
-byId("plan-form").addEventListener("submit", event => {
-    event.preventDefault();
-    const when = fieldsOf(eventFilters);
-    const trigger = byId("event").value;
-    if (trigger === "timer") when.after_ms = Number(byId("delay").value);
-    const declaration = {event: trigger, mode: byId("mode").value, match: fieldsOf(actionFilters), when,
-        repeat: Boolean(byId("repeat").value)};
-    write("prepare", {declaration});
-});
-byId("ready").addEventListener("click", () => write("ready", {}));
+byId("pause-game").addEventListener("click", () => write(room.paused_by === room.side ? "resume" : "pause", {}));
+byId("ready").addEventListener("click", () => write("player_ready", {}));
 byId("fighter-pick").addEventListener("change", event => write("select_character", {character_id: event.target.value}));
-byId("lobby-ready").addEventListener("click", () => write("ready", {}));
+byId("lobby-ready").addEventListener("click", () => write("player_ready", {}));
 byId("lobby-catalog").addEventListener("click", showCatalog);
 
-function bindCatalog() {
-    const mine = catalog.players.find(player => player.side === room?.side);
-    const enemy = catalog.players.find(player => player.side !== room?.side);
-    const skills = (mine?.characters || []).flatMap(actor => actor.skills);
-    const entries = skills.map(skill => [skill.id, skill.name]);
-    selectItems("ability", Object.entries(catalog.actions || {}), "任意");
-    selectItems("using-card", entries, "任意");
-    bindHandFilter(room.frame.players.find(p => p.side === room.side)?.hand || []);
-    const targets = (enemy?.characters || []).map(actor => [actor.id, actor.name]);
-    selectItems("target", targets, "任意");
-}
-function bindHandFilter(hand) {
-    const own = catalog.players.find(p => p.side === room.side);
-    const entries = new Map((own?.characters || []).flatMap(c => c.skills.map(s => [s.id, s.name])));
-    for (const card of hand) entries.set(card.action_key, titleOf(card.action_key));
-    selectItems("replace-card", [...entries], "任意");
-    for (const card of hand) if (card.action_key !== card.id) entries.delete(card.id);
-    selectItems("card", [...entries], "任意");
-}
 function syncRoster(players) {
     const picks = players.map(player => player.characters[0].id);
     if (picks.length === roster.length && picks.every((id, index) => id === roster[index])) return;
-    if (room.side) {
-        const myIndex = room.side - 1;
-        const opponentIndex = 1 - myIndex;
-        if (picks[myIndex] !== roster[myIndex]) {
-            for (const id of ["card", "replace-card", "using-card"]) selectItems(id, [], "任意");
-        }
-        if (picks[opponentIndex] !== roster[opponentIndex]) selectItems("target", [], "任意");
-    }
     roster = picks;
     catalog = null;
     catalogRequest = null;
@@ -419,7 +336,6 @@ async function getCatalog() {
             for (const player of catalog.players) for (const actor of player.characters) {
                 for (const skill of actor.skills) printed.set(skill.id, skill);
             }
-            bindCatalog();
             return catalog;
         }).finally(() => {
             if (request === catalogRequest) catalogRequest = null;
@@ -498,32 +414,44 @@ async function showCatalog() {
         page("出战图鉴", sections);
     } catch (error) { ruleError(version, error); }
 }
-async function showCard(id) {
+async function showCard(id, liveCard, preview) {
     const version = loading("技能卡面", true);
     try {
-        await getCatalog();
+        if (!liveCard) await getCatalog();
         if (version !== ruleVersion) return;
-        const card = printed.get(id);
+        const card = liveCard || printed.get(id);
         if (!card) throw new Error("图鉴中没有这张技能。");
         const traits = [card.cost + " 费"];
+        if (preview) traits.push("本次通常费用预计 " + preview.cost + " 费");
+        if (card.resource_cost) {
+            const resource = card.resource_cost;
+            const available = preview?.resource_cost?.available;
+            const balance = available != null ? "（现有 " + available + "）" : "";
+            traits.push("另需 " + resource.amount + " " + resource.status + balance);
+        }
         traits.push(...card.range_traits);
         const earlyConditions = Object.entries(card.pre_reveal_requires_status || {});
         if (earlyConditions.length) {
             const terms = earlyConditions.map(([name, count]) => name + "达到" + count + "层");
             traits.push(terms.join("、") + "时可在开牌前打出");
         } else if (card.pre_reveal) traits.push("可在开牌前打出");
+        if (card.before_duel_attack) traits.push("可在交锋开始前进攻");
+        if (card.pre_reveal_target === "occupied_enemy_slot") traits.push("开牌前须指定有敌方置牌的常规交锋");
+        for (const [name, amount] of Object.entries(card.requires_status || {})) traits.push("须持有 " + amount + " " + name);
         if (card.anytime_replace) traits.push("可随时替换");
         const ways = {attack: "主动进攻", place: "置入空位", custom: "按牌面执行"};
         if (card.anytime_play?.length) traits.push("可随时" + card.anytime_play.map(way => ways[way]).join("、"));
         if (card.pre_reveal && !card.interceptable) traits.push("开牌前进攻不可拦截");
-        if (card.anytime_play?.includes("attack")) traits.push(card.instant_interceptable ? "场内进攻可迎击" : "场内进攻不可拦截");
+        if (card.before_duel_attack || card.anytime_play?.includes("attack"))
+            traits.push(card.instant_interceptable ? "场内进攻可迎击" : "场内进攻不可拦截");
         const lines = [traits.join(" · "), ...card.entries];
         for (const die of card.dice) {
             const effects = [...die.range_traits, ...die.entries];
             if (die.resource_cost) effects.push("使用本骰须消耗" + die.resource_cost.amount + die.resource_cost.status);
             if (die.base_value) effects.push("基础值 " + die.base_value);
             if (die.multiplier !== 1) effects.push("倍率 " + die.multiplier);
-            lines.push((dieNames[die.type] || die.type) + " 1～" + die.roll_max + "　" + effects.join("；"));
+            const range = die.roll_max != null ? " 1～" + die.roll_max : "";
+            lines.push((dieNames[die.type] || die.type) + range + "　" + effects.join("；"));
         }
         navigation([["出战图鉴", showCatalog], ["规则目录", showIndex]]);
         page(card.name, make("p", lines.join("\n\n")));
@@ -558,9 +486,4 @@ async function followRoom() {
         }
     }
 }
-const actionKinds = Object.entries(kinds).filter(([key]) => key !== "decline");
-selectItems("event", Object.entries(triggers));
-selectItems("action-kind", actionKinds, "任意合法动作");
-selectItems("observed-kind", actionKinds, "任意");
-syncForm();
 followRoom();

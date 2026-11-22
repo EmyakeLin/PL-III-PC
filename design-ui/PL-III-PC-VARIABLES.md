@@ -153,14 +153,35 @@
 |---|---|---|
 | style.css 纸面与文字 | `--paper`, `--sheet`, `--ink`, `--muted`, `--line`, `--green`, `--red`, `--accent`, `--wash`, `--stripe` | 页面、卡面、主次文字、分隔线、两席颜色、操作强调色及浅底。队伍条纹由该队席位决定。 |
 | style.css 排版 | `--serif`, `--sans`, `--gutter`, `--pad`, `--gap`, `--tap`, `--fast` | 标题与正文字体；自适应横向页边距和卡内边距、区块间距、控件最小高度（px）、按钮状态过渡时长（ms）。 |
-| app.js 席位状态 | `token`, `room`, `writing`, `records`, `current`, `disconnected`, `ready`, `mine`, `isReady`, `options` | 当前链接片段中的私席凭据、最新投影、写入锁、按编号合并的本席事件、快照新旧判断、等待网络恢复的标记、已就绪席位、参赛身份、己方准备状态及已预留的合法动作。 |
+| app.js 席位状态 | `token`, `room`, `writing`, `records`, `current`, `disconnected`, `ready`, `mine`, `isReady`, `options` | 当前链接片段中的私席凭据、最新投影、写入锁、按编号合并的本席事件、快照新旧判断、等待网络恢复的标记、已就绪席位、参赛身份、己方准备状态及此时可执行的合法动作。 |
 | 联机选人 | `lobby`, `picking`, `selector`, `opponentPick`, `taken`, `busy`, `note`, `seatLabel`, `readiness` | 赛前阵容与候选名单、本席可见的选人区、角色选择框、另一席的已选角色、选项已被占用、动作等待回执或网络恢复、准备语义说明，以及双席对照卡的身份与准备文字。 |
 | 阵容图鉴 | `roster`, `picks`, `myIndex`, `opponentIndex`, `requestedRoster`, `request`, `dialog`, `rosterBound` | 画面已接收的角色 ID 列表、本帧按席位排序的列表、双方对应的数组索引、发起图鉴请求时的阵容及该次请求、已打开的规则对话框和内容是否依赖出战阵容。 |
 | 跨设备同步 | `clockOffset`, `controller`, `deadline`, `banner`, `cursor`, `nonce` | 房主时间戳与本地单调时钟的毫秒差，用于计算等待时长；单次 HTTP 请求的中止对象与超时计时器；显示重连进度的区域；长轮询已完整接收的席位事件编号；一次玩家操作的随机标识，丢失回执时沿用。 |
-| 标签与控件 | `kinds`, `triggers`, `phaseNames`, `battles`, `scores`, `dieNames`, `results`, `actionFilters`, `eventFilters`, `actionKinds` | 动作、触发、阶段、交锋类别、比较关系、骰种、结果的显示名；动作和事件字段到表单的对应及可登记的动作列表。 |
-| 提前声明 | `plan`, `match`, `when`, `execute`, `trigger`, `timer`, `declaration`, `details`, `actors`, `fields`, `mapping`, `key`, `id`, `input`, `value` | 一条事前准备及其动作范围、时点条件、执行方式、触发种类、计时标记，提交负载、供确认的条件说明和候选角色。表单映射负责提取值，席位与编号按整数提交。 |
+| 标签与控件 | `kinds`, `phaseNames`, `battles`, `dieNames`, `results` | 动作、阶段、交锋类别、骰种与结果的显示名。 |
 | 队伍、交锋与手牌 | `side`, `player`, `fighter`, `origin`, `own`, `bar`, `stats`, `shields`, `statuses`, `statusNode`, `n`, `frame`, `sets`, `duels`, `slots`, `slot`, `cards`, `names`, `target`, `kind`, `combat`, `showClash`, `dice`, `die`, `result`, `owner`, `hand`, `outcome`, `phase` | 席位与角色公开字段、头衔、己方标识、生命条、费用与资源等；按交锋类型组织槽、牌与目标；当前掷骰或拼点结果、该席可见手牌与回合结论。 |
 | 公开回应计时 | `timing`, `clock`, `end`, `seconds`, `from`, `to` | 声明计时记录、对应 time 元素、服务器给出的起止毫秒（未回应时按当前时间）、累计的整秒。 |
+| 暂停与续行 | `_interrupt_returns`, `suspended`, `trigger_card`, `trigger_die`, `trigger_name` | 每层手工中断应恢复的模式、时点和交锋空间，以及仍待续行的公开交锋、来源技能、印刷骰位和触发词条。 |
 | 列表与节点 | `tag`, `label`, `node`, `list`, `items`, `item`, `index`, `identity`, `remaining`, `create`, `update`, `invoke`, `first`, `saved`, `field`, `option`, `events`, `a`, `b` | 元素标签、内容和节点；带键列表保留同一实例及焦点；创建、更新、点击回调；下拉首项及选中值、可选动作和按 ID 排序的记录。 |
 | 网络与只读规则 | `method`, `headers`, `body`, `response`, `data`, `error`, `message`, `ms`, `resolve`, `topic`, `guide`, `topics`, `catalog`, `catalogRequest`, `printed`, `ruleVersion`, `version`, `book`, `chapter`, `title`, `content` | 请求方法、席位请求头、含幂等键的操作、响应及重试；重连延迟毫秒及回调；章节索引、印刷图鉴、共享的加载请求、按牌 ID 检索的印刷牌面和浮层代次。 |
 | 图鉴内容 | `enemy`, `targets`, `entries`, `actor`, `skills`, `skill`, `card`, `sections`, `section`, `passives`, `passive`, `description`, `links`, `name`, `detail`, `traits`, `ways`, `way`, `lines`, `fn`, `event` | 候选目标与本席技能、角色与技能原文、被动、状态、导航、卡面费用与许可、骰子行及各控件的动作或提交事件。 |
+
+### 本机战桌的效果选择与中断
+
+| 作用域 | 变量 | 含义 |
+|---|---|---|
+| 选择来源 | `choice`, `source_name`, `source_card_id`, `die_position`, `selection`, `description`, `optional`, `task`, `isSlot`, `title`, `heading` | 当前席位可见的来源、印刷骰位、要选的对象、词条提示和可否放弃。交接画面只收到公开的选择类型。 |
+| 候选与牌面 | `options`, `candidates`, `option`, `index`, `target`, `targetSide`, `fromHand`, `known`, `hand`, `owners`, `colors`, `card`, `art`, `clip`, `label`, `caption`, `price`, `cost`, `extra`, `priceLines` | 合法选项保留服务器下标。按区域、席位、交锋种类、编号和侧内位次定位；卡面只取该席可见数据。价格为本次预计常规费，额外费用分别列出所需资源和现有量。 |
+| 桌面选取 | `chooseOnBoard`, `boardChoice`, `railItems`, `railTargets`, `choiceIndex`, `eligible`, `selectable`, `effectMarks`, `mark`, `border`, `draw`, `focus`, `highlightChoice`, `selectOption`, `onSelectionChange` | 原战桌和编号条中的合法对象、各对象的高亮与命中区。点击任何入口都选中相同下标，并定位候选页；确认后才提交。 |
+| 选择托盘 | `panelW`, `panelH`, `innerW`, `headerH`, `footerH`, `safeTop`, `choiceSafeTop`, `roomForCard`, `faceH`, `cardW`, `captionH`, `gap`, `panelX`, `panelY`, `trayTop`, `compact` | 全部尺寸与位置单位为画布像素。已占用的骰子区域决定托盘可用高度，矮窗口用卡名及费用摘要，完整卡面可查阅。 |
+| 页与确认 | `perPage`, `pages`, `page`, `selected`, `decline`, `ordinal`, `targetPage`, `visible`, `rowW`, `col`, `markers`, `body`, `footer`, `actionY`, `navY`, `nextPage`, `direction`, `onReady`, `onPick`, `onInspect`, `confirmSelection`, `stepPage`, `showPage`, `refreshFooter` | 宽度决定每页张数；选中编号与放弃编号独立。翻页清除之前的选中，确认仅提交当前选择。 |
+| 结算画面 | `paused`, `play`, `chain`, `source`, `location`, `previousStack`, `nextDepth`, `resumedPlay`, `restored`, `outcome`, `repeatHit`, `charge` | 暂停的原交锋、来源、骰位、恢复到的场次、同骰第几次命中及本次实际扣费。 |
+| 卡面与骰序 | `rangeTraits`, `dieRules`, `position`, `destroyed`, `card_instance_id`, `destroyed_die_positions` | 条件远程、额外资源、对应印刷骰位与摧毁标记；实体编号用于区分同名技能。 |
+| 词条的选择请求 | `effect_choice`, `choice_prompt`, `source_name`, `source_card_id`, `die_position`, `selection`, `optional` | 决策席位看到的来源名、可知的技能编号、从 1 开始的印刷骰位、选择区域以及能否放弃。选择说明默认采用触发词条的印刷原文，牌包可用 `choice_prompt` 指定当前分支的提示。 |
+| 词条的候选与费用 | `effect_target`, `zone`, `kind`, `number`, `position`, `card`, `use_preview`, `base_cost`, `cost`, `use_discount`, `choice_discount`, `resource_cost`, `available` | 候选归属的手牌区或交锋区、交锋类别与编号、实体在该侧的位置和有权查看的卡面。插入用牌在判断时展示原费用、减免后通常费、额外资源需求和当前持有量。`use_discount` 同时以 `$choice_discount` 交给选定后的技能使用程序，实际费用在用牌时结算。 |
+| 联机决策及续行提示 | `choice`, `select`, `inspect`, `liveCard`, `preview`, `suspended`, `prior`, `hasScores`, `context` | 当前词条的标题及提示、提交选择与查看卡面的独立按钮、决策席可见的实例卡面、预览费用、暂挂的结算顺序、最近一次暂停的位置、是否已有拼点值和当前交锋结束后的续行说明。 |
+
+| 联机对局控制 | 含义 |
+| --- | --- |
+| `human_seats`, `can_pause`, `paused_by`, `ownPause` | 真人席位、当前席能否暂停、持有暂停的席位和本席的继续权限。 |
+| `_beat_timer`, `playback`, `pausedText` | 真人房间下一拍的计时器、暂停按钮及对应的行动提示。 |
+| `pendingFieldAction` | 同机玩家在上一拍请求返回前点了场内行动，收到新局面后在仍可响应的公开时点打开面板。 |

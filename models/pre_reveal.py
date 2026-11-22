@@ -16,6 +16,9 @@ class PreRevealDuel(DuelSlot):
         self.resolved_target = None
         self.origin = "pre_reveal" if pre_reveal else "instant"
         self.required_card = None
+        self.trigger_card = None
+        self.trigger_die = None
+        self.trigger_name = None
         self.interceptable = allows_interception(attack_card.data, pre_reveal=pre_reveal)
         self.ready = not self.interceptable
 

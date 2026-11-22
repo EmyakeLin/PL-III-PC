@@ -104,6 +104,60 @@ class SpecialTableTests(unittest.TestCase):
         self.assertEqual(self.state["special_timing"], "技能使用前，可换卡")
         self.assertTrue(any("使用 飞场" in line for line in self.state["history"]))
 
+    def test_private_response_stays_with_current_seat_and_rejects_other_seat(self):
+        revision = self.state["revision"]
+        with self.assertRaises(ValueError):
+            self.table.act("open_special", revision, side=2)
+        self.play("open_special", side=1)
+        self.assertEqual((self.state["mode"], self.state["frame"]["viewer_side"]), ("special", 1))
+        self.play("leave_special")
+        self.assertEqual((self.state["mode"], self.state["active_side"]), ("placement", 1))
+
+    def test_automatic_pursuit_names_the_parent_and_returns_before_the_original_hit(self):
+        self.table = BattleMatch(("iron_qi_zheng", "plan_b_sa"), seed=2)
+        self.state = self.table.snapshot()
+        self.play("place", card_id="sa_disintegrate")
+        self.play("ready", side=1)
+        self.play("place", card_id="qi_zheng_hook")
+        self.until(lambda: bool((self.state["frame"]["combat"] or {}).get("suspended")))
+        pursuit = self.state["frame"]["combat"]
+        self.assertEqual(pursuit["kind"], "instant")
+        self.assertEqual(pursuit["suspended"], [{
+            "kind": "regular", "duel_number": 1, "side": 1, "card_id": "qi_zheng_hook",
+            "card_name": "勾带", "die_position": 2, "source_name": "过身取背",
+        }])
+        self.assertEqual(pursuit["sides"][0]["card_id"], "qi_zheng_pass")
+        self.until(lambda: self.state["special_timing"] == "返回原交锋")
+        resumed = self.state["frame"]["combat"]
+        self.assertEqual((resumed["kind"], resumed["suspended"]), ("regular", []))
+        self.assertEqual((resumed["sides"][0]["node"], resumed["sides"][0]["die"]["position"]),
+                         ("before_dice_hit", 2))
+
+    def test_nested_instant_returns_to_the_same_reserved_die_and_then_original_skill(self):
+        opponent = self.table.game.players[1]
+        extra = Card(opponent, dict(id="应时出击", name="应时出击", cost=0, dice=[],
+                                    anytime_play=["attack"]), opponent.characters[0])
+        opponent.characters[0].skills.append(extra)
+        opponent.cardspace.hand.add_card(extra)
+        self.play("place", card_id="wen_sheng_call")
+        self.until(lambda: self.state["special_timing"] == "技能使用前，可换卡")
+        original = self.state["frame"]["combat"]
+        self.private(1)
+        self.use("attack", "wen_sheng_entrance")
+        self.until(lambda: self.state["special_timing"] == "命中前")
+        paused = self.state["frame"]["combat"]
+        self.assertEqual((paused["kind"], paused["duel_number"]), ("instant", 1))
+        self.private(2)
+        self.use("attack", extra.id)
+        nested = self.state["frame"]["combat"]
+        self.assertEqual((nested["duel_number"], len(nested["suspended"])), (2, 2))
+        self.assertEqual(nested["suspended"][-1]["card_name"], "飞场")
+        self.until(lambda: self.state["frame"]["combat"]["duel_number"] == 1)
+        self.assertEqual(self.state["frame"]["combat"], paused)
+        self.assertEqual(self.state["special_timing"], "命中前")
+        self.until(lambda: self.state["frame"]["combat"]["kind"] == "regular")
+        self.assertEqual(self.state["frame"]["combat"], original)
+
     def test_pre_use_opportunity_is_selectable_and_the_underlying_phase_resumes(self):
         self.play("place", card_id="wen_sheng_call")
         self.until(lambda: self.state["special_timing"] == "技能使用前，可换卡")
@@ -115,6 +169,44 @@ class SpecialTableTests(unittest.TestCase):
         self.assertEqual(self.state["mode"], "timing")
         self.assertFalse(self.state["special_options"])
         self.until(lambda: any("使用 对手戏" in event for event in self.state["history"]))
+
+    def test_surprise_stops_on_the_chosen_skills_payment_before_its_first_die(self):
+        for seed, card_id, extra_tunnel, paid, required, feedback in (
+            (4, "lin_qiu_void_cut", 0, False, 2, "隧道不足（需 2，现有 1）"),
+            (8, "lin_qiu_void_cut", 1, True, 2, "实付 2 费、2 隧道"),
+            (8, "lin_qiu_draw_blade", 0, True, 0, "实付 0 费"),
+        ):
+            with self.subTest(card=card_id, extra_tunnel=extra_tunnel):
+                self.table = BattleMatch(("nova_lin_qiu", "waa_lake"), seed=seed)
+                self.state = self.table.snapshot()
+                self.until(lambda: self.state["mode"] == "placement" and self.state["active_side"] == 1)
+                self.play("place", card_id="lin_qiu_surprise")
+                self.until(lambda: self.state["card_choice"])
+                self.assertIs(self.table.game.special.decision_owner, self.table.game.players[0])
+                if self.state["mode"] == "special_handoff":
+                    self.play("ready", side=1)
+                option = next(i for i, move in enumerate(self.state["special_options"])
+                              if move.get("target_card_id") == card_id)
+                if extra_tunnel:
+                    self.table.game.players[0].characters[0].add_status("隧道", extra_tunnel)
+                self.play("use_special", option=option)
+                self.assertIsNone(self.table.game.special.decision_owner)
+                self.until(lambda: any(e["kind"] == "cost_pay" and e["card_id"] == card_id
+                                       for e in self.state["fx_events"]))
+                payments = [e for e in self.state["fx_events"] if e["kind"] == "cost_pay" and e["card_id"] == card_id]
+                self.assertEqual(len(payments), 1)
+                payment = payments[0]
+                actual = required if paid else 0
+                self.assertEqual((payment["paid"], payment["required_cost"], payment["cost"]), (paid, required, actual))
+                self.assertEqual((payment["personal_paid"], payment["common_paid"]), (0, actual))
+                self.assertEqual(payment["resource_paid"], {"status": "隧道", "amount": 2} if extra_tunnel else None)
+                self.assertEqual(payment["failure_reason"], None if paid else feedback)
+                self.assertIn(feedback, self.state["history"][-1])
+                self.assertEqual(self.state["mode"], "combat")
+                combat = self.state["frame"]["combat"]
+                self.assertEqual(combat["suspended"][-1]["card_id"], "lin_qiu_surprise")
+                side = combat["sides"][0]
+                self.assertEqual((side["card_id"], side["node"], side["die"]), (card_id, "logic_skill_use", None))
 
     def test_cli_chooses_an_action_privately_and_preserves_placement(self):
         game = self.table.game

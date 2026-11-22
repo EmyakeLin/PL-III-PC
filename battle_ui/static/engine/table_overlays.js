@@ -23,6 +23,7 @@ import {
   wrapCjkText,
   drawShieldGlyph,
   drawLightStar,
+  buildCardBack,
   buildFullCard,
   buildVerbatimCardPanel,
   buildUnifiedEntryPlate,
@@ -1507,15 +1508,237 @@ export function buildDrawSelectOverlay(w, h, {
 
 const SPECIAL_KIND_STYLE = {
   replace:   { label: '换卡', color: 0x1a8775, wash: 0xedf8f5 },
-  attack:    { label: '先制', color: 0xcf4932, wash: 0xfdf1ee },
+  attack:    { label: '进攻', color: 0xcf4932, wash: 0xfdf1ee },
   intercept: { label: '迎击', color: 0x1c8a64, wash: 0xeef7f3 },
+  pass_intercept: { label: '放行', color: INK.secondary, wash: INK.paperSoft },
+  place:     { label: '置卡', color: 0x1a8775, wash: 0xedf8f5 },
+  ability:   { label: '能力', color: INK.gold, wash: INK.goldBg },
+  custom:    { label: '打出', color: INK.gold, wash: INK.goldBg },
   special:   { label: '特殊', color: INK.gold, wash: INK.goldBg },
 };
+
+const DUEL_LABEL = { regular: '常规交锋', pre_reveal: '开牌前交锋', instant: '即时交锋' };
+
+function choiceText(value, size, color, width, bold = false) {
+  return new PIXI.Text({
+    text: value,
+    style: {
+      fontFamily: FONT_UI, fontSize: size, fill: color, fontWeight: bold ? '800' : '500',
+      wordWrap: true, breakWords: true, wordWrapWidth: Math.max(40, width), lineHeight: size + 4,
+    },
+  });
+}
+
+// A public handoff has no options. Once the seat takes control, board targets
+// and the tray use the same option index and the same confirmation button.
+export function buildEffectChoice(w, h, {
+  side, choice, options, hand = [], colors = {}, owners = {}, safeTop = 64, onReady, onPick, onInspect, onSelectionChange,
+}) {
+  const root = new PIXI.Container();
+  const chooseOnBoard = !onReady && choice.selection !== 'hand';
+  root.eventMode = chooseOnBoard ? 'passive' : 'static';
+  if (!chooseOnBoard) root.hitArea = new PIXI.Rectangle(0, 0, w, h);
+  root.on('pointertap', (event) => event.stopPropagation());
+  const theme = SIDE_THEME[side];
+  const isSlot = choice.selection === 'slot';
+  const task = isSlot ? '选择交锋' : choice.selection === 'hand' ? '选择手牌' : '选择技能';
+  const candidates = options.map((option, index) => ({ option, index })).filter(({ option }) => option.kind !== 'decline_card');
+  const decline = options.findIndex((option) => option.kind === 'decline_card');
+  const gap = 12;
+  const panelW = Math.min(w - 24, 1060);
+  const innerW = panelW - 32;
+  const title = [choice.source_name, choice.die_position && `第 ${choice.die_position} 骰`, task].filter(Boolean).join(' · ');
+  const heading = choiceText(title, 16, theme.accent, innerW, true);
+  const description = choiceText(choice.description || '', 13, INK.primary, innerW);
+  const headerH = 19 + heading.height + (choice.description ? description.height + 4 : 0);
+  const cardW = isSlot ? 164 : Math.min(202, Math.max(144, Math.floor(w * 0.19)));
+  const perPage = Math.max(1, Math.floor((innerW + gap) / (cardW + gap)));
+  const pages = Math.max(1, Math.ceil(candidates.length / perPage));
+  const footerH = w < 520 && pages > 1 ? 86 : 48;
+  const roomForCard = h - safeTop - headerH - footerH - 22;
+  const compact = roomForCard < 188;
+  const captionH = onReady || isSlot || compact ? 0 : 44;
+  const faceH = onReady ? 0 : isSlot ? 46
+    : Math.max(48, Math.min(compact ? 78 : 244, roomForCard - captionH));
+  const panelH = headerH + faceH + captionH + footerH + 12;
+  const panelX = (w - panelW) / 2;
+  const panelY = Math.max(4, h - panelH - 10);
+  const panel = new PIXI.Container();
+  panel.eventMode = 'static';
+  panel.hitArea = new PIXI.Rectangle(0, 0, panelW, panelH);
+  panel.position.set(panelX, panelY);
+  const paper = new PIXI.Graphics();
+  drawFolioFrame(paper, 0, 0, panelW, panelH, { accent: theme.accent, radius: 9, edgeDepth: 2, shadowAlpha: 0.2 });
+  panel.addChild(paper, heading);
+  heading.position.set(16, 9);
+  if (choice.description) {
+    description.position.set(16, 13 + heading.height);
+    panel.addChild(description);
+  } else description.destroy();
+  root.addChild(panel);
+
+  if (onReady) {
+    const ready = makeSealButton(`${theme.name}接手`, { width: 134, height: 34, accent: theme.accent, solid: true, onClick: onReady });
+    ready.position.set(panelW - 150, headerH + 6);
+    panel.addChild(ready);
+    return root;
+  }
+
+  const body = new PIXI.Container();
+  const footer = new PIXI.Container();
+  panel.addChild(body, footer);
+  let page = 0;
+  let selected = -1;
+  const markers = new Map();
+  const reset = (container) => {
+    for (const child of container.removeChildren()) child.destroy({ children: true });
+  };
+  const confirm = () => {
+    if (selected >= 0) onPick(selected);
+  };
+  const select = (index) => {
+    const ordinal = candidates.findIndex((candidate) => candidate.index === index);
+    if (ordinal < 0) return;
+    const targetPage = Math.floor(ordinal / perPage);
+    if (targetPage !== page) showPage(targetPage);
+    selected = index;
+    onSelectionChange(index);
+    for (const [candidateIndex, mark] of markers) mark.visible = candidateIndex === index;
+    refreshFooter();
+  };
+  const refreshFooter = () => {
+    reset(footer);
+    const actionY = panelH - 47;
+    const confirmButton = makeSealButton(isSlot ? '确认交锋' : '确认选择', {
+      width: 108, height: 34, accent: theme.accent, solid: true, disabled: selected < 0, onClick: confirm,
+    });
+    confirmButton.position.set(panelW - 124, actionY);
+    footer.addChild(confirmButton);
+    if (decline >= 0) {
+      const skip = makeSealButton('放弃 · Esc', { width: 106, height: 34, onClick: () => onPick(decline) });
+      skip.position.set(panelW - 240, actionY);
+      footer.addChild(skip);
+    }
+    if (pages > 1) {
+      const navY = w < 520 ? actionY - 38 : actionY;
+      const prev = makeSealButton('‹', { width: 34, height: 32, disabled: page === 0, onClick: () => showPage(page - 1) });
+      const count = choiceText(`${page + 1} / ${pages}`, 13, INK.primary, 72);
+      const next = makeSealButton('›', { width: 34, height: 32, disabled: page + 1 === pages, onClick: () => showPage(page + 1) });
+      prev.position.set(16, navY);
+      count.position.set(59, navY + 7);
+      next.position.set(68 + count.width, navY);
+      footer.addChild(prev, count, next);
+    }
+  };
+  const showPage = (nextPage) => {
+    onInspect(null);
+    reset(body);
+    page = Math.max(0, Math.min(pages - 1, nextPage));
+    selected = -1;
+    onSelectionChange(-1);
+    const visible = candidates.slice(page * perPage, (page + 1) * perPage);
+    const rowW = visible.length * (cardW + gap) - gap;
+    markers.clear();
+    visible.forEach(({ option, index }, col) => {
+      const target = option.effect_target || {};
+      const targetSide = target.side || side;
+      const fromHand = target.zone === 'hand' && targetSide === side;
+      const card = target.card || (fromHand && hand.find((item) => (item.action_key || item.id) === option.target_card_id));
+      const item = new PIXI.Container();
+      item.position.set(Math.max(16, (panelW - rowW) / 2) + col * (cardW + gap), headerH + 3);
+      item.eventMode = 'static';
+      item.cursor = 'pointer';
+      item.hitArea = new PIXI.Rectangle(0, 0, cardW, faceH + captionH);
+      body.addChild(item);
+      const known = card && !card.hidden;
+      if (isSlot) {
+        const targetLabel = choiceText(option.label, 13, theme.accent, cardW - 14, true);
+        const slot = new PIXI.Graphics().roundRect(0, 0, cardW, faceH, 6)
+          .fill(INK.paperSoft).stroke({ width: 1, color: theme.border });
+        targetLabel.anchor.set(0.5);
+        targetLabel.position.set(cardW / 2, faceH / 2);
+        item.addChild(slot, targetLabel);
+      } else {
+        const label = target.zone === 'board'
+          ? `${targetSide === side ? '己方' : '对方'} · ${DUEL_LABEL[target.kind]} ${target.number} · 第 ${target.position} 张`
+          : known ? owners[card.character_id] || '' : option.label;
+        const price = option.use_preview;
+        const cost = price ? [`预计 ${price.cost} 费`] : [];
+        const extra = price?.resource_cost;
+        if (extra) cost.push(`需 ${extra.amount} ${extra.status}（现有 ${extra.available}）`);
+        const priceLines = cost.length ? cost : [label];
+        if (compact) {
+          const surface = new PIXI.Graphics().roundRect(0, 0, cardW, faceH, 6)
+            .fill(INK.paperSoft).stroke({ width: 1, color: theme.border });
+          const title = known ? card.name : '扣置技能';
+          const caption = choiceText([title, ...priceLines].join('\n'), 12, INK.strong, cardW - 12, true);
+          caption.anchor.set(0.5);
+          caption.position.set(cardW / 2, faceH / 2);
+          item.addChild(surface, caption);
+        } else {
+          const art = known
+            ? buildFullCard(card, {
+                side: targetSide, width: cardW, fixedHeight: faceH, dense: true, centered: true,
+                accentColor: colors[card.character_id],
+              })
+            : buildCardBack(targetSide, { width: Math.min(cardW, faceH / 1.40), height: faceH });
+          art.position.set(cardW / 2, faceH / 2);
+          item.addChild(art);
+          const clip = new PIXI.Graphics().rect(-2, -2, cardW + 6, faceH + 5).fill(0xffffff);
+          item.addChild(clip);
+          art.mask = clip;
+          const caption = choiceText(priceLines.join('\n'), 12, INK.primary, cardW, true);
+          caption.anchor.set(0.5, 0);
+          caption.position.set(cardW / 2, faceH + 5);
+          item.addChild(caption);
+        }
+        if (known) {
+          item.on('pointerover', () => {
+            const point = item.getGlobalPosition();
+            onInspect(card, targetSide, point.x + cardW / 2, panelY - 4);
+          });
+          item.on('pointerout', () => onInspect(null));
+        }
+      }
+      const marker = new PIXI.Graphics();
+      marker.roundRect(-2, -3, cardW + 4, faceH + captionH + 3, 7).stroke({ width: 2.5, color: theme.accent });
+      marker.visible = false;
+      markers.set(index, marker);
+      item.addChild(marker);
+      item.on('pointertap', (event) => {
+        event.stopPropagation();
+        select(index);
+      });
+    });
+    refreshFooter();
+  };
+  showPage(0);
+  root.selectOption = select;
+  root.trayTop = panelY;
+  root.confirmSelection = confirm;
+  root.cancelSelection = () => {
+    if (selected >= 0) showPage(page);
+    else if (decline >= 0) onPick(decline);
+  };
+  root.moveSelection = (direction) => {
+    const ordinal = candidates.findIndex((candidate) => candidate.index === selected);
+    const nextOrdinal = ordinal < 0 ? page * perPage
+      : Math.max(0, Math.min(candidates.length - 1, ordinal + direction));
+    if (candidates[nextOrdinal]) select(candidates[nextOrdinal].index);
+  };
+  root.getSelection = () => selected;
+  root.stepPage = (direction) => {
+    const nextPage = page + direction;
+    if (nextPage >= 0 && nextPage < pages) showPage(nextPage);
+  };
+  return root;
+}
 
 export function buildSpecialOverlay(w, h, {
   side,
   timing,
   options = [],
+  duels = [],
   pendingAttack,
   scrollY = 0,
   onPick,
@@ -1527,14 +1750,14 @@ export function buildSpecialOverlay(w, h, {
   const theme = SIDE_THEME[side] || SIDE_THEME[1];
 
   const veil = new PIXI.Graphics();
-  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.87 });
+  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.18 });
   veil.eventMode = 'static';
   root.addChild(veil);
 
-  const panelW = Math.min(680, w - 72);
-  const headerH = 56;
-  const footerH = 58;
-  const maxBodyH = Math.min(h - 104 - headerH - footerH, 410);
+  const panelW = Math.min(720, w - 24);
+  const headerH = 48;
+  const footerH = 50;
+  const maxBodyH = Math.min(Math.max(84, Math.floor(h * 0.44) - headerH), 322);
 
   // Pre-build semantic action seal cards to measure exact scrollable height
   const bodyInnerW = panelW - 52;
@@ -1544,9 +1767,21 @@ export function buildSpecialOverlay(w, h, {
 
   options.forEach((opt, idx) => {
     const ks = SPECIAL_KIND_STYLE[opt.kind] || SPECIAL_KIND_STYLE.special;
-    const textW = Math.max(180, bodyInnerW - 104);
+    const textW = Math.max(76, bodyInnerW - 104);
+    const target = opt.effect_target;
+    let targetLine = '';
+    if (target?.zone === 'board' && (opt.kind === 'replace' || (opt.kind === 'ability' && !opt.duel_number))) {
+      targetLine = `${DUEL_LABEL[target.kind]} ${target.number} · 第 ${target.position} 张`;
+    } else if (opt.response_number) {
+      const duel = duels.find((slot) => slot.number === opt.response_number);
+      const attack = duel?.sides.find((entry) => entry.side === duel.attacking_side)?.cards.find((card) => card.play_mode === 'active');
+      if (attack) {
+        const destination = duel.target?.kind === 'duel' ? `常规交锋 ${duel.target.number}` : duel.target?.name;
+        targetLine = [attack.name, destination].filter(Boolean).join(' → ');
+      }
+    }
     const lbl = new PIXI.Text({
-      text: wrapCjkText(opt.label || '', Math.max(20, Math.floor(textW / 12.6))),
+      text: [opt.label, targetLine].filter(Boolean).join('\n'),
       style: {
         fontFamily: FONT_UI,
         fontSize: 12.8,
@@ -1611,7 +1846,7 @@ export function buildSpecialOverlay(w, h, {
   const viewH = Math.max(84, Math.min(maxBodyH, contentH));
   const panelH = headerH + viewH + footerH + 18;
   const px = (w - panelW) / 2;
-  const py = (h - panelH) / 2;
+  const py = Math.max(4, h - panelH - 12);
 
   // Illuminated Interrupt Folio Frame
   const panel = new PIXI.Graphics();
@@ -1716,14 +1951,16 @@ export function buildSpecialOverlay(w, h, {
   }
 
   const footY = py + panelH - footerH + 11;
-  const switchBtn = makeSealButton('切换席位', {
-    width: 120, height: 36, accent: INK.secondary, fontSize: 12.5, radius: 9, onClick: onSwitchSide,
-  });
-  switchBtn.position.set(px + 20, footY);
-  root.addChild(switchBtn);
+  if (onSwitchSide) {
+    const switchBtn = makeSealButton('切换席位', {
+      width: 120, height: 36, accent: INK.secondary, fontSize: 12.5, radius: 9, onClick: onSwitchSide,
+    });
+    switchBtn.position.set(px + 20, footY);
+    root.addChild(switchBtn);
+  }
 
   if (!pendingAttack) {
-    const closeBtn = makeSealButton('让过', {
+    const closeBtn = makeSealButton('返回战场', {
       width: 120, height: 36, accent: theme.accent, solid: true, fontSize: 13, radius: 9, onClick: onLeave,
     });
     closeBtn.position.set(px + panelW - 140, footY);

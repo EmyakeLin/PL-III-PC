@@ -170,6 +170,23 @@ class Context:
         """Pay the SPEND_STATUS operands on the stack only if the adjusted cost is affordable."""
         return bool(self.execute_op(OpCode.SPEND_STATUS, require_full=True, result_field="paid_in_full"))
 
+    def pay_skill_cost(self, card, discount=0):
+        """Keep the receipt for this use, including price changes made by payment hooks."""
+        printed_cost = card.cost
+        price = max(0, printed_cost - discount)
+        prepaid = bool(card.use_state.get("cost_prepaid"))
+        self.stack.extend((card, price))
+        event = self.execute_op(OpCode.PAY_COST, result_field=None, use_discount=discount) or {}
+        personal = event.get("personal_spent", 0)
+        common = event.get("common_spent", 0)
+        paid = event.get("result") is True
+        return {
+            "paid": paid, "cost": personal + common, "personal_paid": personal, "common_paid": common,
+            "printed_cost": printed_cost, "required_cost": event.get("amount", 0 if prepaid else price),
+            "discount": discount, "prepaid": event.get("prepaid", prepaid), "resource_paid": event.get("resource_paid"),
+            "failure_reason": None if paid else event.get("failure_reason") or "支付被取消",
+        }
+
     def pay_action_costs(self, actor, ability_costs, status_costs):
         """Resolve all price modifiers before charging an action with several costs."""
         costs = [(OpCode.SPEND_ABILITY_EFFECT, name, amount) for name, amount in ability_costs.items()]
@@ -211,7 +228,7 @@ class Context:
         return True
 
     def execute_op(self, opcode, *, result_field="result", defer_payment=None, **fields):
-        """Run one hooked operation and read a result field from its own event."""
+        """Run one hooked operation. A None result_field requests its complete event."""
         names = OPERANDS.get(opcode, ())
         if len(self.stack) < len(names):
             raise StackUnderflowError(f"{opcode.name} 参数不足")
@@ -279,7 +296,8 @@ class Context:
             fields["source"] = character_of(fields["card"])
         elif opcode == OpCode.PAY_COST:
             card = fields["card"]
-            fields.update(source=card.character, player=card.player, side=card.player.side)
+            fields.update(source=card.character, player=card.player, side=card.player.side,
+                          personal_spent=0, common_spent=0, resource_paid=None, failure_reason=None)
         elif opcode in (OpCode.RESET_COST, OpCode.NEXT_TURN_COST):
             fields.update(source=None, side=fields["player"].side)
         elif opcode == OpCode.TURN_COST_ADD:
@@ -347,10 +365,13 @@ class Context:
             executed_op = self.current_op
             result = handler(self)
             if self.current_op is None:
+                if result_field is None:
+                    event["result"] = None
+                    return event
                 return None
             event["result"] = result
             self.dispatch_opcode(executed_op, "AFTER")
-            return event.get(result_field)
+            return event if result_field is None else event.get(result_field)
 
     def register_entries(self, owner, specs):
         """Instantiate a character's passives, a card's entries or a die's entries."""

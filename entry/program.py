@@ -46,9 +46,14 @@ def run_program(ctx, entry, tokens):
         if field == "own_regular_duels":
             return [slot for slot in ctx.game.duelspace.space if ctx.game.pipeline.can_join(slot)
                     and any(card.character is actor for card in slot.get_content(player.side))]
+        if field == "board_skills":
+            return [card for seat in ctx.game.players for member in seat.characters
+                    for card in ctx.game.special.board_skills(member)]
+        if field == "own_board_skills":
+            return ctx.game.special.board_skills(actor)
         if field == "target_board_skills":
             return ctx.game.special.board_skills(event.get("target"))
-        if field in ("chosen_card", "chosen_slot", "choice_subject"):
+        if field in ("chosen_card", "chosen_slot", "choice_subject", "choice_discount"):
             return event.get(field)
         if field == "allies":
             return [member for member in player.characters if member.is_alive]

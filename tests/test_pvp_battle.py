@@ -38,6 +38,21 @@ class PlayerMatchTests(WireClient, unittest.TestCase):
                     and all(m.get(key) == value for key, value in fields.items()))
         return self.command(side, "act", option_id=move["id"])
 
+    def test_live_players_pause_and_resume_the_shared_clock_over_http(self):
+        self.command(1, "player_ready")
+        self.command(2, "player_ready")
+        paused = self.command(2, "pause")
+        self.assertEqual(self.observe()["paused_by"], 2)
+        self.assertFalse(self.observe(1)["options"])
+        self.assertEqual(self.request("/api/resume", {"revision": self.observe(1)["revision"],
+                         "request_id": "wrong-seat"}, side=1)[0], 400)
+        self.assertEqual(self.observe(2)["revision"], paused["revision"])
+        resumed = self.command(2, "resume")
+        status, beat = self.request("/api/follow", {"cursor": resumed["cursor"], "timeout": 3}, side=2)
+        self.assertEqual(status, 200)
+        self.assertGreater(beat["cursor"], resumed["cursor"])
+        self.assertIsNone(beat["paused_by"])
+
     def test_browser_follows_own_private_events_without_waking_agents_or_opponents(self):
         cursors = {side: self.observe(side)["cursor"] for side in (1, 2, None)}
         self.command(1, "prepare", declaration={"mode": "reserve", "event": "scores_ready",

@@ -326,6 +326,18 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 args = self._json_body()
                 check_arguments(BY_NAME["wait"]["inputSchema"], args)
                 return self._send(200, self.server.room.wait(side, **args, visible_updates=True))
+            if path in ("/api/player_ready", "/api/pause", "/api/resume"):
+                if side is None:
+                    raise RequestError(403, "请使用自己的席位邀请。")
+                args = self._json_body()
+                check_arguments(BY_NAME["ready"]["inputSchema"], args)
+                if path == "/api/player_ready":
+                    view = self.server.room.ready(side, **args, human=True)
+                elif path == "/api/pause":
+                    view = self.server.room.pause(side, **args)
+                else:
+                    view = self.server.room.resume(side, **args)
+                return self._send(200, view)
             if path == "/api/select_character":
                 if side is None:
                     raise RequestError(403, "请使用自己的席位邀请选择角色。")

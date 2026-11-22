@@ -50,6 +50,8 @@ def duel_view(slot):
 
 def combat_view(combat):
     data = fields(combat, "kind", "duel_number", "round_id")
+    if combat.get("suspended"):
+        data["suspended"] = combat["suspended"]
     data["sides"] = []
     for member in combat["sides"]:
         fighter = fields(member, "side", "card_id", "character_id", "target_id", "die_number", "play_mode")
@@ -57,8 +59,10 @@ def combat_view(combat):
             fighter["range_deficit"] = member["range_deficit"]
         die = member["die"]
         if die:
-            fighter["die"] = fields(die, "type", "level", "roll_max", "base_value", "rolled_value",
+            fighter["die"] = fields(die, "position", "type", "level", "roll_max", "base_value", "rolled_value",
                                     "final_score", "clash_score", "result")
+            if die.get("hit_index", 0) > 1:
+                fighter["die"]["hit_index"] = die["hit_index"]
             for key in ("critical", "destroyed", "win_branch_skipped"):
                 if die[key]:
                     fighter["die"][key] = True
@@ -72,6 +76,8 @@ def decision_view(room):
     frame = fields(source, "turn", "phase", "mode", "first_side", "placing_side", "winner_side")
     if source.get("timing"):
         frame["timing"] = source["timing"]
+    if source.get("effect_choice"):
+        frame["effect_choice"] = source["effect_choice"]
     frame["players"] = [player_view(p) for p in source["players"]]
     if source["duels"]:
         frame["duels"] = [duel_view(s) for s in source["duels"]]
@@ -88,6 +94,11 @@ def decision_view(room):
     if source.get("combat"):
         frame["combat"] = combat_view(source["combat"])
     result = {key: room[key] for key in ("side", "revision", "cursor", "started", "finished", "options", "events")}
+    result["options"] = [
+        {**option, "effect_target": {**target, "card": card_view(target["card"])}}
+        if (target := option.get("effect_target")) and "card" in target else option
+        for option in room["options"]
+    ]
     result["frame"] = frame
     if not room["started"]:
         result["ready_sides"] = room["ready_sides"]

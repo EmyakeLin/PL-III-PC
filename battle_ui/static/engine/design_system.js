@@ -439,8 +439,20 @@ export function exactSkillTraits(card) {
 
 export function exactSkillTraitSpecs(card) {
   const specs = [];
-  if (card.range_level) specs.push({ label: RANGE_LABELS[card.range_level], style: TRAIT_STYLE.range });
-  if (card.ignore_range) specs.push({ label: `无视 ${card.ignore_range} 级远程`, style: TRAIT_STYLE.ignore_range });
+  const rangeTraits = card.range_traits || [
+    card.range_level && RANGE_LABELS[card.range_level],
+    card.ignore_range && `无视 ${card.ignore_range} 级远程`,
+  ].filter(Boolean);
+  for (const label of rangeTraits) {
+    specs.push({ label, style: label.includes('无视') ? TRAIT_STYLE.ignore_range : TRAIT_STYLE.range });
+  }
+  if (card.resource_cost) {
+    specs.push({ label: `使用须付 ${card.resource_cost.amount} ${card.resource_cost.status}`, style: TRAIT_STYLE.anytime });
+  }
+  for (const [name, count] of Object.entries(card.requires_status || {})) {
+    specs.push({ label: `须持有 ${count} ${name}`, style: TRAIT_STYLE.anytime });
+  }
+  if (card.before_duel_attack) specs.push({ label: '交锋开始前可进攻', style: TRAIT_STYLE.pre_reveal });
   const earlyConditions = Object.entries(card.pre_reveal_requires_status || {});
   if (earlyConditions.length) {
     const terms = earlyConditions.map(([name, count]) => `${name}达到${count}层`);
@@ -1029,27 +1041,32 @@ export function buildTraitPills(card, maxWidth, { compact = false } = {}) {
   const gapY = 4;
   let x = 0;
   let y = 0;
+  let rowH = pillH;
 
   for (const sp of specs) {
     const t = new PIXI.Text({
       text: sp.label,
-      style: { fontFamily: FONT_UI, fontSize, fontWeight: '800', fill: sp.style.color },
+      style: { fontFamily: FONT_UI, fontSize, fontWeight: '800', fill: sp.style.color,
+        wordWrap: true, breakWords: true, wordWrapWidth: Math.max(20, maxWidth - 10), lineHeight: fontSize + 3 },
     });
     const pw = Math.ceil(t.width) + 10;
+    const ph = Math.max(pillH, Math.ceil(t.height) + 2);
     if (x > 0 && x + pw > maxWidth) {
       x = 0;
-      y += pillH + gapY;
+      y += rowH + gapY;
+      rowH = pillH;
     }
-    bg.roundRect(x, y, pw, pillH, 3)
+    rowH = Math.max(rowH, ph);
+    bg.roundRect(x, y, pw, ph, 3)
       .fill({ color: sp.style.bg })
       .stroke({ width: 0.85, color: sp.style.border, alpha: 0.8 });
     t.anchor.set(0, 0.5);
-    t.position.set(x + 5, y + pillH / 2);
+    t.position.set(x + 5, y + ph / 2);
     root.addChild(t);
     x += pw + gapX;
   }
 
-  root._height = y + pillH;
+  root._height = y + rowH;
   return root;
 }
 
@@ -1113,6 +1130,7 @@ export function buildUnifiedDieRow(die, {
   width = 240,
   active = false,
   spent = false,
+  destroyed = false,
   dense = false,
   compact = false,
   showDivider = true,
@@ -1131,8 +1149,14 @@ export function buildUnifiedDieRow(die, {
   const rightW = Math.max(76, width - rightX - 3);
 
   const dmgNode = badge ? buildDamageBadge(badge, { compact: false, muted: spent }) : null;
-  const richNode = restEntries.length
-    ? buildRichVerbatimText(restEntries.join('\n'), {
+  const dieRules = isBlanked ? [] : [...(die.range_traits || [])];
+  if (!isBlanked && die.resource_cost) {
+    dieRules.push(`用骰须付 ${die.resource_cost.amount} ${die.resource_cost.status}`);
+  }
+  if (destroyed) dieRules.unshift('已摧毁');
+  dieRules.push(...restEntries);
+  const richNode = dieRules.length
+    ? buildRichVerbatimText(dieRules.join('\n'), {
         maxWidth: rightW,
         fontSize,
         lineHeight: lineH,

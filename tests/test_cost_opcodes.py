@@ -155,6 +155,32 @@ class CostOpcodeTests(unittest.TestCase):
         self.assertEqual((self.right.max_cost, self.right.used_cost), (0, 0))
         self.assertEqual((self.defender.independent_cost, self.defender.used_independent_cost), (0, 0))
 
+    def test_payment_receipts_follow_adjusted_price_prepaid_and_resource_hooks(self):
+        self.game.start_turn()
+        card = self.attacker.skills[1]
+        card.data["resource_cost"] = {"status": "燃料", "amount": 1}
+        self.attacker.add_status("燃料", 3)
+        self.listen(card, "BEFORE PAY_COST", [1, OpCode.SUB])
+        self.listen(self.attacker, "BEFORE SPEND_STATUS", [1, OpCode.ADD])
+
+        receipt = self.ctx.pay_skill_cost(card, 1)
+        self.assertEqual((receipt["paid"], receipt["printed_cost"], receipt["required_cost"], receipt["discount"]),
+                         (True, 4, 2, 1))
+        self.assertEqual((receipt["cost"], receipt["personal_paid"], receipt["common_paid"]), (2, 1, 1))
+        self.assertEqual(receipt["resource_paid"], {"status": "燃料", "amount": 2})
+
+        card.use_state["cost_prepaid"] = True
+        receipt = self.ctx.pay_skill_cost(card)
+        self.assertTrue(receipt["prepaid"])
+        self.assertEqual((receipt["paid"], receipt["required_cost"], receipt["cost"]), (False, 0, 0))
+        self.assertEqual(receipt["failure_reason"], "燃料不足（需 2，现有 1）")
+        card.use_state["cost_prepaid"] = True
+        self.attacker.add_status("燃料", 1)
+        receipt = self.ctx.pay_skill_cost(card)
+        self.assertTrue(receipt["paid"])
+        self.assertEqual((receipt["cost"], receipt["personal_paid"], receipt["common_paid"]), (0, 0, 0))
+        self.assertEqual(receipt["resource_paid"], {"status": "燃料", "amount": 2})
+
     def test_destroying_card_in_before_payment_prevents_debit(self):
         self.game.start_turn()
         card = self.attacker.skills[0]

@@ -202,27 +202,15 @@ class _TablePlayer(Player):
                           for c in self.characters if c.is_alive],
             )
 
-    def pay_skill_cost(self, card):
-        char = card.character
-        p_before = char.available_cost if char else 0
-        c_before = self.available_cost
-        paid = super().pay_skill_cost(card)
-        if self.game and hasattr(self.game, "emit_fx"):
-            self.game.emit_fx(
-                "cost_pay",
-                side=self.side,
-                character_id=char.id if char else None,
-                card_id=card.id,
-                card_name=card.name,
-                cost=card.cost,
-                personal_paid=max(0, p_before - (char.available_cost if char else 0)),
-                common_paid=max(0, c_before - self.available_cost),
-                paid=bool(paid),
-            )
-        return paid
-
 
 class _TableContext(Context):
+    def pay_skill_cost(self, card, discount=0):
+        payment = super().pay_skill_cost(card, discount)
+        self.game.emit_fx("cost_pay", side=card.player.side,
+                          character_id=card.character.id if card.character else None,
+                          card_id=card.id, card_name=card.name, **payment)
+        return payment
+
     def register_entries(self, owner, specs):
         if getattr(owner, "type", None) == "blank":
             return super().register_entries(owner, specs)
@@ -559,7 +547,8 @@ class BattleMatch:
         self._response_times = []
         self._special_open = False
         self._special_seat = None
-        self._interrupt_return = None
+        self._interrupt_returns = []
+        self.game.pipeline.pause_on_clash_scores = True
         self._timing = ""
         self.revision = 0
         self._advance()
@@ -647,6 +636,7 @@ class BattleMatch:
             "special_options": special_options,
             "special_pending": self.game.special.pending_attack is not None or self.game.special.decision_owner is not None,
             "card_choice": self.game.special.card_decision is not None,
+            "effect_choice": self._views[side].effect_choice() if mode == "special" else None,
             "queued_placement": self.game.special.placement_owner is not None,
             "special_timing": self._timing,
             "draw_select": self._current_draw_prompt(),
@@ -696,8 +686,15 @@ class BattleMatch:
         if self._special_open:
             self._special_action(action, side, option)
         elif action == "open_special" and special_seats(self.game) and self.mode != "draw_select":
+            viewer = None
+            if side is not None:
+                private = self.game.placing if self.mode == "placement" else (
+                    self._pre_seat if self.mode in ("pre_attack", "intercept") else None)
+                if private is None or private not in special_seats(self.game):
+                    raise ValueError("请先由行动方接手。")
+                viewer = self._choose_seat(side, [private])
             self._special_open = True
-            self._special_seat = None
+            self._special_seat = viewer
         elif self.mode == "handoff" and action == "ready":
             if self._draw_seat is not None:
                 if side is not None:
@@ -728,6 +725,12 @@ class BattleMatch:
                 self._pre_action(action, card_id, target, duel_number)
         else:
             raise ValueError("当前阶段无法执行这个操作。")
+        # An action during placement or declarations can itself request a choice
+        # without advancing the public pipeline to another node.
+        owner = self.game.special.decision_owner
+        if owner is not None and not self._special_open:
+            self._special_open = True
+            self._special_seat = None
         self.revision += 1
         return self.snapshot()
 
@@ -769,9 +772,9 @@ class BattleMatch:
             self._special_seat = self._choose_seat(side if side is not None else seats[0].side, seats)
             return
         if action == "leave_special" and game.special.pending_attack is None and game.special.decision_owner is None:
-            self._return_from_special()
+            self._return_from_special(self._special_seat)
             return
-        if action == "switch_side" and self._special_seat is not None:
+        if action == "switch_side" and self._special_seat is not None and len(seats) > 1:
             self._special_seat = None
             return
         if action != "use_special" or self._special_seat is None:
@@ -784,6 +787,7 @@ class BattleMatch:
         if move.kind == "ability":
             ability_name = next(s["name"] for s in move.character.action_specs() if s["id"] == move.ability_id)
         old_space = game.pipeline.interrupt_space
+        public_replacement = move.kind == "replace" and self._views[None]._board_visible(move.target_card)
         succeeded = game.special.apply(player, move)
         # Face-down placements and replacements must remain hidden in the public log.
         if move.kind == "place":
@@ -791,12 +795,8 @@ class BattleMatch:
         elif move.kind == "replace":
             message = "替换技能"
             if succeeded is not False:
-                game.emit_fx(
-                    "card_replace",
-                    side=player.side,
-                    old_card_id=move.target_card.id if move.target_card else None,
-                    new_card_id=move.card.id if move.card else None,
-                )
+                public_cards = {"old_card_id": move.target_card.id, "new_card_id": move.card.id} if public_replacement else {}
+                game.emit_fx("card_replace", side=player.side, **public_cards)
         elif move.kind == "pass_intercept":
             message = f"放行即时交锋 {move.response_number}"
         elif move.kind == "intercept":
@@ -819,23 +819,27 @@ class BattleMatch:
             self._finish()
         elif game.special.pending_attack is not None or game.special.decision_owner is not None:
             self._special_open = True
+            if game.special.decision_owner is player:
+                self._special_seat = player
         elif game.pipeline.interrupt_space is not old_space:
             self._special_open = False
-            if self._interrupt_return is None:
-                self._interrupt_return = self.mode, self._timing, old_space
+            self._interrupt_returns.append((self.mode, self._timing, old_space))
+            self._advance()
+        elif move.kind in ("choose_card", "choose_slot", "decline_card") and self.mode == "combat":
+            self._special_open = False
             self._advance()
         else:
-            self._return_from_special()
+            self._return_from_special(player)
 
-    def _return_from_special(self):
+    def _return_from_special(self, viewer=None):
         self._special_open = False
         self._special_seat = None
         if self.game.pre_reveal.actor is not None and self.game.pipeline.interrupt_space is None:
             self._pre_seat = self.game.pre_reveal.actor
-            self.mode = "handoff"
+            self.mode = self._pre_mode() if self._pre_seat is viewer else "handoff"
         elif self.mode in ("placement", "handoff") and self._pre_seat is None:
-            self._require_handoff = True
-            self._open_window()
+            self._require_handoff = self.game.placing is not viewer
+            self._open_window(previous=viewer)
             if self.game.placing is None:
                 self._advance()
         elif self.mode in ("pre_attack", "intercept", "handoff"):
@@ -962,6 +966,7 @@ class BattleMatch:
     def _advance(self):
         game = self.game
         while not game.is_over:
+            previous_interrupt = game.pipeline.interrupt_space
             try:
                 node = game.next_step()
             except PipelineFinished:
@@ -976,13 +981,19 @@ class BattleMatch:
                 self._timing = "选择技能" if game.special.card_decision else "选择交锋"
                 self.mode = "combat"
                 return
-            if self._interrupt_return is not None:
-                previous_mode, timing, space = self._interrupt_return
+            if self._interrupt_returns:
+                previous_mode, timing, space = self._interrupt_returns[-1]
                 if game.pipeline.interrupt_space is space:
                     self.mode, self._timing = previous_mode, timing
-                    self._interrupt_return = None
+                    self._interrupt_returns.pop()
                     self._return_from_special()
                     return
+            if (previous_interrupt is not None and previous_interrupt is not game.pipeline.interrupt_space
+                    and node == ("FINISHED", "FINISHED") and game.pipeline.in_duel_phase):
+                # A rule-triggered pursuit ends before the next hit of the paused play.
+                self.mode = "combat"
+                self._timing = "返回原交锋"
+                return
             self._timing = timing_label(node)
             if node == "logic_draw_cards" and game._pending_draws:
                 self._draw_seat = game._pending_draws[0]["player"]
@@ -1033,7 +1044,7 @@ class BattleMatch:
             return False
         actions = []
         scores = []
-        pause = False
+        pause = "logic_skill_use" in nodes and bool(combat["suspended"])
         early = combat["kind"] == "pre_reveal"
         if early and "logic_duel_start" in nodes:
             slot = game.pre_reveal.space.space[combat["duel_number"] - 1]
@@ -1059,19 +1070,15 @@ class BattleMatch:
                 (c for c in player.characters if c.is_alive), player.characters[0])
             die = side["die"]
             if node == "logic_skill_use":
-                verb = "使用" if pipe.paid else "未能支付"
-                actions.append(f"{character.combat_name}{verb} {pipe.card.name}")
-                game.emit_fx(
-                    "cost_pay",
-                    side=player.side,
-                    character_id=character.id,
-                    card_id=pipe.card.id,
-                    card_name=pipe.card.name,
-                    cost=pipe.card.cost,
-                    personal_paid=character.used_independent_cost if pipe.paid else 0,
-                    common_paid=max(0, pipe.card.cost - (character.used_independent_cost if pipe.paid else 0)) if pipe.paid else 0,
-                    paid=bool(pipe.paid),
-                )
+                payment = pipe.payment
+                if pipe.paid:
+                    price = f"{payment['cost']} 费"
+                    if resource := payment["resource_paid"]:
+                        price += f"、{resource['amount']} {resource['status']}"
+                    actions.append(f"{character.combat_name}使用 {pipe.card.name}（实付 {price}）")
+                else:
+                    actions.append(f"{character.combat_name}跳过「{pipe.card.name}」，{payment['failure_reason']}")
+                    pause = True
                 if pipe.paid and side["range_deficit"]:
                     actions.append(f"{pipe.card.name}处于 {side['range_deficit']} 级远程劣势")
             elif scored and die and die["result"] in ("win", "lose", "draw"):

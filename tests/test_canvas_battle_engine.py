@@ -125,7 +125,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
     def test_webgl_pre_reveal_labels_and_burn_fallback_match_the_catalog(self):
         state = BattleSession(seed=37).state()
         cards = {card["name"]: card for actor in state["roster_catalog"] for card in actor["skills"]}
-        selection = [cards[name] for name in ("机动·贯彻长空", "抽刀", "开锋")]
+        selection = [cards[name] for name in ("机动·贯彻长空", "抽刀", "开锋", "空断")]
         script = """
             import {readFileSync} from 'node:fs';
             import {exactSkillTraits, exactSkillTraitSpecs, OFFICIAL_STATUS_RULES}
@@ -142,7 +142,10 @@ class CanvasBattleEngineTests(unittest.TestCase):
             input=json.dumps(selection), capture_output=True, encoding="utf-8", check=True,
         )
         rendered = json.loads(result.stdout)
-        expected = [["凝聚达到3层时可在开牌前进攻"], ["开牌前打出"], []]
+        expected = [
+            [*cards["机动·贯彻长空"]["range_traits"], "凝聚达到3层时可在开牌前进攻"],
+            ["开牌前打出"], [], [*cards["空断"]["range_traits"], "使用须付 2 隧道"],
+        ]
         self.assertEqual(rendered["traits"], expected)
         self.assertEqual(rendered["badges"], expected)
         self.assertIn(rendered["burn"], state["catalog"]["statuses"]["烧伤"])
@@ -163,6 +166,55 @@ class CanvasBattleEngineTests(unittest.TestCase):
             code = re.sub(r"/\*.*?\*/|//[^\n]*", "", raw, flags=re.S)
             for forbidden in ("Lv.", "无附加词条", "compactDieBadges", "compactSkillTag", "拖入扣置或双击", "被动 (", "placeLeft"):
                 self.assertNotIn(forbidden, code, f"Forbidden text {forbidden!r} found in {name}")
+
+    @unittest.skipUnless(shutil.which("node"), "Canvas choice controls require a JavaScript runtime")
+    def test_board_selection_and_tray_confirm_the_same_private_option(self):
+        script = """
+            import assert from 'node:assert/strict';
+            import * as PIXI from './vendor/pixi.min.mjs';
+            import {GameDirector} from './engine/game_director.js';
+            import {buildEffectChoice} from './engine/table_overlays.js';
+            const measure = {measureText: text => ({
+                width: text.length * 10, actualBoundingBoxAscent: 10, actualBoundingBoxDescent: 3,
+            })};
+            PIXI.DOMAdapter.set({...PIXI.DOMAdapter.get(), getCanvasRenderingContext2D: () => class {},
+                createCanvas: () => ({getContext: () => measure})});
+            const options = Array.from({length: 9}, (_, i) => ({
+                kind: 'choose_card', label: '扣置技能',
+                effect_target: {zone: 'board', side: 2, kind: 'regular', number: 1, position: i + 1},
+            }));
+            options.splice(3, 0, {kind: 'decline_card', label: '放弃'});
+            for (const [w, h] of [[1366, 768], [800, 500], [390, 650]]) {
+                const submissions = [], highlights = [];
+                const tray = buildEffectChoice(w, h, {side: 1, safeTop: 246, options,
+                    choice: {selection: 'board', source_name: '分界', description: '选择一张在场技能。'},
+                    onPick: index => submissions.push(index), onInspect() {},
+                    onSelectionChange: index => highlights.push(index)});
+                assert.ok(tray.trayTop >= 246);
+                assert.equal(tray.eventMode, 'passive');
+                tray.confirmSelection();
+                const board = new PIXI.Container();
+                const director = {
+                    state: {effect_choice: {selection: 'board'}, special_options: options, active_side: 1},
+                    effectMarks: [], _activeOverlayNode: {node: tray},
+                };
+                GameDirector.prototype._markEffectTarget.call(director, board, 'regular', 1, 2, 8, 0, 0, 100, 140);
+                assert.equal(board.children.length, 1);
+                board.children[0].emit('pointertap', {stopPropagation() {}});
+                assert.deepEqual(submissions, []);
+                assert.equal(highlights.at(-1), 8);
+                tray.confirmSelection();
+                tray.cancelSelection();
+                tray.confirmSelection();
+                assert.deepEqual(submissions, [8]);
+                tray.cancelSelection();
+                assert.deepEqual(submissions, [8, 3]);
+                board.destroy({children: true});
+                tray.destroy({children: true});
+            }
+        """
+        subprocess.run([shutil.which("node"), "--input-type=module", "-e", script],
+                       cwd=STATIC_DIR, capture_output=True, check=True)
 
     def test_director_wires_all_wave1_modules_and_scalable_10v10_roster(self):
         director_src = (STATIC_DIR / "engine" / "game_director.js").read_text(encoding="utf-8")

@@ -3,7 +3,12 @@
 from secrets import token_hex
 
 from battle_ui.match import BattleMatch
-from displayer import hand_key, seat_action_view
+from displayer import board_location_label, hand_key, seat_action_view
+
+
+def action_fields(move):
+    """Private card faces and cost estimates describe a choice without identifying it."""
+    return {k: v for k, v in move.items() if k not in ("label", "effect_target", "use_preview")}
 
 
 def hand_card_label(card):
@@ -63,6 +68,9 @@ class ArenaEngine(BattleMatch):
         frame = self._views[side].snapshot()
         frame.update(mode=self._mode(), timing=self._timing,
                      response_times=[dict(t) for t in self._response_times])
+        effect_choice = self._views[side].effect_choice()
+        if effect_choice:
+            frame["effect_choice"] = effect_choice
         return frame
 
     def catalog(self):
@@ -118,6 +126,14 @@ class ArenaEngine(BattleMatch):
             if kind in ("choose_card", "decline_card", "choose_slot"):
                 # Only the chooser can act; a new prompt must invalidate the previous positions.
                 option["choice_key"] = f"{self.revision}.{index}"
+            elif kind == "replace":
+                target = action.target_card
+                # Keep the original printed target's legacy ID. A borrowed or copied entity
+                # remains independently addressable even if its board position later changes.
+                original = next((c for actor in player.characters for c in actor.skills if c.id == target.id), None)
+                if target is not original:
+                    option["choice_key"] = f"instance:{target.instance_id}"
+                option["label"] += " · " + board_location_label(option["effect_target"])
             elif kind == "ability" and action.target_card and action.target_card.player is not player:
                 # Two seats may reserve abilities concurrently. Keep a concealed candidate's token
                 # while that exact target stays eligible, even if a different seat has acted.
@@ -165,13 +181,15 @@ class ArenaEngine(BattleMatch):
                         self.event["kind"] = "roll"
         return self.event
 
+    def current_move(self, side, move):
+        requested = action_fields(move)
+        return next((a for a in self.options(side) if action_fields(a) == requested), None)
+
     def apply(self, side, move):
         player = self._choose_seat(side, self.game.players)
         if not isinstance(move, dict):
             raise ValueError("动作必须来自本席位的当前合法选项。")
-        requested = {k: v for k, v in move.items() if k != "label"}
-        legal = next((a for a in self.options(side)
-                      if {k: v for k, v in a.items() if k != "label"} == requested), None)
+        legal = self.current_move(side, move)
         if legal is None:
             raise ValueError("动作不在本席当前的合法选项中。")
         kind = legal["kind"]

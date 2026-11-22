@@ -1,6 +1,6 @@
 """Player-facing timing and hot-seat choices for mid-turn actions."""
 
-from displayer import special_action_label, special_seats, timing_label
+from displayer import Displayer, special_action_label, special_seats, timing_label
 from pre_reveal_cli import _choose
 
 
@@ -37,15 +37,27 @@ def offer_actions(game):
             game.begin_private_view(player)
             actions = game.special.options(player)
             if actions:
-                index = _choose([special_action_label(action) for action in actions],
-                                "选择行动，回车返回公开桌面 ")
+                choice = Displayer(game, viewer_side=player.side).effect_choice()
+                if choice:
+                    die = f" · 第 {choice['die_position']} 骰" if choice["die_position"] else ""
+                    print(f"{choice['source_name']}{die}　{choice['description']}")
+                prompt = "选择行动，回车返回公开桌面 "
+                if choice:
+                    prompt = "选择技能，回车放弃此次选牌 " if choice["optional"] else "请输入选项编号 "
+                index = _choose([special_action_label(action) for action in actions], prompt)
+                if choice and index is None:
+                    if not choice["optional"]:
+                        continue
+                    index = next(i for i, action in enumerate(actions) if action.kind == "decline_card")
                 if index is not None:
                     old_space = game.pipeline.interrupt_space
                     game.special.apply(player, actions[index])
-                    game.close_private_view()
                     # The game host pumps the interrupted duel before resuming the parent.
                     if game.pipeline.interrupt_space is not old_space or game.is_over:
                         return
+                    if game.special.decision_owner is player:
+                        seats = [player]
+                        continue
             else:
                 input("当前没有可执行的特殊行动，按回车返回公开桌面 ")
             game.close_private_view()

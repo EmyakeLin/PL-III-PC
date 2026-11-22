@@ -347,12 +347,15 @@ export function buildFullCard(card, {
 
     // 3. Hairline-Separated Unified Die Rows (ZERO nested boxes!)
     dice.forEach((die, idx) => {
-      const isActive = activeDieNumber === idx + 1;
-      const isSpent = activeDieNumber !== null && idx + 1 < activeDieNumber;
+      const position = idx + 1;
+      const isActive = activeDieNumber === position;
+      const destroyed = !isActive && (card.destroyed_die_positions || []).includes(position);
+      const isSpent = destroyed || (activeDieNumber !== null && position < activeDieNumber);
       const rowNode = buildUnifiedDieRow(die, {
         width: targetInnerW,
         active: isActive,
         spent: isSpent,
+        destroyed,
         dense,
         compact,
         showDivider: idx < dice.length - 1,

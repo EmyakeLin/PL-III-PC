@@ -32,6 +32,7 @@ class SidePipeline:
         self.card = None
         self.die = None
         self.paid = None
+        self.payment = None
         self.withdrawn = False
         self.used = False
         self.opposing_card = None
@@ -121,6 +122,25 @@ class Pipeline:
     @property
     def interrupt_space(self):
         return self._frame.space if self._frames and self._frame.interrupt else None
+
+    def suspended_uses(self):
+        """Describe the paused plays from the outermost duel to the active insertion."""
+        parent = None
+        for frame in self._frames:
+            index = frame.space.current_duel_index
+            slot = frame.space.space[index] if 0 <= index < len(frame.space.space) else None
+            if slot and frame.interrupt:
+                side = slot.attacking_side
+                pipe = parent.sides[side] if parent else None
+                if parent and (pipe.card is None or pipe.die is None):
+                    pipe = next((p for p in parent.sides.values() if p.die is not None), pipe)
+                card = slot.trigger_card or (pipe.card if pipe else None)
+                die = slot.trigger_die or (pipe.die if pipe and pipe.card is card else None)
+                yield parent.space if parent else None, card, die, slot.trigger_name or slot.attack_card.name
+            for stack in frame.suspended_skills.values():
+                for paused, _, die in stack:
+                    yield frame.space, paused.card, die, None
+            parent = frame
 
     @property
     def before_duel_start(self):
@@ -368,7 +388,7 @@ class Pipeline:
         index = slot.current_card_index.get(side, 0)
         cards[index:index] = batch
         parent = self.side_pipelines[side]
-        self._frame.suspended_skills[side].append((parent, batch))
+        self._frame.suspended_skills[side].append((parent, batch, die))
         child = SidePipeline(side, self.game)
         child.blocked_at = steps.SKILL[-1]
         self._frame.sides[side] = child
@@ -383,7 +403,7 @@ class Pipeline:
             pending = self._frame.suspended_skills[pipe.side]
             if not pending or pipe.card is not None or not pipe.is_blocked_at(steps.NEXT_CARD):
                 continue
-            parent, batch = pending[-1]
+            parent, batch, _ = pending[-1]
             if slot.next_playable_card(pipe.side) in batch:
                 continue
             pending.pop()
@@ -402,7 +422,7 @@ class Pipeline:
             active = frame.sides[side]
             if active.card is card and not active.withdrawn:
                 return frame, active
-            for suspended, _ in reversed(frame.suspended_skills[side]):
+            for suspended, _, _ in reversed(frame.suspended_skills[side]):
                 if suspended.card is card and not suspended.withdrawn:
                     return frame, suspended
         return None
@@ -531,6 +551,7 @@ class Pipeline:
                         continue
                     pipe.card = card
                     pipe.paid = None
+                    pipe.payment = None
                     pipe.withdrawn = pipe.used = False
                     pipe.opposing_card = None
                     pipe.target = (slot.resolve_target_character(pipe.side)
@@ -1072,16 +1093,14 @@ class Pipeline:
                         char.on_duel_start()
         elif name == "logic_skill_use":
             discount = pipe.card.use_state.pop("use_discount", 0)
-            with self.game.context.binding(**event, use_discount=discount):
-                payment = self.game.context.eval_block([pipe.card, max(0, pipe.card.cost - discount), OpCode.PAY_COST])
-            pipe.paid = payment is True
+            with self.game.context.binding(**event):
+                pipe.payment = self.game.context.pay_skill_cost(pipe.card, discount)
+            pipe.paid = pipe.payment["paid"]
             if pipe.paid:
                 self.game.used_cards.append(pipe.card)
                 print(f"{pipe.card.character.combat_name} 使用「{pipe.card.name}」（牌面 {pipe.card.cost} 费）")
-            elif payment is None:
-                print(f"「{pipe.card.name}」的支付被取消，跳过该技能。")
             else:
-                print(f"{pipe.card.character.combat_name} 未能支付「{pipe.card.name}」的费用，跳过该技能。")
+                print(f"{pipe.card.character.combat_name} 跳过「{pipe.card.name}」，{pipe.payment['failure_reason']}。")
         elif name == "logic_dice_clash":
             with self.game.context.binding(**event):
                 pipe.die.roll()

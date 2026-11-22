@@ -65,6 +65,7 @@ import {
   buildHandoffOverlay,
   buildDrawSelectOverlay,
   buildSpecialOverlay,
+  buildEffectChoice,
   buildRosterOverlay,
   buildCodexOverlay,
   buildPileOverlay,
@@ -99,6 +100,13 @@ const GRADE_LABEL = {
 };
 
 const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
+
+function pausedPlayLabel(play) {
+  const duel = { regular: '常规交锋', instant: '即时交锋', pre_reveal: '开牌前交锋' }[play.kind];
+  const location = play.duel_number ? `${duel} ${play.duel_number}` : PHASE_NAMES[play.kind];
+  const die = play.die_position ? `第 ${play.die_position} 骰` : '';
+  return [location, play.card_name, die].filter(Boolean).join(' · ');
+}
 
 function clearContainer(c) {
   const removed = c.removeChildren();
@@ -151,8 +159,9 @@ export class GameDirector {
     this.shakeTime = 0;
     this.shakePower = 0;
     this.time = 0;
-    this.autoPace = false;
+    this.autoPace = true;
     this.autoTimer = 0;
+    this.pendingFieldAction = false;
 
     // Inspection & interactive state
     this.hoveredCard = null;
@@ -174,6 +183,8 @@ export class GameDirector {
     this.sidePanelActors = [];
     this._duelScrollCtl = null;
     this._combatRail = null;
+    this.effectMarks = [];
+    this.choiceSafeTop = 64;
     this._activeOverlayNode = null;
     this._lastHandHoverSfxMs = 0;
     this.rosterModal = null;
@@ -260,8 +271,10 @@ export class GameDirector {
       pad: 16,
       onToggleAuto: () => {
         this.autoPace = !this.autoPace;
+        this.pendingFieldAction = false;
         this.autoTimer = 0.35;
         this._syncTopBar();
+        if (this.state) this._rebuildActionControls();
       },
       onToggleMute: () => {
         this.audio.toggleMute();
@@ -373,6 +386,7 @@ export class GameDirector {
   }
 
   resize(w, h) {
+    const effectIndex = this._activeOverlayNode?.node.getSelection?.();
     this.w = w;
     this.h = h;
     this.app.stage.hitArea = this.app.screen;
@@ -380,6 +394,7 @@ export class GameDirector {
     this._syncTopBar();
     this._positionPersistentHud();
     if (this.state) this._rebuildAll();
+    if (effectIndex >= 0) this._activeOverlayNode?.node.selectOption?.(effectIndex);
   }
 
   _positionPersistentHud() {
@@ -497,8 +512,9 @@ export class GameDirector {
     const leftFighterX = battleX + Math.round(fighterBandW * 0.50);
     const rightFighterX = battleX + battleW - Math.round(fighterBandW * 0.50);
     // Expansive central confrontational arena for upright vertical duel cards & combat showdown!
-    const arenaX = battleX + fighterBandW + 14;
-    const arenaW = Math.max(440, battleW - fighterBandW * 2 - 28);
+    const narrowCombat = Boolean(this.state?.frame?.combat) && w < 2 * pad + fighterBandW + 14 + 440;
+    const arenaX = narrowCombat ? pad : battleX + fighterBandW + 14;
+    const arenaW = narrowCombat ? w - 2 * pad : Math.max(440, battleW - fighterBandW * 2 - 28);
 
     // FIXED full-height world vertical stage coordinates across ALL phases (placement -> pre_reveal -> reveal -> combat -> turn_end)!
     // Diegetic fanned hand floats organically at the lower-center edge — ZERO exclusive web bottom dock bar & ZERO layout jump on reveal!
@@ -535,6 +551,7 @@ export class GameDirector {
   }
 
   applyState(nextState, { isInitial = false } = {}) {
+    this.autoTimer = nextState.mode === 'combat' ? 1.25 : 0.85;
     // STRICT PRIVACY CLEAR on every state update
     this.hoveredCard = null;
     this.hoveredInfo = null;
@@ -542,9 +559,11 @@ export class GameDirector {
     this.selectedHandCardId = null;
     this.focusedDuelNumber = null;
     this._clearCardIntent();
-    if (nextState.mode === 'handoff' || nextState.mode === 'special_handoff') {
+    if (nextState.mode === 'handoff' || nextState.mode === 'special_handoff' || nextState.effect_choice) {
       this.activeHeroPanel = null;
       this.passiveDrawer = null;
+      this.pileModal = null;
+      this.codexModal = null;
     }
     this._renderInspection();
 
@@ -571,6 +590,9 @@ export class GameDirector {
       this.finishScrollY = 0;
     }
 
+    const previousStack = this.state?.frame?.combat?.suspended || [];
+    const nextDepth = nextState.frame?.combat?.suspended?.length || 0;
+    const resumedPlay = previousStack[nextDepth];
     this.state = nextState;
     if (nextState.character_sprites) {
       setCharacterSpriteUrls(nextState.character_sprites);
@@ -595,6 +617,13 @@ export class GameDirector {
     }
 
     this._rebuildAll();
+    if (!isInitial && resumedPlay && prevTurn === nextTurn && prevRosterSig === nextRosterSig && !nextState.frame?.is_over) {
+      const combat = nextState.frame?.combat;
+      const restored = combat
+        ? combat.kind === resumedPlay.kind && combat.duel_number === resumedPlay.duel_number
+        : nextState.frame?.phase === resumedPlay.kind;
+      if (restored) this.showToast(`返回${pausedPlayLabel(resumedPlay)}`, INK.gold, 1.6);
+    }
 
     const events = nextState.fx_events || [];
     if (isInitial) {
@@ -711,11 +740,14 @@ export class GameDirector {
               duration: 0.42,
             });
           }
-          this._spawnFloater(pos.x, pos.y - 44, `-${ev.cost} 费`, INK.gold, 13, 'status');
+        }
+        if (ev.cost > 0 || ev.discount || ev.prepaid) {
+          const charge = ev.prepaid ? '已代付' : ev.discount ? `实付 ${ev.cost} 费` : `−${ev.cost} 费`;
+          this._spawnFloater(pos.x, pos.y - 44, charge, INK.gold, 13, 'status');
         }
       } else {
         this.audio.shieldErode();
-        this._showBanner(`费用不足 · 跳过「${ev.card_name}」`, 0xcf4932, 1.5);
+        this._showBanner(`${ev.card_name} · ${ev.failure_reason || '支付受阻，跳过使用'}`, 0xcf4932, 2);
       }
     } else if (ev.kind === 'card_pull') {
       this.audio.cardFlip();
@@ -1153,7 +1185,8 @@ export class GameDirector {
     this.topBar.resize(this.layout.w || this.w, this.layout.pad ?? 16);
     this.topBar.sync({
       turn: frame?.turn || 1,
-      phaseLabel: frame ? (PHASE_NAMES[frame.phase] || frame.phase || '') : '',
+      phaseLabel: this.state?.special_timing && ['timing', 'combat'].includes(this.state.mode) ? this.state.special_timing
+        : (PHASE_NAMES[frame?.phase] || frame?.phase || ''),
       firstSide: frame?.first_side ?? null,
       autoPace: this.autoPace,
       muted: this.audio.muted,
@@ -1995,6 +2028,12 @@ export class GameDirector {
     this.preTimerTexts = [];
     this._duelScrollCtl = null;
     this._combatRail = null;
+    this.effectMarks = [];
+    this.choiceSafeTop = this.layout.arenaTop;
+    const choosingEffect = Boolean(this.state.effect_choice);
+    for (const layer of [this.actorsLayer, this.wingsLayer, this.persistentHudLayer, this.cornerHudLayer, this.handLayer, this.sidePanelsLayer, this.controlsLayer]) {
+      layer.interactiveChildren = !choosingEffect;
+    }
 
     const frame = this.state.frame;
     if (frame.combat) {
@@ -2009,6 +2048,40 @@ export class GameDirector {
     this._rebuildConfrontationBridge();
     this._rebuildHandFan();
     this._rebuildActionControls();
+  }
+
+  _markEffectTarget(parent, kind, number, side, position, x, y, width, height) {
+    if (!this.state.effect_choice) return;
+    const options = this.state.special_options || [];
+    const index = options.findIndex(({ effect_target: target }) =>
+      target?.zone === 'board' && target.kind === kind && target.number === number
+      && (position == null ? target.position == null : target.position === position && target.side === side));
+    if (index < 0) return;
+    const mark = new PIXI.Container();
+    mark.position.set(x, y);
+    const border = new PIXI.Graphics();
+    const accent = SIDE_THEME[this.state.active_side].accent;
+    const draw = (selected) => {
+      border.clear().roundRect(0, 0, width, height, Math.min(7, width / 3))
+        .fill({ color: accent, alpha: selected ? 0.2 : 0.045 }).stroke({ width: selected ? 3 : 1.5, color: accent });
+    };
+    draw(false);
+    mark.addChild(border);
+    if (position != null) {
+      const label = new PIXI.Text({ text: String(position), style: { fontFamily: FONT_NUM, fontSize: 11, fontWeight: '900', fill: INK.paper } });
+      const tag = new PIXI.Graphics().roundRect(1, 1, label.width + 8, 17, 3).fill(accent);
+      label.position.set(5, 2);
+      mark.addChild(tag, label);
+    }
+    mark.eventMode = 'static';
+    mark.cursor = 'pointer';
+    mark.hitArea = new PIXI.Rectangle(0, 0, width, height);
+    mark.on('pointertap', (event) => {
+      event.stopPropagation();
+      this._activeOverlayNode?.node.selectOption?.(index);
+    });
+    parent.addChild(mark);
+    this.effectMarks.push({ index, draw });
   }
 
   /**
@@ -2108,17 +2181,18 @@ export class GameDirector {
           });
           head.position.set(sx + 8, sy + 5);
           this.boardLayer.addChild(head);
+          this._markEffectTarget(this.boardLayer, slot._kind, slot.number, null, null, sx, sy, slotW, 23);
           if (timingRec?.declared_at_ms && !timingRec.answered_at_ms) {
             this.preTimerTexts.push({ txt: head, baseHeader, declaredAt: timingRec.declared_at_ms });
           }
 
           const cards = [];
           for (const sEntry of slot.sides || []) {
-            for (const c of sEntry.cards || []) cards.push({ card: c, side: sEntry.side });
+            (sEntry.cards || []).forEach((card, index) => cards.push({ card, side: sEntry.side, position: index + 1 }));
           }
           const availCardW = Math.max(160, Math.floor((slotW - 14 - (cards.length - 1) * 6) / Math.max(1, cards.length)));
           const availCardH = slotH - 28;
-          cards.forEach(({ card, side }, cIdx) => {
+          cards.forEach(({ card, side, position }, cIdx) => {
             const ownerColor = this._resolveCharColor(card.character_id, side);
             // Try 1:1 full card first; if space is tighter, use razor-sharp 1:1 buildBoardCardTag (ZERO blurry scaling!)
             let spr = null;
@@ -2188,6 +2262,8 @@ export class GameDirector {
               });
             }
             this.boardLayer.addChild(spr);
+            this._markEffectTarget(this.boardLayer, slot._kind, slot.number, side, position,
+              cxCard - drawW / 2, cyCard - drawH / 2, drawW, drawH);
           });
 
           if (isPendingForMe) {
@@ -2308,6 +2384,7 @@ export class GameDirector {
       numTxt.anchor.set(0.5);
       numTxt.position.set(midX, baseMidY);
       duelContent.addChild(numTxt);
+      this._markEffectTarget(duelContent, 'regular', number, null, null, midX - 19, baseMidY - 19, 38, 38);
 
       const wellH = laneH - 8;
       const slotRefs = [];
@@ -2455,6 +2532,8 @@ export class GameDirector {
             });
           }
           duelContent.addChild(spr);
+          this._markEffectTarget(duelContent, 'regular', number, s, cIdx + 1,
+            spr.x - spr._boxWidth / 2, spr.y - spr._boxHeight / 2, spr._boxWidth, spr._boxHeight);
         });
       }
       laneMeta.push({ laneRect, baseLy, slotRefs });
@@ -2527,20 +2606,48 @@ export class GameDirector {
     }
 
     const railY = arenaTop;
+    const boardChoice = this.state.effect_choice && this.state.effect_choice.selection !== 'hand';
+    const railTargets = boardChoice ? railItems.flatMap((item) => {
+      const options = [];
+      this.state.special_options.forEach(({ effect_target: target }, choiceIndex) => {
+        if (target?.zone !== 'board' || target.kind !== item.kind || target.number !== item.number) return;
+        const card = target.position != null ? ` · ${target.position}号${target.card?.name || '扣牌'}` : '';
+        options.push({ ...item, label: item.label + card, choiceIndex });
+      });
+      return options.length ? options : [{ ...item, selectable: false }];
+    }) : railItems;
     const rail = buildScalableDuelRail({
       x: arenaX,
       y: railY,
       width: arenaW,
-      items: railItems,
+      items: railTargets,
       activeKind: combat.kind,
       activeNumber: combat.duel_number,
+      onSelect: boardChoice ? (item) => this._activeOverlayNode?.node.selectOption?.(item.choiceIndex) : null,
     });
     this.boardLayer.addChild(rail);
     this._combatRail = rail;
 
     // 2. Sculpted 3D Dice Clash Arena & Score Medallions
-    const clashTop = railY + (rail._boxHeight || 32) + 8;
+    let clashTop = railY + (rail._boxHeight || 32) + 8;
+    const paused = combat.suspended || [];
+    if (paused.length) {
+      const chain = paused.map((play) => {
+        const source = play.source_name ? ` · ${play.source_name}触发` : ' · 插入技能';
+        return pausedPlayLabel(play) + source;
+      });
+      const context = new PIXI.Text({
+        text: chain.join('　→　'),
+        style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: INK.secondary,
+          align: 'center', wordWrap: true, breakWords: true, wordWrapWidth: arenaW - 20 },
+      });
+      context.anchor.set(0.5, 0);
+      context.position.set(arenaX + arenaW / 2, clashTop);
+      this.boardLayer.addChild(context);
+      clashTop += context.height + 7;
+    }
     const clashH = 148;
+    this.choiceSafeTop = clashTop + clashH + 6;
     const cx = arenaX + arenaW / 2;
 
     const arenaG = new PIXI.Graphics();
@@ -2573,7 +2680,7 @@ export class GameDirector {
     this.clashLayer.addChild(vsTxt);
 
     // Draw Left (P1) & Right (P2) Sculpted Live Die Score Medallions
-    const medW = Math.min(226, Math.max(156, Math.floor(arenaW / 2 - 42)));
+    const medW = Math.min(226, Math.max(116, Math.floor(arenaW / 2 - (arenaW < 400 ? 20 : 42))));
     for (const s of combat.sides || []) {
       const isLeft = s.side === 1;
       const mx = isLeft ? arenaX + 10 : arenaX + arenaW - medW - 10;
@@ -2605,9 +2712,11 @@ export class GameDirector {
       this.clashLayer.addChild(mg);
 
       const rangeStr = formatDieRange(die);
-      const resLabel = win
+      const outcome = win
         ? (die.win_branch_skipped ? '胜（跳过拼赢）' : '胜')
-        : lose ? '负' : die.result === 'draw' ? '平' : '';
+        : lose ? '负' : die.result === 'draw' ? '平' : die.result === 'skip' ? '跳过' : '';
+      const repeatHit = die.hit_index > 1 ? `第 ${die.hit_index} 次命中` : '';
+      const resLabel = [outcome, repeatHit].filter(Boolean).join(' · ');
 
       const head = new PIXI.Text({
         text: `${ds.label} ${rangeStr}${s.range_deficit ? ` 压制-${s.range_deficit}` : ''}`,
@@ -2687,7 +2796,7 @@ export class GameDirector {
         ownerName: charNames[card.character_id] || '',
         width: colW,
         minHeight: Math.min(cardsAvailH - 4, Math.round(colW * 1.34)),
-        activeDieNumber: combatSide?.die_number || null,
+        activeDieNumber: combatSide?.die?.position ?? null,
         dense: colW < 290,
         compact: colW < 330 || cardsAvailH < 340,
       });
@@ -2699,6 +2808,13 @@ export class GameDirector {
         panel.position.set(px, cardsTop);
       }
       this.boardLayer.addChild(panel);
+      const option = this.state.special_options?.find(({ effect_target: target }) => target?.zone === 'board'
+        && target.card?.instance_id != null && target.card.instance_id === card.instance_id);
+      if (option) {
+        const target = option.effect_target;
+        this._markEffectTarget(this.boardLayer, target.kind, target.number, side, target.position,
+          panel.x, panel.y, colW * panel.scale.x, panel._boxHeight * panel.scale.y);
+      }
     }
   }
 
@@ -2723,7 +2839,8 @@ export class GameDirector {
     for (const cs of combat.sides || []) {
       if (!cs.card_id) continue;
       const sidePool = pools.find((p) => p.side === cs.side);
-      const found = sidePool?.cards?.find((c) => c.id === cs.card_id);
+      const found = sidePool?.cards?.find((c) => cs.card_instance_id != null
+        ? c.instance_id === cs.card_instance_id : c.id === cs.card_id);
       if (found) out.set(cs.side, found);
     }
     return out;
@@ -3007,14 +3124,26 @@ export class GameDirector {
       const labelMap = {
         reveal: '进入常规交锋',
         combat: '下一拍',
-        timing: '继续',
+        timing: '下一拍',
         turn_end: '下一回合',
       };
       buttons.push({ label: labelMap[mode], h: 42, accent: 0x1a825e, solid: true, fn: () => this._sendAction('next') });
     }
 
     if (this.state.special_available && mode !== 'finished' && mode !== 'draw_select' && mode !== 'special' && mode !== 'special_handoff') {
-      buttons.push({ label: '特殊行动', h: 34, accent: 0x177d6b, solid: true, fn: () => this._sendAction('open_special') });
+      const privateSide = this.state.frame.viewer_side;
+      buttons.push({ label: this.autoPace && ['timing', 'combat', 'reveal'].includes(mode) ? '暂停并行动' : '场内行动', h: 34, accent: 0x177d6b, solid: true,
+        fn: () => {
+          if (['timing', 'combat', 'reveal'].includes(mode)) {
+            this.autoPace = false;
+            this._syncTopBar();
+            if (this.transport.busy) {
+              this.pendingFieldAction = true;
+              return;
+            }
+          }
+          this._sendAction('open_special', privateSide ? { side: privateSide } : {});
+        } });
     }
 
     if (!buttons.length) return;
@@ -3192,7 +3321,31 @@ export class GameDirector {
     }
 
     const mode = this.state.mode;
-    if (mode === 'handoff' || mode === 'special_handoff') {
+    if (this.state.effect_choice || (mode === 'special_handoff' && (this.state.card_choice || this.state.queued_placement))) {
+      const side = this.state.active_side;
+      const handoff = mode === 'special_handoff';
+      const ov = buildEffectChoice(w, h, {
+        side,
+        choice: this.state.effect_choice || { selection: this.state.queued_placement ? 'slot' : 'board' },
+        options: this.state.special_options || [],
+        hand: this.state.frame.players.find((player) => player.side === side)?.hand || [],
+        colors: this.state.character_colors,
+        owners: this._charNameMap(),
+        safeTop: this.choiceSafeTop,
+        onReady: handoff ? () => this._sendAction('ready', { side }) : null,
+        onPick: (option) => this._sendAction('use_special', { option }),
+        onSelectionChange: (choiceIndex) => {
+          for (const mark of this.effectMarks) mark.draw(mark.index === choiceIndex);
+          this._combatRail?.highlightChoice(choiceIndex);
+        },
+        onInspect: (card, ownerSide, anchorX, anchorY) => {
+          this.hoveredCard = card ? { card, side: ownerSide, anchorX, anchorY, source: 'effect' } : null;
+          this._renderInspection();
+        },
+      });
+      this._activeOverlayNode = { kind: 'effect_choice', node: ov };
+      this.overlayLayer.addChild(ov);
+    } else if (mode === 'handoff' || mode === 'special_handoff') {
       const ov = buildHandoffOverlay(w, h, {
         activeSide: this.state.active_side,
         eligibleSides: this.state.eligible_sides,
@@ -3236,10 +3389,11 @@ export class GameDirector {
         side: this.state.active_side,
         timing: this.state.special_timing,
         options: this.state.special_options || [],
+        duels: this.state.frame.special_duels || [],
         pendingAttack: this.state.special_pending,
         scrollY: this.specialScrollY || 0,
         onPick: (idx) => this._sendAction('use_special', { option: idx }),
-        onSwitchSide: () => this._sendAction('switch_side'),
+        onSwitchSide: this.state.eligible_sides?.length > 1 ? () => this._sendAction('switch_side') : null,
         onLeave: () => this._sendAction('leave_special'),
         onScrollChange: (val) => { this.specialScrollY = val; },
       });
@@ -3310,7 +3464,7 @@ export class GameDirector {
 
     if (this.hoveredCard) {
       const { card, side, accentColor = null, ownerName, anchorX, anchorY, sourceSprite = null } = this.hoveredCard;
-      const W = 224;
+      const W = this.hoveredCard.source === 'effect' ? Math.min(w - 32, 320) : 224;
       const fixedH = Math.min(h - 72, Math.round(W * 1.40));
       const panel = buildFullCard(card, {
         side,
@@ -3330,7 +3484,7 @@ export class GameDirector {
       }
 
       const targetX = anchorX ?? w * 0.5;
-      const targetY = anchorY ?? h * 0.45;
+      const targetY = this.hoveredCard.source === 'effect' ? anchorY - H / 2 : anchorY ?? h * 0.45;
       const px = Math.max(16, Math.min(w - W - 16, targetX - W / 2));
       const maxPy = this.hoveredCard.source === 'board' && this.layout.hasHand
         ? Math.max(48, this.layout.stageBottom - H - 4)
@@ -3626,6 +3780,7 @@ export class GameDirector {
     // 4. O(1) Wheel Scroll for Active Mode Overlays (draw_select / special / finished)
     if (this._activeOverlayNode?.node) {
       const { kind, node } = this._activeOverlayNode;
+      if (kind === 'effect_choice' && this.lastPointerY >= node.trayTop) return;
       if (kind === 'draw_select' && this.state.mode === 'draw_select') {
         if (typeof node.setScrollX === 'function' && (node._maxScrollX || 0) > 0) {
           const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
@@ -3720,6 +3875,27 @@ export class GameDirector {
   }
 
   _onKeyDown(e) {
+    if (this._activeOverlayNode?.kind === 'effect_choice') {
+      if (e.key === 'Tab' || e.key === ' ' || e.key === 'Enter') e.preventDefault();
+      if (e.repeat) return;
+      const node = this._activeOverlayNode.node;
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (this.state.mode === 'special_handoff') this._sendAction('ready', { side: this.state.active_side });
+        else node.confirmSelection?.();
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Tab') {
+        node.moveSelection?.(e.key === 'ArrowLeft' || e.shiftKey ? -1 : 1);
+      } else if (e.key === 'PageUp' || e.key === 'PageDown') {
+        node.stepPage?.(e.key === 'PageUp' ? -1 : 1);
+      } else if (e.key === 'Escape') {
+        node.cancelSelection?.();
+      }
+      return;
+    }
+    if (this.state?.mode === 'special' && !this.rosterModal && !this.codexModal && !this.pileModal) {
+      if (e.key === 'Tab') e.preventDefault();
+      if (e.key === 'Escape' && !this.state.special_pending && !e.repeat) this._sendAction('leave_special');
+      if (e.key === 'Escape' || e.key === 'Tab') return;
+    }
     if (e.key === 'Tab') {
       if (this.state && this.state.mode !== 'handoff' && this.state.mode !== 'special_handoff' && !this.rosterModal) {
         e.preventDefault();
@@ -3800,8 +3976,17 @@ export class GameDirector {
   async _sendAction(action, payload = {}) {
     try {
       const next = await this.transport.send(action, payload);
-      if (next) this.applyState(next);
+      if (next) {
+        this.applyState(next);
+        if (this.pendingFieldAction) {
+          this.pendingFieldAction = false;
+          if (next.special_available && ['timing', 'combat', 'reveal'].includes(next.mode)) {
+            await this._sendAction('open_special');
+          }
+        }
+      }
     } catch (err) {
+      this.pendingFieldAction = false;
       this.audio.shieldErode();
       this.showToast(err.message || String(err), 0xcf4932, 2.4);
     }

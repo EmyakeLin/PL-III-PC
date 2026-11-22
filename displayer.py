@@ -73,8 +73,10 @@ def _passives(specs):
 
 def _visible_card(card):
     details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
+    destroyed = sorted({die.position for die in card.instantiated_dice or () if die and die.destroyed})
     return {**details, "pre_reveal": card.can_open_pre_reveal,
             "character_id": card.character.id, "borrowed": card.printed_owner is not card.character,
+            "destroyed_die_positions": destroyed,
             "instance_id": card.instance_id, "cost": card.cost, "state": card.state.name.lower()}
 
 
@@ -96,7 +98,7 @@ def _live_die(die):
         "base_value": die.base_value, "rolled_value": die.value or None,
         "final_score": die.final_score, "clash_score": die.clash_score,
         "result": die.clash_result, "win_branch_skipped": die.win_branch_skipped,
-        "critical": die.critical, "destroyed": die.destroyed,
+        "critical": die.critical, "destroyed": die.destroyed, "hit_index": die.hit_index,
     }
 
 
@@ -140,11 +142,13 @@ def timing_label(nodes):
 
 def special_seats(game):
     """Only public rules and statuses determine whether to offer the shared table."""
-    if game.is_over or not game.turn_number or game.turn_number <= game.turn_count:
+    if game.is_over:
         return []
     pending = game.special.pending_attack
     if game.special.decision_owner is not None:
         return [game.special.decision_owner]
+    if game.turn_number <= game.turn_count:
+        return []
     if pending is not None:
         return sorted(game.players, key=lambda p: p.side == pending.attacking_side)
     for player in game.players:
@@ -153,16 +157,76 @@ def special_seats(game):
                 continue
             if (actor.ability_permission("place") or actor.ability_permission("replace")
                     or any(game.special.window_open(a["window"]) for a in actor.action_specs())
-                    or any(s.get("anytime_play") or s.get("anytime_replace")
+                    or any(s.get("anytime_play") or s.get("anytime_replace") or s.get("replace_targets")
                            or s.get("before_duel_attack") and game.special.window_open("before_duel")
                            for s in actor.skill_data)):
                 return game.players.copy()
     return []
 
 
+_DUEL_NAMES = {"regular": "常规交锋", "pre_reveal": "开牌前交锋", "instant": "即时交锋"}
+
+
+def board_location_label(target):
+    return f"{_DUEL_NAMES[target['kind']]} {target['number']} · 第 {target['position']} 张"
+
+
+def _card_choice_view(card, viewer):
+    game = card.player.game
+    hand = card.player.cardspace.hand.content
+    if card in hand:
+        position = hand.index(card) + 1
+        target = {"zone": "hand", "side": card.player.side, "position": position}
+        if viewer is not card.player:
+            return {"effect_target": target, "label": f"对方第 {position} 张手牌"}
+        target["card"] = _visible_card(card)
+        borrowed = "（取自对手）" if card.printed_owner is not card.character else ""
+        view = {"effect_target": target, "label": f"{card.name}{borrowed}（{card.cost} 费）"}
+        choice = game.special.card_decision
+        discount = choice.use_discount if choice and choice.player is viewer else None
+        if discount is not None:
+            cost = max(0, card.cost - discount)
+            extra = card.data.get("resource_cost")
+            resource = {**extra, "available": card.character.statuses.get(extra["status"], 0)} if extra else None
+            view["use_preview"] = {"base_cost": card.cost, "discount": discount, "cost": cost, "resource_cost": resource}
+            label = f"{card.name}{borrowed} · 预计 {cost} 费"
+            if resource:
+                label += f" + {resource['amount']} {resource['status']}（现有 {resource['available']}）"
+            view["label"] = label
+        return view
+    target = _board_card_target(card, viewer)
+    name = card.name if "card" in target else "扣置技能"
+    return {"effect_target": target, "label": f"{board_location_label(target)} · {name}"}
+
+
+def _board_card_target(card, viewer):
+    game = card.player.game
+    for kind, slots in (("regular", game.duelspace.space), ("pre_reveal", game.pre_reveal.space.space),
+                        ("instant", game.special.duels)):
+        for number, slot in enumerate(slots, 1):
+            cards = slot.get_content(card.player.side)
+            if card in cards:
+                position = cards.index(card) + 1
+                target = {"zone": "board", "side": card.player.side, "kind": kind, "number": number, "position": position}
+                visible = kind != "regular" or _board_visible_to(card, viewer)
+                if visible:
+                    target["card"] = _visible_card(card)
+                return target
+    raise ValueError("所选技能已离开候选区域。")
+
+
+def _board_visible_to(card, viewer):
+    return card.player is viewer or card.state == CardState.PLACED_FACE_UP or (
+        card.player.game.cards_revealed and card.state != CardState.PLACED_FACE_DOWN)
+
+
 def special_action_label(action):
     if action.label is not None:
         return action.label
+    if action.kind == "choose_card":
+        card = action.target_card
+        chooser = card.player.game.special.decision_owner
+        return _card_choice_view(card, chooser)["label"] if chooser else "选择技能"
     if action.kind == "ability":
         spec = next(s for s in action.character.action_specs() if s["id"] == action.ability_id)
         label = f"{action.character.name} · {spec['name']}"
@@ -197,7 +261,14 @@ def seat_action_view(action, player):
     target_id = None
     if target and target.player is player:
         target_id = hand_key(target) if target in player.cardspace.hand.content else target.id
-    return {"kind": action.kind, "label": special_action_label(action),
+    details = _card_choice_view(target, player) if action.kind == "choose_card" else {"label": special_action_label(action)}
+    if action.kind == "replace" or (action.kind == "ability" and action.duel_index is not None):
+        details["effect_target"] = _board_card_target(target, player)
+    if action.kind == "choose_slot":
+        details["effect_target"] = {
+            "zone": "board", "side": player.side, "kind": action.duel_kind, "number": action.duel_index + 1,
+        }
+    return {"kind": action.kind, **details,
             "card_id": hand_key(action.card) if action.card else None, "ability_id": action.ability_id,
             "target_card_id": target_id, "character_id": action.character.id if action.character else None,
             "duel_number": action.duel_index + 1 if action.duel_index is not None else None,
@@ -289,6 +360,31 @@ class Displayer:
             return []
         return [seat_action_view(a, self._viewer) for a in self._game.special.options(self._viewer)]
 
+    def effect_choice(self):
+        special = self._game.special
+        if self._viewer is None or special.decision_owner is not self._viewer:
+            return None
+        card_choice = special.card_decision
+        choice = card_choice or special.slot_decision
+        selection = "slot"
+        if card_choice:
+            selection = "hand" if all(in_hand for _, in_hand in choice.origins.values()) else "board"
+        entry = choice.invocation.entry
+        source = entry.owning_card
+        visible = source is None or source.player is self._viewer or source.state == CardState.PLACED_FACE_UP
+        description = entry.choice_prompt if visible else None
+        fallback = "选择要追加技能的交锋。" if selection == "slot" else "选择一张技能牌。"
+        name = getattr(entry.owner, "name", "技能效果")
+        if source:
+            name = source.name if visible else "扣置技能"
+        return {
+            "selection": selection, "optional": getattr(choice, "optional", False),
+            "description": description or fallback,
+            "source_name": name,
+            "source_card_id": source.id if source and visible else None,
+            "die_position": getattr(entry.owner, "position", None) if visible else None,
+        }
+
     def catalog(self) -> dict:
         """Public printed rules for the selected roster, independent of card locations."""
         actions = {action["id"]: action["name"] for p in self._game.players for c in p.characters
@@ -349,11 +445,34 @@ class Displayer:
         }
 
     def _board_visible(self, card):
-        return card.player is self._viewer or card.state == CardState.PLACED_FACE_UP or (
-            self._game.cards_revealed and card.state != CardState.PLACED_FACE_DOWN)
+        return _board_visible_to(card, self._viewer)
 
     def _board_card(self, card):
         return _visible_card(card) if self._board_visible(card) else {"hidden": True}
+
+    def _suspended(self):
+        game = self._game
+        result = []
+        for space, card, die, source in game.pipeline.suspended_uses():
+            number = None
+            if space is None:
+                index = game.pipeline.current_step_index
+                node = game.pipeline.step_list[index].id if index >= 0 else None
+                kind = _PHASES.get(node, "turn_start")
+            else:
+                number = space.current_duel_index + 1
+                if space is game.duelspace:
+                    kind = "regular"
+                elif space is game.pre_reveal.space:
+                    kind = "pre_reveal"
+                else:
+                    kind = "instant"
+                    number = game.special.duels.index(space.space[number - 1]) + 1
+            visible = card is not None and self._board_visible(card)
+            result.append({"kind": kind, "duel_number": number, "side": card.player.side if card else None,
+                           "card_id": card.id if visible else None, "card_name": card.name if visible else None,
+                           "die_position": die.position if die and visible else None, "source_name": source})
+        return result
 
     def _combat(self):
         game = self._game
@@ -388,4 +507,4 @@ class Displayer:
             if slot in game.special.duels:
                 number = game.special.duels.index(slot) + 1
         return {"kind": "instant" if instant else "pre_reveal" if early else "regular", "duel_number": number,
-                "round_id": game.pipeline.round_id, "sides": sides}
+                "round_id": game.pipeline.round_id, "sides": sides, "suspended": self._suspended()}

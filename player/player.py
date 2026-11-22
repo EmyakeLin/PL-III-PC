@@ -89,7 +89,7 @@ class Player:
     def pay_skill_cost(self, card):
         if card.player is not self:
             return False
-        return self.game.context.eval_block([card, card.cost, OpCode.PAY_COST]) is True
+        return self.game.context.pay_skill_cost(card)["paid"]
 
     def draw_card(self, draw_count):
         available = min(draw_count, len(self.cardspace.draw.content))

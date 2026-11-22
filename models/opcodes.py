@@ -268,27 +268,41 @@ def handle_reset_cost(ctx):
 def handle_pay_cost(ctx):
     """Charge the amount left on the stack after BEFORE PAY_COST, personal funds first."""
     amount, card = ctx.pop(), ctx.pop()
-    cost = 0 if card.use_state.pop("cost_prepaid", False) else max(0, amount)
-    ctx.event.update(amount=cost, personal_spent=0, common_spent=0)
+    prepaid = bool(card.use_state.pop("cost_prepaid", False))
+    cost = 0 if prepaid else max(0, amount)
+    ctx.event.update(amount=cost, prepaid=prepaid)
     player, character = card.player, card.character
     if (character is None or character.player is not player or not character.is_alive
             or character.skill_restricted(card)
             or card.destroyed or card.state == CardState.NEGATED):
+        ctx.event["failure_reason"] = "技能当前不可使用"
         return False
     personal = min(cost, max(0, character.available_cost))
     common = cost - personal
     if common > player.available_cost:
+        ctx.event["failure_reason"] = f"费用不足（需 {cost}，现有 {personal + max(0, player.available_cost)}）"
         return False
     extra = card.data.get("resource_cost")
     if extra and card.range_deficit < 3:
         ctx.stack.extend((character, extra["status"], extra["amount"]))
-        if not ctx.pay_status_cost():
+        spend = ctx.execute_op(OpCode.SPEND_STATUS, require_full=True, result_field=None)
+        if not spend or spend["result"] is None or not spend.get("paid_in_full"):
+            status = spend["status"] if spend else extra["status"]
+            available = spend.get("available_before") if spend else None
+            needed = spend.get("amount") if spend else None
+            if isinstance(needed, int) and available is not None and available < needed:
+                ctx.event["failure_reason"] = f"{status}不足（需 {needed}，现有 {available}）"
+            else:
+                ctx.event["failure_reason"] = f"{status}支付受阻"
             return False
+        ctx.event["resource_paid"] = {"status": spend["status"], "amount": spend["result"]}
         if not character.is_alive or card.destroyed or card.state == CardState.NEGATED:
+            ctx.event["failure_reason"] = "技能当前不可使用"
             return False
         personal = min(cost, max(0, character.available_cost))
         common = cost - personal
         if common > player.available_cost:
+            ctx.event["failure_reason"] = f"费用不足（需 {cost}，现有 {personal + max(0, player.available_cost)}）"
             return False
     character.used_independent_cost += personal
     player.used_cost += common
@@ -672,8 +686,8 @@ def handle_status(ctx):
 def handle_spend_status(ctx):
     """Apply a spend after price modifiers, preserving the balance on a failed conditional payment."""
     requested, name, target = ctx.pop(), ctx.pop(), ctx.pop()
-    ctx.event.update(amount=requested, paid_in_full=False)
     balance = target.spendable_status(name)
+    ctx.event.update(status=name, amount=requested, paid_in_full=False, available_before=balance)
     require_full = ctx.event["require_full"]
     if requested == "all" and balance and not target.is_alive and not require_full:
         target.clear_status(name)

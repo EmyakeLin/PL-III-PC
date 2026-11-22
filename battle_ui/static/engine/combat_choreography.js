@@ -785,7 +785,7 @@ export function createDiegeticTopBar({
   root.addChild(trayGroup);
 
   const sealSpecs = [
-    { key: 'auto', label: '自动', width: 64, activeAccent: PALETTE.jade, accent: INK.secondary, onClick: onToggleAuto },
+    { key: 'auto', label: '暂停', width: 64, activeAccent: PALETTE.jade, accent: INK.secondary, onClick: onToggleAuto },
     { key: 'audio', label: '音效', width: 62, activeAccent: INK.secondary, accent: INK.secondary, onClick: onToggleMute },
     { key: 'passives', label: '被动', width: 62, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onTogglePassives },
     { key: 'codex', label: '典籍', width: 62, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onOpenCodex },
@@ -826,6 +826,7 @@ export function createDiegeticTopBar({
       const w = spec.width;
       const h = sealH;
       const yOff = state.pressed ? 1 : 0;
+      if (spec.key === 'auto') labelTxt.text = state.active ? '暂停' : '继续';
       const isSolid = state.active;
       const isMuted = state.muted;
       const accent = isSolid ? spec.activeAccent : isMuted ? INK.muted : spec.accent;
@@ -1165,7 +1166,15 @@ export function buildScalableDuelRail({
     labelTxt.position.set(isActive ? 21 : 17, chipH / 2 + 0.5);
     chip.addChild(g, labelTxt);
 
-    if (typeof onSelect === 'function') {
+    const eligible = Number.isInteger(it.choiceIndex);
+    const focus = eligible ? new PIXI.Graphics() : null;
+    if (eligible) {
+      drawChamferedPlaque(g, 0, 0, chipW, chipH, 5).stroke({ width: 2, color: PALETTE.jade });
+      drawChamferedPlaque(focus, 1, 1, chipW - 2, chipH - 2, 4).fill({ color: PALETTE.jade, alpha: 0.24 });
+      focus.visible = false;
+      chip.addChild(focus);
+    }
+    if (typeof onSelect === 'function' && it.selectable !== false) {
       chip.eventMode = 'static';
       chip.cursor = 'pointer';
       chip.on('pointertap', (e) => {
@@ -1178,6 +1187,7 @@ export function buildScalableDuelRail({
       item: it,
       index: i,
       node: chip,
+      focus,
       x: rawCursorX,
       w: chipW,
       cx: rawCursorX + chipW / 2,
@@ -1334,6 +1344,11 @@ export function buildScalableDuelRail({
   root.setScroll = setScroll;
   root.scrollBy = (deltaX) => setScroll(scrollX + deltaX);
   root.centerOn = centerOn;
+  root.highlightChoice = (choiceIndex) => {
+    for (const rec of chipRecords) {
+      if (rec.focus) rec.focus.visible = rec.item.choiceIndex === choiceIndex;
+    }
+  };
   root.getMetrics = () => ({
     width: W,
     height: H,

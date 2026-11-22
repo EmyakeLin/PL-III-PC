@@ -20,6 +20,7 @@ class SpecialAction:
     response_number: int | None = None
     ability_id: str | None = None
     label: str | None = None
+    duel_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class CardDecision:
     operation: object
     invocation: object
     event: dict
+    use_discount: int | None
 
 
 @dataclass
@@ -98,22 +100,8 @@ class SpecialActions:
             return False
         origins = {card: (card.character, card in card.player.cardspace.hand.content) for card in cards}
         self._card_choices.append(CardDecision(chooser.player, cards, origins, bool(spec.get("optional")),
-                                               spec["then"], invocation, ctx.event.copy()))
+                                               spec["then"], invocation, ctx.event.copy(), spec.get("use_discount")))
         return True
-
-    def _candidate_label(self, card, viewer):
-        for group, slots in (("常规交锋", self.game.duelspace.space),
-                             ("开牌前交锋", self.game.pre_reveal.space.space), ("即时交锋", self.duels)):
-            for index, slot in enumerate(slots, 1):
-                cards = slot.get_content(card.player.side)
-                if card in cards:
-                    name = ("扣置技能" if card.state == CardState.PLACED_FACE_DOWN and card.player is not viewer
-                            else card.name)
-                    return f"{group} {index} · 第 {cards.index(card) + 1} 张 · {name}"
-        if viewer is not card.player:
-            return f"对方第 {card.player.cardspace.hand.content.index(card) + 1} 张手牌"
-        borrowed = "（取自对手）" if card.printed_owner is not card.character else ""
-        return f"{card.name}{borrowed}（{card.cost} 费）"
 
     def _valid_candidates(self, decision):
         board = {card for slot in self.game.board_slots() for cards in slot.content.values() for card in cards}
@@ -151,7 +139,7 @@ class SpecialActions:
         if action.kind == "decline_card":
             return True
         ctx = self.game.context
-        fields = dict(decision.event, chosen_card=action.target_card)
+        fields = dict(decision.event, chosen_card=action.target_card, choice_discount=decision.use_discount)
         ctx.executions.append(decision.invocation)
         try:
             with ctx.binding(**fields):
@@ -179,13 +167,18 @@ class SpecialActions:
         return self.game.pipeline.insert_skill(use, anchor, ctx.event)
 
     @property
-    def placement_owner(self):
+    def slot_decision(self):
         while self._slot_choices:
             choice = self._slot_choices[0]
             if self._slot_options(choice):
-                return choice.actor.player
+                return choice
             self._slot_choices.pop(0)
         return None
+
+    @property
+    def placement_owner(self):
+        choice = self.slot_decision
+        return choice.actor.player if choice else None
 
     def choose_slot(self, ctx, subject, candidates, continuation):
         """Suspend a program and resume its captured block with the chosen duel."""
@@ -208,15 +201,16 @@ class SpecialActions:
         if use and use.card not in self.own_hand_skills(choice.actor):
             return {}
         options = {}
-        for group, slots in (("常规交锋", self.game.duelspace.space), ("开牌前交锋", self.game.pre_reveal.space.space),
-                             ("即时交锋", self.duels)):
+        for kind, group, slots in (("regular", "常规交锋", self.game.duelspace.space),
+                                   ("pre_reveal", "开牌前交锋", self.game.pre_reveal.space.space),
+                                   ("instant", "即时交锋", self.duels)):
             for index, slot in enumerate(slots):
                 if slot in choice.candidates and self.game.pipeline.can_join(slot):
                     label = f"{group} {index + 1}"
                     if use:
                         label = f"{use.card.name} · {label}"
                     options[SpecialAction("choose_slot", card=use.card if use else None,
-                                          duel_index=index, label=label)] = slot
+                                          duel_index=index, duel_kind=kind, label=label)] = slot
         return options
 
     def _resolve_slot_choice(self, action):
@@ -240,6 +234,11 @@ class SpecialActions:
         game = self.game
         if game.is_over or game.turn_number <= game.turn_count:
             return False
+        if window == "turn_start":
+            pipe = game.pipeline
+            index = pipe.current_step_index
+            return (not pipe.in_duel_phase and 0 <= index < len(pipe.step_list)
+                    and pipe.step_list[index].id == "on_turn_start")
         if window == "before_reveal":
             return not game.cards_revealed
         if window == "placement":
@@ -336,20 +335,21 @@ class SpecialActions:
 
     def options(self, player):
         game = self.game
-        if game.is_over or game.turn_number <= game.turn_count or player not in game.players:
+        if game.is_over or player not in game.players:
             return []
         decision = self.card_decision
         if decision:
             if player is not decision.player:
                 return []
-            choices = [SpecialAction("choose_card", target_card=card, label=self._candidate_label(card, player))
-                       for card in self._valid_candidates(decision)]
+            choices = [SpecialAction("choose_card", target_card=card) for card in self._valid_candidates(decision)]
             if decision.optional:
                 choices.append(SpecialAction("decline_card", label="放弃此次选牌"))
             return choices
         if self.placement_owner is not None:
             choice = self._slot_choices[0]
             return list(self._slot_options(choice)) if player is choice.actor.player else []
+        if game.turn_number <= game.turn_count:
+            return []
         phase = game.pre_reveal
         cards = phase.playable_hand(player)
         enemy = phase.opponent(player)
@@ -435,6 +435,11 @@ class SpecialActions:
     def declare_field_attack(self, card, target, duel_index=None, *, deferred=False):
         game = self.game
         slot = PreRevealDuel(game, card, target, duel_index, pre_reveal=False)
+        if deferred and game.context.executions:
+            rule = game.context.executions[-1].entry
+            slot.trigger_die = game.context.event.get("die")
+            slot.trigger_card = getattr(slot.trigger_die, "card", None) or game.context.event.get("card")
+            slot.trigger_name = getattr(rule, "_passive_name", None)
         if self.window_open("before_duel"):
             slot.origin = "before_duel"
         self.duels.append(slot)
