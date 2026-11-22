@@ -16,6 +16,8 @@ import {
   RANK_COLOR,
   SHIELD_STYLE,
   STATUS_COLORS,
+  getStatusColor,
+  mountStatusIcon,
   OFFICIAL_STATUS_RULES,
   parseHexColor,
   wrapCjkText,
@@ -577,19 +579,20 @@ export function buildHeroSidePanel({
       bx += 48;
     }
     for (const [sName, sVal] of statuses) {
-      if (bx + 48 > width - 12) break;
-      const col = STATUS_COLORS[sName] || INK.secondary;
+      if (bx + 56 > width - 12) break;
+      const col = getStatusColor(sName, INK.secondary);
       const burst = sName === '裂血' && character.bleed_burst;
       const stTxt = new PIXI.Text({
         text: `${sName}${sVal}`,
         style: { fontFamily: FONT_UI, fontSize: 10.4, fontWeight: '800', fill: col },
       });
-      const bw = Math.ceil(stTxt.width) + 10;
+      const bw = Math.ceil(stTxt.width) + 22;
       badgeG.roundRect(bx, curY, bw, 19, 4)
         .fill({ color: burst ? 0xfce0e4 : INK.paperSoft })
         .stroke({ width: burst ? 1.5 : 0.9, color: col });
-      stTxt.anchor.set(0.5);
-      stTxt.position.set(bx + bw / 2, curY + 9.5);
+      mountStatusIcon(root, badgeG, sName, bx + 9.5, curY + 9.5, 5.6, col);
+      stTxt.anchor.set(0, 0.5);
+      stTxt.position.set(bx + 17, curY + 9.5);
       root.addChild(stTxt);
       bx += bw + 4;
     }

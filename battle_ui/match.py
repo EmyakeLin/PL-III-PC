@@ -16,6 +16,7 @@ from pipeline.pipeline_errors import PipelineFinished
 from player.player import Player
 
 from .fx_compiler import discover_character_fx, discover_fx_scripts
+from .status_icons import discover_status_visuals
 
 
 class StaleActionError(ValueError):
@@ -526,6 +527,7 @@ class BattleMatch:
         self._character_sprites = _discover_character_sprites(pool)
         self._character_fx = discover_character_fx(pool, self._character_colors)
         self._fx_scripts = discover_fx_scripts()
+        self._status_visuals = discover_status_visuals(pool)
         self.choices = [
             {
                 **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")},
@@ -653,6 +655,7 @@ class BattleMatch:
             "character_sprites": dict(self._character_sprites),
             "character_fx": dict(self._character_fx),
             "fx_scripts": dict(self._fx_scripts),
+            "status_visuals": dict(self._status_visuals),
             "card_owners": card_owners,
             "default_targets": {
                 str(p.side): p.default_target_character.id

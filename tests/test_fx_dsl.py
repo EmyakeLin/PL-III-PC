@@ -11,6 +11,7 @@ from battle_ui.fx_compiler import (
     sanitize_bright_hex,
     validate_fx_recipe,
 )
+from battle_ui.status_icons import discover_status_visuals
 from loader import load_characters_from_packs
 
 
@@ -122,6 +123,46 @@ class FxDslInterfaceTests(unittest.TestCase):
         self.assertIn("2", sk["dice"])
         self.assertEqual(sk["dice"]["2"]["vfx"][0]["primitive"], "pierce_lance")
         self.assertEqual(sk["dice"]["2"]["vfx"][0]["count"], 3)
+
+    def test_status_icons_discovery_inline_sanitization_and_static_serving(self):
+        session = BattleSession(seed=37)
+        snap = session.state()
+        visuals = snap.get("status_visuals", {})
+        self.assertIn("凝聚", visuals)
+        self.assertIn("烧伤", visuals)
+        self.assertIn("限制", visuals)
+        self.assertEqual(visuals["凝聚"]["color"], "#248277")
+        self.assertTrue(visuals["凝聚"]["icon_url"].startswith("/status_icons/"))
+        self.assertIn("icon_path", visuals["限制"])
+
+        # Static resolver handles URL-encoded CJK SVG names and blocks traversal
+        resolved = _resolve_static(visuals["凝聚"]["icon_url"])
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved[1], "image/svg+xml")
+        self.assertIsNone(_resolve_static("/status_icons/../wind_plan_b.json"))
+        self.assertIsNone(_resolve_static("/status_icons/manifest.json"))
+
+        # Inline status_rules visuals support safe SVG/path/symbol and strip unsafe <script> SVG
+        synthetic_pool = {
+            "hero_x": {
+                "id": "hero_x",
+                "status_rules": {
+                    "霜痕": {
+                        "color": "#2478cc",
+                        "icon_svg": "<svg viewBox='0 0 24 24'><circle cx='12' cy='12' r='8'/></svg>",
+                    },
+                    "恶意状态": {
+                        "icon_svg": "<svg><script>alert(1)</script></svg>",
+                        "icon_symbol": "★",
+                    },
+                },
+            }
+        }
+        syn = discover_status_visuals(synthetic_pool)
+        self.assertIn("icon_svg", syn["霜痕"])
+        self.assertEqual(syn["霜痕"]["color"], "#2478cc")
+        self.assertNotIn("icon_svg", syn["恶意状态"])
+        self.assertEqual(syn["恶意状态"]["icon_symbol"], "★")
 
 
 if __name__ == "__main__":

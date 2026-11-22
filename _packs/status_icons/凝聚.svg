@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 凝聚：向中心汇聚的四向菱形能量核心 -->
+  <circle cx="12" cy="12" r="9" fill="none" stroke="#248277" stroke-width="1.6" stroke-dasharray="4 2.5"/>
+  <polygon points="12,5 17,12 12,19 7,12" fill="#248277"/>
+  <polygon points="12,8.5 14.5,12 12,15.5 9.5,12" fill="#FFFDF7"/>
+  <path d="M 12 1.8 L 12 4.4 M 12 19.6 L 12 22.2 M 1.8 12 L 4.4 12 M 19.6 12 L 22.2 12" stroke="#248277" stroke-width="1.8" stroke-linecap="round"/>
+</svg>

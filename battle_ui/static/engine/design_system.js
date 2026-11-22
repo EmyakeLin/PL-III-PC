@@ -145,7 +145,148 @@ export const STATUS_COLORS = {
   换卡机会: 0x22856a,
   骰子等级降低: 0xa65044,
   骰级免疫: 0x2d8c57,
+  凝聚: 0x248277,
+  余烬: 0xd96226,
 };
+
+// Dynamic pack-provided status visuals (`status_visuals` from snapshot):
+// name -> { color?: "#...", icon_url?: "/status_icons/...", icon_svg?: "<svg...>", icon_path?: [...], icon_symbol?: "..." }
+const CUSTOM_STATUS_VISUALS = new Map();
+const STATUS_ICON_TEXTURE_CACHE = new Map();
+
+function _rasterizeStatusSvg(svgMarkup, cacheKey) {
+  if (STATUS_ICON_TEXTURE_CACHE.has(cacheKey)) {
+    return STATUS_ICON_TEXTURE_CACHE.get(cacheKey);
+  }
+  const entry = {
+    ready: false,
+    failed: false,
+    texture: null,
+    listeners: new Set(),
+    onReady(fn) {
+      if (this.ready || this.failed) fn(this);
+      else this.listeners.add(fn);
+    },
+  };
+  STATUS_ICON_TEXTURE_CACHE.set(cacheKey, entry);
+
+  const notify = () => {
+    for (const fn of entry.listeners) {
+      try { fn(entry); } catch (_) { /* ignore */ }
+    }
+    entry.listeners.clear();
+  };
+
+  if (typeof Image === 'undefined' || typeof document === 'undefined') {
+    entry.failed = true;
+    notify();
+    return entry;
+  }
+
+  const img = new Image();
+  img.decoding = 'async';
+  img.onload = () => {
+    try {
+      const sz = 72; // 3x HiDPI crisp status icon
+      const canvas = document.createElement('canvas');
+      canvas.width = sz;
+      canvas.height = sz;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.clearRect(0, 0, sz, sz);
+      ctx.drawImage(img, 0, 0, sz, sz);
+      const tex = PIXI.Texture.from(canvas);
+      if (tex?.source) tex.source.scaleMode = 'linear';
+      entry.texture = tex;
+      entry.ready = true;
+      notify();
+    } catch (_) {
+      entry.failed = true;
+      notify();
+    }
+  };
+  img.onerror = () => {
+    entry.failed = true;
+    notify();
+  };
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+  return entry;
+}
+
+function _preloadStatusIconUrl(url) {
+  const key = `url:${url}`;
+  if (STATUS_ICON_TEXTURE_CACHE.has(key)) {
+    return STATUS_ICON_TEXTURE_CACHE.get(key);
+  }
+  const entry = {
+    ready: false,
+    failed: false,
+    texture: null,
+    listeners: new Set(),
+    onReady(fn) {
+      if (this.ready || this.failed) fn(this);
+      else this.listeners.add(fn);
+    },
+  };
+  STATUS_ICON_TEXTURE_CACHE.set(key, entry);
+
+  const notify = () => {
+    for (const fn of entry.listeners) {
+      try { fn(entry); } catch (_) { /* ignore */ }
+    }
+    entry.listeners.clear();
+  };
+
+  if (typeof fetch !== 'function') {
+    entry.failed = true;
+    notify();
+    return entry;
+  }
+
+  fetch(url, { cache: 'no-store' })
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.text();
+    })
+    .then((svgText) => {
+      const compiled = _rasterizeStatusSvg(svgText, `svg_url:${url}`);
+      compiled.onReady((done) => {
+        entry.ready = done.ready;
+        entry.failed = done.failed;
+        entry.texture = done.texture;
+        notify();
+      });
+    })
+    .catch(() => {
+      entry.failed = true;
+      notify();
+    });
+
+  return entry;
+}
+
+export function setStatusVisuals(visualsMap) {
+  if (!visualsMap || typeof visualsMap !== 'object') return;
+  for (const [name, spec] of Object.entries(visualsMap)) {
+    if (!name || !spec || typeof spec !== 'object') continue;
+    CUSTOM_STATUS_VISUALS.set(name, spec);
+    if (spec.color) {
+      STATUS_COLORS[name] = parseHexColor(spec.color, STATUS_COLORS[name] || INK.secondary);
+    }
+    if (spec.icon_url) {
+      _preloadStatusIconUrl(spec.icon_url);
+    } else if (spec.icon_svg) {
+      _rasterizeStatusSvg(spec.icon_svg, `inline:${name}:${spec.icon_svg.length}`);
+    }
+  }
+}
+
+export function getStatusColor(name, fallback = INK.secondary) {
+  const custom = name ? CUSTOM_STATUS_VISUALS.get(name) : null;
+  if (custom?.color) return parseHexColor(custom.color, STATUS_COLORS[name] || fallback);
+  return STATUS_COLORS[name] || fallback;
+}
 
 export const TRAIT_STYLE = {
   range:           { color: 0xb87010, bg: 0xfef6e6, border: 0xe3c386 },
@@ -574,6 +715,75 @@ export function drawStatusIcon(g, name, cx, cy, r, col) {
     }
   } else {
     g.circle(cx, cy, r * 0.58).fill({ color: col, alpha: 0.25 }).stroke({ width: 1.7, color: col });
+  }
+}
+
+/**
+ * Mount a status icon into `parentContainer`:
+ *  - Priority 1: Custom SVG file (`icon_url`), inline SVG (`icon_svg`), or SVG path (`icon_path`)
+ *    from `_packs/status_icons/` or `status_rules` (cached at 3x HiDPI as PIXI.Sprite).
+ *  - Priority 2: Custom 1-2 char symbol (`icon_symbol`).
+ *  - Priority 3: Built-in vector fallback (`drawStatusIcon`).
+ */
+export function mountStatusIcon(parentContainer, fallbackGraphics, name, cx, cy, r, col) {
+  const resolvedCol = col ?? getStatusColor(name);
+  const spec = name ? CUSTOM_STATUS_VISUALS.get(name) : null;
+
+  let texEntry = null;
+  if (spec?.icon_url) {
+    texEntry = _preloadStatusIconUrl(spec.icon_url);
+  } else if (spec?.icon_svg) {
+    texEntry = _rasterizeStatusSvg(spec.icon_svg, `inline:${name}:${spec.icon_svg.length}`);
+  } else if (Array.isArray(spec?.icon_path) && spec.icon_path.length) {
+    const cssCol = hexToCss(resolvedCol);
+    const paths = spec.icon_path.map((d) => `<path d="${d}" fill="${cssCol}"/>`).join('');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${paths}</svg>`;
+    texEntry = _rasterizeStatusSvg(svg, `path:${name}:${cssCol}:${spec.icon_path.join('|')}`);
+  }
+
+  if (texEntry && parentContainer) {
+    const size = r * 2.15;
+    if (texEntry.ready && texEntry.texture) {
+      const spr = new PIXI.Sprite(texEntry.texture);
+      spr.anchor.set(0.5);
+      spr.width = size;
+      spr.height = size;
+      spr.position.set(cx, cy);
+      parentContainer.addChild(spr);
+      return;
+    }
+    // Render temporary fallback while 2ms SVG decode finishes, then swap cleanly
+    const tempG = new PIXI.Graphics();
+    drawStatusIcon(tempG, name, cx, cy, r, resolvedCol);
+    parentContainer.addChild(tempG);
+    texEntry.onReady((done) => {
+      if (parentContainer.destroyed) return;
+      if (done.ready && done.texture) {
+        if (!tempG.destroyed) tempG.visible = false;
+        const spr = new PIXI.Sprite(done.texture);
+        spr.anchor.set(0.5);
+        spr.width = size;
+        spr.height = size;
+        spr.position.set(cx, cy);
+        parentContainer.addChild(spr);
+      }
+    });
+    return;
+  }
+
+  if (spec?.icon_symbol && parentContainer) {
+    const t = new PIXI.Text({
+      text: spec.icon_symbol,
+      style: { fontFamily: FONT_UI, fontSize: Math.max(9, r * 1.45), fontWeight: '900', fill: resolvedCol },
+    });
+    t.anchor.set(0.5);
+    t.position.set(cx, cy);
+    parentContainer.addChild(t);
+    return;
+  }
+
+  if (fallbackGraphics) {
+    drawStatusIcon(fallbackGraphics, name, cx, cy, r, resolvedCol);
   }
 }
 
@@ -1009,7 +1219,7 @@ export function buildUnifiedEntryPlate({
   const isSkill = variant === 'skill';
   const accent = accentColor ?? (
     isStatus
-      ? (STATUS_COLORS[statusName] || INK.secondary)
+      ? getStatusColor(statusName, INK.secondary)
       : isPassive
         ? INK.gold
         : INK.secondary
@@ -1046,7 +1256,7 @@ export function buildUnifiedEntryPlate({
   root.addChild(g);
 
   if (isStatus) {
-    drawStatusIcon(g, statusName, 19, Math.min(totalH / 2, 17), 9, accent);
+    mountStatusIcon(root, g, statusName, 19, Math.min(totalH / 2, 17), 9, accent);
     const titleStr = `${statusName}${statusValue !== null ? ' ' + statusValue : ''}${statusBurst ? '（爆发）' : ''}`;
     const hTxt = new PIXI.Text({
       text: titleStr,

@@ -27,6 +27,9 @@ import {
   drawDieIcon,
   drawUnifiedDieFrame,
   drawStatusIcon,
+  mountStatusIcon,
+  setStatusVisuals,
+  getStatusColor,
   drawShieldGlyph,
   drawLightStar,
   drawCostCrystal,
@@ -572,6 +575,9 @@ export class GameDirector {
     if (nextState.character_sprites) {
       setCharacterSpriteUrls(nextState.character_sprites);
     }
+    if (nextState.status_visuals) {
+      setStatusVisuals(nextState.status_visuals);
+    }
     this.fxDirector.sync(nextState.character_fx, nextState.fx_scripts);
     this.drawSelected.clear();
 
@@ -855,7 +861,7 @@ export class GameDirector {
 
   _playStatusChangeFx(ev) {
     const pos = this._actorPos(ev.character_id);
-    const col = STATUS_COLORS[ev.status] || INK.secondary;
+    const col = getStatusColor(ev.status, INK.secondary);
     const sign = ev.delta > 0 ? '+' : '';
     const customRecipe = ev.delta > 0 ? this.fxDirector.resolveStatusRecipe(ev) : null;
     if (customRecipe) {
@@ -1874,7 +1880,7 @@ export class GameDirector {
     }
     for (const [name, val] of statuses) {
       if (sx + stBoxSize + 1 > hudW + 6) break;
-      const col = STATUS_COLORS[name] || INK.secondary;
+      const col = getStatusColor(name, INK.secondary);
       const burst = name === '裂血' && ch.bleed_burst;
       const iconBox = new PIXI.Container();
       iconBox.position.set(sx, row3Y);
@@ -1882,9 +1888,17 @@ export class GameDirector {
       ig.roundRect(0, 0, stBoxSize, stBoxSize, 4.5)
         .fill({ color: burst ? 0xfce0e4 : INK.paper })
         .stroke({ width: burst ? 1.6 : 1.1, color: col });
-      drawStatusIcon(ig, name, stBoxSize / 2, stBoxSize * 0.45, compactHud ? 5.8 : 7.2, col);
-      ig.roundRect(stBoxSize * 0.45, stBoxSize * 0.52, stBoxSize * 0.6, stBoxSize * 0.5, 3).fill({ color: col });
       iconBox.addChild(ig);
+
+      const glyphLayer = new PIXI.Container();
+      const glyphG = new PIXI.Graphics();
+      glyphLayer.addChild(glyphG);
+      mountStatusIcon(glyphLayer, glyphG, name, stBoxSize / 2, stBoxSize * 0.45, compactHud ? 5.8 : 7.2, col);
+      iconBox.addChild(glyphLayer);
+
+      const badgeG = new PIXI.Graphics();
+      badgeG.roundRect(stBoxSize * 0.45, stBoxSize * 0.52, stBoxSize * 0.6, stBoxSize * 0.5, 3).fill({ color: col });
+      iconBox.addChild(badgeG);
 
       const valTxt = new PIXI.Text({
         text: String(val),
@@ -1909,7 +1923,7 @@ export class GameDirector {
               name: n,
               value: v,
               burst: n === '裂血' && ch.bleed_burst,
-              color: STATUS_COLORS[n] || INK.secondary,
+              color: getStatusColor(n, INK.secondary),
               text: (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '',
             };
           }),
