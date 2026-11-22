@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,140">
+  <defs>
+    <linearGradient id="sa_body" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#BA3444"/>
+      <stop offset="100%" stop-color="#781C28"/>
+    </linearGradient>
+    <linearGradient id="sa_gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FAD978"/>
+      <stop offset="100%" stop-color="#C78A1C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. PlanB Boss Dominance Halo -->
+  <g id="bone_back_hair" data-pivot="80,82">
+    <circle cx="80" cy="82" r="46" fill="#FBECEF" fill-opacity="0.74" stroke="url(#sa_gold)" stroke-width="1.6" stroke-opacity="0.56"/>
+    <polygon points="80,28 85,40 75,40" fill="url(#sa_gold)"/>
+    <polygon points="28,82 40,77 40,87" fill="url(#sa_gold)"/>
+    <polygon points="132,82 120,77 120,87" fill="url(#sa_gold)"/>
+  </g>
+
+  <!-- 2. Sweeping Ceremonial Boss Cloak -->
+  <g id="bone_cape_back" data-pivot="74,84">
+    <path d="M 74 72 Q 34 80 18 130 L 66 126 Z" fill="#6E1924" opacity="0.86"/>
+    <path d="M 26 122 L 64 120" stroke="url(#sa_gold)" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 3. Ceremonial Crimson-Gold Overcoat -->
+  <g id="bone_torso" data-pivot="80,114">
+    <polygon points="80,64 106,94 100,138 58,138 54,94" fill="url(#sa_body)" stroke="#FFFDF7" stroke-width="2.0" stroke-linejoin="round"/>
+    <polygon points="80,68 100,96 94,136 80,136" fill="#701A24" opacity="0.75"/>
+    <path d="M 60 128 L 98 128" stroke="url(#sa_gold)" stroke-width="2.6" stroke-linecap="round"/>
+    <polygon points="80,88 87,98 80,108 73,98" fill="url(#sa_gold)"/>
+  </g>
+
+  <!-- 4. Ivory Head + Boss Crown & Crimson Visor -->
+  <g id="bone_head" data-pivot="80,66">
+    <circle cx="82" cy="54" r="14.5" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
+    <rect x="77" y="51" width="19" height="5.5" rx="2.5" fill="#A82E3C"/>
+    <polygon points="70,44 76,32 82,39 88,32 94,44" fill="url(#sa_gold)" stroke="#3B322A" stroke-width="1.3" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 5. Gilded Ritual Dominance Blade -->
+  <g id="bone_weapon" data-pivot="94,102">
+    <polygon points="94,100 148,46 140,80 100,108" fill="#FFFDF7" stroke="#A82E3C" stroke-width="2.0" stroke-linejoin="round"/>
+    <line x1="99" y1="98" x2="142" y2="54" stroke="url(#sa_gold)" stroke-width="2.6" stroke-linecap="round"/>
+    <polygon points="94,92 102,100 94,108 86,100" fill="url(#sa_gold)"/>
+  </g>
+</svg>

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,140">
+  <defs>
+    <linearGradient id="hk_body" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#D65526"/>
+      <stop offset="100%" stop-color="#963114"/>
+    </linearGradient>
+    <linearGradient id="hk_ember" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFE07D"/>
+      <stop offset="100%" stop-color="#EB8A1C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. Ember Sunlit Halo & Rising Sparks -->
+  <g id="bone_back_hair" data-pivot="80,82">
+    <circle cx="80" cy="82" r="44" fill="#FEF0DF" fill-opacity="0.72" stroke="#C94E24" stroke-width="1.3" stroke-opacity="0.34"/>
+    <polygon points="36,68 41,58 44,70 38,75" fill="url(#hk_ember)" opacity="0.88"/>
+    <polygon points="28,98 35,88 38,100 31,105" fill="#D65526" opacity="0.72"/>
+  </g>
+
+  <!-- 2. Scorched Asymmetric Mantle -->
+  <g id="bone_cape_back" data-pivot="74,84">
+    <polygon points="74,70 26,86 38,118 52,110 56,124 74,116" fill="#8C2F14" opacity="0.76"/>
+  </g>
+
+  <!-- 3. PlanB Ember Coat Torso -->
+  <g id="bone_torso" data-pivot="80,114">
+    <polygon points="58,72 102,74 98,138 62,138"
+             fill="url(#hk_body)" stroke="#FFFDF7" stroke-width="2.0" stroke-linejoin="round"/>
+    <polygon points="80,76 92,98 80,114 69,98" fill="#FEF0DF" opacity="0.9"/>
+    <polygon points="80,86 86,96 80,106 74,96" fill="url(#hk_ember)"/>
+    <rect x="64" y="122" width="32" height="5.5" rx="2" fill="#4A3C32"/>
+    <rect x="76" y="120" width="8" height="9.5" rx="2" fill="url(#hk_ember)"/>
+  </g>
+
+  <!-- 4. Clean Ivory Head + Flame Crest & Glowing Ember Visor -->
+  <g id="bone_head" data-pivot="80,66">
+    <circle cx="82" cy="54" r="14" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
+    <rect x="78" y="50" width="19" height="6.5" rx="3" fill="url(#hk_ember)"/>
+    <path d="M 68 48 L 76 32 L 84 42 L 94 34 L 94 46 Z" fill="#C94E24"/>
+  </g>
+
+  <!-- 5. Igniting Ember Greatsword -->
+  <g id="bone_weapon" data-pivot="94,102">
+    <polygon points="94,98 144,48 150,56 100,108"
+             fill="#FFFDF7" stroke="#C94E24" stroke-width="2.0" stroke-linejoin="round"/>
+    <line x1="99" y1="98" x2="142" y2="56" stroke="url(#hk_ember)" stroke-width="3.2" stroke-linecap="round"/>
+    <circle cx="96" cy="102" r="3.6" fill="url(#hk_ember)"/>
+  </g>
+</svg>

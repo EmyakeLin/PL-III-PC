@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,140">
+  <defs>
+    <linearGradient id="qm_body" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#48967F"/>
+      <stop offset="100%" stop-color="#2D6655"/>
+    </linearGradient>
+    <linearGradient id="qm_bronze" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F2C464"/>
+      <stop offset="100%" stop-color="#A87624"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. Resonant Concentric Bronze Bell Halo -->
+  <g id="bone_back_hair" data-pivot="80,82">
+    <circle cx="80" cy="82" r="46" fill="#EDF5F0" fill-opacity="0.76" stroke="url(#qm_bronze)" stroke-width="1.6" stroke-opacity="0.62"/>
+    <circle cx="80" cy="82" r="36" fill="none" stroke="#3D826E" stroke-width="1.2" stroke-dasharray="10 6" opacity="0.5"/>
+  </g>
+
+  <!-- 2. Artisan Bronze-Trimmed Mantle -->
+  <g id="bone_cape_back" data-pivot="74,84">
+    <path d="M 74 72 Q 38 84 26 128 L 68 124 Z" fill="#2A5C4D" opacity="0.8"/>
+    <path d="M 32 120 L 66 118" stroke="url(#qm_bronze)" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 3. Bellfounder Artisan Robe -->
+  <g id="bone_torso" data-pivot="80,114">
+    <polygon points="80,66 104,96 98,138 60,138 56,96" fill="url(#qm_body)" stroke="#FFFDF7" stroke-width="2.0" stroke-linejoin="round"/>
+    <polygon points="80,76 92,98 80,114 68,98" fill="#EDF5F0" opacity="0.9"/>
+    <circle cx="80" cy="96" r="6" fill="url(#qm_bronze)"/>
+    <path d="M 62 128 L 96 128" stroke="url(#qm_bronze)" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 4. Ivory Head + Bronze Resonance Ring -->
+  <g id="bone_head" data-pivot="80,66">
+    <circle cx="82" cy="54" r="14.5" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
+    <ellipse cx="82" cy="34" rx="17" ry="4" fill="none" stroke="url(#qm_bronze)" stroke-width="2.2"/>
+    <path d="M 72 48 Q 82 43 92 48" fill="none" stroke="#3D826E" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 5. Heavy Bronze Tuning Mallet ("试音锤") -->
+  <g id="bone_weapon" data-pivot="94,102">
+    <line x1="88" y1="118" x2="132" y2="66" stroke="#3B322A" stroke-width="4.2" stroke-linecap="round"/>
+    <rect x="118" y="48" width="22" height="30" rx="6" transform="rotate(-44 129 63)" fill="url(#qm_bronze)" stroke="#3B322A" stroke-width="1.8"/>
+    <line x1="122" y1="56" x2="136" y2="70" stroke="#FFFDF7" stroke-width="2.0" stroke-linecap="round"/>
+  </g>
+</svg>

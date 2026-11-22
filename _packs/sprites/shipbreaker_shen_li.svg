@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,140">
+  <defs>
+    <linearGradient id="sl_body" x1="0" y1="0" x2="0.8" y2="1">
+      <stop offset="0%" stop-color="#38878A"/>
+      <stop offset="100%" stop-color="#225759"/>
+    </linearGradient>
+    <linearGradient id="sl_rust" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#E68846"/>
+      <stop offset="100%" stop-color="#B04D1E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 1. Dockyard Rivet Ring Halo -->
+  <g id="bone_back_hair" data-pivot="80,82">
+    <circle cx="80" cy="82" r="46" fill="#EAF3F2" fill-opacity="0.74" stroke="#C9682E" stroke-width="1.5" stroke-opacity="0.48"/>
+    <circle cx="80" cy="36" r="3" fill="#C9682E"/>
+    <circle cx="34" cy="82" r="3" fill="#C9682E"/>
+    <circle cx="126" cy="82" r="3" fill="#C9682E"/>
+  </g>
+
+  <!-- 2. Heavy Dockyard Tattered Coat Tail -->
+  <g id="bone_cape_back" data-pivot="74,84">
+    <polygon points="74,70 24,86 36,120 50,112 56,126 74,118" fill="#225759" opacity="0.82"/>
+  </g>
+
+  <!-- 3. Broad Shipbreaker Coat & Riveted Shoulder Plate -->
+  <g id="bone_torso" data-pivot="80,114">
+    <polygon points="56,72 104,72 100,138 60,138" fill="url(#sl_body)" stroke="#FFFDF7" stroke-width="2.0" stroke-linejoin="round"/>
+    <line x1="62" y1="78" x2="98" y2="122" stroke="url(#sl_rust)" stroke-width="3.8" stroke-linecap="round"/>
+    <rect x="46" y="68" width="24" height="16" rx="5" fill="#6B645C" stroke="url(#sl_rust)" stroke-width="1.8"/>
+    <path d="M 62 128 L 98 128" stroke="url(#sl_rust)" stroke-width="2.4" stroke-linecap="round"/>
+  </g>
+
+  <!-- 4. Ivory Head + Dockyard Bandana & Rust Visor -->
+  <g id="bone_head" data-pivot="80,66">
+    <circle cx="82" cy="54" r="14.5" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
+    <path d="M 68 46 Q 82 40 96 46 L 94 50 Q 82 45 70 50 Z" fill="url(#sl_rust)"/>
+    <rect x="78" y="51" width="19" height="5.5" rx="2.5" fill="#2F7578"/>
+  </g>
+
+  <!-- 5. Heavy Shipbreaker Cleaver ("剥漆刀 / 破水楔") -->
+  <g id="bone_weapon" data-pivot="94,102">
+    <path d="M 94 102 L 146 46 L 154 64 L 102 110 Z" fill="#FFFDF7" stroke="#2F7578" stroke-width="2.2" stroke-linejoin="round"/>
+    <line x1="99" y1="100" x2="144" y2="56" stroke="url(#sl_rust)" stroke-width="3.0" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -38,7 +38,7 @@ import {
   buildRichVerbatimText,
   buildUnifiedEntryPlate,
 } from './card_print.js';
-import { createCharacterActor, actorPalette } from './stage_actors.js';
+import { createCharacterActor, actorPalette, setCharacterSpriteUrls } from './stage_actors.js';
 import {
   createFactionCostHud,
   createDiegeticDeckPiles,
@@ -552,6 +552,9 @@ export class GameDirector {
     }
 
     this.state = nextState;
+    if (nextState.character_sprites) {
+      setCharacterSpriteUrls(nextState.character_sprites);
+    }
     this.drawSelected.clear();
 
     const isCombat = Boolean(nextState.frame?.combat);
