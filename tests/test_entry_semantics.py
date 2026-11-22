@@ -11,6 +11,8 @@ from entry.effects import run_effect
 from entry.program import run_program
 from game import Game
 from models.character import Character
+from models.card import Card
+from models.conditions import COMPARISONS, skill_state_allows
 from models.opcode import OpCode
 from models.roster import RosterDraft
 from models.turn_history import TurnHistory
@@ -342,6 +344,46 @@ class TurnHistoryTests(unittest.TestCase):
         history.clear()
         self.assertEqual(history.clash_count(a.player, "draw"), 0)
         self.assertEqual(history.skill_uses[a, "same"], 0)
+
+
+class ConditionExecutorTests(unittest.TestCase):
+    def test_each_comparison_observes_the_actual_value_on_both_sides_of_the_threshold(self):
+        for op, compare in COMPARISONS.items():
+            for threshold in (-11, 0, 1, 2, 2**70):
+                condition = {"op": op, "value": threshold, "key": "k", "status": "s", "form": "f"}
+                actor = SimpleNamespace(statuses={})
+                card = SimpleNamespace(character=actor, printed_data={"form_when": condition}, _form=None)
+                changes = []
+                def change(key):
+                    changes.append(key)
+                    card._form = key
+                card.set_form = change
+                expected = []
+                for actual in (threshold - 1, threshold, threshold, threshold + 1, threshold):
+                    actor.statuses["s"] = actual
+                    Card.refresh_status_form(card)
+                    active = compare(actual, threshold)
+                    self.assertIs(skill_state_allows({"k": actual}, condition), active)
+                    key = "f" if active else None
+                    if key != (expected[-1] if expected else None):
+                        expected.append(key)
+                self.assertEqual(changes, expected)
+
+    def test_a_success_does_not_hide_another_status_check(self):
+        from unittest.mock import Mock
+
+        for rolls in ((1, 1), (1, 4), (4, 1), (4, 4)):
+            rng = Mock()
+            rng.randint.side_effect = rolls
+            trace = []
+            owner = SimpleNamespace(is_alive=True, game=SimpleNamespace(rng=rng, is_over=False),
+                                    statuses={"a": 2, "b": 2}, _effect_context=Context())
+            owner.status_rules = {key: {"check": {"event": "critical", "sides": 4,
+                                  "success": key + "+", "failure": key + "-"}} for key in ("a", "b")}
+            owner._effect_context._invoke = lambda entry: trace.append(entry.operation)
+            self.assertIs(Character._roll_status_check(owner, "critical"), any(n <= 2 for n in rolls))
+            self.assertEqual(trace, [key + ("+" if roll <= 2 else "-") for key, roll in zip("ab", rolls)])
+            self.assertEqual(rng.randint.call_count, 2)
 
 
 if __name__ == "__main__":

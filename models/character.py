@@ -344,10 +344,11 @@ class Character:
             self._status_max_hp_delta += cap_delta
             self.hp = min(self.hp, self.max_hp)
             self.check_death()
-        if bool(previous) != bool(value):
+        if previous != value:
             for card in self.conditional_cards:
                 if card.printed_data["form_when"]["status"] == name:
                     card.refresh_status_form()
+        if bool(previous) != bool(value):
             for other, count in self.status_rules.get(name, {}).get("sustain", {}).items():
                 grants = self._sustained_stacks.get(other, 0) + (count if value else -count)
                 self._set_status(other, self._ordinary_status(other), grants)
@@ -396,7 +397,10 @@ class Character:
 
         if not self.is_alive:
             return False
-        for name, rule in self.status_rules.items():
+        succeeded = False
+        for name, rule in tuple(self.status_rules.items()):
+            if not self.is_alive or self.game is not None and self.game.is_over:
+                break
             check = rule.get("check")
             if not check or check["event"] != event:
                 continue
@@ -409,9 +413,8 @@ class Character:
                 entry = Entry.from_spec(self, {"trigger": event, "operation": outcome, "origin": "status"})
                 with self._effect_context.binding(source=self, target=self, damage_part=False):
                     self._effect_context._invoke(entry)
-            if passed:
-                return True
-        return False
+            succeeded = succeeded or passed
+        return succeeded
 
     def on_attack_hit(self, die, target):
         die.critical = self._roll_status_check("critical")

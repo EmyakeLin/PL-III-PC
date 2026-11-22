@@ -1,5 +1,6 @@
 from enum import Enum, auto
 
+from models.conditions import matches_value, skill_state_allows
 from models.opcode import OpCode
 
 
@@ -111,7 +112,11 @@ def describe_skill_traits(data):
     if requirements := data.get("requires_status"):
         traits.extend(f"须持有{count}层{name}" for name, count in requirements.items())
     if condition := data.get("form_when"):
-        traits.append(f"持有{condition['status']}时使用「{condition['form']}」形态")
+        if "op" in condition:
+            sign = {"lt": "<", "le": "≤", "eq": "=", "ne": "≠", "ge": "≥", "gt": ">"}[condition["op"]]
+            traits.append(f"{condition['status']}{sign}{condition['value']}时使用「{condition['form']}」形态")
+        else:
+            traits.append(f"持有{condition['status']}时使用「{condition['form']}」形态")
     if not allows_interception(data, pre_reveal=True):
         traits.append("不可拦截")
     modes = {"attack": "主动进攻", "place": "置于空交锋", "custom": "依卡面执行"}
@@ -202,7 +207,7 @@ class Card:
             printed_index, _ = self._dice_order[self.current_dice_index]
             spec = self.dice[printed_index]
             gate = spec.get("requires_skill_state")
-            if not gate or self.use_state.get(gate):
+            if skill_state_allows(self.use_state, gate):
                 break
             self.current_dice_index += 1
         if not self.has_next_die():
@@ -234,7 +239,7 @@ class Card:
             printed_index, _ = self._dice_order[index]
             spec = self.dice[printed_index]
             gate = spec.get("requires_skill_state")
-            if spec["type"] == "skip" or gate and not self.use_state.get(gate):
+            if spec["type"] == "skip" or not skill_state_allows(self.use_state, gate):
                 continue
             die = self._materialize_die(game, index)
             if not die.destroyed and die.can_afford_use():
@@ -264,7 +269,8 @@ class Card:
     def refresh_status_form(self):
         condition = self.printed_data.get("form_when")
         if condition:
-            key = condition["form"] if self.character.statuses.get(condition["status"], 0) else None
+            value = self.character.statuses.get(condition["status"], 0)
+            key = condition["form"] if matches_value(value, condition) else None
             if key != self._form:
                 self.set_form(key)
 
@@ -294,8 +300,10 @@ class Card:
             self.instantiated_dice.extend([None] * len(remaining))
         for spec in remaining:
             gate = spec.get("requires_skill_state")
-            if gate and other.use_state.get(gate):
-                self.use_state[gate] = other.use_state[gate]
+            if gate:
+                key = gate if isinstance(gate, str) else gate["key"]
+                if key in other.use_state:
+                    self.use_state[key] = other.use_state[key]
 
     def set_controller(self, character):
         if self.character is not character and "form_when" in self.printed_data:
