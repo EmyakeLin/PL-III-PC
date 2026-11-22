@@ -11,6 +11,7 @@ from entry.effects import run_effect
 from entry.program import run_program
 from models.character import Character
 from models.opcode import OpCode
+from models.roster import RosterDraft
 
 
 class TracedContext(Context):
@@ -95,6 +96,30 @@ class CommandTests(unittest.TestCase):
                     self.assertEqual(vm.trace, [(OpCode.DRAW, "BEFORE", (player, amount)),
                                                 (OpCode.DRAW, "AFTER", ())])
                     self.assertEqual(zones.hand.content, list("abc"[:max(0, amount)]))
+
+
+class RosterExecutorTests(unittest.TestCase):
+    def test_rejected_choices_leave_both_teams_and_pool_intact(self):
+        members = [{"id": key} for key in "abcd"]
+        draft = RosterDraft(members, seats=2, maximum=7)
+        self.assertEqual(draft.limit, 3)
+        for invalid in ([], members, members[:1] * 2, [{"id": "absent"}]):
+            with self.assertRaises(ValueError):
+                draft.submit(invalid)
+            self.assertEqual(draft.pool, members)
+            self.assertEqual(draft.teams, [])
+        draft.submit(members[1:3])
+        draft.submit([members[3], members[0]])
+        self.assertEqual(draft.teams, [members[1:3], [members[3], members[0]]])
+
+    def test_a_mirror_is_released_only_after_a_team_finishes(self):
+        mirror = {"id": "m", "mirror_allowed": True}
+        draft = RosterDraft([mirror], seats=2, maximum=3)
+        draft.submit([mirror])
+        draft.submit([mirror])
+        self.assertEqual(draft.teams, [[mirror], [mirror]])
+        with self.assertRaises(ValueError):
+            draft.submit([mirror])
 
 
 if __name__ == "__main__":

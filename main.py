@@ -9,6 +9,7 @@ from displayer import special_seats, timing_label
 from pipeline.pipeline_errors import PipelineFinished
 from player.player import Player
 from special_actions_cli import offer_actions
+from terminal_bridge import TerminalBridge
 
 
 def play_game(game, step=False):
@@ -50,7 +51,7 @@ def main(argv=None):
         print("每方选择 1～3 名角色。双方扣置后先处理开牌前交锋，再统一开牌。消灭对方所有角色获胜。")
         game = Game([Player(1, "玩家一"), Player(2, "玩家二")], rng=random.Random(args.seed))
         game.special_prompt = offer_actions
-        game.select_character(characters)
+        TerminalBridge(game).select_character(characters)
         play_game(game, step=args.step)
     except (EOFError, KeyboardInterrupt):
         print("\n已退出对局。")

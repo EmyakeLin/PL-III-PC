@@ -5,9 +5,8 @@ from types import SimpleNamespace
 from context.context import Context
 from gamerule import GameRule
 from loader import base_effects
-from models.card import CardState, describe_entry, describe_skill_traits
-from models.character import Character, CharacterRank
-from models.dice import describe_die
+from models.card import CardState
+from models.character import Character
 from models.duel import DuelSpace
 from models.opcode import OpCode
 from models.pre_reveal import PreRevealPhase
@@ -56,35 +55,7 @@ class Game:
         self.last_step = None
         self.tmp = SimpleNamespace()
 
-    def select_character(self, characters):
-        pool = list(characters)
-        if len(pool) < len(self.players) and not any(c.get("mirror_allowed") for c in pool):
-            raise ValueError("共享角色池至少需要两名角色，才能为双方各留一名。")
-        rosters = []
-        for index, player in enumerate(self.players):
-            reserve = 0 if any(c.get("mirror_allowed") for c in pool) else len(self.players) - index - 1
-            limit = min(self.gamerule.MAX_CHAR_COUNT, len(pool) - reserve)
-            roster = []
-            while len(roster) < limit:
-                print(f"\n{player.name} 选人（已选 {len(roster)}，本次最多 {limit} 人）")
-                for number, data in enumerate(pool, 1):
-                    print(f"  [{number}] {self.character_summary(data)}")
-                answer = input("请输入角色编号，? 编号查看技能；选好后按回车确定 ").strip()
-                if answer.startswith("?"):
-                    number = answer[1:].strip()
-                    if number.isdecimal() and 1 <= int(number) <= len(pool):
-                        self.show_character(pool[int(number) - 1])
-                    continue
-                if not answer and roster:
-                    break
-                if answer.isdecimal() and 1 <= int(answer) <= len(pool):
-                    roster.append(pool.pop(int(answer) - 1))
-                else:
-                    print("请至少选一名角色，并输入列表中的编号。")
-            print(f"{player.name} 出战：" + "、".join(data["name"] for data in roster))
-            rosters.append(roster)
-            pool.extend(spec for spec in roster if spec.get("mirror_allowed"))
-
+    def deploy_rosters(self, rosters):
         for player, roster in zip(self.players, rosters):
             for data in roster:
                 character = Character(data, player)
@@ -92,41 +63,6 @@ class Game:
                 character.init_cards()
                 character.setup_deck()
             player.cardspace.draw.shuffle(self.rng)
-
-    @staticmethod
-    def character_summary(data):
-        rank = CharacterRank[data["rank"]]
-        label = {"NORMAL": "常人", "ELITE": "精英", "BOSS": "Boss", "EMPOWERED_BOSS": "强化 Boss"}[rank.name]
-        title = f"　{data['title']}" if data.get("title") else ""
-        integrity = Character.initial_lightcore_max(data["max_hp"])
-        return (f"{data['name']}{title}　{label}　生命 {data['max_hp']}　完整度 {integrity}"
-                f"　最多 {Character.base_duels(data)} 交锋")
-
-    @staticmethod
-    def show_character(data):
-        print(Game.character_summary(data))
-        if data.get("faction"):
-            print(f"所属阵营　{data['faction']}")
-        for key, label in (("faction_passives", "阵营被动"), ("passive_skills", "角色被动")):
-            for passive in data.get(key, []):
-                name = passive.get("name", "") if isinstance(passive, dict) else ""
-                entries = passive.get("entries", [passive]) if isinstance(passive, dict) else [passive]
-                if not entries and passive.get("description"):
-                    entries = [passive["description"]]
-                for entry in entries:
-                    print("  " + " · ".join(part for part in (label, name, describe_entry(entry)) if part))
-        for printed in data["skills"]:
-            Game.show_skill(printed)
-            for form in printed.get("forms", {}).values():
-                Game.show_skill({**printed, **form})
-
-    @staticmethod
-    def show_skill(skill):
-        dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
-        entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
-        zone = "战斗外" if skill.get("out_of_combat") else ""
-        print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
-                                              describe_skill_traits(skill), dice, entries, zone) if s))
 
     def begin_private_view(self, player):
         """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
