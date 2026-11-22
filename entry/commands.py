@@ -23,11 +23,11 @@ class CommandSet:
         name = parts[0]
         operands = parts[1] if len(parts) > 1 else ""
         parameters, expand = self.definitions[name]
-        if not operands and any(p.default is p.empty for p in parameters.parameters.values()):
-            return None  # A bare parameterized word retains its postfix or legacy meaning.
         try:
             arguments = parameters.bind(*read_operands(operands))
         except (TypeError, ValueError) as error:
+            if not operands:
+                return None  # A bare parameterized word retains its postfix or legacy meaning.
             raise ValueError(f"{name}{parameters} 的参数无效：{operands}") from error
         return expand(*arguments.args)
 
@@ -47,6 +47,9 @@ def read_operands(source):
             word, source = parts[0], parts[1] if len(parts) == 2 else ""
             if word.startswith("$"):
                 yield word
+                continue
+            if word.startswith("+") and word[1:].isascii() and word[1:].isdecimal():
+                yield int(word)
                 continue
             try:
                 value, end = decoder.raw_decode(word)

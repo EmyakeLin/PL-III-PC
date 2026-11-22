@@ -185,6 +185,24 @@ class CommandTests(unittest.TestCase):
                     expected = [side, "middle", "last"][start:] if offset == 1 else []
                     self.assertEqual(vm.pop(), expected)
 
+    def test_shared_divmod_vocabulary_only_composes_existing_instructions(self):
+        vm = TracedContext()
+        entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})
+        for numerator in (-2**94, -9, -1, 0, 1, 9, 2**91):
+            for denominator in (-11, -1, 1, 2, 8, 2**77):
+                vm.trace.clear()
+                run_program(vm, entry, [numerator, "value", "STORE", f"DIVMOD $local.value {denominator:+d}",
+                                        "POP", "POP"])
+                before = [(code, stack) for code, timing, stack in vm.trace if timing == "BEFORE"]
+                self.assertEqual([code for code, _ in before], [
+                    OpCode.WITH_BINDINGS, OpCode.FLOOR_DIV, OpCode.DUP, OpCode.MUL,
+                    OpCode.SWAP, OpCode.SUB, OpCode.POP, OpCode.POP])
+                self.assertEqual(before[-2][1], divmod(numerator, denominator))
+        vm.push("outer")
+        with self.assertRaises(ZeroDivisionError):
+            run_program(vm, entry, ["DIVMOD 42 0"])
+        self.assertEqual(vm.stack, ["outer"])
+
     def test_optional_fields_and_unknown_names_have_distinct_results(self):
         vm = TracedContext()
         entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})

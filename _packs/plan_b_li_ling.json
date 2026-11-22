@@ -61,8 +61,8 @@
           "operation": {"op":"program","code":[
             "$actual_delta", 0, "LT", [
               "$self", "能源消耗余量", "CHARACTER_STATE", "$actual_delta", "SUB", "total", "STORE",
-              {"local":"total"}, 8, "FLOOR_DIV", "earned", "STORE",
-              "$self", "能源消耗余量", {"local":"total"}, {"local":"earned"}, 8, "MUL", "SUB", "SET_CHARACTER_STATE",
+              "DIVMOD $local.total 8", "remainder", "STORE", "earned", "STORE",
+              "$self", "能源消耗余量", "$local.remainder", "SET_CHARACTER_STATE",
               {"local":"earned"}, 0, "GT", ["$self", "凝聚", {"local":"earned"}, "STATUS"], "WHEN"
             ], "WHEN"
           ]}, "description":"每累计实际消耗8能源，获得1凝聚，余数跨回合保留。"

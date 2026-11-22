@@ -101,6 +101,11 @@ def compile_program(tokens, *, expand=expand_command):
                 root, *suffix = token[1:].split(".")
                 if any(not part.isidentifier() or part.startswith("_") for part in (root, *suffix)):
                     raise ValueError(f"无效的词条字段 {token!r}")
+                if root == "local" and suffix:
+                    yield Local(suffix[0])
+                    if len(suffix) > 1:
+                        yield Access(tuple(suffix[1:]))
+                    continue
                 body = FIELD_ALIASES.get(root)
                 if body is None:
                     yield Field(token[1:])
