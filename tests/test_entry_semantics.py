@@ -272,6 +272,29 @@ class CommandTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "未知牌区"):
             run_program(vm, entry, ["$self", "x", "missing", "FIND_SKILL", "POP"])
 
+    def test_skill_copy_separates_the_printed_source_from_the_new_controller(self):
+        from entry.compiler import compile_program
+        from models.special_actions import SkillCopy
+
+        vm = TracedContext()
+        sources = [SimpleNamespace(id=key, printed_data={"name": name}) for key, name in
+                   [("another", "first"), ("same", "second"), ("same", "last")]]
+        owner, recipient = SimpleNamespace(skills=sources), object()
+        entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})
+        with vm.binding(holder=owner, recipient_actor=recipient, copy_data=sources[2].printed_data):
+            for skill_id, expected in (("another", sources[0]), ("same", sources[1]), ("missing", None)):
+                vm.trace.clear()
+                run_program(vm, entry, ["$event.holder", {"literal": skill_id}, "COPY_SKILL", "POP"])
+                selected = vm.trace[-2][2][-1]
+                self.assertEqual(selected, SkillCopy(owner, expected.printed_data) if expected else None)
+                self.assertEqual([op for op, timing, _ in vm.trace if timing == "BEFORE"
+                                  and op in (OpCode.FILTER, OpCode.FIRST)], [OpCode.FILTER, OpCode.FIRST])
+            vm.trace.clear()
+            run_program(vm, entry, ["$event.recipient_actor", "$event.copy_data", "SKILL_COPY", "POP"])
+            self.assertEqual(vm.trace[-2][2][-1], SkillCopy(recipient, sources[2].printed_data))
+            self.assertEqual([op for op, timing, _ in vm.trace if timing == "BEFORE"], [OpCode.POP])
+        self.assertIs(compile_program(["COPY_SKILL"]).instructions[-1], OpCode.WITH_BINDINGS)
+
     def test_optional_fields_and_unknown_names_have_distinct_results(self):
         vm = TracedContext()
         entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})

@@ -59,7 +59,7 @@
             "description": "其他友方角色的攻击触发引燃时，对同一目标发起一次「重锤！」追击。调用技能副本，减免1费，【使用时】照常结算。每位队友每回合至多触发一次。",
             "operation": {"op": "program", "code": [
               "$activation_owner", "CHARACTER_OF", "ally", "STORE",
-              "$activation_origin", "die", "EQ", "$activation_origin", "card", "EQ", "ADD",
+              "$activation_origin", "die", "EQ", "$activation_origin", "card", "EQ", "OR",
               {"local": "ally"}, "$self", "EQ", "NOT", "AND", "$in_duel", "AND", "$target_alive", "AND",
               "$self", {"local": "ally"}, "CHARACTER_STATE", "$turn_number", "EQ", "NOT", "AND",
               ["$self", {"local": "ally"}, "$turn_number", "SET_CHARACTER_STATE",

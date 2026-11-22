@@ -35,11 +35,10 @@ def skill_use(vm):
     vm.push(SkillUse(card, **terms) if isinstance(terms, dict) else SkillUse(card, discount=terms))
 
 
-def copy_skill(vm):
+def skill_copy(vm):
     from models.special_actions import SkillCopy
-    skill_id, actor = vm.pop(), vm.pop()
-    data = next((card.printed_data for card in actor.skills if card.id == skill_id), None) if actor else None
-    vm.push(SkillCopy(actor, data) if data is not None else None)
+    data, owner = vm.pop(), vm.pop()
+    vm.push(SkillCopy(owner, data) if data is not None and owner is not None else None)
 
 
 def contains(vm):
@@ -56,7 +55,7 @@ WORDS = {
     "REPEAT_WHILE": repeat_while,
     "CHARACTER_OF": lambda vm: vm.push(character_of(vm.pop())),
     "STATUS_ACTIVE": status_active,
-    "SKILL_USE": skill_use, "COPY_SKILL": copy_skill, "INSERT_AT": insert_at,
+    "SKILL_USE": skill_use, "SKILL_COPY": skill_copy, "INSERT_AT": insert_at,
     "CARD_COST": lambda vm: vm.push(vm.pop().cost), "CONTAINS": contains,
     "SHIELD_COUNT": shield_count,
     "STATUS_COUNT": status_count,

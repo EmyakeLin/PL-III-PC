@@ -14,6 +14,11 @@ def _lookup(path):
 
 
 WORD_ALIASES = {
+    "COPY_SKILL": [{"literal": ["owner", "id"]}, [
+        "$bindings.owner", "$bindings.owner.skills", {"literal": []}, "COALESCE",
+        ["$item.id", "$bindings.id", "EQ"], "FILTER", "FIRST",
+        {"field": "printed_data", "default": None}, "SKILL_COPY",
+    ], "WITH_BINDINGS"],
     "DIE_STATE": _lookup("use_state"), "SKILL_STATE": _lookup("use_state"),
     "CHARACTER_STATE": _lookup("rule_state"), "ABILITY_COUNT": _lookup("ability_effects"),
     "SPENT_STATUS_COUNT": _lookup("use_state.spent_statuses"),
