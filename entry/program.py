@@ -181,11 +181,6 @@ def run_program(ctx, entry, tokens):
                 break
             vm.eval_block(action)
 
-    def once_per_round(vm):
-        key = vm.pop()
-        vm.push(key not in actor.round_triggers)
-        actor.round_triggers.add(key)
-
     def ability_count(vm):
         name, target = vm.pop(), vm.pop()
         vm.push(target.ability_effects.get(name, 0) if target is not None else 0)
@@ -270,7 +265,7 @@ def run_program(ctx, entry, tokens):
         "CHARACTER_OF": lambda vm: vm.push(character_of(vm.pop())),
         "DAMAGE_AMOUNT": lambda vm: vm.push(vm.execute_op(OpCode.DAMAGE) or 0),
         "DAMAGE_ADD": damage_add,
-        "ONCE_PER_ROUND": once_per_round, "STATUS_ACTIVE": status_active,
+        "STATUS_ACTIVE": status_active,
         "DIE_STATE": die_state,
         "ACTIVATE_STATUS": lambda vm: vm.push(bool(vm.execute_op(OpCode.ACTIVATE_STATUS))),
         "SKILL_USE": skill_use, "COPY_SKILL": copy_skill, "INSERT_AT": insert_at,
@@ -302,6 +297,10 @@ def run_program(ctx, entry, tokens):
                 block.append(lambda vm, operation=token: run_effect(vm, entry, operation))
             elif isinstance(token, str) and token.startswith("$"):
                 block.append(lambda vm, field=token[1:]: vm.push(read(field)))
+            elif token == "ONCE_PER_ROUND":
+                # Old programs consume a key and receive the pre-record comparison.
+                block.extend([OpCode.DUP, actor, OpCode.SWAP, OpCode.ROUND_TRIGGER_COUNT, 1, OpCode.LT,
+                              OpCode.SWAP, actor, OpCode.SWAP, OpCode.RECORD_ROUND_TRIGGER])
             elif isinstance(token, str):
                 block.append(words.get(token, OpCode.__members__.get(token, token)))
             else:

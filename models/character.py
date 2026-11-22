@@ -1,3 +1,4 @@
+from collections import Counter
 from enum import Enum, auto
 from math import prod
 import random
@@ -80,7 +81,7 @@ class Character:
         self._status_listeners = {}
         self.activating_statuses = set()
         self.active_statuses = set()
-        self.round_triggers = set()
+        self.round_triggers = Counter()
         if self.game:
             self._effect_context = self.game.context
             self.game.status_entries.update(data.get("status_entries", {}))
@@ -369,7 +370,8 @@ class Character:
             self._set_status(name, 0, self._sustained_stacks.get(name, 0))
 
     def begin_dice_round(self):
-        self.round_triggers = set()
+        # An interrupt retains the outer round's counter until it resumes.
+        self.round_triggers = Counter()
 
     def damage_multiplier(self):
         return prod(self.status_rules.get(name, {}).get("incoming_damage_multiplier", 1) for name in self.statuses)

@@ -173,6 +173,16 @@ def handle_set_character_state(ctx):
         return value
 
 
+def handle_round_trigger_count(ctx):
+    key, character = ctx.pop(), ctx.pop()
+    ctx.push(character.round_triggers[key])
+
+
+def handle_record_round_trigger(ctx):
+    key, character = ctx.pop(), ctx.pop()
+    character.round_triggers[key] += 1
+
+
 def handle_set_skill_form(ctx):
     key, card = ctx.pop(), ctx.pop()
     if card is not None and _usable_component(card):
@@ -755,6 +765,8 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.ROUND_TRIGGER_COUNT: handle_round_trigger_count,
+    OpCode.RECORD_ROUND_TRIGGER: handle_record_round_trigger,
     OpCode.RESERVE_DIE: handle_reserve_die,
     OpCode.ACTIVATE_STATUS: handle_activate_status, OpCode.SET_DIE_STATE: handle_set_component_state,
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
@@ -800,6 +812,8 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.ROUND_TRIGGER_COUNT: ("character", "key"),
+    OpCode.RECORD_ROUND_TRIGGER: ("character", "key"),
     OpCode.RESERVE_DIE: ("card", "position", "count"),
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),

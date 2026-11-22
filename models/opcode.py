@@ -90,3 +90,5 @@ class OpCode(Enum):
     QUEUE_DIE_EFFECT = auto()
     CHOOSE_CARD = auto()
     INSERT_SKILL = auto()
+    ROUND_TRIGGER_COUNT = auto()
+    RECORD_ROUND_TRIGGER = auto()
