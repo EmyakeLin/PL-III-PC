@@ -12,6 +12,13 @@ class Program:
 
 
 @dataclass(frozen=True)
+class TargetedProgram:
+    selector: object
+    default: str
+    program: Program
+
+
+@dataclass(frozen=True)
 class Field:
     name: str
 
@@ -23,7 +30,7 @@ class Local:
 
 @dataclass(frozen=True)
 class Effect:
-    operation: dict
+    operation: object
 
 
 @dataclass(frozen=True)
@@ -102,10 +109,59 @@ def prepare_effect(operation):
         if prepared and all(isinstance(item, Program) for item in prepared):
             return Program(tuple(instruction for part in prepared for instruction in part.instructions))
         return prepared
-    if isinstance(operation, dict) and operation.get("op", "").lower() == "program":
-        return {**operation, "code": compile_program(operation["code"])}
     if isinstance(operation, str):
         expansion = expand_command(operation)
         if expansion is not None:
             return compile_program(expansion)
-    return operation
+        from entry.effects import independent_damage_part
+        part = independent_damage_part(operation)
+        if part:
+            amount, opcode = part
+            data, args, name = {"amount": amount}, [], opcode.name
+        else:
+            name, _, operands = operation.partition(":")
+            args = [item.strip() for item in operands.split(",") if item.strip()]
+            data = {}
+    elif isinstance(operation, dict):
+        name, args, data = operation["op"], operation.get("args", []), operation
+    else:
+        return operation
+
+    name = name.lower().strip().replace("-", "_")
+    if name == "program":
+        if isinstance(data["code"], Program):
+            return operation
+        return {**data, "code": compile_program(data["code"])}
+    if name == "reveal_lock":
+        return compile_program(["placement", "WINDOW_OPEN", "$event.target.state.name", "PLACED_FACE_DOWN", "EQ", "AND",
+                                ["SET_CARD_FACE $event.target up", "SET_PLACEMENT_LOCK $event.target true"], "WHEN"])
+    return compile_targeted_action(name, data, args) or operation
+
+
+def compile_targeted_action(name, data, args):
+    default = "self" if name in ("heal", "draw", "draw_card", "discard", "shield") else "target"
+    selector = data.get("target")
+    target = Field("event.target")
+    if name in ("draw", "draw_card", "discard"):
+        opcode = OpCode.DISCARD if name == "discard" else OpCode.DRAW
+        operands = [Field("event.selected_player"), int(data.get("amount", args[0] if args else 1))]
+    elif name in ("heal", "lightcore_damage", "real_damage"):
+        opcode = OpCode[name.upper()]
+        operands = [target, int(data.get("amount", args[0] if args else 1))]
+    elif name == "shield":
+        opcode = OpCode.SHIELD
+        kind = data.get("kind", args[1] if len(args) > 1 else "normal")
+        operands = [target, kind, int(data.get("amount", args[0] if args else 1))]
+    elif name == "status":
+        opcode = OpCode.STATUS
+        status = data.get("name", args[0] if args else None)
+        if not status:
+            raise ValueError("Status 需要状态名")
+        operands = [target, status, int(data.get("amount", args[1] if len(args) > 1 else 1))]
+    elif name in ("destroy", "stagger"):
+        opcode, operands = OpCode[name.upper()], [target]
+        if name == "destroy" and args:
+            selector = args[0]
+    else:
+        return None
+    return TargetedProgram(selector, default, Program((*operands, opcode)))

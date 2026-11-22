@@ -102,3 +102,6 @@ class OpCode(Enum):
     FIRST_IN_ORDER = auto()
     COALESCE = auto()
     WITH_BINDINGS = auto()
+    WINDOW_OPEN = auto()
+    SET_CARD_FACE = auto()
+    SET_PLACEMENT_LOCK = auto()

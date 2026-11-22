@@ -28,7 +28,8 @@ MESSAGES = {
     "hidden_card_replaced": "{player} 调换了一张扣置技能，原牌{destination}。",
     "card_replaced": "{actor} 换入「{card}」，「{replaced}」{destination}。",
     "critical": "{actor} 触发暴击。",
-    "revealed_and_locked": "「{card}」翻正，本置卡阶段锁定位置。",
+    "card_face_changed": "{label}{direction}。",
+    "placement_lock": "{label}{lock}。",
     "turn_started": "第 {turn} 回合",
     "turn_ended": "第 {turn} 回合结束。",
     "speed_rolled": "{player} 速度：{members}；阵营速度 {speed:g}。",
@@ -65,6 +66,12 @@ def format_fact(kind, fields):
     if kind != "hit" and kind not in MESSAGES:
         return ""
     values = dict(fields)
+    if kind in ("card_face_changed", "placement_lock"):
+        values["label"] = f"「{values['card']}」" if values["card"] else "一张扣置牌"
+        if kind == "card_face_changed":
+            values["direction"] = "翻正" if values["face"] == "up" else "翻面扣置"
+        else:
+            values["lock"] = "锁定位置" if values["locked"] else "解除位置锁定"
     if kind == "hit":
         if values["mode"] == "full":
             if values["index"] <= 1:

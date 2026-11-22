@@ -168,6 +168,51 @@ class CommandTests(unittest.TestCase):
                     self.assertEqual(vm.stack, [])
                     self.assertIn(OpCode.WITH_BINDINGS, compile_program([operation]).instructions)
 
+    def test_card_face_and_position_lock_are_independent_at_every_card_state(self):
+        from models.card import CardState
+        class Subject:
+            name = "隐藏名称"
+        card = Subject()
+        for window in (True, False):
+            for state in CardState:
+                vm = TracedContext()
+                locks = set()
+                vm.game = SimpleNamespace(special=SimpleNamespace(window_open=lambda phase: window, locked_cards=locks))
+                card.state = state
+                entry = Entry.from_spec(None, {"trigger": "example", "operation": {"op": "reveal_lock"}})
+                with vm.binding(target=card), vm.collect_facts() as facts:
+                    run_effect(vm, entry, entry.compiled_operation)
+                applies = window and state is CardState.PLACED_FACE_DOWN
+                self.assertIs(card.state, CardState.PLACED_FACE_UP if applies else state)
+                self.assertEqual(card in locks, applies)
+                writes = [op for op, timing, _ in vm.trace if timing == "BEFORE"
+                          and op in (OpCode.SET_CARD_FACE, OpCode.SET_PLACEMENT_LOCK)]
+                self.assertEqual(writes, [OpCode.SET_CARD_FACE, OpCode.SET_PLACEMENT_LOCK] if applies else [])
+                self.assertEqual(len(facts), 2 if applies else 0)
+                with vm.collect_facts() as independent:
+                    vm.eval_block([card, True, OpCode.SET_PLACEMENT_LOCK])
+                    vm.eval_block([card, False, OpCode.SET_PLACEMENT_LOCK])
+                self.assertNotIn(card, locks)
+                self.assertIs(card.state, CardState.PLACED_FACE_UP if applies else state)
+                if state is CardState.PLACED_FACE_DOWN and not applies:
+                    self.assertTrue(all(card.name not in format_fact(*fact) for fact in independent))
+
+    def test_legacy_draw_selects_the_entry_target_and_supplies_it_to_listeners(self):
+        from entry.compiler import TargetedProgram
+        for text in ("Draw: 0", {"op": "draw_card", "amount": 0}, "DRAW"):
+            vm = TracedContext()
+            player = Player(7, "乙")
+            target = SimpleNamespace(player=player)
+            entry = Entry.from_spec(None, {"trigger": "tick", "target": "target", "operation": text})
+            self.assertIsInstance(entry.compiled_operation, TargetedProgram)
+            observed = []
+            vm.register_entries(None, [{"trigger": "BEFORE DRAW",
+                                         "operation": lambda ctx: observed.append((ctx.event["target"], ctx.event["player"]))}])
+            with vm.binding(target=target):
+                run_effect(vm, entry, entry.compiled_operation)
+            self.assertEqual(observed, [(target, player)])
+            self.assertEqual(vm.stack, [])
+
     def test_author_lines_compile_in_printed_order_for_both_permitted_factions(self):
         import json
         from pathlib import Path

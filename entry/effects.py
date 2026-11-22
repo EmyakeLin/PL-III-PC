@@ -28,7 +28,7 @@ a pending operation. Entries with the same source execute in printed order.
 """
 import re
 
-from entry.compiler import Program, prepare_effect
+from entry.compiler import Program, TargetedProgram, prepare_effect
 from entry.entry import character_of
 from models.opcode import OpCode
 
@@ -76,11 +76,20 @@ def select_entity(ctx, selector, owner):
 
 def run_effect(ctx, entry, operation):
     """Execute one rule in its triggering event, retaining its actual source."""
+    if isinstance(operation, (str, dict)):
+        operation = prepare_effect(operation)
+    if isinstance(operation, TargetedProgram):
+        selector = operation.selector if operation.selector is not None else entry.target or operation.default
+        target = select_entity(ctx, selector, entry.owner)
+        if target is None:
+            return
+        with ctx.binding(target=target, selected_player=getattr(target, "player", target)):
+            return run_effect(ctx, entry, operation.program)
     if isinstance(operation, Program):
         from entry.program import run_program
         return run_program(ctx, entry, operation)
     if isinstance(operation, list):
-        if all(isinstance(item, (dict, str, Program)) for item in operation):
+        if all(isinstance(item, (dict, str, Program, TargetedProgram)) for item in operation):
             for item in operation:
                 if ctx.executions and ctx.executions[-1].cancelled:
                     break
@@ -92,31 +101,15 @@ def run_effect(ctx, entry, operation):
         operation(ctx)
         return
     if isinstance(operation, str):
-        prepared = prepare_effect(operation)
-        if isinstance(prepared, Program):
-            return run_effect(ctx, entry, prepared)
-        part = independent_damage_part(operation)
-        if part:
-            amount, opcode = part
-            name, args, data = opcode.name, [], {"amount": amount}
-        else:
-            name, _, rest = operation.partition(":")
-            args = [x.strip() for x in rest.split(",") if x.strip()]
-            data = {}
+        name, _, rest = operation.partition(":")
+        args = [x.strip() for x in rest.split(",") if x.strip()]
+        data = {}
     elif isinstance(operation, dict):
         data = operation
         name, args = data["op"], data.get("args", [])
     else:
         raise ValueError(f"无效词条操作 {operation!r}")
     name = name.lower().strip().replace("-", "_")
-    if name == "reveal_lock":
-        from models.card import CardState
-        card = ctx.event["target"]
-        if ctx.game.special.window_open("placement") and card.state == CardState.PLACED_FACE_DOWN:
-            card.state = CardState.PLACED_FACE_UP
-            ctx.game.special.locked_cards.add(card)
-            ctx.record("revealed_and_locked", card=card.name)
-        return
     if name == "program":
         from entry.program import run_program
         if "damage_part" in data:
@@ -169,16 +162,13 @@ def run_effect(ctx, entry, operation):
         grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
         modifiers.append((name, value, grade))
         return
-    default_target = "self" if name in ("heal", "shield", "draw", "draw_card", "discard") else "target"
-    selector = data.get("target", entry.target or default_target)
-    if name == "destroy" and args:
-        selector = args[0]
+    selector = data.get("target", entry.target or "target")
     target = select_entity(ctx, selector, entry.owner)
     if target is None:
         return
     source = character_of(entry.owner) or ctx.event.get("source")
-    amount = int(data.get("amount", args[0] if args and name not in ("destroy", "status") else 1))
     if name == "damage":
+        amount = int(data.get("amount", args[0] if args else 1))
         grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
         die = ctx.event.get("die")
         attack_type = data.get("attack_type", getattr(die, "type", "none"))
@@ -190,46 +180,24 @@ def run_effect(ctx, entry, operation):
         ctx.deal_damage(source, target, amount, grade, attack_type,
                         damage_part=data.get("damage_part", False), **fields)
         return
-    if name in ("lightcore_damage", "real_damage"):
-        block = [target, amount, OpCode[name.upper()]]
-    elif name == "status":
-        status = data.get("name", args[0] if args else None)
-        if not status:
-            raise ValueError("Status 需要状态名")
-        block = [target, status, int(data.get("amount", args[1] if len(args) > 1 else 1)), OpCode.STATUS]
-    elif name == "shield":
-        kind = data.get("kind", args[1] if len(args) > 1 else "normal")
-        block = [target, kind, amount, OpCode.SHIELD]
-    elif name in ("draw", "draw_card", "discard"):
-        player = getattr(target, "player", target)
-        block = [player, amount, OpCode.DISCARD if name == "discard" else OpCode.DRAW]
-    elif name == "heal":
-        block = [target, amount, OpCode.HEAL]
-    elif name == "stagger":
-        block = [target, OpCode.STAGGER]
-    elif name == "destroy":
-        block = [target, OpCode.DESTROY]
-    else:
-        # Status packs can publish keywords that invoke their existing settlement
-        # rule on a target, with credit for the damage going to the caller.
-        for status, rule in getattr(target, "status_rules", {}).items():
-            keywords = rule.get("activation", {}).get("keywords", ())
-            if name in keywords:
-                owner = entry.owner
-                final_divisor = data.get("final_divisor", 1)
-                if type(final_divisor) is not int or final_divisor < 1:
-                    raise ValueError("状态发动的最终伤害除数须为正整数")
-                if data.get("from_die"):
-                    owner = (ctx.event.get("activation_die") if ctx.event.get("opcode") == "ACTIVATE_STATUS"
-                             else ctx.event.get("die"))
-                    if (owner is None or character_of(owner) is not source
-                            or ctx.range_blocks_target(target, card=owner.card)):
-                        return
-                ctx.stack.extend((target, status))
-                return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
-                                      activation_owner=owner, activation_kind=keywords[0],
-                                      activation_multiplier=data.get("multiplier", 1),
-                                      activation_final_divisor=final_divisor)
-        raise ValueError(f"未知词条操作 {name!r}")
-    with ctx.binding(source=source, target=target, authority=entry.authority):
-        ctx.eval_block(block)
+    # Status packs can publish keywords that invoke their existing settlement
+    # rule on a target, with credit for the damage going to the caller.
+    for status, rule in getattr(target, "status_rules", {}).items():
+        keywords = rule.get("activation", {}).get("keywords", ())
+        if name in keywords:
+            owner = entry.owner
+            final_divisor = data.get("final_divisor", 1)
+            if type(final_divisor) is not int or final_divisor < 1:
+                raise ValueError("状态发动的最终伤害除数须为正整数")
+            if data.get("from_die"):
+                owner = (ctx.event.get("activation_die") if ctx.event.get("opcode") == "ACTIVATE_STATUS"
+                         else ctx.event.get("die"))
+                if (owner is None or character_of(owner) is not source
+                        or ctx.range_blocks_target(target, card=owner.card)):
+                    return
+            ctx.stack.extend((target, status))
+            return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
+                                  activation_owner=owner, activation_kind=keywords[0],
+                                  activation_multiplier=data.get("multiplier", 1),
+                                  activation_final_divisor=final_divisor)
+    raise ValueError(f"未知词条操作 {name!r}")

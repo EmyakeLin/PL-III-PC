@@ -398,6 +398,30 @@ def handle_next_turn_cost(ctx):
     return player.next_turn_common_cost
 
 
+def handle_set_card_face(ctx):
+    face, card = ctx.pop(), ctx.pop()
+    states = {"up": CardState.PLACED_FACE_UP, "down": CardState.PLACED_FACE_DOWN}
+    if face not in states:
+        raise ValueError(f"未知卡牌朝向 {face!r}")
+    if card.state in states.values() and card.state != states[face]:
+        card.state = states[face]
+        ctx.record("card_face_changed", card=card.name if face == "up" else None, face=face)
+
+
+def handle_placement_lock(ctx):
+    locked, card = ctx.pop(), ctx.pop()
+    if type(locked) is not bool:
+        raise ValueError("位置锁定需要布尔值")
+    locks = ctx.game.special.locked_cards
+    if (card in locks) != locked:
+        if locked:
+            locks.add(card)
+        else:
+            locks.discard(card)
+        ctx.record("placement_lock", locked=locked,
+                   card=card.name if card.state == CardState.PLACED_FACE_UP else None)
+
+
 def handle_place(ctx):
     card, idx, side = ctx.pop(), ctx.pop(), ctx.pop()
     game = ctx.game
@@ -820,6 +844,8 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.WINDOW_OPEN: lambda ctx: ctx.push(ctx.game.special.window_open(ctx.pop())),
+    OpCode.SET_CARD_FACE: handle_set_card_face, OpCode.SET_PLACEMENT_LOCK: handle_placement_lock,
     OpCode.WITH_BINDINGS: handle_with_bindings,
     OpCode.SIZE: lambda ctx: ctx.push(len(ctx.pop())), OpCode.FILTER: handle_filter,
     OpCode.EACH: handle_each, OpCode.FIRST_IN_ORDER: handle_first_in_order,
@@ -872,7 +898,8 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
-    OpCode.WITH_BINDINGS: ("names", "block"),
+    OpCode.WINDOW_OPEN: ("window",), OpCode.SET_CARD_FACE: ("card", "face"),
+    OpCode.SET_PLACEMENT_LOCK: ("card", "locked"), OpCode.WITH_BINDINGS: ("names", "block"),
     OpCode.SIZE: ("collection",), OpCode.FILTER: ("collection", "predicate"),
     OpCode.EACH: ("collection", "block"), OpCode.FIRST_IN_ORDER: ("collection", "first"),
     OpCode.SKILL_USE_COUNT: ("actor", "skill_id"), OpCode.CLASH_COUNT: ("subject", "outcome", "position"),
