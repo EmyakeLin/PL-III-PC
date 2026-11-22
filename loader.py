@@ -79,6 +79,7 @@ def base_effects():
 
 def load_characters_from_packs(packs_dir=None):
     from models.card import validate_skill_traits
+    from models.conditions import validate_skill_gate
     from models.character import CharacterRank, RANK_SKILL_COUNT
     from models.dice import Dice
 
@@ -129,8 +130,8 @@ def load_characters_from_packs(packs_dir=None):
                         raise ValueError(f"{card['name']} 的技能形态须包含名称和骰组")
                     for form in (card, *forms.values()):
                         for die_data in form.get("dice", []):
-                            if "requires_skill_state" in die_data and not isinstance(die_data["requires_skill_state"], str):
-                                raise ValueError("骰位启用条件须为本次技能状态名称")
+                            if "requires_skill_state" in die_data:
+                                validate_skill_gate(die_data["requires_skill_state"])
                             die = Dice(die_data)
                             die.value = 1
                             die.get_value()

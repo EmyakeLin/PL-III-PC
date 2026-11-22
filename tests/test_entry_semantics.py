@@ -505,6 +505,30 @@ class TurnHistoryTests(unittest.TestCase):
 
 
 class ConditionExecutorTests(unittest.TestCase):
+    def test_pack_parser_accepts_the_same_dice_gates_the_executor_accepts(self):
+        import json
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from unittest.mock import patch
+        from loader import EffectDefinitions, load_characters_from_packs
+
+        with TemporaryDirectory() as directory, patch("loader._shared_effects", return_value=EffectDefinitions()):
+            card = {"id": "gate", "name": "符号", "cost": 0, "dice": []}
+            char = {"id": "a", "name": "甲", "rank": "NORMAL", "max_hp": 11,
+                    "skills": [card, dict(card, id="b"), dict(card, id="c")]}
+            path = Path(directory) / "synthetic.json"
+            for gate in ["flag", *({"key": "k", "op": op, "value": n}
+                                   for op in COMPARISONS for n in (-2**89, 0, 2**95))]:
+                card["dice"] = [{"type": "blunt", "level": 1, "requires_skill_state": gate}]
+                path.write_text(json.dumps({"characters": [char]}), encoding="utf-8")
+                loaded, = load_characters_from_packs(directory)
+                self.assertEqual(loaded["skills"][0]["dice"][0]["requires_skill_state"], gate)
+            for invalid in (5, {}, {"key": "x", "op": "ge"}, {"key": "x", "op": "typo", "value": 42}):
+                card["dice"][0]["requires_skill_state"] = invalid
+                path.write_text(json.dumps({"characters": [char]}), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "骰位启用条件"):
+                    load_characters_from_packs(directory)
+
     def test_each_comparison_observes_the_actual_value_on_both_sides_of_the_threshold(self):
         for op, compare in COMPARISONS.items():
             for threshold in (-11, 0, 1, 2, 2**70):

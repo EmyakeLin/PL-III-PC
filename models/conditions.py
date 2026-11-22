@@ -23,3 +23,11 @@ def skill_state_allows(values, gate):
     if isinstance(gate, str):
         return bool(values.get(gate))
     return matches_value(values.get(gate["key"], 0), gate)
+
+def validate_skill_gate(gate):
+    if isinstance(gate, str) and gate:
+        return
+    if (isinstance(gate, dict) and isinstance(gate.get("key"), str) and gate["key"]
+            and gate.get("op") in COMPARISONS and "value" in gate):
+        return
+    raise ValueError("骰位启用条件需要状态名，或包含 key、op、value 的比较式")
