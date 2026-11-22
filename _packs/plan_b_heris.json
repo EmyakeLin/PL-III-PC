@@ -41,13 +41,22 @@
               "operation": {"op": "program", "code": ["$self", "火焰之锤次数", 0, "SET_CHARACTER_STATE"]}
             },
             {
-              "trigger": "before_dice_hit", "when": {"die_type": "blunt"},
+              "trigger": "before_dice_hit",
+              "when": {"die_type":"blunt"},
               "description": "打击命中前记录目标是否已有烧伤。本回合已触发两次后，目标每8烧伤使这次命中的骰子伤害+1，至多+2。",
-              "operation": {"op": "program", "code": [
-                "$die", "命中前持有烧伤", "$target", "烧伤", "STATUS_COUNT", 0, "GT", "SET_DIE_STATE",
-                "$self", "火焰之锤次数", "CHARACTER_STATE", 2, "GE", "$has_damage_part", "AND",
-                ["$target", "烧伤", "STATUS_COUNT", 8, "FLOOR_DIV", 2, "MIN", "DAMAGE_ADD"], "WHEN"
-              ]}
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$die", "命中前持有烧伤", "$target", "烧伤", "STATUS_COUNT", 0, "GT", "SET_DIE_STATE", "$self",
+                  "火焰之锤次数", "CHARACTER_STATE", 2, "GE", "$has_damage_part", "AND",
+                  [
+                    "$target", "烧伤", "STATUS_COUNT", 8, "FLOOR_DIV", 2, "MIN", "amount", "STORE",
+                    "$event.target", "$event.hit_modifiers", "damage_add", "$local.amount", "normal",
+                    "ADD_DAMAGE_MODIFIER"
+                  ],
+                  "WHEN"
+                ]
+              }
             },
             {
               "trigger": "on_dice_hit", "when": {"die_type": "blunt"},
@@ -185,39 +194,82 @@
                "operation": {"op": "program", "code": [
                  "$target", "烧伤", 2, "$card", "首骰额外烧伤", "SKILL_STATE", "ADD", "STATUS", {"op": "ignite"}
                ]}},
-              {"trigger": "AFTER STATUS", "subject": "source", "when": {"status": "烧伤", "activation_kind": "ignite"},
-               "description": "本骰引燃每实际移除1烧伤，自身获得1能源。",
-               "operation": {"op": "program", "code": [
-                 "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
-                 ["$self", "能源", 0, "$actual_delta", "SUB", "STATUS"], "WHEN"
-               ]}}
+              {
+                "trigger": "AFTER STATUS",
+                "subject": "source",
+                "when": [
+                  {"left":"$event.status","op":"eq","right":"烧伤"},
+                  {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+                  {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
+                ],
+                "description": "本骰引燃每实际移除1烧伤，自身获得1能源。",
+                "operation": {
+                  "op": "program",
+                  "code": [
+                    "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
+                    ["$self","能源",0,"$actual_delta","SUB","STATUS"], "WHEN"
+                  ]
+                }
+              }
             ]},
             {"type": "blunt", "level": 4, "entries": [
               "1物理",
               {"trigger": "on_dice_hit", "description": "触发引燃。", "operation": {"op": "ignite"}},
-              {"trigger": "AFTER STATUS", "subject": "source", "when": {"status": "烧伤", "activation_kind": "ignite"},
-               "description": "本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
-               "operation": {"op": "program", "code": [
-                 "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
-                 [0, "$actual_delta", "SUB", 2, "FLOOR_DIV", "energy", "STORE",
-                  {"local": "energy"}, 0, "GT",
-                  ["$player.characters", ["$item.is_alive", ["$item", "能源", {"local": "energy"}, "STATUS"], "WHEN"],
-                   "EACH"], "WHEN"], "WHEN"
-               ]}}
+              {
+                "trigger": "AFTER STATUS",
+                "subject": "source",
+                "when": [
+                  {"left":"$event.status","op":"eq","right":"烧伤"},
+                  {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+                  {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
+                ],
+                "description": "本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
+                "operation": {
+                  "op": "program",
+                  "code": [
+                    "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
+                    [
+                      0, "$actual_delta", "SUB", 2, "FLOOR_DIV", "energy", "STORE", {"local":"energy"},
+                      0, "GT",
+                      [
+                        "$player.characters",
+                        ["$item.is_alive",["$item","能源",{"local":"energy"},"STATUS"],"WHEN"], "EACH"
+                      ],
+                      "WHEN"
+                    ],
+                    "WHEN"
+                  ]
+                }
+              }
             ]},
             {"type": "blunt", "level": 1, "multiplier": 2, "entries": [
               {"trigger": "on_dice_hit", "description": "触发引燃。", "operation": {"op": "ignite"}},
-              {"trigger": "AFTER STATUS", "subject": "source", "when": {"status": "烧伤", "activation_kind": "ignite"},
-               "description": "本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
-               "operation": {"op": "program", "code": [
-                 "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND", [
-                   0, "$actual_delta", "SUB", 3, "FLOOR_DIV", "stacks", "STORE",
-                   {"local": "stacks"}, 0, "GT", [
-                     "$self", "$target", "虚弱", {"local": "stacks"}, "QUEUE_STATUS",
-                     "$self", "$target", "束缚", {"local": "stacks"}, "QUEUE_STATUS"
-                   ], "WHEN"
-                 ], "WHEN"
-               ]}}
+              {
+                "trigger": "AFTER STATUS",
+                "subject": "source",
+                "when": [
+                  {"left":"$event.status","op":"eq","right":"烧伤"},
+                  {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+                  {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
+                ],
+                "description": "本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
+                "operation": {
+                  "op": "program",
+                  "code": [
+                    "$activation_owner", "$owner", "EQ", "$actual_delta", 0, "LT", "AND",
+                    [
+                      0, "$actual_delta", "SUB", 3, "FLOOR_DIV", "stacks", "STORE", {"local":"stacks"},
+                      0, "GT",
+                      [
+                        "$self", "$target", "虚弱", {"local":"stacks"}, "QUEUE_STATUS", "$self", "$target",
+                        "束缚", {"local":"stacks"}, "QUEUE_STATUS"
+                      ],
+                      "WHEN"
+                    ],
+                    "WHEN"
+                  ]
+                }
+              }
             ]}
           ]
         }

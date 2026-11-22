@@ -260,6 +260,7 @@ class Context:
         mark = len(self.stack) - len(names)
         fields.update(zip(names, self.stack[mark:]))
         originating_entry = self.executions[-1] if self.executions else None
+        fields["issuer"] = originating_entry.entry if originating_entry else None
         if opcode in (OpCode.ABILITY_EFFECT, OpCode.SPEND_ABILITY_EFFECT):
             holder = fields["target"]
             if holder is None or not holder.is_alive or fields["ability"] not in holder.ability_rules:
@@ -643,6 +644,8 @@ class Context:
         try:
             with self.binding(**fields, node_id=node_id):
                 self._dispatch(TriggerType.PIPELINE, node_id)
+            if node_id == "on_skill_use" and card is not None:
+                card.use_effects_resolved = True
         finally:
             for e in self.entries[:]:
                 if e.period and node_id == e.period.get("until") and self._window_owner(e, fields):

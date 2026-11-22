@@ -122,10 +122,11 @@ def run_effect(ctx, entry, operation):
         die = ctx.event.get("die")
         attack_type = data.get("attack_type", getattr(die, "type", "none"))
         fields = {}
-        if data.get("from_die"):
-            if die is None or character_of(die) is not source:
+        if "credit" in data:
+            credited = select_entity(ctx, data["credit"], entry.owner)
+            if credited is None or character_of(credited) is not source:
                 return
-            fields["damage_die"] = die
+            fields["damage_die"] = credited
         ctx.deal_damage(source, target, amount, grade, attack_type,
                         damage_part=data.get("damage_part", False), **fields)
         return
@@ -135,11 +136,10 @@ def run_effect(ctx, entry, operation):
         keywords = rule.get("activation", {}).get("keywords", ())
         if name in keywords:
             owner = entry.owner
-            if data.get("from_die"):
-                owner = (ctx.event.get("activation_die") if ctx.event.get("opcode") == "ACTIVATE_STATUS"
-                         else ctx.event.get("die"))
+            if "credit" in data:
+                owner = select_entity(ctx, data["credit"], entry.owner)
                 if (owner is None or character_of(owner) is not source
-                        or ctx.range_blocks_target(target, card=owner.card)):
+                        or ctx.range_blocks_target(target, card=getattr(owner, "card", None))):
                     return
             ctx.stack.extend((target, status))
             return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,

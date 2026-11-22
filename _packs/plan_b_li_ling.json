@@ -73,14 +73,21 @@
       {
         "name": "洞穿",
         "entries": [{
-          "trigger": "AFTER ACTIVATE_STATUS", "subject": "source",
-          "when": {"status": "烧伤", "activation_kind": "ignite", "activation_die_type": "pierce", "result": true},
-          "operation": {"op": "program", "code": [
-            "$self", "凝聚", "STATUS_COUNT",
-            ["$target_alive", "$target", "烧伤", "STATUS_COUNT", 0, "GT", "AND",
-             [1, 20, "RANDOM_INT", "$target", "烧伤", "STATUS_COUNT", "LE"], [false], "IF_ELSE"],
-            [{"op":"ignite", "from_die":true, "adjustments":{"final_damage":[2,"CEIL_DIV"]}}], "REPEAT_WHILE"
-          ]},
+          "trigger": "AFTER ACTIVATE_STATUS",
+          "subject": "source",
+          "when": {"status":"烧伤","activation_kind":"ignite","activation_die_type":"pierce","result":true},
+          "operation": {
+            "op": "program",
+            "code": [
+              "$self", "凝聚", "STATUS_COUNT",
+              [
+                "$target_alive", "$target", "烧伤", "STATUS_COUNT", 0, "GT", "AND",
+                [1,20,"RANDOM_INT","$target","烧伤","STATUS_COUNT","LE"], [false], "IF_ELSE"
+              ],
+              [{"op":"ignite","credit":"activation_die","adjustments":{"final_damage":[2,"CEIL_DIV"]}}],
+              "REPEAT_WHILE"
+            ]
+          },
           "description": "自身突刺骰引燃后，掷1～20，若不高于目标剩余烧伤，再引燃一次。重复引燃最终伤害减半并向上取整。每次原始引燃至多追加等于凝聚层数的次数。"
         }]
       },

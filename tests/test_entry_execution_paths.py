@@ -262,3 +262,72 @@ class CollectionAndTargetTests(unittest.TestCase):
             resolve_entry(ctx, die, spec, source=actor, target=primary, card=card, die=die, result=landed)
             order = [primary] + [e for e in enemies if e is not primary]
             self.assertEqual(visits, [(e, 6 if e is primary else 4, "normal", "slash") for e in order] if landed else [])
+
+
+class DamageAndPaymentTests(unittest.TestCase):
+    def test_finish_damage_and_destruction_follow_victories_even_when_win_effects_were_skipped(self):
+        for wins in range(4):
+            ctx = TraceContext()
+            actor, target = actor_for(ctx, 1), actor_for(ctx, 2)
+            printed = printed_skill("plan_b_heck.json", "heck_flame_lunge")
+            card, opponent = Card(None, printed, actor), Card(None, printed, target)
+            die = Dice(printed["dice"][3])
+            die.card = card
+            card.instantiated_dice = [SimpleNamespace(clash_result="win", win_branch_skipped=True)
+                                      for _ in range(wins)] + [die]
+            target.game.status_rules["烧伤"] = {"activation":{"keywords":["ignite"],"operation":{"op":"program","code":[]}}}
+            event = dict(source=actor, target=target, card=card, die=die, damage_die=die,
+                         damage_part=True, opponent_card=opponent, modifiers=[], hit_modifiers=[])
+            fire(ctx, die, "before_dice_use", **event)
+            fire(ctx, die, "BEFORE DAMAGE", **event)
+            fire(ctx, die, "on_dice_hit", **event)
+            self.assertEqual(event["modifiers"], [("damage_add", 1, "normal")] if wins >= 2 else [])
+            self.assertEqual(event["hit_modifiers"], [])
+            self.assertEqual(opponent.destroyed, wins >= 2)
+
+    def test_payment_uses_its_receipt_even_when_another_listener_spends_energy(self):
+        printed = printed_skill("plan_b_heck.json", "heck_energy_analysis")
+        listener = next(e for e in printed["dice"][1]["entries"] if isinstance(e, dict) and e["trigger"] == "BEFORE DAMAGE")
+        for price, balance, doubled in itertools.product((1, 4, 11), (0, 3, 20), (False, True)):
+            ctx = TraceContext()
+            actor = actor_for(ctx, 1)
+            actor.statuses.update({"能源": balance, "凝聚": price, "全开": int(doubled)})
+            card = Card(None, printed, actor)
+            die = Dice(printed["dice"][1])
+            die.card = card
+            nested = {"trigger":"AFTER SPEND_STATUS","subject":"source","operation":{"op":"program","code":[
+                "$self", "能源", 2, {"call":"SPEND_STATUS"}]}}
+            ctx.register_entries(actor, [nested])
+            segment, hit = [], []
+            resolve_entry(ctx, die, listener, source=actor, target=actor, card=card, die=die, damage_die=die,
+                          damage_part=True, modifiers=segment, hit_modifiers=hit)
+            bonus = price // 2 * (1 + doubled) if balance >= price else 0
+            self.assertEqual(die.use_state["analysis_burn"], bonus)
+            self.assertEqual(segment, [("damage_add", bonus, "normal")] if balance >= price else [])
+            self.assertEqual(hit, [])
+            self.assertEqual(actor.statuses.get("能源", 0), max(0, balance-price-2) if balance >= price else balance)
+            self.assertNotIn("spent_statuses", card.use_state)
+            follow = next(e for e in printed["dice"][1]["entries"] if isinstance(e, dict) and e["trigger"] == "on_dice_hit")
+            resolve_entry(ctx, die, follow, source=actor, target=actor, card=card, die=die)
+            self.assertEqual(actor.statuses.get("烧伤", 0), bonus)
+
+    def test_ignite_reward_only_counts_the_status_change_issued_by_the_activation(self):
+        printed = printed_skill("plan_b_heris.json", "heris_crush")
+        reward = next(e for e in printed["dice"][0]["entries"] if isinstance(e, dict) and e["trigger"] == "AFTER STATUS")
+        ctx = TraceContext()
+        actor, target = actor_for(ctx, 1), actor_for(ctx, 2)
+        target.statuses["烧伤"] = 9
+        target.game.status_rules["烧伤"] = {"activation":{"keywords":["ignite","引燃"],
+            "operation":{"op":"program","code":["$event.target","烧伤",-2,"STATUS"]}}}
+        card = Card(None, printed, actor)
+        die = Dice(printed["dice"][0])
+        die.card = card
+        ctx.register_entries(die, [reward])
+        ctx.register_entries(actor, [{"trigger":"AFTER STATUS","subject":"source",
+            "when":[{"left":"$event.status","op":"eq","right":"烧伤"}],
+            "operation":{"op":"program","code":["$event.target","烧伤",-1,"STATUS"]}}])
+        with ctx.binding(source=actor, target=target, card=card, die=die):
+            ctx._invoke(Entry.from_spec(actor, {"trigger":"on_dice_hit","operation":{"op":"ignite","credit":"die"}}))
+        self.assertEqual(target.statuses["烧伤"], 6)
+        self.assertEqual(actor.statuses["能源"], 2)
+        self.assertEqual(ctx.operations.count(OpCode.STATUS), 3)

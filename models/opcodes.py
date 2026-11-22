@@ -847,7 +847,8 @@ def handle_activate_status(ctx):
                        card=owner.card.name if origin == "die" else getattr(owner, "name", None),
                        position=getattr(owner, "position", None), target=target.combat_name,
                        effect=entry.damage_cause, count=target.statuses[name])
-        with ctx.binding(source=source, target=target, side=source.player.side, damage_part=False, hit_modifiers=()):
+        with ctx.binding(source=source, target=target, side=source.player.side, damage_part=False,
+                         hit_modifiers=(), activation_entry=entry):
             if not ctx._invoke(entry):
                 ctx.current_op = None
                 return
@@ -927,10 +928,6 @@ def handle_spend_status(ctx):
     deferred = ctx.event["defer_spend_effects"]
     remaining = target.apply_status_delta(name, -paid, notify=False, defer_effects=deferred)
     ctx.event.update(paid_in_full=paid == cost, previous_stacks=previous, current_stacks=remaining)
-    card = ctx.event.get("card")
-    if card is not None and card.character is target:
-        spent = card.use_state.setdefault("spent_statuses", {})
-        spent[name] = spent.get(name, 0) + paid
     ctx.record("status_spent", target=target.combat_name, name=name, amount=paid, cost=cost, total=remaining)
     if not deferred:
         target.notify_status_change(name, previous, remaining)

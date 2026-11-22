@@ -112,12 +112,12 @@
                     [
                       "$die_range", 0, "EQ",
                       [
-                        "$target", "烧伤", 1, "STATUS", "$self", "剑刃近战命中", "$self", "剑刃近战命中", "CHARACTER_STATE", 1,
-                        "ADD", "SET_CHARACTER_STATE"
+                        "$target", "烧伤", 1, "STATUS", "$self", "剑刃近战命中", "$self", "剑刃近战命中",
+                        "CHARACTER_STATE", 1, "ADD", "SET_CHARACTER_STATE"
                       ],
                       "WHEN"
                     ],
-                    [{"op":"ignite","from_die":true}], "IF_ELSE"
+                    [{"op":"ignite","credit":"die"}], "IF_ELSE"
                   ],
                   "WHEN"
                 ]
@@ -336,7 +336,11 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$damage_die", "$owner", "EQ", "$die", "lunge_finish", "DIE_STATE", "AND", [1, "DAMAGE_ADD"],
+                      "$damage_die", "$owner", "EQ", "$die", "lunge_finish", "DIE_STATE", "AND",
+                      [
+                        1, "amount", "STORE", "$event.target", "$event.modifiers", "damage_add",
+                        "$local.amount", "normal", "ADD_DAMAGE_MODIFIER"
+                      ],
                       "WHEN"
                     ]
                   },
@@ -487,17 +491,19 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$damage_die", "$owner", "EQ",
+                      "$event.damage_die", "$owner", "IS",
                       [
-                        "$die", "analysis_burn", 0, "SET_DIE_STATE", "$self", "凝聚", "STATUS_COUNT", "price", "STORE",
-                        {"local":"price"}, 0, "GT",
+                        "$event.die", "analysis_burn", 0, "SET_DIE_STATE", "$self", "凝聚", "STATUS_COUNT",
+                        "price", "STORE", "$local.price", 0, "GT",
                         [
-                          "$card", "能源", "SPENT_STATUS_COUNT", "before", "STORE", "$self", "能源", {"local":"price"},
-                          "SPEND_STATUS_IN_FULL",
+                          "$self", "能源", "$local.price",
+                          {"call":"SPEND_STATUS","with":{"require_full":true},"result":"result","default":0},
+                          "paid", "STORE", "$local.paid", 0, "GT",
                           [
-                            "$card", "能源", "SPENT_STATUS_COUNT", {"local":"before"}, "SUB", 2, "FLOOR_DIV", "$self", "全开",
-                            "STATUS_COUNT", [2, "MUL"], "WHEN", "bonus", "STORE", "$die", "analysis_burn",
-                            {"local":"bonus"}, "SET_DIE_STATE", {"local":"bonus"}, "DAMAGE_ADD"
+                            "$local.paid", 2, "FLOOR_DIV", "$self", "全开", "STATUS_COUNT", [2,"MUL"],
+                            "WHEN", "bonus", "STORE", "$event.die", "analysis_burn", "$local.bonus",
+                            "SET_DIE_STATE", "$event.target", "$event.modifiers", "damage_add",
+                            "$local.bonus", "normal", "ADD_DAMAGE_MODIFIER"
                           ],
                           "WHEN"
                         ],
@@ -727,7 +733,15 @@
                   "when": {"damage_part":true},
                   "operation": {
                     "op": "program",
-                    "code": ["$damage_die", "$owner", "EQ", ["$self", "凝聚", "STATUS_COUNT", "DAMAGE_ADD"], "WHEN"]
+                    "code": [
+                      "$damage_die", "$owner", "EQ",
+                      [
+                        "$self", "凝聚", "STATUS_COUNT", "amount", "STORE", "$event.target",
+                        "$event.modifiers", "damage_add", "$local.amount", "normal",
+                        "ADD_DAMAGE_MODIFIER"
+                      ],
+                      "WHEN"
+                    ]
                   },
                   "description": "本骰伤害部分增加等同于当前凝聚的数值。"
                 },

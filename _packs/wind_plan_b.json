@@ -187,9 +187,14 @@
             },
             {
               "trigger": "before_dice_hit",
-              "operation": {"op": "program", "code": [
-                "$card", "vortex_target", "SKILL_STATE", [{"op": "damage_add", "amount": 1}], "WHEN"
-              ]},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$card", "vortex_target", "SKILL_STATE",
+                  ["$event.target","$event.hit_modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"],
+                  "WHEN"
+                ]
+              },
               "description": "使用时目标带有涡流，则本技能骰子伤害+1。"
             },
             {
@@ -246,8 +251,15 @@
               {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "slash", "level": 3, "entries": ["0物理",
-              {"trigger": "before_dice_hit", "when": {"owner_status_at_least": {"涡流": 3}},
-               "operation": {"op": "damage_add", "amount": 1}, "description": "自身涡流≥3时，伤害+1。"}
+              {
+                "trigger": "before_dice_hit",
+                "when": {"owner_status_at_least":{"涡流":3}},
+                "operation": {
+                  "op": "program",
+                  "code": ["$event.target","$event.hit_modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"]
+                },
+                "description": "自身涡流≥3时，伤害+1。"
+              }
             ]},
             {"type": "blunt", "level": 3, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1},
