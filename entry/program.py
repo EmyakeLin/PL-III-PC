@@ -1,6 +1,8 @@
 """Translate JSON effect programs into blocks for the existing postfix VM."""
 
 from entry.commands import expand_command
+from entry.field_aliases import FIELD_ALIASES
+from entry.references import read_path
 from entry.entry import character_of
 from models.character import SHIELD_FIELDS
 from models.opcode import OpCode
@@ -16,151 +18,61 @@ def run_program(ctx, entry, tokens):
     variables = {}
 
     def read(field):
+        root, *path = field.split(".")
         event = ctx.event
-        if field in ("recipient", "recipient_player"):
-            recipient = select_entity(ctx, entry.target or "self", entry.owner)
-            return getattr(recipient, "player", recipient) if field == "recipient_player" else recipient
-        if field == "hp":
-            return actor.hp
-        if field == "original_max_hp":
-            return actor.original_max_hp
-        if field == "in_turn_end":
-            return ctx.game.turn_ending
-        if field in ("lightcore_hp", "max_lightcore_hp"):
-            return getattr(actor, field)
-        if field in ("target_lightcore_hp", "target_max_lightcore_hp"):
-            return getattr(event.get("target"), field.removeprefix("target_"), 0)
-        if field == "speed_lead":
-            return actor.speed - next(other.speed for other in ctx.game.players if other is not player)
-        if field == "target_speed_lead":
-            target = event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
-            return actor.speed - target.speed if target is not None else 0
-        if field == "printed_min":
-            return event["printed_min"]
-        if field == "opponent_player":
-            return next(other for other in ctx.game.players if other is not player)
-        if field == "target_alive":
-            return bool(getattr(event.get("target"), "is_alive", False))
-        if field == "target_player":
-            return getattr(event.get("target"), "player", None)
-        if field == "target_next_die":
-            return ctx.game.pipeline.next_planned_die(event.get("target"))
-        if field == "own_hand_skills":
-            return ctx.game.special.own_hand_skills(actor)
-        if field == "own_regular_duels":
-            return [slot for slot in ctx.game.duelspace.space if ctx.game.pipeline.can_join(slot)
-                    and any(card.character is actor for card in slot.get_content(player.side))]
-        if field == "board_skills":
-            return [card for seat in ctx.game.players for member in seat.characters
-                    for card in ctx.game.special.board_skills(member)]
-        if field == "own_board_skills":
-            return ctx.game.special.board_skills(actor)
-        if field == "target_board_skills":
-            return ctx.game.special.board_skills(event.get("target"))
-        if field in ("chosen_card", "chosen_slot", "choice_subject", "choice_discount"):
-            return event.get(field)
-        if field == "allies":
-            return [member for member in player.characters if member.is_alive]
-        if field == "roll_value":
-            return event["die"].value
-        if field == "roll_max":
-            return event["die"].roll_max
-        if field == "is_attack":
-            return event["die"].is_attack
-        if field == "is_repeat":
-            return event["die"].is_repeat
-        if field == "has_damage_part":
-            return event["die"].has_damage_part
-        if field == "did_deal_damage":
-            return event["die"].did_deal_damage
-        if field == "damage_die_is_attack":
-            return bool(getattr(event.get("damage_die"), "is_attack", False))
-        if field in ("activation_kind", "activation_multiplier", "activation_owner", "activation_origin",
-                     "activation_die", "activation_die_type", "damage_card", "damage_status"):
-            return event.get(field)
-        if field == "clash_result":
-            return event["die"].clash_result
-        if field in ("hit_index", "hit_mode", "targets", "status", "ability", "status_overflow",
-                     "previous_stacks", "current_stacks", "actual_delta"):
-            return event.get(field)
-        if field in ("in_duel", "duel_damage_taken"):
+        if root in ("recipient", "recipient_player"):
+            entity = select_entity(ctx, entry.target or "self", entry.owner)
+            value = getattr(entity, "player", entity) if root == "recipient_player" else entity
+        elif root == "self":
+            value = actor
+        elif root == "player":
+            value = player
+        elif root == "owner":
+            value = entry.owner
+        elif root == "game":
+            value = ctx.game
+        elif root == "event":
+            value = event
+        elif root == "opponent_player":
+            value = next(other for other in ctx.game.players if other is not player)
+        elif root in ("skill_target", "target_speed_lead"):
+            value = event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
+            if root == "target_speed_lead":
+                value = actor.speed - value.speed if value is not None else 0
+        elif root == "target_next_die":
+            value = ctx.game.pipeline.next_planned_die(event.get("target"))
+        elif root == "own_hand_skills":
+            value = ctx.game.special.own_hand_skills(actor)
+        elif root == "own_regular_duels":
+            value = [slot for slot in ctx.game.duelspace.space if ctx.game.pipeline.can_join(slot)
+                     and any(card.character is actor for card in slot.get_content(player.side))]
+        elif root == "board_skills":
+            value = [card for seat in ctx.game.players for member in seat.characters
+                     for card in ctx.game.special.board_skills(member)]
+        elif root in ("own_board_skills", "target_board_skills"):
+            value = ctx.game.special.board_skills(actor if root == "own_board_skills" else event.get("target"))
+        elif root in ("in_duel", "duel_damage_taken"):
             duel = ctx.game.resolving_duel
-            if field == "in_duel":
-                return duel is not None
-            return duel.damage_taken.get(actor, 0) if duel is not None else 0
-        if field == "value_ref":
-            return event["value_ref"]
-        if field == "printed_level":
-            return event["die"].printed_level.value
-        if field == "final_score":
-            return event["die"].get_value()
-        if field == "clash_score":
-            return event["die"].clash_score
-        if field == "opponent_clash_score":
-            return event["opponent_die"].clash_score
-        if field in ("opponent_card", "opponent_die", "combat_window", "clash_difference", "prospective_result"):
-            return event.get(field)
-        if field in ("amount", "result", "damage_amount", "damage_dealt", "damage_received", "damage_die",
-                     "base_amount", "hp_lost",
-                     "lightcore_lost", "lightcore_collapsed"):
-            return event.get(field)
-        if field in ("card", "die", "duel", "target", "play_mode", "replaced_card"):
-            return event.get(field)
-        if field == "skill_target":
-            return event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
-        if field == "next_duel_target":
-            return ctx.game.active_duelspace.next_duel_target(player.side)
-        if field == "next_duel_enemy_skills":
-            return ctx.game.active_duelspace.next_duel_enemy_skills(player.side)
-        if field == "is_primary_target":
-            return event.get("target") is event.get("primary_target", event.get("target"))
-        if field == "enemies":
-            enemy = next(p for p in ctx.game.players if p is not player)
-            living = [member for member in enemy.characters if member.is_alive]
-            primary = event.get("primary_target", event.get("target"))
-            return sorted(living, key=lambda member: member is not primary)
-        if field == "self":
-            return actor
-        if field == "owner":
-            return entry.owner
-        if field == "own_skills_in_hand":
-            regular = [card for card in actor.skills if not card.out_of_combat]
-            return bool(regular) and all(card in player.cardspace.hand.content for card in regular)
-        if field == "turn_number":
-            return ctx.game.turn_number
-        if field == "die_type":
-            return getattr(event.get("die"), "type", None)
-        if field == "die_range":
-            return event["die"].effective_range
-        if field == "die_owner":
-            return character_of(event.get("die"))
-        if field == "player":
-            return player
-        if field == "hand_count":
-            return len(player.cardspace.hand.content)
-        if field == "previous_hand_count":
-            return event["previous_count"]
-        if field == "current_hand_count":
-            return event["hand_count"]
-        if field == "duel_number":
-            return ctx.game.duel_position()[1] + 1
-        if field == "faster":
-            enemy = next(p for p in ctx.game.players if p is not player)
-            return player.speed > enemy.speed
-        if field == "won_clash":
-            return actor.won_clash_this_turn
-        if field == "previous_loss":
-            return player.lost_clash_in_previous_duel()
-        if field == "full_hp":
-            return actor.hp >= actor.max_hp
-        if field == "repeat_count":
-            return sum(die is not None and die.repeat_requested
-                       for die in event["card"].instantiated_dice or ())
-        if field == "damage_cause":
-            return bool(event.get("damage_cause"))
-        if field == "self_damage":
-            return actor is event.get("target")
-        raise ValueError(f"未知的词条字段 ${field}")
+            value = duel is not None if root == "in_duel" else duel.damage_taken.get(actor, 0) if duel else 0
+        elif root == "final_score":
+            value = event["die"].get_value()
+        elif root == "next_duel_target":
+            value = ctx.game.active_duelspace.next_duel_target(player.side)
+        elif root == "next_duel_enemy_skills":
+            value = ctx.game.active_duelspace.next_duel_enemy_skills(player.side)
+        elif root in ("primary_target", "is_primary_target"):
+            value = event.get("primary_target", event.get("target"))
+            if root == "is_primary_target":
+                value = event.get("target") is value
+        elif root == "die_owner":
+            value = character_of(event.get("die"))
+        elif root == "duel_number":
+            value = ctx.game.duel_position()[1] + 1
+        elif root == "damage_cause":
+            value = bool(event.get("damage_cause"))
+        else:
+            value = event.get(root)
+        return read_path(value, path)
 
     def status_count(vm):
         name, target = vm.pop(), vm.pop()
@@ -296,7 +208,11 @@ def run_program(ctx, entry, tokens):
             elif isinstance(token, dict):
                 block.append(lambda vm, operation=token: run_effect(vm, entry, operation))
             elif isinstance(token, str) and token.startswith("$"):
-                block.append(lambda vm, field=token[1:]: vm.push(read(field)))
+                field = token[1:]
+                if field in FIELD_ALIASES:
+                    block.extend(compile_block(FIELD_ALIASES[field]))
+                else:
+                    block.append(lambda vm, name=field: vm.push(read(name)))
             elif token == "USED_SKILL_THIS_TURN":
                 block.extend([OpCode.SKILL_USE_COUNT, 0, OpCode.GT])
             elif token == "ONCE_PER_ROUND":

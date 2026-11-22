@@ -30,6 +30,8 @@ def handle_clamp(ctx):
 
 _BINARY_OPERATIONS = {
     OpCode.FLOOR_DIV: operator.floordiv, OpCode.MIN: min,
+    OpCode.COALESCE: lambda value, default: default if value is None else value,
+    OpCode.ALL_IN: lambda members, collection: all(item in collection for item in members),
     OpCode.LT: operator.lt, OpCode.LE: operator.le, OpCode.GT: operator.gt,
     OpCode.GE: operator.ge, OpCode.EQ: operator.eq, OpCode.AND: lambda a, b: bool(a and b),
 }
@@ -171,6 +173,42 @@ def handle_set_character_state(ctx):
     if actor is not None and actor.is_alive:
         actor.rule_state[key] = value
         return value
+
+
+def handle_filter(ctx):
+    predicate, items = ctx.pop(), ctx.pop()
+    selected = []
+    for item in items:
+        if ctx.executions and ctx.executions[-1].cancelled:
+            break
+        surrounding, ctx.stack = ctx.stack, []
+        try:
+            with ctx.binding(item=item):
+                ctx.eval_block(predicate)
+            if ctx.executions and ctx.executions[-1].cancelled:
+                break
+            if len(ctx.stack) != 1:
+                raise ValueError("筛选条件必须产生一个结果")
+            keep = ctx.pop()
+        finally:
+            ctx.stack = surrounding
+        if keep:
+            selected.append(item)
+    ctx.push(selected)
+
+
+def handle_each(ctx):
+    action, items = ctx.pop(), ctx.pop()
+    for item in tuple(items):
+        if ctx.executions and ctx.executions[-1].cancelled:
+            break
+        with ctx.binding(item=item):
+            ctx.eval_block(action)
+
+
+def handle_first_in_order(ctx):
+    first, items = ctx.pop(), ctx.pop()
+    ctx.push(sorted(items, key=lambda item: item != first))
 
 
 def handle_skill_use_count(ctx):
@@ -765,6 +803,8 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.SIZE: lambda ctx: ctx.push(len(ctx.pop())), OpCode.FILTER: handle_filter,
+    OpCode.EACH: handle_each, OpCode.FIRST_IN_ORDER: handle_first_in_order,
     OpCode.SKILL_USE_COUNT: handle_skill_use_count, OpCode.CLASH_COUNT: handle_clash_count,
     OpCode.DUEL_OFFSET: handle_duel_offset,
     OpCode.ROUND_TRIGGER_COUNT: handle_round_trigger_count,
@@ -814,6 +854,8 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.SIZE: ("collection",), OpCode.FILTER: ("collection", "predicate"),
+    OpCode.EACH: ("collection", "block"), OpCode.FIRST_IN_ORDER: ("collection", "first"),
     OpCode.SKILL_USE_COUNT: ("actor", "skill_id"), OpCode.CLASH_COUNT: ("subject", "outcome", "position"),
     OpCode.DUEL_OFFSET: ("offset",),
     OpCode.ROUND_TRIGGER_COUNT: ("character", "key"),

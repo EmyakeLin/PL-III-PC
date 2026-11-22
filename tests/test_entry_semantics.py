@@ -65,6 +65,31 @@ class RoundCounterTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_legacy_hand_condition_exposes_filter_membership_and_nonempty_check(self):
+        from models.opcode import OpCode as O
+        regular = SimpleNamespace(out_of_combat=False)
+        extra = SimpleNamespace(out_of_combat=True)
+        for skills, hand, expected in (([], [], False), ([extra], [extra], False),
+                                       ([regular, extra], [], False), ([regular, extra], [regular], True)):
+            vm = TracedContext()
+            player = SimpleNamespace(cardspace=SimpleNamespace(hand=SimpleNamespace(content=hand)))
+            actor = SimpleNamespace(is_alive=True, player=player, skills=skills)
+            entry = Entry.from_spec(actor, {"trigger": "example", "operation": []})
+            run_program(vm, entry, ["$own_skills_in_hand", "POP"])
+            before = [op for op, timing, _ in vm.trace if timing == "BEFORE"]
+            self.assertEqual(before, [O.FILTER] + [O.NOT] * len(skills)
+                             + [O.DUP, O.ALL_IN, O.SWAP, O.SIZE, O.GT, O.AND, O.POP])
+            self.assertIs(vm.trace[-2][2][-1], expected)
+
+    def test_filter_restores_the_enclosing_stack_and_event_on_a_bad_predicate(self):
+        vm = Context()
+        vm.push("outer")
+        for invalid in ([], [1, 2]):
+            with self.assertRaisesRegex(ValueError, "一个结果"):
+                vm.eval_block([[1], invalid, OpCode.FILTER])
+            self.assertEqual(vm.stack, ["outer"])
+            self.assertEqual(vm.event, {})
+
     def test_operand_types_and_extension(self):
         vocabulary = CommandSet()
 
