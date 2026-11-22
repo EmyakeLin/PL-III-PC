@@ -69,6 +69,8 @@ def validate_skill_traits(data):
     for key in ("pre_reveal", "interceptable", "anytime_replace", "before_duel_attack"):
         if key in data and type(data[key]) is not bool:
             raise ValueError(f"{key} 必须是布尔值")
+    if data.get("pre_reveal_bind", "slot") not in ("slot", "declared_card"):
+        raise ValueError("pre_reveal_bind 须为 slot 或 declared_card")
     modes = data.get("anytime_play", [])
     if (not isinstance(modes, list) or any(mode not in ("attack", "place", "custom") for mode in modes)
             or len(modes) != len(set(modes))):
@@ -114,6 +116,8 @@ def describe_skill_traits(data):
         traits.append("可在交锋开始前打出")
     if data.get("pre_reveal_target") == "occupied_enemy_slot":
         traits.append("开牌前仅可指定已有敌方置牌的交锋")
+    if data.get("pre_reveal_bind") == "declared_card":
+        traits.append("指定交锋时锁定其中下一张敌方技能；放行后该牌不可牵制则本场跳过")
     if extra := data.get("resource_cost"):
         traits.append(f"使用时须支付{extra['amount']}{extra['status']}")
     if requirements := data.get("requires_status"):

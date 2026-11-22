@@ -43,6 +43,7 @@ def _printed_skill(data, *, include_forms=False):
         "pre_reveal_requires_status": dict(data.get("pre_reveal_requires_status", {})),
         "before_duel_attack": data.get("before_duel_attack", False),
         "pre_reveal_target": data.get("pre_reveal_target"),
+        "pre_reveal_bind": data.get("pre_reveal_bind", "slot"),
         "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
         "requires_status": dict(data.get("requires_status", {})),
         "forms": [_printed_skill({**data, **form}) for form in data.get("forms", {}).values()] if include_forms else [],

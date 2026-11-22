@@ -46,9 +46,7 @@ class PreRevealDuel(DuelSlot):
             slot = self.game.duelspace.space[index]
             # An immediate attack can point at a regular slot already running.
             # Only unstarted skills can be pulled into a second battlefield.
-            remaining = slot.get_content(defender.side)[slot.current_card_index.get(defender.side, 0):]
-            candidates = [c for c in remaining if c.character.is_alive and not c.destroyed
-                          and c.state != CardState.NEGATED]
+            candidates = list(slot.playable_cards(defender.side))
             card = next((c for c in candidates if not self.game.pipeline.in_use(slot, c)), None)
             if self.required_card is not None:
                 if self.required_card not in candidates or self.game.pipeline.in_use(slot, self.required_card):
@@ -121,12 +119,12 @@ class PreRevealPhase:
 
     def attack_targets(self, card):
         enemy = self.opponent(card.player)
-        if card.data.get("pre_reveal_target") == "occupied_enemy_slot":
-            return [(None, i) for i, slot in enumerate(self.game.duelspace.space)
-                    if any(c.character.is_alive and not c.destroyed and c.state != CardState.NEGATED
-                           for c in slot.get_content(enemy.side))]
-        return ([(c, None) for c in enemy.characters if c.is_alive]
-                + [(None, i) for i in range(len(self.game.duelspace.space))])
+        occupied_only = card.data.get("pre_reveal_target") == "occupied_enemy_slot"
+        bind_card = card.data.get("pre_reveal_bind") == "declared_card"
+        characters = [] if occupied_only else [(c, None) for c in enemy.characters if c.is_alive]
+        slots = [(None, i) for i, slot in enumerate(self.game.duelspace.space)
+                 if not (occupied_only or bind_card) or next(slot.playable_cards(enemy.side), None) is not None]
+        return characters + slots
 
     def intercept_cards(self, player):
         if self.game.is_over or not self.pending_for(player):
@@ -191,8 +189,8 @@ class PreRevealPhase:
         if (character, duel_index) not in self.attack_targets(card):
             raise ValueError("此牌只能指定对方已置牌的常规交锋。")
         slot = PreRevealDuel(self.game, card, character, duel_index, pre_reveal=True)
-        if card.data.get("pre_reveal_target") == "occupied_enemy_slot":
-            slot.required_card = self.game.duelspace.space[duel_index].next_playable_card(enemy.side)
+        if duel_index is not None and card.data.get("pre_reveal_bind") == "declared_card":
+            slot.required_card = next(self.game.duelspace.space[duel_index].playable_cards(enemy.side))
         self.space.append_new_duel(slot)
         self.game.context.record("attack_declared", series="pre_reveal", number=len(self.space.space),
                                  player=card.player.name, card=card.name, target=getattr(character, "name", None),

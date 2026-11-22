@@ -68,6 +68,12 @@ class DuelSlot:
     def has_next_card(self, side):
         return self.get_current_card(side) is not None
 
+    def playable_cards(self, side):
+        """Inspect the remaining live cards without advancing this side's cursor."""
+        for card in self.get_content(side)[self.current_card_index.get(side, 0):]:
+            if card.character.is_alive and not card.destroyed and card.state != CardState.NEGATED:
+                yield card
+
     def next_playable_card(self, side):
         while (card := self.get_current_card(side)) is not None:
             if card.character.is_alive and not card.destroyed and card.state != CardState.NEGATED:

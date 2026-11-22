@@ -1248,5 +1248,51 @@ class StatusAliasTests(unittest.TestCase):
             self.assertFalse(hasattr(Character, "bleed_burst"))
 
 
+class PreRevealBindingTests(unittest.TestCase):
+    def test_slot_selection_and_card_binding_are_independent_at_resolution(self):
+        from models.duel import DuelSlot
+        from models.pre_reveal import PreRevealPhase
+        for occupied in (False, True):
+            for bind in ("slot", "declared_card"):
+                for response in ("replace", "pulled", "intercept"):
+                    with self.subTest(occupied=occupied, bind=bind, response=response):
+                        left, right = Player(2, "甲"), Player(5, "乙")
+                        actors = [SimpleNamespace(is_alive=True, player=p) for p in (left, right)]
+                        left.characters, right.characters = [actors[0]], [actors[1]]
+                        regular = DuelSlot()
+                        game = SimpleNamespace(players=[left, right], duelspace=SimpleNamespace(space=[regular, DuelSlot()]),
+                                               context=Context(), pipeline=SimpleNamespace(in_use=lambda *_: False))
+                        phase = PreRevealPhase(game)
+                        spec = {"id": "a", "name": "a", "cost": 1, "pre_reveal_bind": bind}
+                        if occupied:
+                            spec["pre_reveal_target"] = "occupied_enemy_slot"
+                        attack = Card(left, spec, actors[0])
+                        original, replacement = [Card(right, {"id": n, "name": n, "cost": 1}, actors[1])
+                                                 for n in ("A", "B")]
+                        regular.add_content(right.side, original)
+                        targets = phase.attack_targets(attack)
+                        self.assertIn((None, 0), targets)
+                        self.assertEqual((None, 1) in targets, not occupied and bind == "slot")
+                        self.assertEqual((actors[1], None) in targets, not occupied)
+                        phase.attack_cards = lambda _: [attack]
+                        phase._refresh = lambda **_: None
+                        left.cardspace.hand.content.append(attack)
+                        duel = phase.declare_attack(attack, duel_index=0)
+                        self.assertIs(duel.required_card, original if bind == "declared_card" else None)
+                        regular.remove_card(original)
+                        if response == "replace":
+                            regular.add_content(right.side, replacement)
+                        elif response == "pulled":
+                            phase.pulled_owners[(0, right.side)] = actors[1]
+                        else:
+                            duel.intercept_card = replacement
+                            duel.add_content(right.side, replacement)
+                        duel.ready = True
+                        succeeds = bind == "slot" or response == "intercept"
+                        self.assertEqual(duel.prepare(phase), succeeds)
+                        self.assertIs(duel.pulled_card, replacement if response == "replace" and succeeds else None)
+                        self.assertIs(duel.resolved_target, actors[1] if succeeds else None)
+
+
 if __name__ == "__main__":
     unittest.main()
