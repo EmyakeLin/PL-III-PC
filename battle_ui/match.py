@@ -168,13 +168,7 @@ class BattleMatch:
         players = [Player(1, "玩家一"), Player(2, "玩家二")]
         self.game = Game(players, rng=random.Random(seed))
         self.presentation = TableBridge(self.game.context)
-        for team, player in zip(teams, players):
-            for key in team:
-                character = Character(pool[key], player)
-                player.characters.append(character)
-                character.init_cards()
-                character.setup_deck()
-            player.cardspace.draw.shuffle(self.game.rng)
+        self.game.deploy_rosters([[pool[key] for key in team] for team in teams])
         self._views = {side: Displayer(self.game, viewer_side=side) for side in (None, 1, 2)}
         self._history = deque(maxlen=100)
         self._require_handoff = initial_handoff

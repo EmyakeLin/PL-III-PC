@@ -409,12 +409,6 @@ class Card:
         suffix = f" · {self.cost} 费" if cost else ""
         return f"{prefix}{self.name}{suffix}"
 
-    def print(self, owner=None):
-        if self.state is CardState.PLACED_FACE_DOWN and owner is not self.player:
-            print("已扣置")
-        else:
-            print(f"{self.character.name} · {self.name} · {self.cost} 费")
-
     def describe(self):
         from models.dice import describe_die
         actions = " → ".join(describe_die(die) for die in self.dice)

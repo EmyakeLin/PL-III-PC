@@ -892,5 +892,62 @@ class ConditionExecutorTests(unittest.TestCase):
             self.assertEqual(rng.randint.call_count, 2)
 
 
+class ExecutionBoundaryTests(unittest.TestCase):
+    def test_cancelling_the_invocation_restores_the_stack_and_skips_its_next_instruction(self):
+        vm = TracedContext()
+        player = Player(1, "甲")
+        entry = Entry.from_spec(None, {"trigger": "tick", "operation": {"op": "program", "code": [
+            "$event.who", 2, "DRAW", "$event.who", 3, "DRAW"]}})
+        def cancel_caller(ctx):
+            ctx.event["execution"].cancelled = True
+        vm.register_entries(None, [{"trigger": "BEFORE DRAW", "operation": cancel_caller}])
+        vm.push("enclosing")
+        with vm.binding(who=player):
+            vm._invoke(entry)
+        draws = [(timing, stack[-1]) for opcode, timing, stack in vm.trace if opcode == OpCode.DRAW]
+        self.assertEqual(draws, [("BEFORE", 2)])
+        self.assertEqual(vm.stack, ["enclosing"])
+        self.assertEqual((vm.executions, vm.op_stack, vm.event), ([], [], {}))
+
+    def test_each_executable_opcode_declares_its_stack_contract(self):
+        from models.opcodes import DISPATCH_TABLE, OPERANDS
+        # ENTRY is the listener-dispatch frame surrounding a rule invocation.
+        self.assertEqual(set(DISPATCH_TABLE), set(OpCode) - {OpCode.ENTRY})
+        self.assertEqual(set(DISPATCH_TABLE), set(OPERANDS))
+        for opcode, names in OPERANDS.items():
+            self.assertEqual(len(names), len(set(names)), opcode)
+            self.assertTrue(all(isinstance(name, str) and name.isidentifier() for name in names))
+
+    def test_kernel_modules_have_no_console_calls_or_presentation_dependencies(self):
+        import ast
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        sources = [
+            "game.py", "loader.py", "gamerule.py", "context/context.py",
+            "entry/commands.py", "entry/compiler.py", "entry/entry.py", "entry/effects.py", "entry/program.py",
+            "entry/field_aliases.py", "entry/predicates.py", "entry/references.py", "entry/stack_words.py",
+            "entry/legacy_operations.py", "entry/arithmetic_operations.py",
+            "models/card.py", "models/character.py", "models/conditions.py", "models/damage.py", "models/dice.py",
+            "models/duel.py", "models/identities.py", "models/opcode.py", "models/opcodes.py", "models/pre_reveal.py",
+            "models/roster.py", "models/special_actions.py", "models/turn_history.py", "models/values.py",
+            "player/card_space.py", "player/draw_choice.py", "player/player.py", "player/target_order.py",
+            "pipeline/pipeline.py", "pipeline/pipeline_base.py", "pipeline/pipeline_steps.py", "pipeline/combat_steps.py",
+        ]
+        presentation = {"main", "terminal_bridge", "terminal_events", "pre_reveal_cli", "special_actions_cli",
+                        "displayer", "battle_ui", "battle_mcp"}
+        for source in sources:
+            tree = ast.parse((root / source).read_text(encoding="utf-8-sig"), filename=source)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imports = [alias.name for alias in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    imports = [node.module or ""]
+                else:
+                    imports = []
+                self.assertFalse(any(name.split(".")[0] in presentation for name in imports), (source, imports))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                    self.assertNotIn(node.func.id, ("print", "input"), (source, node.lineno))
+
+
 if __name__ == "__main__":
     unittest.main()
