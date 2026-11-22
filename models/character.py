@@ -413,7 +413,7 @@ class Character:
     def on_attack_hit(self, die, target):
         die.critical = self._roll_status_check("critical")
         if die.critical and self.game:
-            print(f"{self.name} 触发暴击。")
+            self.game.context.record("critical", actor=self.name)
             self.game.context.dispatch_pipeline("on_critical", source=self, target=target,
                                                 side=self.player.side, card=die.card, die=die)
         return die.critical

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from weakref import WeakSet
 
 from models.card import Card, CardState
-from models.dice import TYPE_NAMES
 from models.duel import ClashPair, DuelSpace
 from models.opcode import OpCode
 from models.pack_types import PackType
@@ -495,10 +494,10 @@ class Pipeline:
         pre_reveal = space is self.game.pre_reveal.space or self._frame.interrupt
         while (slot := self._get_current_duel()) is not None:
             if pre_reveal:
-                label = "即时交锋" if self._frame.interrupt else "开牌前交锋"
-                print(f"\n结算{label} {self.game.duel_position()[1] + 1}")
+                self.game.context.record("duel_started", series="instant" if self._frame.interrupt else "pre_reveal",
+                                         number=self.game.duel_position()[1] + 1)
                 if not slot.prepare(self.game.pre_reveal):
-                    print("进攻牌或目标已离场，本场交锋跳过。")
+                    self.game.context.record("duel_skipped")
                     self.release_temporary_skills(slot)
                     self._closed_slots.add(slot)
                     space.current_duel_index += 1
@@ -508,7 +507,7 @@ class Pipeline:
             pipes = [p for p in self.side_pipelines.values() if slot.next_playable_card(p.side)]
             if pipes:
                 if not pre_reveal:
-                    print(f"\n交锋 {space.current_duel_index + 1}")
+                    self.game.context.record("duel_started", series="regular", number=space.current_duel_index + 1)
                 self._frame.started = False
                 yield from self._play_slot(slot, pipes)
                 self.game.context.expire_lasting_entries(slot)
@@ -639,7 +638,7 @@ class Pipeline:
         card.set_range_opponent(opponent, own_range=signature[1], opposing_range=signature[2],
                                 ignore_range=signature[3])
         if card.range_deficit:
-            print(f"「{opponent.name}」对「{card.name}」有 {card.range_deficit} 级远程优势。")
+            self.game.context.record("range_advantage", card=opponent.name, opposing=card.name, amount=card.range_deficit)
 
     def _card_live(self, pipe):
         return (pipe.card is not None and not pipe.withdrawn and pipe.card.character.is_alive
@@ -671,7 +670,7 @@ class Pipeline:
                 paid = self._pay_die_against(p.die, other, skipping=skipping)
             if not paid:
                 if self._die_live(p):
-                    print(f"「{p.card.name}」第{p.die.position}骰未能支付用骰费用，略过此骰。")
+                    self.game.context.record("die_unpaid", card=p.card.name, position=p.die.position)
                     p.card.skip_unpaid_die()
                 return False
         # A later payment may destroy an earlier paid die. Nothing has paired yet.
@@ -715,7 +714,7 @@ class Pipeline:
             if pipe.range_pairing:
                 self._refresh_skill_range(pipe, pipe.range_pairing[0])
         if any(p.die.type == "skip" for p in ready):
-            print("SKIP：跳过本轮。")
+            self.game.context.record("round_skipped", reason="printed")
             for pipe in ready:
                 pipe.die.clash_result = "skip"
                 pipe.push_pack(steps.SKIPPED_DICE)
@@ -782,7 +781,7 @@ class Pipeline:
                 pipe.push_pack(steps.SKIPPED_DICE)
                 stops[pipe.side] = steps.NEXT_DIE
         if not active:
-            print("本轮跳过拼点。")
+            self.game.context.record("round_skipped", reason="passive")
         yield from self._run_to(ready, stops)
         if can_pair:
             yield from self._clash(active)
@@ -850,7 +849,7 @@ class Pipeline:
                                              ignore_range=pipe.die.effective_ignore_range)
                 if pipe.card.range_deficit >= 3:
                     pipe.die.make_blank()
-            print(f"{target.combat_name} 以「{reply.card.name}」第{reserve.position}骰迎击。")
+            self.game.context.record("reserved_intercept", target=target.combat_name, card=reply.card.name, position=reserve.position)
             starters = participants if start_attacker else [reply]
             for p in starters:
                 p.push_pack(steps.DICE)
@@ -913,14 +912,14 @@ class Pipeline:
                                                         prospective_result=results[p.side],
                                                         clash_difference=difference)
                 if pair.skipped:
-                    print("跳过本轮：双方均不判胜负。")
+                    self.game.context.record("round_skipped", reason="effect")
                     for p in live:
                         p.die.clash_result = "skip"
                         p.push_pack(steps.PASSIVE_SKIP)
                     yield from self._run_to(live, "on_clash_skip")
                     results = None
                 elif pair.split:
-                    print("双方改为单方面攻击，按拼点点数依次命中。")
+                    self.game.context.record("clash_split")
                     # The pipes are already in initiative order, which breaks score ties.
                     for p in sorted(live, key=lambda p: p.die.clash_score, reverse=True):
                         if self._die_live(p):
@@ -936,25 +935,22 @@ class Pipeline:
             # A formed pair lost its die before a result. The vanished side has
             # no result at all, including skip. Only the survivor enters a branch.
             results = {live[0].side: "win"}
-            print(f"空白轮：对位骰消失，{live[0].card.character.combat_name} 拼点胜利。")
+            self.game.context.record("unopposed_clash_win", actor=live[0].card.character.combat_name)
         if results and live:
             yield from self._resolve_results(live, results)
         yield from self._run_to(participants, "after_dice_clash")
 
     def _resolve_results(self, live, results):
         self._frame.results = results
-        labels = {"win": "胜", "lose": "负", "draw": "平"}
         winner = next((p for p in live if results[p.side] == "win"), None)
         if winner and winner.card.range_deficit >= 2:
             winner.die.win_branch_skipped = True
-            labels["win"] = "胜，跳过胜利分支"
             if len(live) == 1:
-                print(f"{winner.card.character.combat_name} 受远程压制，跳过拼赢分支。")
+                self.game.context.record("clash_win_suppressed", actor=winner.card.character.combat_name)
         if len(live) == 2:
-            print("拼点 " + " · ".join(
-                f"{p.card.character.combat_name} {TYPE_NAMES[p.die.type]} 最终 {p.die.final_score} → "
-                f"拼点 {p.die.clash_score}（{labels[results[p.side]]}）"
-                for p in live))
+            self.game.context.record("clash_scored", sides=tuple(
+                (p.card.character.combat_name, p.die.type, p.die.final_score, p.die.clash_score,
+                 results[p.side], p.die.win_branch_skipped) for p in live))
         stops = {}
         result_pipes = []
         for p in live:
@@ -988,7 +984,7 @@ class Pipeline:
         if target is None or not target.is_alive:
             return
         if not self.current_clash_pair:
-            print(f"单方面攻击：{pipe.card.character.combat_name} → {target.combat_name}")
+            self.game.context.record("solo_attack", actor=pipe.card.character.combat_name, target=target.combat_name)
         die = pipe.die
         die.hit_target = target
         if automatic:
@@ -1098,9 +1094,10 @@ class Pipeline:
             pipe.paid = pipe.payment["paid"]
             if pipe.paid:
                 self.game.used_cards.append(pipe.card)
-                print(f"{pipe.card.character.combat_name} 使用「{pipe.card.name}」（牌面 {pipe.card.cost} 费）")
+                self.game.context.record("skill_used", actor=pipe.card.character.combat_name, card=pipe.card.name, cost=pipe.card.cost)
             else:
-                print(f"{pipe.card.character.combat_name} 跳过「{pipe.card.name}」，{pipe.payment['failure_reason']}。")
+                self.game.context.record("skill_unpaid", actor=pipe.card.character.combat_name, card=pipe.card.name,
+                                         reason=pipe.payment["failure_reason"])
         elif name == "logic_dice_clash":
             with self.game.context.binding(**event):
                 pipe.die.roll()

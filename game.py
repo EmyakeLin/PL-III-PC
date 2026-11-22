@@ -148,7 +148,7 @@ class Game:
 
     def draw_phase(self):
         self.prepare_turn()
-        print(f"\n第 {self.turn_count + 1} 回合")
+        self.context.record("turn_started", turn=self.turn_count + 1)
         self.cards_revealed = False
         self._drawing_players = iter(self.players)
         self._continue_drawing()
@@ -180,13 +180,13 @@ class Game:
         while True:
             for player in self.players:
                 player.calculate_speed()
-                members = "、".join(f"{char.name} {char.speed:g}" for char in player.characters if char.is_alive)
-                print(f"{player.name} 速度：{members}；阵营速度 {player.speed:g}。")
+                self.context.record("speed_rolled", player=player.name, speed=player.speed,
+                                    members=tuple((c.name, c.speed) for c in player.characters if c.is_alive))
             if left.speed != right.speed:
                 self.first_player = left if left.speed > right.speed else right
-                print(f"{self.first_player.name} 先手。")
+                self.context.record("initiative", player=self.first_player.name)
                 return
-            print("速度相同，双方重掷。")
+            self.context.record("speed_tied")
 
     def switch_place_right(self):
         self.placing = next(
@@ -280,14 +280,14 @@ class Game:
             return
         self.cards_revealed = True
         if not self.duelspace.space:
-            print("双方空过。")
+            self.context.record("empty_board")
             return
         for slot in self.duelspace.space:
             for cards in slot.content.values():
                 for card in cards:
                     if card.state == CardState.PLACED_FACE_DOWN:
                         card.state = CardState.PLACED_FACE_UP
-        print("双方开牌。")
+        self.context.record("cards_revealed")
         for slot in self.duelspace.space:
             for player in sorted(self.players, key=lambda p: p is not self.first_player):
                 for card in tuple(slot.get_content(player.side)):
@@ -295,12 +295,8 @@ class Game:
                         self.context.dispatch_pipeline("on_card_reveal", source=card.character, side=player.side,
                                                        card=card, duel=slot)
         for number, slot in enumerate(self.duelspace.space, 1):
-            sides = []
-            for player in self.players:
-                cards = slot.content.get(player.side, ())
-                names = "、".join(card.name for card in cards) or "空"
-                sides.append(f"{player.name}：{names}")
-            print(f"交锋 {number}　" + "　对　".join(sides))
+            sides = tuple((p.name, tuple(card.name for card in slot.get_content(p.side))) for p in self.players)
+            self.context.record("slot_revealed", number=number, sides=sides)
 
     def resolve_status_batches(self):
         """Freeze all eligible holders before any end-of-turn batch listener runs."""
@@ -320,7 +316,7 @@ class Game:
         for name, batch, targets in batches:
             if self.is_over:
                 break
-            print(f"{batch.get('label', name)}触发，目标为{'、'.join(c.combat_name for c in targets)}。")
+            self.context.record("status_batch", effect=batch.get("label", name), targets=tuple(c.combat_name for c in targets))
             self.context.dispatch_pipeline(batch["event"], source=None, target=None, card=None, die=None,
                                            side=None, targets=targets, status=name)
             for char in targets:
@@ -375,7 +371,7 @@ class Game:
         self.ended_player.clear()
         self.cards_revealed = False
         self.turn_count += 1
-        print(f"第 {self.turn_count} 回合结束。")
+        self.context.record("turn_ended", turn=self.turn_count)
         self.check_game_over()
 
     def init_dice(self, data):

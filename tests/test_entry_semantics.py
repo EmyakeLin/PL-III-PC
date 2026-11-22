@@ -196,6 +196,18 @@ class PlacementExecutorTests(unittest.TestCase):
 
 
 class BattleFactTests(unittest.TestCase):
+    def test_observers_receive_completed_facts_in_order_and_can_detach(self):
+        vm = Context()
+        vm.record("outside", sample=0)
+        with vm.collect_facts() as outer:
+            vm.record("first", sample=-1)
+            with vm.collect_facts() as inner:
+                vm.record("second", sample=9)
+            vm.record("third", sample=0)
+        vm.record("outside", sample=1)
+        self.assertEqual([kind for kind, _ in outer], ["first", "second", "third"])
+        self.assertEqual(list(inner), [("second", {"sample": 9})])
+
     def test_every_shield_spelling_reaches_one_operation_and_yields_its_actual_total(self):
         from models.character import SHIELD_FIELDS
 

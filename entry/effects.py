@@ -113,7 +113,7 @@ def run_effect(ctx, entry, operation):
         if ctx.game.special.window_open("placement") and card.state == CardState.PLACED_FACE_DOWN:
             card.state = CardState.PLACED_FACE_UP
             ctx.game.special.locked_cards.add(card)
-            print(f"「{card.name}」翻正，本置卡阶段锁定位置。")
+            ctx.record("revealed_and_locked", card=card.name)
         return
     if name == "program":
         from entry.program import run_program

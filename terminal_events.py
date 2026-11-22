@@ -1,9 +1,43 @@
 """Chinese hot-seat presentation of settled battle facts."""
 
 from entry.effects import GRADE_NAMES
+from models.dice import TYPE_NAMES
 
 
 MESSAGES = {
+    "duel_started": "结算{series} {number}",
+    "duel_skipped": "进攻牌或目标已离场，本场交锋跳过。",
+    "range_advantage": "「{card}」对「{opposing}」有 {amount} 级远程优势。",
+    "die_unpaid": "「{card}」第{position}骰未能支付用骰费用，略过此骰。",
+    "round_skipped": "{reason}",
+    "reserved_intercept": "{target} 以「{card}」第{position}骰迎击。",
+    "clash_split": "双方改为单方面攻击，按拼点点数依次命中。",
+    "unopposed_clash_win": "空白轮：对位骰消失，{actor} 拼点胜利。",
+    "clash_win_suppressed": "{actor} 受远程压制，跳过拼赢分支。",
+    "clash_scored": "拼点 {sides}",
+    "solo_attack": "单方面攻击：{actor} → {target}",
+    "skill_used": "{actor} 使用「{card}」（牌面 {cost} 费）",
+    "skill_unpaid": "{actor} 跳过「{card}」，{reason}。",
+    "card_pulled": "常规交锋 {number} 的「{card}」被牵制。",
+    "attack_declared": "{series} {number}：{player} 声明「{card}」→ {target}。",
+    "intercepted": "{player} 用「{card}」迎击{series} {number}。",
+    "passed_intercept": "{player} 放行即时交锋 {number}。",
+    "special_placement": "{player} 特殊置卡至常规交锋 {number}。",
+    "ability_used": "{actor} 使用「{ability}」。",
+    "card_played": "{player} 打出「{card}」，依卡面结算。",
+    "hidden_card_replaced": "{player} 调换了一张扣置技能，原牌{destination}。",
+    "card_replaced": "{actor} 换入「{card}」，「{replaced}」{destination}。",
+    "critical": "{actor} 触发暴击。",
+    "revealed_and_locked": "「{card}」翻正，本置卡阶段锁定位置。",
+    "turn_started": "第 {turn} 回合",
+    "turn_ended": "第 {turn} 回合结束。",
+    "speed_rolled": "{player} 速度：{members}；阵营速度 {speed:g}。",
+    "initiative": "{player} 先手。",
+    "speed_tied": "速度相同，双方重掷。",
+    "empty_board": "双方空过。",
+    "cards_revealed": "双方开牌。",
+    "slot_revealed": "交锋 {number}　{sides}",
+    "status_batch": "{effect}触发，目标为{targets}。",
     "hand_card_taken": "{receiver} 从对方手中抽取了一张技能。",
     "discount_used": "「{card}」本次费用减免 {discount}，实付 {paid} 费。",
     "random_check": "{source} 进行 {low}～{high} 判定，掷出 {roll}。",
@@ -31,7 +65,27 @@ def format_fact(kind, fields):
     values = dict(fields)
     if "source" in values and values["source"] is None:
         values["source"] = "效果"
-    if kind == "direct_damage":
+    if "series" in values:
+        values["series"] = {"regular": "常规交锋", "instant": "即时交锋", "pre_reveal": "开牌前交锋"}[values["series"]]
+    if kind == "attack_declared" and values["target"] is None:
+        values["target"] = f"常规交锋 {values['duel_index'] + 1}"
+    if "dissolved" in values:
+        values["destination"] = "消失" if values["dissolved"] else "回手"
+    if kind == "round_skipped":
+        values["reason"] = {"printed": "SKIP：跳过本轮。", "passive": "本轮跳过拼点。",
+                            "effect": "跳过本轮：双方均不判胜负。"}[values["reason"]]
+    elif kind == "clash_scored":
+        results = {"win": "胜", "lose": "负", "draw": "平"}
+        values["sides"] = " · ".join(
+            f"{name} {TYPE_NAMES[die]} 最终 {final} → 拼点 {score}（{results[result]}{'，跳过胜利分支' if skipped else ''}）"
+            for name, die, final, score, result, skipped in values["sides"])
+    elif kind == "speed_rolled":
+        values["members"] = "、".join(f"{name} {speed:g}" for name, speed in values["members"])
+    elif kind == "slot_revealed":
+        values["sides"] = "　对　".join(name + "：" + ("、".join(cards) or "空") for name, cards in values["sides"])
+    elif kind == "status_batch":
+        values["targets"] = "、".join(values["targets"])
+    elif kind == "direct_damage":
         values["grade"] = GRADE_NAMES[values["grade"]]
     elif kind == "healed" and not values["alive"]:
         return "{target} 实际恢复 {amount} 点生命，回复生命触发即死，阵亡。".format_map(values)

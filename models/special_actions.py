@@ -285,7 +285,7 @@ class SpecialActions:
                 return False
             key = actor, action.ability_id
             self.ability_uses[key] = self.ability_uses.get(key, 0) + 1
-            print(f"{actor.name} 使用「{spec['name']}」。")
+            ctx.record("ability_used", actor=actor.name, ability=spec["name"])
             ctx._invoke(Entry(actor, TriggerType.PIPELINE, "on_player_action", spec["operation"]))
         return True
 
@@ -396,7 +396,7 @@ class SpecialActions:
         if action.kind == "place":
             if not game.place_in_duel(player.side, card, action.duel_index, special=True):
                 return False
-            print(f"{player.name} 特殊置卡至常规交锋 {action.duel_index + 1}。")
+            game.context.record("special_placement", player=player.name, number=action.duel_index + 1)
         elif action.kind == "replace":
             with game.context.binding(source=card.character, side=player.side):
                 return game.context.eval_block([card, action.target_card, OpCode.REPLACE_SKILL])
@@ -408,17 +408,18 @@ class SpecialActions:
             if card is not None:
                 slot.intercept_card = card
                 slot.target_character = slot.target_duel_index = None
-                print(f"{player.name} 用「{card.name}」迎击即时交锋 {action.response_number}。")
+                game.context.record("intercepted", series="instant", number=action.response_number,
+                                    player=player.name, card=card.name)
                 game.pre_reveal.play_declared_skill(slot, card, slot.attack_card.character)
             else:
-                print(f"{player.name} 放行即时交锋 {action.response_number}。")
+                game.context.record("passed_intercept", player=player.name, number=action.response_number)
             self._resolve_ready()
         else:
             # A custom play is a declaration. The pack owns the ensuing use,
             # costs and destination via the normal entry/OpCode machinery.
             if not game.context.eval_block([card, "delayed_discard", OpCode.MOVE_CARD]):
                 return False
-            print(f"{player.name} 打出「{card.name}」，依卡面结算。")
+            game.context.record("card_played", player=player.name, card=card.name)
             if card.character.is_alive and not game.is_over:
                 game.context.dispatch_pipeline("on_anytime_play", side=player.side, source=card.character,
                                                card=card, die=None, play_mode="custom")
@@ -444,8 +445,8 @@ class SpecialActions:
             slot.origin = "before_duel"
         self.duels.append(slot)
         self._declarations.append(slot)
-        label = target.name if target else f"常规交锋 {duel_index + 1}"
-        print(f"即时交锋 {len(self.duels)}：{card.player.name} 以「{card.name}」进攻 {label}。")
+        game.context.record("attack_declared", series="instant", number=len(self.duels), player=card.player.name,
+                            card=card.name, target=getattr(target, "name", None), duel_index=duel_index)
         game.pre_reveal.play_declared_skill(slot, card, target)
         self._resolve_ready(deferred=deferred)
 
@@ -495,11 +496,11 @@ class SpecialActions:
             hand._on_size_changed(len(hand.content) + 1, len(hand.content))
         else:
             old.reset_for_draw()
-        destination = "消失" if old.temporary else "回手"
         if card.state == CardState.PLACED_FACE_DOWN:
-            print(f"{player.name} 调换了一张扣置技能，原牌{destination}。")
+            self.game.context.record("hidden_card_replaced", player=player.name, dissolved=old.temporary)
         else:
-            print(f"{card.character.name} 换入「{card.name}」，「{old.name}」{destination}。")
+            self.game.context.record("card_replaced", actor=card.character.name, card=card.name,
+                                     replaced=old.name, dissolved=old.temporary)
         self.game.context.dispatch_pipeline("on_skill_replaced", source=card.character, side=player.side,
                                             card=card, replaced_card=old, duel=slot)
         return True

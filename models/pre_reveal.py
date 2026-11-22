@@ -61,7 +61,7 @@ class PreRevealDuel(DuelSlot):
                 card.state = CardState.PLACED_FACE_UP
                 self.pulled_card = card
                 phase.pulled_owners[key] = card.character
-                print(f"常规交锋 {index + 1} 的「{card.name}」被牵制。")
+                self.game.context.record("card_pulled", number=index + 1, card=card.name)
             if card is None and candidates:
                 self.resolved_target = candidates[0].character
             else:
@@ -194,8 +194,9 @@ class PreRevealPhase:
         if card.data.get("pre_reveal_target") == "occupied_enemy_slot":
             slot.required_card = self.game.duelspace.space[duel_index].next_playable_card(enemy.side)
         self.space.append_new_duel(slot)
-        label = character.name if character is not None else f"常规交锋 {duel_index + 1}"
-        print(f"开牌前交锋 {len(self.space.space)}：{card.player.name} 声明「{card.name}」→ {label}。")
+        self.game.context.record("attack_declared", series="pre_reveal", number=len(self.space.space),
+                                 player=card.player.name, card=card.name, target=getattr(character, "name", None),
+                                 duel_index=duel_index)
         self.play_declared_skill(slot, card, character)
         self._refresh(offer_interception_to=enemy)
         return slot
@@ -218,7 +219,8 @@ class PreRevealPhase:
         slot.intercept_card = card
         slot.target_character = slot.target_duel_index = None
         slot.ready = True
-        print(f"{player.name} 用「{card.name}」拦截，开牌前交锋 {self.space.space.index(slot) + 1} 转火。")
+        self.game.context.record("intercepted", series="pre_reveal", number=self.space.space.index(slot) + 1,
+                                 player=player.name, card=card.name)
         self.play_declared_skill(slot, card, slot.attack_card.character)
         self._refresh()
 
@@ -248,7 +250,6 @@ class PreRevealPhase:
     def begin_resolution(self):
         if self.phase != "ready" or any(not slot.ready for slot in self.space.space):
             raise ValueError("双方结束开牌前声明后才能结算。")
-        self.game.close_private_view()
         if self.space.space:
             self.phase = "resolving"
             self.game.pipeline.start_duel_combat()
