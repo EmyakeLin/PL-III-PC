@@ -34,8 +34,10 @@ def run_program(ctx, entry, tokens):
             value = event
         elif root == "skill_target":
             value = event.get("target") or ctx.game.pipeline.resolve_skill_target(event.get("card"))
+        elif root in event:
+            value = event[root]
         else:
-            value = event.get(root)
+            raise ValueError(f"当前事件没有词条字段 ${root}")
         return read_path(value, path)
 
     def store_local(vm):

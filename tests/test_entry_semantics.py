@@ -185,6 +185,18 @@ class CommandTests(unittest.TestCase):
                     expected = [side, "middle", "last"][start:] if offset == 1 else []
                     self.assertEqual(vm.pop(), expected)
 
+    def test_optional_fields_and_unknown_names_have_distinct_results(self):
+        vm = TracedContext()
+        entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})
+        with vm.binding(target=object()):
+            for name, expected in (("$target_alive", False), ("$target_lightcore_hp", 0),
+                                   ("$damage_die", None), ("$event.absent", None)):
+                run_program(vm, entry, [name, "POP"])
+                self.assertEqual(vm.trace[-2][2][-1], expected)
+            with self.assertRaisesRegex(ValueError, "不存在的字段"):
+                run_program(vm, entry, ["$不存在的字段", "POP"])
+            self.assertEqual(vm.stack, [])
+
     def test_inline_native_instructions_preserve_every_declared_operand(self):
         from entry.compiler import Field, compile_program
         from models.opcodes import OPERANDS

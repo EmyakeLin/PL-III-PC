@@ -32,11 +32,11 @@ FIELD_ALIASES = {
     "in_turn_end": ["$game.turn_ending"],
     "lightcore_hp": ["$self.lightcore_hp"],
     "max_lightcore_hp": ["$self.max_lightcore_hp"],
-    "target_lightcore_hp": ["$event.target.lightcore_hp", 0, "COALESCE"],
-    "target_max_lightcore_hp": ["$event.target.max_lightcore_hp", 0, "COALESCE"],
+    "target_lightcore_hp": ["$event.target", {"field": "lightcore_hp", "default": 0}],
+    "target_max_lightcore_hp": ["$event.target", {"field": "max_lightcore_hp", "default": 0}],
     "speed_lead": ["$self.speed", "$opponent_player.speed", "SUB"],
-    "target_player": ["$event.target.player"],
-    "target_alive": ["$event.target.is_alive", False, "COALESCE"],
+    "target_player": ["$event.target", {"field": "player", "default": None}],
+    "target_alive": ["$event.target", {"field": "is_alive", "default": False}],
     "allies": ["$player.characters", ["$item.is_alive"], "FILTER"],
     "enemies": ["$opponent_player.characters", ["$item.is_alive"], "FILTER",
                 "$primary_target", "FIRST_IN_ORDER"],
@@ -46,7 +46,7 @@ FIELD_ALIASES = {
     "is_repeat": ["$event.die.is_repeat"],
     "has_damage_part": ["$event.die.has_damage_part"],
     "did_deal_damage": ["$event.die.did_deal_damage"],
-    "damage_die_is_attack": ["$event.damage_die.is_attack", False, "COALESCE"],
+    "damage_die_is_attack": ["$event.damage_die", {"field": "is_attack", "default": False}],
     "clash_result": ["$event.die.clash_result"],
     "printed_level": ["$event.die.printed_level.value"],
     "clash_score": ["$event.die.clash_score"],
@@ -63,7 +63,18 @@ FIELD_ALIASES = {
     "won_clash": ["$self", "win", None, "CLASH_COUNT", 0, "GT"],
     "previous_loss": ["$player", "lose", -1, "DUEL_OFFSET", "CLASH_COUNT", 0, "GT"],
     "full_hp": ["$self.hp", "$self.max_hp", "GE"],
-    "self_damage": ["$self", "$event.target", "EQ"],
+    "self_damage": ["$self", "$event.target", "IS"],
     "repeat_count": ["$event.card.instantiated_dice", {"literal": []}, "COALESCE",
                      ["$item.repeat_requested", False, "COALESCE"], "FILTER", "SIZE"],
 }
+
+# These optional fields existed before dotted event references. Their absence is a valid observation.
+for name in (
+    "chosen_card", "chosen_slot", "choice_subject", "choice_discount", "activation_kind", "activation_multiplier",
+    "activation_owner", "activation_origin", "activation_die", "activation_die_type", "damage_card", "damage_status",
+    "hit_index", "hit_mode", "targets", "status", "ability", "status_overflow", "previous_stacks", "current_stacks",
+    "actual_delta", "opponent_card", "opponent_die", "combat_window", "clash_difference", "prospective_result",
+    "amount", "result", "damage_amount", "damage_dealt", "damage_received", "damage_die", "base_amount", "hp_lost",
+    "lightcore_lost", "lightcore_collapsed", "card", "die", "duel", "target", "play_mode", "replaced_card",
+):
+    FIELD_ALIASES[name] = ["$event." + name]

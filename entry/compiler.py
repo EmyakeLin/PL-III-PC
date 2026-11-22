@@ -27,10 +27,14 @@ class Field:
 @dataclass(frozen=True)
 class Access:
     path: tuple
+    optional: bool = False
+    default: object = None
 
     def execute(self, vm):
         from entry.references import read_path
-        vm.push(read_path(vm.pop(), self.path))
+        entity = vm.pop()
+        value = read_path(entity, self.path, missing=self.default) if self.optional else read_path(entity, self.path)
+        vm.push(self.default if value is None and self.optional else value)
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,7 @@ def compile_program(tokens, *, expand=expand_command):
                         raise ValueError("调用参数不能覆盖执行栈或词条话语权")
                     yield Invocation(opcode, tuple(options.items()), result, token.get("default"))
                 elif "field" in token:
-                    yield Access(tuple(token["field"].split(".")))
+                    yield Access(tuple(token["field"].split(".")), "default" in token, token.get("default"))
                 elif "local" in token:
                     yield Local(token["local"])
                 else:

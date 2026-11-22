@@ -217,6 +217,13 @@ def handle_slot_cards(ctx):
     ctx.push(cards)
 
 
+def handle_opponent(ctx):
+    player = ctx.pop()
+    if player not in ctx.game.players:
+        raise ValueError("查询对手需要对局中的一个席位")
+    ctx.push(next(other for other in ctx.game.players if other is not player))
+
+
 def handle_slot_offset(ctx):
     offset, space = ctx.pop(), ctx.pop()
     index = space.current_duel_index + offset
@@ -251,7 +258,7 @@ def handle_each(ctx):
 
 def handle_first_in_order(ctx):
     first, items = ctx.pop(), ctx.pop()
-    ctx.push(sorted(items, key=lambda item: item != first))
+    ctx.push(sorted(items, key=lambda item: item is not first))
 
 
 def handle_skill_use_count(ctx):
@@ -881,7 +888,7 @@ DISPATCH_TABLE = {
     OpCode.FILTER: handle_map_or_filter, OpCode.MAP: handle_map_or_filter,
     OpCode.FLATTEN: lambda ctx: ctx.push([item for group in ctx.pop() for item in group]),
     OpCode.FIRST: lambda ctx: ctx.push(next(iter(ctx.pop()), None)), OpCode.LOOKUP: handle_lookup,
-    OpCode.OPPONENT: lambda ctx: ctx.push(ctx.game.pre_reveal.opponent(ctx.pop())),
+    OpCode.OPPONENT: handle_opponent,
     OpCode.BOARD_SLOTS: lambda ctx: ctx.push(tuple(ctx.game.board_slots())),
     OpCode.SLOT_CARDS: handle_slot_cards, OpCode.REMAINING_CARDS: handle_slot_cards,
     OpCode.SLOT_AT_OFFSET: handle_slot_offset, OpCode.SKILL_RESTRICTED: handle_skill_restricted,
