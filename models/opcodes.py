@@ -3,6 +3,7 @@ import random
 
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.effects import GRADE_RANK
+from entry.play_conditions import record_hand_play
 from models.card import Card, CardState
 from models.duel import DuelSlot
 from models.opcode import OpCode
@@ -538,6 +539,8 @@ def handle_place(ctx):
     if (space is game.duelspace and card.character
             and not any(c.character is card.character for c in side_cards if isinstance(c, Card))):
         card.character.used_duels += 1
+    if card in zones.hand.content:
+        record_hand_play(card)
     slot.add_content(side, card)
     face_up = game.cards_revealed or space is not game.duelspace
     card.state = CardState.PLACED_FACE_UP if face_up else CardState.PLACED_FACE_DOWN
@@ -604,6 +607,8 @@ def handle_move_card(ctx):
             return True
     for pile in (zones.hand, zones.draw, zones.delayed_discard, zones.out_of_combat):
         if card in pile.content:
+            if pile is zones.hand and ctx.event["play_from_hand"]:
+                record_hand_play(card)
             pile.move_card_to(card, destination)
             return True
     return False

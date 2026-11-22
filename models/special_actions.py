@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from entry.entry import Entry, TriggerType, character_of
 from entry.effects import run_effect
 from entry.legacy_operations import compile_ability_requirements
+from entry.play_conditions import record_hand_play
 from models.card import Card, CardState
 from models.character import Character
 from models.opcode import OpCode
@@ -426,7 +427,8 @@ class SpecialActions:
         else:
             # A custom play is a declaration. The pack owns the ensuing use,
             # costs and destination via the normal entry/OpCode machinery.
-            if not game.context.eval_block([card, "delayed_discard", OpCode.MOVE_CARD]):
+            game.context.stack.extend((card, "delayed_discard"))
+            if not game.context.execute_op(OpCode.MOVE_CARD, play_from_hand=True):
                 return False
             game.context.record("card_played", player=player.name, card=card.name)
             if card.character.is_alive and not game.is_over:
@@ -486,10 +488,10 @@ class SpecialActions:
                     or old not in slot.get_content(player.side) or self.is_locked(old)
                     or not self.game.pipeline.before_use(slot, old)):
                 return False
+        record_hand_play(card)
         self.game.pipeline.withdraw_skill(slot, old)
         cards = slot.get_content(player.side)
         cards[cards.index(old)] = card
-        hand.remember_play_rank(card)
         if old.temporary:
             hand.content.remove(card)
         else:

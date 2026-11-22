@@ -164,7 +164,7 @@ class Card:
         self.id = data["id"]
         self.name = data["name"]
         self.cost = data["cost"]
-        self.hand_cost_rank = None
+        self.play_observations = {}
         self.range_level = data.get("range_level", 0)
         self.ignore_range = data.get("ignore_range", 0)
         self.range_opponent = None
@@ -401,7 +401,7 @@ class Card:
         self.instantiated_dice = None
 
     def reset_for_draw(self):
-        self.hand_cost_rank = None
+        self.play_observations = {}
         self.set_form(self._form if "form_when" in self.printed_data else None)
         self.final_bonus = self.level_bonus = 0
         self.range_opponent = None

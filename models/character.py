@@ -274,16 +274,8 @@ class Character:
         return 0 if self.status_rules.get(name, {}).get("permanent") else self._ordinary_status(name)
 
     def skill_restricted(self, card):
-        """A hand play keeps its cost rank for its pending use, including face-down placement."""
-        if not card.meets_use_requirements():
-            return True
-        limit = max((self.statuses.get(name, 0) for name, rule in self.status_rules.items()
-                     if rule.get("restrict_highest_hand_cost")), default=0)
-        if not limit:
-            return False
-        hand = self.player.cardspace.hand
-        rank = hand.cost_rank(card) if card in hand.content else card.hand_cost_rank
-        return rank is not None and rank <= limit
+        from entry.play_conditions import denies_skill_use
+        return not card.meets_use_requirements() or denies_skill_use(self, card)
 
     def apply_status_delta(self, name, amount, *, notify=True, defer_effects=False):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""

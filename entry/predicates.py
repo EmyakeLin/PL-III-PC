@@ -26,6 +26,25 @@ class Reference:
 
 
 @dataclass(frozen=True)
+class Rank:
+    subject: Reference
+    collection: Reference
+    key: Reference
+    conditions: tuple
+    descending: bool
+
+    def read(self, owner, event):
+        subject = self.subject.read(owner, event)
+        candidates = []
+        for item in self.collection.read(owner, event):
+            item_event = dict(event, item=item)
+            if all(condition.evaluate(owner, item_event) for condition in self.conditions):
+                candidates.append((self.key.read(owner, item_event), item))
+        candidates.sort(key=lambda pair: pair[0], reverse=self.descending)
+        return next((index for index, (_, item) in enumerate(candidates, 1) if item == subject), None)
+
+
+@dataclass(frozen=True)
 class Operand:
     offset: int
 
@@ -44,7 +63,7 @@ class Comparison:
 
     def evaluate(self, owner, event, peek=None):
         def read(value):
-            if isinstance(value, Reference):
+            if isinstance(value, (Reference, Rank)):
                 return value.read(owner, event)
             return peek(value.offset) if isinstance(value, Operand) else value
         left, right = read(self.left), read(self.right)
@@ -56,31 +75,38 @@ class Comparison:
             return False
 
 
+def compile_value(value, operands=()):
+    options = value if isinstance(value, dict) else {}
+    if "rank_of" in options:
+        descending = options.get("descending", False)
+        fields = [compile_value(options[key]) for key in ("rank_of", "in", "by")]
+        if type(descending) is not bool or not all(isinstance(ref, Reference) for ref in fields):
+            raise ValueError("排名需要对象、集合、排序字段和布尔方向")
+        return Rank(*fields, compile_when(options.get("where", []), None, None), descending)
+    if "literal" in options:
+        return options["literal"]
+    field = options.get("field", value)
+    if not isinstance(field, str) or not field.startswith("$"):
+        return value
+    root, *parts = field[1:].split(".")
+    if root == "pending" and len(parts) == 1 and parts[0] in operands:
+        return Operand(len(operands) - operands.index(parts[0]) - 1)
+    if root not in ("self", "event") or any(not key.isidentifier() or key.startswith("_") for key in parts):
+        raise ValueError(f"无效的条件字段 {field!r}")
+    return Reference((root, *parts), options.get("key"), options.get("default"), options.get("size", False))
+
+
 def compile_when(when, trigger, timing):
     from models.opcodes import OPERANDS
 
     operands = OPERANDS.get(trigger, ()) if timing == "BEFORE" else ()
-
-    def reference(value):
-        options = value if isinstance(value, dict) else {}
-        if "literal" in options:
-            return options["literal"]
-        field = options.get("field", value)
-        if not isinstance(field, str) or not field.startswith("$"):
-            return value
-        root, *parts = field[1:].split(".")
-        if root == "pending" and len(parts) == 1 and parts[0] in operands:
-            return Operand(len(operands) - operands.index(parts[0]) - 1)
-        if root not in ("self", "event") or any(not key.isidentifier() or key.startswith("_") for key in parts):
-            raise ValueError(f"无效的条件字段 {field!r}")
-        return Reference((root, *parts), options.get("key"), options.get("default"), options.get("size", False))
 
     if isinstance(when, list):
         result = []
         for clause in when:
             if not isinstance(clause, dict) or not {"left", "op", "right"} <= clause.keys() or clause["op"] not in COMPARISONS:
                 raise ValueError(f"无效的词条条件 {clause!r}")
-            result.append(Comparison(reference(clause["left"]), clause["op"], reference(clause["right"])))
+            result.append(Comparison(compile_value(clause["left"], operands), clause["op"], compile_value(clause["right"], operands)))
         return tuple(result)
 
     result = []
@@ -101,7 +127,7 @@ def compile_when(when, trigger, timing):
         elif name in ("amount_at_least", "result_at_least", "hp_lost_at_least", "damage_amount_at_least"):
             field = name.removesuffix("_at_least")
             pending = field == "amount" or field == "damage_amount" and trigger == OpCode.RESOLVE_DAMAGE
-            left = reference("$pending.amount") if pending and "amount" in operands else Reference(("event", field))
+            left = compile_value("$pending.amount", operands) if pending and "amount" in operands else Reference(("event", field))
             result.append(Comparison(left, "ge", value, numeric=True))
         else:
             result.append(Comparison(Reference(("event",), name), "eq", value))

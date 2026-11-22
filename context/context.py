@@ -318,6 +318,8 @@ class Context:
             fields["side"] = getattr(player, "side", None)
         elif opcode in (OpCode.PLACE, OpCode.MOVE_CARD):
             fields["source"] = character_of(fields["card"])
+            if opcode == OpCode.MOVE_CARD:
+                fields.setdefault("play_from_hand", False)
         elif opcode == OpCode.PAY_COST:
             card = fields["card"]
             fields.update(source=card.character, player=card.player, side=card.player.side,

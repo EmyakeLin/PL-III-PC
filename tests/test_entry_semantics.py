@@ -1195,7 +1195,7 @@ class ExecutionBoundaryTests(unittest.TestCase):
             "entry/commands.py", "entry/compiler.py", "entry/entry.py", "entry/effects.py", "entry/program.py",
             "entry/field_aliases.py", "entry/predicates.py", "entry/references.py", "entry/stack_words.py",
             "entry/legacy_operations.py", "entry/arithmetic_operations.py", "entry/status_operations.py",
-            "entry/collection_operations.py",
+            "entry/collection_operations.py", "entry/play_conditions.py",
             "models/card.py", "models/character.py", "models/conditions.py", "models/damage.py", "models/dice.py",
             "models/duel.py", "models/identities.py", "models/opcode.py", "models/opcodes.py", "models/pre_reveal.py",
             "models/roster.py", "models/special_actions.py", "models/turn_history.py", "models/values.py",
@@ -1330,6 +1330,63 @@ class AbilityConditionTests(unittest.TestCase):
             special.apply(player, action)
         vm.pay_action_costs.assert_not_called()
         self.assertFalse(special.ability_uses)
+
+
+class PlayObservationTests(unittest.TestCase):
+    def test_play_observes_the_hand_before_departure_and_denial_reads_live_stacks(self):
+        from models.duel import DuelSpace, DuelSlot
+        from models.pre_reveal import PreRevealDuel, PreRevealPhase
+        for path in ("place", "declare", "custom", "move", "remove"):
+            with self.subTest(path=path):
+                seat, vm = Player(3, "甲"), TracedContext()
+                space = DuelSpace(None)
+                space.append_new_duel(DuelSlot())
+                game = seat.game = vm.game = SimpleNamespace(
+                    context=vm, card_serial=0, status_entries={}, turn_end_statuses=set(), ability_rules={},
+                    active_duelspace=space, duelspace=space, cards_revealed=False, players=[seat],
+                    special=SimpleNamespace(is_locked=lambda _: False), board_slots=lambda: space.space,
+                    status_rules={"费用": {"restrict_highest_hand_cost": True}, "名字": {"skill_use": [{
+                        "capture": {"n": {"rank_of": "$event.card", "in": "$self.player.cardspace.hand.content",
+                                          "by": "$event.item.name"}, "paid": "$event.card.cost"},
+                        "deny_when": [{"left": "$event.observed.n", "op": "eq", "right": "$event.stacks"}]}]}})
+                first, other = [Character({"name": n, "id": n, "rank": "NORMAL", "skills": [], "max_hp": 4},
+                                          seat) for n in ("一", "二")]
+                seat.characters[:] = [first, other]
+                hand = seat.cardspace.hand
+                cards = [Card(seat, {"id": n, "name": n, "cost": cost}, actor) for n, cost, actor in
+                         (("D", 2**95, other), ("Z", 7, first), ("A", 7, first), ("F", 0, first))]
+                hand.content[:] = cards
+                card = cards[2]
+                for n in (0, 1, 2, 3, 2**96):
+                    first.statuses = {"费用": n}
+                    self.assertEqual(first.skill_restricted(card), n >= 2)
+                self.assertEqual(card.play_observations, {})
+                first.statuses.clear()
+                if path == "place":
+                    vm.eval_block([seat.side, 0, card, OpCode.PLACE])
+                elif path == "declare":
+                    slot = PreRevealDuel(game, card, other, None)
+                    PreRevealPhase(game).play_declared_skill(slot, card, other)
+                elif path == "remove":
+                    hand.remove_card(hand.content.index(card))
+                else:
+                    vm.stack.extend((card, "delayed_discard"))
+                    self.assertTrue(vm.execute_op(OpCode.MOVE_CARD, play_from_hand=path == "custom"))
+                self.assertNotIn(card, hand.content)
+                hand.content.reverse()
+                card.cost = -2**93
+                if path in ("move", "remove"):
+                    self.assertEqual(card.play_observations, {})
+                    continue
+                self.assertEqual(card.play_observations, {("费用", 0): {"position": 2},
+                                                         ("名字", 0): {"n": 1, "paid": 7}})
+                for name, stacks, expected in (("费用", 1, False), ("费用", 2, True),
+                                               ("名字", 1, True), ("名字", 2, False)):
+                    first.statuses = {name: stacks}
+                    self.assertIs(first.skill_restricted(card), expected)
+                card.reset_for_draw()
+                self.assertEqual(card.play_observations, {})
+                self.assertFalse(first.skill_restricted(card))
 
 
 if __name__ == "__main__":

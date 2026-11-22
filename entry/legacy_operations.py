@@ -54,6 +54,21 @@ WORD_ALIASES = {
 }
 
 
+# Earlier packs spell this printed restriction as a single boolean.
+HIGHEST_HAND_COST = {
+    "capture": {"position": {"rank_of": "$event.card", "in": "$self.player.cardspace.hand.content",
+                             "where": [{"left": "$event.item.character", "op": "eq", "right": "$self"}],
+                             "by": "$event.item.cost", "descending": True}},
+    "deny_when": [{"left": "$event.observed.position", "op": "le", "right": "$event.stacks"}],
+}
+
+
+def skill_use_rules(status):
+    if status.get("restrict_highest_hand_cost"):
+        yield HIGHEST_HAND_COST
+    yield from status.get("skill_use", ())
+
+
 def compile_ability_requirements(spec):
     from entry.predicates import compile_when
 

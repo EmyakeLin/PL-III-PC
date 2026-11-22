@@ -79,20 +79,6 @@ class Hand(CardList):
         super().__init__(all_cards)
         self.player = player
 
-    def cost_rank(self, card):
-        # Stable sorting preserves hand order within a tie and excludes teammates' cards.
-        candidates = [other for other in self.content if other.character is card.character]
-        candidates.sort(key=lambda other: other.cost, reverse=True)
-        return candidates.index(card) + 1
-
-    def remember_play_rank(self, card):
-        card.hand_cost_rank = self.cost_rank(card)
-
-    def remove_card(self, index):
-        if 0 <= index < len(self.content):
-            self.remember_play_rank(self.content[index])
-        return super().remove_card(index)
-
     def _on_size_changed(self, before, after):
         if before != after and self.player.game:
             self.player.game.context.dispatch_pipeline(
