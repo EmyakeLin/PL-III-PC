@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 from entry.commands import expand_command
 from entry.field_aliases import FIELD_ALIASES
+from entry.legacy_operations import WORD_ALIASES, compile_targeted_action
 from models.opcode import OpCode
 
 
@@ -29,6 +30,19 @@ class Local:
 
 
 @dataclass(frozen=True)
+class Invocation:
+    opcode: OpCode
+    options: tuple
+    result: str | None
+    default: object
+
+    def execute(self, vm):
+        value = vm.execute_op(self.opcode, result_field=self.result or "result", **dict(self.options))
+        if self.result is not None:
+            vm.push(self.default if value is None else value)
+
+
+@dataclass(frozen=True)
 class Effect:
     operation: object
 
@@ -36,23 +50,6 @@ class Effect:
 @dataclass(frozen=True)
 class Word:
     name: str
-
-
-def _team_status(action):
-    return [{"literal": ["subject", "status", "amount"]},
-            ["$bindings.amount", 0, "GT",
-             ["$bindings.subject.player.characters", ["$item.is_alive", action, "WHEN"], "EACH"], "WHEN"],
-            "WITH_BINDINGS"]
-
-
-COMPATIBILITY = {
-    "TEAM_STATUS": _team_status(["$item", "$bindings.status", "$bindings.amount", "STATUS"]),
-    "NEXT_TEAM_STATUS": _team_status(["$bindings.subject", "$item", "$bindings.status",
-                                     "$bindings.amount", "QUEUE_STATUS"]),
-    "USED_SKILL_THIS_TURN": ["SKILL_USE_COUNT", 0, "GT"],
-    "ONCE_PER_ROUND": ["DUP", "$self", "SWAP", "ROUND_TRIGGER_COUNT", 1, "LT", "SWAP",
-                       "$self", "SWAP", "RECORD_ROUND_TRIGGER"],
-}
 
 
 def compile_program(tokens, *, expand=expand_command):
@@ -68,6 +65,15 @@ def compile_program(tokens, *, expand=expand_command):
             if isinstance(token, dict):
                 if "literal" in token:
                     yield token["literal"]
+                elif "call" in token:
+                    opcode = OpCode[token["call"]]
+                    result = token.get("result")
+                    if result is not None and not isinstance(result, str):
+                        raise ValueError("调用的结果字段需要名称")
+                    options = token.get("with", {})
+                    if not isinstance(options, dict) or {"result_field", "defer_payment", "opcode", "authority", "execution"} & options.keys():
+                        raise ValueError("调用参数不能覆盖执行栈或词条话语权")
+                    yield Invocation(opcode, tuple(options.items()), result, token.get("default"))
                 elif "local" in token:
                     yield Local(token["local"])
                 else:
@@ -82,8 +88,8 @@ def compile_program(tokens, *, expand=expand_command):
                     yield Field(token[1:])
                     continue
                 name = token
-            elif token in COMPATIBILITY:
-                name, body = token, COMPATIBILITY[token]
+            elif token in WORD_ALIASES:
+                name, body = token, WORD_ALIASES[token]
             elif token in WORDS or token in ("STORE", "DAMAGE_ADD"):
                 yield Word(token)
                 continue
@@ -132,36 +138,4 @@ def prepare_effect(operation):
         if isinstance(data["code"], Program):
             return operation
         return {**data, "code": compile_program(data["code"])}
-    if name == "reveal_lock":
-        return compile_program(["placement", "WINDOW_OPEN", "$event.target.state.name", "PLACED_FACE_DOWN", "EQ", "AND",
-                                ["SET_CARD_FACE $event.target up", "SET_PLACEMENT_LOCK $event.target true"], "WHEN"])
     return compile_targeted_action(name, data, args) or operation
-
-
-def compile_targeted_action(name, data, args):
-    default = "self" if name in ("heal", "draw", "draw_card", "discard", "shield") else "target"
-    selector = data.get("target")
-    target = Field("event.target")
-    if name in ("draw", "draw_card", "discard"):
-        opcode = OpCode.DISCARD if name == "discard" else OpCode.DRAW
-        operands = [Field("event.selected_player"), int(data.get("amount", args[0] if args else 1))]
-    elif name in ("heal", "lightcore_damage", "real_damage"):
-        opcode = OpCode[name.upper()]
-        operands = [target, int(data.get("amount", args[0] if args else 1))]
-    elif name == "shield":
-        opcode = OpCode.SHIELD
-        kind = data.get("kind", args[1] if len(args) > 1 else "normal")
-        operands = [target, kind, int(data.get("amount", args[0] if args else 1))]
-    elif name == "status":
-        opcode = OpCode.STATUS
-        status = data.get("name", args[0] if args else None)
-        if not status:
-            raise ValueError("Status 需要状态名")
-        operands = [target, status, int(data.get("amount", args[1] if len(args) > 1 else 1))]
-    elif name in ("destroy", "stagger"):
-        opcode, operands = OpCode[name.upper()], [target]
-        if name == "destroy" and args:
-            selector = args[0]
-    else:
-        return None
-    return TargetedProgram(selector, default, Program((*operands, opcode)))

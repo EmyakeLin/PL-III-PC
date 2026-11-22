@@ -124,6 +124,28 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(vm.stack, ["outer"])
             self.assertEqual(vm.event, {})
 
+    def test_call_reads_the_requested_receipt_field_without_repeating_the_operation(self):
+        from entry.compiler import compile_program
+        vm = TracedContext()
+        for opcode in OpCode:
+            for result in (None, False, 0, -15, 2**88):
+                trace = []
+                def execute(code, **options):
+                    trace.append((code, options))
+                    return result
+                vm.execute_op = execute
+                program = compile_program([{"call": opcode.name, "result": "paid_in_full", "default": "missing"}])
+                program.instructions[0].execute(vm)
+                self.assertEqual(vm.pop(), "missing" if result is None else result)
+                self.assertEqual(trace, [(opcode, {"result_field": "paid_in_full"})])
+        for word, opcode in (("SPEND_STATUS_IN_FULL", OpCode.SPEND_STATUS),
+                             ("SPEND_ABILITY_EFFECT_IN_FULL", OpCode.SPEND_ABILITY_EFFECT)):
+            instruction, = compile_program([word]).instructions
+            self.assertEqual((instruction.opcode, instruction.options, instruction.result, instruction.default),
+                             (opcode, (("require_full", True),), "paid_in_full", False))
+        with self.assertRaises(ValueError):
+            compile_program([{"call": "DRAW", "with": {"authority": 2}}])
+
     def test_inline_native_instructions_preserve_every_declared_operand(self):
         from entry.compiler import Field, compile_program
         from models.opcodes import OPERANDS

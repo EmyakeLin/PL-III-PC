@@ -1,6 +1,6 @@
 """Translate JSON effect programs into blocks for the existing postfix VM."""
 
-from entry.compiler import Effect, Field, Local, Program, Word, compile_program
+from entry.compiler import Effect, Field, Invocation, Local, Program, Word, compile_program
 from entry.stack_words import WORDS
 from entry.references import read_path
 from entry.entry import character_of
@@ -84,6 +84,8 @@ def run_program(ctx, entry, tokens):
         for instruction in program.instructions:
             if isinstance(instruction, Program):
                 block.append(bind(instruction))
+            elif isinstance(instruction, Invocation):
+                block.append(instruction.execute)
             elif isinstance(instruction, Field):
                 block.append(lambda vm, name=instruction.name: vm.push(read(name)))
             elif isinstance(instruction, Local):
