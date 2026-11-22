@@ -790,12 +790,13 @@ class Pipeline:
         return target if eligible(target) else None
 
     def _pending_response_die(self, attacker):
+        """Preview the first enabled offer. Pairing settles its actual price, including price hooks."""
         target = self._reserved_target(attacker)
         if target is None:
             return None
         for response in target.available_die_responses(BEFORE_ONE_SIDED_ATTACK, self.game.turn_number):
             die = response.template.create_die(self.game, target)
-            if die is not None and self._pay_die_against(die, attacker.die, skipping=True):
+            if die is not None:
                 return die
         return None
 

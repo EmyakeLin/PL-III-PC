@@ -48,8 +48,8 @@ class Game:
         self.turn_end_statuses = set(effects.turn_end_statuses)
         self.is_over = False
         self.winner = None
-        self.context.register_status_programs(self.status_rules)
         self.context = Context(game=self)
+        self.context.register_status_programs(self.status_rules)
         self.duelspace = DuelSpace(self)
         self.pre_reveal = PreRevealPhase(self)
         self.pipeline = Pipeline(self, step_list)

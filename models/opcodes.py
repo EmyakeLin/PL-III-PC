@@ -287,19 +287,19 @@ def handle_with_bindings(ctx):
 
 
 def handle_each(ctx):
-def handle_publish(ctx):
-    fields, name = ctx.pop(), ctx.pop()
-    if not isinstance(name, str) or not isinstance(fields, dict):
-        raise ValueError("发布事件需要事件名和具名字段")
-    ctx.publish(name, fields)
-
-
     action, items = ctx.pop(), ctx.pop()
     for item in tuple(items):
         if ctx.executions and ctx.executions[-1].cancelled:
             break
         with ctx.binding(item=item):
             ctx.eval_block(action)
+
+
+def handle_publish(ctx):
+    fields, name = ctx.pop(), ctx.pop()
+    if not isinstance(name, str) or not isinstance(fields, dict):
+        raise ValueError("发布事件需要事件名和具名字段")
+    ctx.publish(name, fields)
 
 
 def handle_first_in_order(ctx):
@@ -959,7 +959,6 @@ def handle_destroy(ctx):
         target.state = CardState.NEGATED
     elif hasattr(target, "card") and hasattr(target, "roll"):
         if not target.destroyed:
-    OpCode.PUBLISH: handle_publish,
             ctx.record("die_destroyed", position=getattr(target, "position", None))
         target.destroyed = True
     else:
@@ -976,6 +975,7 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.PUBLISH: handle_publish,
     OpCode.SAMPLE_INT: handle_random_int,
     OpCode.TRANSFER_HAND_CARD: handle_transfer_hand_card,
     OpCode.SET_STATUS_OVERFLOW: handle_set_status_overflow,
@@ -1026,7 +1026,6 @@ DISPATCH_TABLE = {
     OpCode.EVAL: lambda ctx: ctx.eval_block(ctx.pop()),
     OpCode.DRAW: handle_draw, OpCode.PLACE: handle_place, OpCode.ROLL: handle_roll,
     OpCode.REPLACE_SKILL: handle_replace_skill,
-    OpCode.PUBLISH: ("name", "fields"),
     OpCode.MOVE_CARD: handle_move_card, OpCode.ROUTE_DIE_ATTACK: handle_route_die_attack,
     OpCode.SELECT_SKILL_TARGET: handle_select_skill_target,
     OpCode.FOR_EACH_TARGET: handle_for_each_target,
@@ -1048,6 +1047,7 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.PUBLISH: ("name", "fields"),
     OpCode.SAMPLE_INT: ("low", "high"),
     OpCode.TRANSFER_HAND_CARD: ("giver", "card", "receiver"),
     OpCode.SET_STATUS_OVERFLOW: ("target", "status", "amount"),

@@ -407,16 +407,6 @@ class Context:
                     member.group_name = spec.get("name")
                 registered.extend(group)
             elif isinstance(spec, dict):
-    def register_status_programs(self, rules):
-        for name, rule in rules.items():
-            if rule.get("global_entries") and name not in self.shared_entry_groups:
-                self.register_entries(None, rule["global_entries"])
-                self.shared_entry_groups.add(name)
-
-    def publish(self, name, fields):
-        with self.binding(**fields):
-            self._dispatch(TriggerType.EVENT, name)
-
                 entry = Entry.from_spec(owner, spec)
                 self.entries.append(entry)
                 registered.append(entry)
@@ -428,6 +418,16 @@ class Context:
                 if kind_of(owner) != "die":
                     raise ValueError(f"词条需要指定触发器: {spec!r}")
         return registered
+
+    def register_status_programs(self, rules):
+        for name, rule in rules.items():
+            if rule.get("global_entries") and name not in self.shared_entry_groups:
+                self.register_entries(None, rule["global_entries"])
+                self.shared_entry_groups.add(name)
+
+    def publish(self, name, fields):
+        with self.binding(**fields):
+            self._dispatch(TriggerType.EVENT, name)
 
     def unregister_entries(self, owner):
         if getattr(owner, "is_alive", True) is False:

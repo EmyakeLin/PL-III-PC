@@ -123,7 +123,7 @@ class DieResponseTests(unittest.TestCase):
         self.grant(card, position=2, count=4, spend_on="attempt", cost=2)
         self.grant(card, position=3, count=2, cost=2)
         gated, unaffordable, successful = self.holder.reserved_dice
-        self.assertEqual(self.pipeline._pending_response_die(self.attack).position, 3)
+        self.assertEqual(self.pipeline._pending_response_die(self.attack).position, 2)
         self.assertEqual([r.remaining for r in self.holder.reserved_dice], [2, 4, 2])
         result = self.pipeline._accept_die_response(self.attack, self.holder, BEFORE_ONE_SIDED_ATTACK)
         self.assertEqual(result.position, 3)
