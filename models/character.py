@@ -423,9 +423,9 @@ class Character:
                 entry = Entry.from_spec(self, {"trigger": event, "operation": outcome, "origin": "status"})
                 with self._effect_context.binding(source=self, target=self, damage_part=False):
                     self._effect_context._invoke(entry)
-            self._effect_context.record("status_check", character=self, check=event, status=name,
-                                        before=stacks, after=self.statuses.get(name, 0), passed=passed,
-                                        target=self._effect_context.event.get("target"))
+            self.record("status_check", check=event, status=name,
+                        before=stacks, after=self.statuses.get(name, 0), passed=passed,
+                        target_id=getattr(self._effect_context.event.get("target"), "id", None))
             succeeded = succeeded or passed
         return succeeded
 

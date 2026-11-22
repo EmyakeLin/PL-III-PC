@@ -154,7 +154,7 @@ class CommandTests(unittest.TestCase):
                             other.content.append(self.content.pop(index))
 
                     zones = SimpleNamespace(draw=Pile("abc"), hand=Pile([]))
-                    player = SimpleNamespace(cardspace=zones)
+                    player = SimpleNamespace(cardspace=zones, side=7)
                     actor = SimpleNamespace(is_alive=True, player=player)
                     entry = Entry.from_spec(actor, {"trigger": "example", "operation": operation})
                     vm = TracedContext()
@@ -279,6 +279,38 @@ class BattleFactTests(unittest.TestCase):
             damage = facts[-1][1]
             self.assertEqual((damage["absorbed"], damage["eroded"], lost), expected)
             self.assertEqual(damage["hp"], 30 - lost)
+
+    def test_table_projects_every_initiative_attempt_before_the_next_user_action(self):
+        from battle_ui.table_bridge import TableBridge
+        vm = Context()
+        table = TableBridge(vm)
+        vm.record("turn_opened", number=5)
+        for attempt, scores in enumerate(((3, 3), (0, 0), (-1, 2)), 1):
+            for side, speed in enumerate(scores, 1):
+                vm.record("initiative_die", side=side, character_id=side, character_name=str(side),
+                          raw=7, speed=speed, modifiers={"迅捷": 3})
+                vm.record("team_speed", side=side, speed=speed, dropped=None)
+            if scores[0] == scores[1]:
+                vm.record("speed_tied")
+            else:
+                vm.record("initiative", side=2, player="乙")
+        table.emit("hand_off", side=2)
+        self.assertEqual([x["seq"] for x in table.events], [1, 2, 3, 4])
+        self.assertEqual([x["turn"] for x in table.events], [5] * 4)
+        self.assertEqual([x["winner_side"] for x in table.speed_rolls], [None, None, 2])
+        self.assertEqual([x["attempt"] for x in table.speed_rolls], [1, 2, 3])
+        self.assertEqual(table.speed_rolls[-1]["sides"][0]["rolls"][0]["raw"], 7)
+        vm.record("turn_opened", number=6)
+        self.assertEqual(table.speed_rolls, ())
+        self.assertEqual(len(table.events), 4)
+
+    def test_bot_order_uses_the_secondary_field_only_for_ties(self):
+        p = Player(1, "甲")
+        opponent = SimpleNamespace(characters=[SimpleNamespace(is_alive=True, hp=n, lightcore_hp=k)
+                                               for n, k in [(2, 3), (3, 1), (2, 2)]])
+        self.assertIs(p.choose_one_sided_target(opponent), opponent.characters[1])
+        p.target_priority = (("hp", 1), ("lightcore_hp", 1))
+        self.assertIs(p.choose_one_sided_target(opponent), opponent.characters[2])
 
     def test_each_hit_mode_records_one_hit_before_its_effects(self):
         for mode in ("full", "damage_only", "effects_only"):
@@ -434,6 +466,7 @@ class ConditionExecutorTests(unittest.TestCase):
             trace = []
             owner = SimpleNamespace(is_alive=True, game=SimpleNamespace(rng=rng, is_over=False),
                                     statuses={"a": 2, "b": 2}, _effect_context=Context())
+            owner.record = owner._effect_context.record
             owner.status_rules = {key: {"check": {"event": "critical", "sides": 4,
                                   "success": key + "+", "failure": key + "-"}} for key in ("a", "b")}
             owner._effect_context._invoke = lambda entry: trace.append(entry.operation)

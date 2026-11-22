@@ -315,7 +315,7 @@ def handle_draw(ctx):
         draw.move_card_to(0, player.cardspace.hand)
         moved += 1
     if moved:
-        ctx.record("cards_drawn", player=player, count=moved)
+        ctx.record("cards_drawn", side=player.side, count=moved)
 
 
 def handle_reset_cost(ctx):

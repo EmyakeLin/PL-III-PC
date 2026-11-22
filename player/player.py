@@ -17,6 +17,7 @@ class Player:
         self.faction_representatives = {}
         self.speed = 0
         self.default_target_character = None
+        self.target_priority = (("hp", -1),)
         self.target_order = None
         self.cardspace = CardSpace(self)
 
@@ -51,7 +52,8 @@ class Player:
         alive = [character for character in enemy_player.characters if character.is_alive]
         if self.default_target_character in alive:
             return self.default_target_character
-        return max(alive, key=lambda char: char.hp, default=None)
+        return min(alive, key=lambda char: tuple(getattr(char, field) * direction
+                                                  for field, direction in self.target_priority), default=None)
 
     def choose_one_sided_target(self, enemy_player):
         eligible = [member for member in enemy_player.characters if member.is_alive]
