@@ -14,6 +14,7 @@ from models.character import Character
 from models.opcode import OpCode
 from models.roster import RosterDraft
 from player.draw_choice import DrawChoice
+from terminal_events import format_fact
 
 
 class TracedContext(Context):
@@ -192,6 +193,25 @@ class PlacementExecutorTests(unittest.TestCase):
             game.submit_placement(left, after="end")
             game.submit_placement(right, after="end")
             self.assertIsNone(game.placing)
+
+
+class BattleFactTests(unittest.TestCase):
+    def test_every_shield_spelling_reaches_one_operation_and_yields_its_actual_total(self):
+        from models.character import SHIELD_FIELDS
+
+        for kind, field in SHIELD_FIELDS.items():
+            for amount in (-13, -2, 0, 1, 2**80):
+                vm = TracedContext()
+                actor = SimpleNamespace(combat_name="甲", shield=3, reinforced_shield=3, concept_shield=3)
+                actor.add_shield = lambda key, delta: Character.add_shield(actor, key, delta)
+                with vm.collect_facts() as facts:
+                    vm.eval_block([actor, kind, amount, OpCode.SHIELD])
+                total = max(0, 3 + amount)
+                self.assertEqual(getattr(actor, field), total)
+                self.assertEqual(list(facts), [("shield_changed", {"target": "甲", "shield": kind, "total": total})])
+                self.assertEqual(vm.trace, [(OpCode.SHIELD, "BEFORE", (actor, kind, amount)),
+                                            (OpCode.SHIELD, "AFTER", ())])
+                self.assertIn(str(total), format_fact(*facts[0]))
 
 
 if __name__ == "__main__":

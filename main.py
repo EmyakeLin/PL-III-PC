@@ -16,24 +16,25 @@ def play_game(game, step=False, *, bridge=None):
     """Drive one match to victory. The host owns interaction between pipeline steps."""
     if bridge is None:
         bridge = TerminalBridge(game)
-    while not game.is_over:
-        try:
-            action = bridge.advance()
-        except PipelineFinished:
-            if game.is_over:
-                break
-            game.pipeline.current_step_index = -1
-            game.pipeline.is_finished = False
-            continue
-        timing = timing_label(action)
-        if (timing or game.special.decision_owner is not None) and bridge.special_prompt and not game.is_over:
-            if special_seats(game):
-                print(f"〔{timing}〕")
-                bridge.offer_special_actions()
-        if step and not game.is_over:
-            if input(f"{action}  [回车继续 / q 退出] ").strip().lower() == "q":
-                return
-    print(f"对局结束，{game.winner.name} 获胜。" if game.winner else "双方全灭，平局。")
+    with bridge.session():
+        while not game.is_over:
+            try:
+                action = bridge.advance()
+            except PipelineFinished:
+                if game.is_over:
+                    break
+                game.pipeline.current_step_index = -1
+                game.pipeline.is_finished = False
+                continue
+            timing = timing_label(action)
+            if (timing or game.special.decision_owner is not None) and bridge.special_prompt and not game.is_over:
+                if special_seats(game):
+                    print(f"〔{timing}〕")
+                    bridge.offer_special_actions()
+            if step and not game.is_over:
+                if input(f"{action}  [回车继续 / q 退出] ").strip().lower() == "q":
+                    return
+        print(f"对局结束，{game.winner.name} 获胜。" if game.winner else "双方全灭，平局。")
 
 
 def main(argv=None):

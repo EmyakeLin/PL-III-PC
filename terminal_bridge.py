@@ -1,6 +1,9 @@
 """Hot-seat presentation and input at the application's composition root."""
 
 import sys
+from contextlib import contextmanager
+
+from terminal_events import format_fact
 
 from pre_reveal_cli import run_declarations
 from models.card import describe_entry, describe_skill_traits
@@ -14,6 +17,21 @@ class TerminalBridge:
         self.game = game
         self.special_prompt = special_prompt
         self._private_player = None
+        self._facts = None
+
+    @contextmanager
+    def session(self):
+        with self.game.context.collect_facts() as facts:
+            self._facts = facts
+            try:
+                yield
+            finally:
+                self.flush()
+                self._facts = None
+
+    def flush(self):
+        while self._facts:
+            print(format_fact(*self._facts.popleft()))
 
     def select_character(self, characters):
         draft = RosterDraft(characters, len(self.game.players), self.game.gamerule.MAX_CHAR_COUNT)
@@ -98,6 +116,7 @@ class TerminalBridge:
 
     def begin_private_view(self, player):
         """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
+        self.flush()
         if self._private_player is player:
             return
         self._private_player = player
@@ -116,6 +135,7 @@ class TerminalBridge:
         if self.special_prompt is None or game.is_over:
             return
         self.special_prompt(self)
+        self.flush()
         while not game.is_over and (game.special.pending_attack is not None or game.special.decision_owner is not None
                                     or game.pipeline.interrupt_space is not None):
             if game.special.pending_attack is None and game.special.decision_owner is None:
@@ -126,6 +146,7 @@ class TerminalBridge:
     def advance(self):
         game = self.game
         action = game.next_step()
+        self.flush()
         if action == "logic_draw_cards":
             self.settle_draws()
             self.close_private_view()

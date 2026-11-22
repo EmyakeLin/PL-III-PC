@@ -2,7 +2,7 @@ import operator
 import random
 
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
-from entry.effects import GRADE_NAMES, GRADE_RANK
+from entry.effects import GRADE_RANK
 from models.card import Card, CardState
 from models.duel import DuelSlot
 from models.opcode import OpCode
@@ -213,7 +213,7 @@ def handle_take_hand_card(ctx):
     card.set_controller(receiver)
     destination = receiver.player.cardspace.hand
     hand.move_card_to(card, destination)
-    print(f"{receiver.combat_name} 从对方手中抽取了一张技能。")
+    ctx.record("hand_card_taken", receiver=receiver.combat_name, from_side=target.player.side)
     return card
 
 
@@ -318,7 +318,7 @@ def handle_pay_cost(ctx):
     player.used_cost += common
     ctx.event.update(personal_spent=personal, common_spent=common)
     if ctx.event.get("use_discount"):
-        print(f"「{card.name}」本次费用减免 {ctx.event['use_discount']}，实付 {cost} 费。")
+        ctx.record("discount_used", card=card.name, discount=ctx.event["use_discount"], paid=cost)
     return True
 
 
@@ -480,7 +480,7 @@ def handle_random_int(ctx):
     high, low = ctx.pop(), ctx.pop()
     roll = ctx.game.rng.randint(low, high)
     source = ctx.event.get("source")
-    print(f"{getattr(source, 'combat_name', '效果')} 进行 {low}～{high} 判定，掷出 {roll}。")
+    ctx.record("random_check", source=getattr(source, "combat_name", None), low=low, high=high, roll=roll)
     ctx.push(roll)
 
 
@@ -518,12 +518,9 @@ def handle_damage(ctx):
     damage_die = ctx.event["damage_die"]
     if damage_die is not None:
         damage_die.did_deal_damage = True
-    grade_name = GRADE_NAMES[grade]
-    cause = ctx.event.get("damage_cause") or getattr(source, "combat_name", "效果")
-    print(f"{cause} 对 {target.combat_name} 造成 {damage} 点伤害"
-          f"（{grade_name}，剩余生命 {target.hp}/{target.max_hp}）")
-    if not target.is_alive:
-        print(f"{target.combat_name} 阵亡。")
+    ctx.record("direct_damage", source=ctx.event.get("damage_cause") or getattr(source, "combat_name", None),
+               target=target.combat_name, amount=damage, grade=grade, lost=hp_lost, hp=target.hp,
+               maximum=target.max_hp, alive=target.is_alive)
     if ctx.event.get("damage_part") and target.is_alive:
         target.after_damage_part()
     return damage
@@ -533,10 +530,8 @@ def handle_heal(ctx):
     amount, target = ctx.pop(), ctx.pop()
     actual = target.heal(amount)
     if actual:
-        if target.is_alive:
-            print(f"{target.combat_name} 恢复 {actual} 点生命（{target.hp}/{target.max_hp}）。")
-        else:
-            print(f"{target.combat_name} 实际恢复 {actual} 点生命，回复生命触发即死，阵亡。")
+        ctx.record("healed", target=target.combat_name, amount=actual, hp=target.hp,
+                   maximum=target.max_hp, alive=target.is_alive)
     return actual
 
 
@@ -551,18 +546,18 @@ def handle_lightcore_damage(ctx):
     target.lightcore_hp -= lost
     collapsed = lost > 0 and target.lightcore_hp == 0
     ctx.event.update(amount=amount, lightcore_lost=lost, lightcore_collapsed=collapsed)
-    cause = getattr(ctx.event.get("source"), "combat_name", "效果")
-    print(f"{cause} 对 {target.combat_name} 造成 {amount} 点光点伤害"
-          f"（完整度 {target.lightcore_hp}/{target.max_lightcore_hp}）。")
+    ctx.record("lightcore_damage", source=getattr(ctx.event.get("source"), "combat_name", None),
+               target=target.combat_name, amount=amount, lost=lost,
+               hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
     if collapsed:
         # This whole segment has been consumed. A subsequent segment sees the new pool.
-        print(f"{target.combat_name} 的光点形态群崩塌。")
+        ctx.record("lightcore_collapse", target=target.combat_name)
         with ctx.binding(source=target, damage_cause="光点形态群崩塌"):
             ctx.eval_block([target, (target.original_max_hp + 1) // 2, OpCode.REAL_DAMAGE])
         target.max_lightcore_hp = max(0, target.max_lightcore_hp - 4)
         target.lightcore_hp = target.max_lightcore_hp
-        print(f"{target.combat_name} 的光点生命上限降至 {target.max_lightcore_hp}，"
-              f"完整度恢复为 {target.lightcore_hp}/{target.max_lightcore_hp}。")
+        ctx.record("lightcore_restored", target=target.combat_name, hp=target.lightcore_hp,
+                   maximum=target.max_lightcore_hp)
     return amount
 
 
@@ -577,11 +572,8 @@ def handle_real_damage(ctx):
     if not target.is_alive and ctx.game.is_over:
         ctx.close_combat_effects()
     ctx.event.update(amount=amount, hp_lost=lost)
-    cause = ctx.event.get("damage_cause") or getattr(ctx.event.get("source"), "combat_name", "效果")
-    print(f"{target.combat_name} 承受 {amount} 点真实伤害"
-          f"（来源：{cause}，剩余生命 {target.hp}/{target.max_hp}）。")
-    if not target.is_alive:
-        print(f"{target.combat_name} 阵亡。")
+    ctx.record("real_damage", source=ctx.event.get("damage_cause") or getattr(ctx.event.get("source"), "combat_name", None),
+               target=target.combat_name, amount=amount, lost=lost, hp=target.hp, maximum=target.max_hp, alive=target.is_alive)
     return amount
 
 
@@ -590,9 +582,8 @@ def handle_lose_hp(ctx):
     lost = target.lose_hp(amount)
     ctx.event["hp_lost"] = lost
     if lost:
-        print(f"{target.combat_name} 失去 {lost} 点生命，剩余 {target.hp}/{target.max_hp}。")
-        if not target.is_alive:
-            print(f"{target.combat_name} 阵亡。")
+        ctx.record("hp_lost", target=target.combat_name, lost=lost, hp=target.hp,
+                   maximum=target.max_hp, alive=target.is_alive)
     return lost
 
 
@@ -604,9 +595,7 @@ def handle_hit(ctx):
 def handle_shield(ctx):
     amount, kind, target = ctx.pop(), ctx.pop(), ctx.pop()
     total = target.add_shield(kind, amount)
-    name = {"normal": "普通护盾", "shield": "普通护盾", "reinforced": "强化护盾",
-            "concept": "概念护盾"}.get(kind, kind)
-    print(f"{target.combat_name} 的{name}变为 {total}。")
+    ctx.record("shield_changed", target=target.combat_name, shield=kind, total=total)
     return total
 
 
@@ -627,14 +616,10 @@ def handle_activate_status(ctx):
     try:
         source = character_of(owner)
         if ctx.event.get("activation_kind"):
-            if origin == "die":
-                initiator = f"「{owner.card.name}」第{owner.position}骰"
-            elif origin == "card":
-                initiator = f"「{owner.name}」"
-            else:
-                initiator = f"的{status_name}" if status_name else ""
-            print(f"{source.combat_name}{initiator} 触发{entry.damage_cause}（{target.combat_name}，"
-                  f"{target.statuses[name]} 层）。")
+            ctx.record("status_activated", source=source.combat_name, origin=origin, status=status_name,
+                       card=owner.card.name if origin == "die" else getattr(owner, "name", None),
+                       position=getattr(owner, "position", None), target=target.combat_name,
+                       effect=entry.damage_cause, count=target.statuses[name])
         with ctx.binding(source=source, target=target, side=source.player.side, damage_part=False, hit_modifiers=()):
             if not ctx._invoke(entry):
                 ctx.current_op = None
@@ -664,11 +649,11 @@ def handle_ability_effect(ctx):
         total = target.apply_ability_delta(name, -paid)
         ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=-paid, paid_in_full=paid > 0)
         if paid:
-            print(f"{target.combat_name} 使用 {paid} 次{name}，剩余 {total} 次。")
+            ctx.record("ability_spent", target=target.combat_name, name=name, amount=paid, total=total)
         return paid
     total = target.apply_ability_delta(name, amount)
     ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=total - old)
-    print(f"{target.combat_name} 的{name}变为 {total} 次。")
+    ctx.record("ability_changed", target=target.combat_name, name=name, total=total)
     return total
 
 
@@ -686,9 +671,9 @@ def handle_status(ctx):
     ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=total-old,
                      status_overflow=overflow)
     if amount == 0 and isinstance(proposed, (int, float)) and proposed > 0:
-        print(f"{target.combat_name} 未能获得{name}。")
+        ctx.record("status_blocked", target=target.combat_name, name=name)
     else:
-        print(f"{target.combat_name} 的{name}变为 {total} 层。")
+        ctx.record("status_changed", target=target.combat_name, name=name, previous=old, total=total)
     target.notify_status_change(name, old, total)
     return total
 
@@ -702,7 +687,7 @@ def handle_spend_status(ctx):
     if requested == "all" and balance and not target.is_alive and not require_full:
         target.clear_status(name)
         ctx.event["paid_in_full"] = True
-        print(f"{target.combat_name} 清空剩余 {balance} 层{name}。")
+        ctx.record("status_cleared", target=target.combat_name, name=name, amount=balance)
         return balance
     cost = balance if requested == "all" else requested
     if (not target.is_alive or not balance or not isinstance(cost, int) or cost <= 0
@@ -719,8 +704,7 @@ def handle_spend_status(ctx):
     if card is not None and card.character is target:
         spent = card.use_state.setdefault("spent_statuses", {})
         spent[name] = spent.get(name, 0) + paid
-    shortfall = f"（需 {cost} 层，未付足）" if paid < cost else ""
-    print(f"{target.combat_name} 消耗 {paid} 层{name}{shortfall}，剩余 {remaining} 层。")
+    ctx.record("status_spent", target=target.combat_name, name=name, amount=paid, cost=cost, total=remaining)
     if not deferred:
         target.notify_status_change(name, previous, remaining)
     return paid
@@ -739,12 +723,12 @@ def handle_destroy(ctx):
         target.cancelled = True
     elif isinstance(target, Card):
         if not target.destroyed:
-            print(f"「{target.get_meta()}」被摧毁。")
+            ctx.record("card_destroyed", card=target.name)
         target.destroyed = True
         target.state = CardState.NEGATED
     elif hasattr(target, "card") and hasattr(target, "roll"):
         if not target.destroyed:
-            print("一颗骰子被摧毁。")
+            ctx.record("die_destroyed", position=getattr(target, "position", None))
         target.destroyed = True
     else:
         raise ValueError("摧毁只能作用于技能、骰子或一次词条执行")

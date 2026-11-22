@@ -34,6 +34,21 @@ class Context:
         self._combat_effects_closed = False
         # Entries whose printed duration outlives the physical card's return to hand.
         self._lasting_entries = {}
+        self._fact_collections = []
+
+    @contextmanager
+    def collect_facts(self):
+        """Capture completed domain actions in order without calling an observer."""
+        facts = deque()
+        self._fact_collections.append(facts)
+        try:
+            yield facts
+        finally:
+            self._fact_collections.pop()
+
+    def record(self, kind, **fields):
+        for collection in self._fact_collections:
+            collection.append((kind, fields.copy()))
 
     @property
     def current_op(self):
