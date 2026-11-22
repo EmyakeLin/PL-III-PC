@@ -1078,10 +1078,6 @@ class Pipeline:
             if not all(self._die_live(self.side_pipelines[s]) for s in self.current_clash_pair.dice_dict):
                 return None
         event = self._event(pipe)
-        if name == "before_dice_use":
-            self.game.context.apply_next_die_effects(**event)
-            if not self._die_live(pipe):
-                return None
         if (name in ("on_dice_hit", "after_dice_hit")
                 and pipe.die.landed_hits < pipe.die.hit_index):
             return None
@@ -1089,7 +1085,8 @@ class Pipeline:
             if name == "on_skill_use":
                 pipe.used = True
                 self.game.turn_history.record_skill(pipe.card.character, pipe.card.id)
-            self.game.context.dispatch_pipeline(name, **event)
+            valid = (lambda: self._die_live(pipe)) if name == "before_dice_use" else None
+            self.game.context.dispatch_pipeline(name, valid=valid, **event)
         elif name == "logic_duel_start" and not self._frame.started:
             self._frame.started = True
             for player in self._ordered_players():

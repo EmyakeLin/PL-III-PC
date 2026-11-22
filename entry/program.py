@@ -3,6 +3,7 @@
 from entry.compiler import Access, Effect, Field, Invocation, Local, Program, Word, compile_program
 from entry.stack_words import WORDS
 from entry.references import read_path
+from entry.scheduling import ScheduledProgram
 from entry.entry import character_of
 
 
@@ -36,26 +37,31 @@ def run_program(ctx, entry, tokens):
             raise ValueError(f"当前事件没有词条字段 ${root}")
         return read_path(value, path)
 
-    def store_local(vm):
+    def store_local(vm, scope):
         name = vm.pop()
-        variables[name] = vm.pop()
+        scope[name] = vm.pop()
 
-    def bind(program):
+    def bind(program, scope):
         block = []
         for instruction in program.instructions:
             if isinstance(instruction, Program):
-                block.append(bind(instruction))
+                block.append(bind(instruction, scope))
+            elif isinstance(instruction, ScheduledProgram):
+                # Bind each delivery with fresh locals; named captures live on the reservation.
+                def push_scheduled(vm, body=instruction.program):
+                    vm.push([lambda current: execute_program_block(current, bind(body, {}))])
+                block.append(push_scheduled)
             elif isinstance(instruction, (Access, Invocation)):
                 block.append(instruction.execute)
             elif isinstance(instruction, Field):
                 block.append(lambda vm, name=instruction.name: vm.push(read(name)))
             elif isinstance(instruction, Local):
-                block.append(lambda vm, name=instruction.name: vm.push(variables[name]))
+                block.append(lambda vm, name=instruction.name: vm.push(scope[name]))
             elif isinstance(instruction, Effect):
                 block.append(lambda vm, op=instruction.operation: run_effect(vm, entry, op))
             elif isinstance(instruction, Word):
                 if instruction.name == "STORE":
-                    block.append(store_local)
+                    block.append(lambda vm: store_local(vm, scope))
                 else:
                     block.append(WORDS[instruction.name])
             else:
@@ -64,7 +70,7 @@ def run_program(ctx, entry, tokens):
 
     program = tokens if isinstance(tokens, Program) else compile_program(tokens)
     with ctx.binding(source=actor or ctx.event.get("source"), authority=entry.authority):
-        return execute_program_block(ctx, bind(program))
+        return execute_program_block(ctx, bind(program, variables))
 
 
 def adjusted_value(ctx, stage, value):

@@ -67,14 +67,26 @@
             },
             "description": "个人速度每领先目标2点，本次施加的烧伤+1（至多+3）。"
           },
-          {"trigger": "on_dice_hit", "when": [{"left":"$event.one_sided","op":"eq","right":true}], "operation": "QUEUE_STATUS $self $self 迅捷 1", "description": "自身骰子单方面攻击命中时，下回合获得1迅捷。"},
+          {"trigger": "on_dice_hit", "when": [{"left":"$event.one_sided","op":"eq","right":true}],
+           "operation": {"schedule": {
+             "event": "on_turn_prepared", "source": "$self", "target": "$self",
+             "after_turns": 1, "through_turns": 1, "uses": 1,
+             "require_source_alive": false, "require_target_alive": true,
+             "then": ["$event.scheduled.target","迅捷",1,"STATUS"]
+           }},
+           "description": "自身骰子单方面攻击命中时，下回合获得1迅捷。"},
           {"trigger": "AFTER ACTIVATE_STATUS", "subject": "source",
            "when": [
              {"left":"$event.status","op":"eq","right":"烧伤"},
              {"left":"$event.activation_kind","op":"eq","right":"ignite"},
              {"left":"$event.result","op":"eq","right":true}
            ],
-           "operation": "QUEUE_STATUS $self $event.target 束缚 1",
+           "operation": {"schedule": {
+             "event": "on_turn_prepared", "source": "$self", "target": "$event.target",
+             "after_turns": 1, "through_turns": 1, "uses": 1,
+             "require_source_alive": false, "require_target_alive": true,
+             "then": ["$event.scheduled.target","束缚",1,"STATUS"]
+           }},
            "description": "每次自身触发引燃，下回合对引燃目标施加1束缚。"}
         ]
       },
@@ -135,7 +147,12 @@
         ],
         "dice": [
           {"type":"evade","level":2,"entries":[
-            {"trigger":"on_clash_win","operation":"QUEUE_STATUS $self $self 迅捷 1",
+            {"trigger":"on_clash_win", "operation": {"schedule": {
+               "event": "on_turn_prepared", "source": "$self", "target": "$self",
+               "after_turns": 1, "through_turns": 1, "uses": 1,
+               "require_source_alive": false, "require_target_alive": true,
+               "then": ["$event.scheduled.target","迅捷",1,"STATUS"]
+             }},
              "description":"拼点胜利后，下回合获得1迅捷。"}
           ]},
           {"type":"pierce","level":1,"entries":["1穿甲",
@@ -213,7 +230,14 @@
           },"description":"付足能源后每颗骰子基础值+2。"}
         ],
         "dice":[
-          {"type":"pierce","level":3,"entries":["3穿甲",{"trigger":"on_dice_hit","operation":"QUEUE_STATUS $self $self 迅捷 2","description":"下回合获得2迅捷。"}]},
+          {"type":"pierce","level":3,"entries":["3穿甲",{"trigger":"on_dice_hit",
+            "operation": {"schedule": {
+              "event": "on_turn_prepared", "source": "$self", "target": "$self",
+              "after_turns": 1, "through_turns": 1, "uses": 1,
+              "require_source_alive": false, "require_target_alive": true,
+              "then": ["$event.scheduled.target","迅捷",2,"STATUS"]
+            }},
+            "description":"下回合获得2迅捷。"}]},
           {"type":"pierce","level":3,"multiplier":2,"entries":["引燃"]}
         ]
       }

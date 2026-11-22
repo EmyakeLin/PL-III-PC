@@ -135,13 +135,6 @@ class Character:
     def available_cost(self):
         return self.independent_cost + self.turn_cost_adjustment - self.used_independent_cost
 
-    def queue_status(self, name, amount, source=None):
-        """Apply an already scheduled status before next turn's draw and speed roll."""
-        if self.is_alive and name not in self.ability_rules:
-            source = self if source is None else source
-            authority = self.game.context.event.get("authority", 0)
-            self.game.next_turn_statuses.append((source, self, name, amount, authority))
-
     def record(self, kind, **fields):
         self._effect_context.record(kind, side=self.player.side, character_id=self.id,
                                     character_name=self.name, **fields)

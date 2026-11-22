@@ -317,8 +317,24 @@
                       0, "$event.actual_delta", "SUB", 3, "FLOOR_DIV", "stacks", "STORE",
                       {"local":"stacks"}, 0, "GT",
                       [
-                        "$self", "$event.target", "虚弱", {"local":"stacks"}, "QUEUE_STATUS", "$self",
-                        "$event.target", "束缚", {"local":"stacks"}, "QUEUE_STATUS"
+                        {
+                          "schedule": {
+                            "event": "on_turn_prepared",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 1,
+                            "through_turns": 1,
+                            "uses": 1,
+                            "require_source_alive": false,
+                            "require_target_alive": true,
+                            "capture": {"stacks":"$local.stacks"},
+                            "then": [
+                              "$event.scheduled.target", "虚弱", "$event.scheduled.capture.stacks",
+                              "STATUS", "$event.scheduled.target", "束缚",
+                              "$event.scheduled.capture.stacks", "STATUS"
+                            ]
+                          }
+                        }
                       ],
                       "WHEN"
                     ],

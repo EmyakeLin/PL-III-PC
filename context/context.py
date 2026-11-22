@@ -5,6 +5,7 @@ import random
 
 from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
+from entry.scheduling import deliver_scheduled
 from models.opcode import OpCode
 from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
 from models.values import ValueBounds
@@ -17,8 +18,8 @@ class Context:
         self.game = parent.game if parent else game
         self.stack = []
         self.entries = []
-        self.register = {}
         self.shared_entry_groups = set()
+        self.register = {}
         self.interceptions = []
         self.meta = {}
         self.code_stream = None
@@ -31,7 +32,7 @@ class Context:
         self.active_dice = {}
         self.hit_modifiers = {}
         self.roll_adjustments = {}
-        self.next_die_effects = {}
+        self.scheduled_effects = []
         self._combat_effects_closed = False
         # Entries whose printed duration outlives the physical card's return to hand.
         self._lasting_entries = {}
@@ -105,19 +106,6 @@ class Context:
                     target = self.event.get("target")
                 return self.range_blocks_target(target)
         return False
-
-    def apply_next_die_effects(self, die, **event):
-        """Resolve effects already promised to this character's next actual use."""
-        actor = die.card.character
-        pending = self.next_die_effects.pop(actor, [])
-        for index, (source, authority, block) in enumerate(pending):
-            if die.destroyed:
-                self.next_die_effects.setdefault(actor, [])[:0] = pending[index:]
-                break
-            if actor.is_alive and (source is None or source.is_alive):
-                with self.binding(**{**event, "die": die, "card": die.card, "source": source,
-                                     "target": actor, "authority": authority}):
-                    self.eval_block(block)
 
     def push(self, value):
         self.stack.append(value)
@@ -267,7 +255,7 @@ class Context:
                 del self.stack[mark:]
                 return None
             fields["status"] = None
-        elif opcode in (OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.QUEUE_STATUS, OpCode.ACTIVATE_STATUS):
+        elif opcode in (OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.ACTIVATE_STATUS):
             holder = fields["target"]
             if holder is not None:
                 name = holder.canonical_status_name(fields["status"])
@@ -346,7 +334,7 @@ class Context:
             fields.update(source=actor, side=actor.player.side if actor else None)
             if "die" in fields:
                 fields["card"] = part.card
-        elif opcode in (OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD):
+        elif opcode in (OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD):
             fields.setdefault("source", self.event.get("source") or fields["target"])
             fields["side"] = fields["source"].player.side
         elif opcode in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.LOSE_HP,
@@ -426,6 +414,8 @@ class Context:
 
     def publish(self, name, fields):
         with self.binding(**fields):
+            if self.scheduled_effects:
+                deliver_scheduled(self, "event", name, fields)
             self._dispatch(TriggerType.EVENT, name)
 
     def unregister_entries(self, owner):
@@ -444,6 +434,7 @@ class Context:
     def close_combat_effects(self):
         """Stop combatants' outstanding effects; global observers can still read terminal results."""
         self._combat_effects_closed = True
+        self.scheduled_effects.clear()
         for execution in self.executions:
             if character_of(execution.entry.owner) is not None:
                 execution.cancelled = True
@@ -518,7 +509,7 @@ class Context:
                     OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE,
                     OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.ACTIVATE_STATUS, OpCode.SHIELD,
                     OpCode.ABILITY_EFFECT, OpCode.SPEND_ABILITY_EFFECT,
-                    OpCode.DESTROY, OpCode.SET_STATUS_OVERFLOW, OpCode.QUEUE_STATUS, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
+                    OpCode.DESTROY, OpCode.SET_STATUS_OVERFLOW, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
                 subject = "target"
             else:
                 subject = "source"
@@ -625,13 +616,17 @@ class Context:
         with self.binding(opcode=opcode.name, timing=timing, opcode_frame=len(self.op_stack) - 1):
             self._dispatch(TriggerType.OPCODE, opcode, timing)
 
-    def dispatch_pipeline(self, node_id, **fields):
+    def dispatch_pipeline(self, node_id, *, valid=None, **fields):
         side, card, die = fields.get("side"), fields.get("card"), fields.get("die")
         if node_id == "before_turn_end":
             self.game.turn_ending = True
             self.dispatch_pipeline("on_turn_closing", **fields)
         if node_id == "before_turn_start":
             self.game.open_turn()
+        if self.scheduled_effects:
+            deliver_scheduled(self, "pipeline", node_id, fields, valid)
+        if valid is not None and not valid():
+            return
         if node_id == "before_skill_use":
             self.active_cards[side] = card
         if node_id == "before_dice_use":

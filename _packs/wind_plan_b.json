@@ -13,8 +13,20 @@
         "operation": {
           "op": "program",
           "code": [
-            "$self", "涡流", 2, {"call":"SPEND_STATUS","result":"result","default":0}, "POP", "$self",
-            "$self", "骰子等级降低", 1, "QUEUE_STATUS"
+            "$self", "涡流", 2, {"call":"SPEND_STATUS","result":"result","default":0}, "POP",
+            {
+              "schedule": {
+                "event": "on_turn_prepared",
+                "source": "$self",
+                "target": "$self",
+                "after_turns": 1,
+                "through_turns": 1,
+                "uses": 1,
+                "require_source_alive": false,
+                "require_target_alive": true,
+                "then": ["$event.scheduled.target","骰子等级降低",1,"STATUS"]
+              }
+            }
           ]
         },
         "description": "回合结束时消耗2层涡流，并在下回合获得1层骰子等级降低。"
@@ -352,8 +364,21 @@
                   "$self", "涡流", "all", {"call":"SPEND_STATUS","result":"result","default":0}, "spent",
                   "STORE", {"local":"spent"}, 0, "GT",
                   [
-                    "$self", "强壮", {"local":"spent"}, "STATUS", "$self", "$self", "强壮",
-                    {"local":"spent"}, "QUEUE_STATUS"
+                    "$self", "强壮", {"local":"spent"}, "STATUS",
+                    {
+                      "schedule": {
+                        "event": "on_turn_prepared",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 1,
+                        "through_turns": 1,
+                        "uses": 1,
+                        "require_source_alive": false,
+                        "require_target_alive": true,
+                        "capture": {"amount":"$local.spent"},
+                        "then": ["$event.scheduled.target","强壮","$event.scheduled.capture.amount","STATUS"]
+                      }
+                    }
                   ],
                   "WHEN"
                 ]
@@ -371,10 +396,22 @@
               {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
             ]},
             {"type": "pierce", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": "QUEUE_STATUS $self $self 涡流 1", "description": "命中时在下回合获得1层涡流。"}
+              {"trigger": "on_dice_hit", "operation": {"schedule": {
+                 "event": "on_turn_prepared", "source": "$self", "target": "$self",
+                 "after_turns": 1, "through_turns": 1, "uses": 1,
+                 "require_source_alive": false, "require_target_alive": true,
+                 "then": ["$event.scheduled.target","涡流",1,"STATUS"]
+               }},
+               "description": "命中时在下回合获得1层涡流。"}
             ]},
             {"type": "blunt", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": "QUEUE_STATUS $self $self 涡流 1", "description": "命中时在下回合获得1层涡流。"}
+              {"trigger": "on_dice_hit", "operation": {"schedule": {
+                 "event": "on_turn_prepared", "source": "$self", "target": "$self",
+                 "after_turns": 1, "through_turns": 1, "uses": 1,
+                 "require_source_alive": false, "require_target_alive": true,
+                 "then": ["$event.scheduled.target","涡流",1,"STATUS"]
+               }},
+               "description": "命中时在下回合获得1层涡流。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
               {
@@ -385,10 +422,13 @@
                   "code": [
                     "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
                     "$event.target", "FIRST_IN_ORDER",
-                    [
-                      "$event.target", 2, "normal", "slash", "DAMAGE", "$self", "$event.target",
-                      "骰子等级降低", 1, "QUEUE_STATUS"
-                    ],
+                    ["$event.target", 2, "normal", "slash", "DAMAGE",
+                     {"schedule": {
+                       "event": "on_turn_prepared", "source": "$self", "target": "$event.target",
+                       "after_turns": 1, "through_turns": 1, "uses": 1,
+                       "require_source_alive": false, "require_target_alive": true,
+                       "then": ["$event.scheduled.target","骰子等级降低",1,"STATUS"]
+                     }}],
                     "FOR_EACH_TARGET"
                   ]
                 },

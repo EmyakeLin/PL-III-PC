@@ -67,7 +67,12 @@ def compile_program(tokens, *, expand=expand_command):
                 yield Program(tuple(compile_items(token, path)))
                 continue
             if isinstance(token, dict):
-                if "literal" in token:
+                if "schedule" in token:
+                    from entry.scheduling import expand_schedule
+                    def compile_body(body):
+                        return Program(tuple(compile_items(body, path)))
+                    yield from compile_items(expand_schedule(token["schedule"], compile_body), path)
+                elif "literal" in token:
                     yield token["literal"]
                 elif "call" in token:
                     opcode = OpCode[token["call"]]
@@ -160,6 +165,8 @@ def compile_adjustments(*declarations):
 
 
 def prepare_effect(operation):
+    if isinstance(operation, dict) and "schedule" in operation:
+        return compile_program([operation])
     if isinstance(operation, list) and all(isinstance(item, (str, dict)) for item in operation):
         prepared = [prepare_effect(item) for item in operation]
         if prepared and all(isinstance(item, Program) for item in prepared):

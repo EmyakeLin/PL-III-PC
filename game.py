@@ -40,7 +40,6 @@ class Game:
         self.turn_ending = False
         self.card_serial = 0
         self._prepared_turn = -1
-        self.next_turn_statuses = []
         effects = base_effects()
         self.status_entries = dict(effects.status_entries)
         self.status_rules = dict(effects.status_rules)
@@ -134,15 +133,11 @@ class Game:
         if self._prepared_turn == self.turn_count:
             return
         self._prepared_turn = self.turn_count
-        pending, self.next_turn_statuses = self.next_turn_statuses, []
         for player in self.players:
             player.turn_common_cost_bonus, player.next_turn_common_cost = player.next_turn_common_cost, 0
             for char in player.characters:
                 char.turn_duel_bonus, char.next_turn_duels = char.next_turn_duels, 0
-        for source, target, name, amount, authority in pending:
-            if target.is_alive and not self.is_over:
-                with self.context.binding(source=source, target=target, side=source.player.side, authority=authority):
-                    self.context.eval_block([target, name, amount, OpCode.STATUS])
+        self.context.dispatch_pipeline("on_turn_prepared", turn_number=self.turn_number)
 
     def record_clash_result(self, character, result):
         self.turn_history.record_clash(self.duel_position(), character, result)

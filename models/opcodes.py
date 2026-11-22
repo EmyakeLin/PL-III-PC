@@ -5,6 +5,7 @@ from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_o
 from entry.effects import GRADE_RANK
 from entry.play_conditions import record_hand_play
 from entry.program import adjusted_value
+from entry.scheduling import schedule_effect
 from models.card import Card, CardState
 from models.die_response import DieResponse, SkillDieTemplate
 from models.duel import DuelSlot
@@ -150,15 +151,6 @@ def handle_skip_round(ctx):
     pair = ctx.game.pipeline.current_clash_pair
     if pair is not None and die in pair.dice_dict.values():
         pair.skipped = True
-        return True
-    return False
-
-
-def handle_queue_die_effect(ctx):
-    block, target = ctx.pop(), ctx.pop()
-    if target is not None and target.is_alive:
-        ctx.next_die_effects.setdefault(target, []).append(
-            (ctx.event.get("source"), ctx.event.get("authority", 0), block))
         return True
     return False
 
@@ -408,14 +400,6 @@ def handle_turn_cost_add(ctx):
     if getattr(pool, "is_alive", True):
         pool.turn_cost_adjustment += max(-pool.available_cost, amount)
         return pool.available_cost
-
-
-def handle_queue_status(ctx):
-    amount, status, target, source = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
-    if not target.is_alive:
-        return False
-    target.queue_status(status, amount, source=source)
-    return True
 
 
 def handle_draw(ctx):
@@ -1008,7 +992,7 @@ DISPATCH_TABLE = {
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
     OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
-    OpCode.QUEUE_DIE_EFFECT: handle_queue_die_effect,
+    OpCode.SCHEDULE_EFFECT: schedule_effect,
     OpCode.SET_SKILL_FORM: handle_set_skill_form, OpCode.SPLIT_CLASH: handle_split_clash,
     OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
     OpCode.TAKE_HAND_CARD: handle_take_hand_card, OpCode.CHOOSE_SLOT: handle_choose_slot,
@@ -1037,7 +1021,7 @@ DISPATCH_TABLE = {
     OpCode.DIE_FINAL_ADD: handle_final_add, OpCode.DIE_LEVEL_ADD: handle_die_level_add,
     OpCode.DIE_BASE_ADD: handle_die_base_add,
     OpCode.REPEAT_DIE: handle_repeat_die, OpCode.NEXT_TURN_DUELS: handle_next_turn_duels,
-    OpCode.SET_SKILL_STATE: handle_set_component_state, OpCode.QUEUE_STATUS: handle_queue_status,
+    OpCode.SET_SKILL_STATE: handle_set_component_state,
     OpCode.DAMAGE: handle_damage, OpCode.LIGHTCORE_DAMAGE: handle_lightcore_damage,
     OpCode.REAL_DAMAGE: handle_real_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
     OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
@@ -1075,7 +1059,7 @@ OPERANDS = {
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
     OpCode.QUEUE_HIT: ("die", "mode", "origin"), OpCode.SKIP_ROUND: ("die",),
-    OpCode.QUEUE_DIE_EFFECT: ("target", "block"),
+    OpCode.SCHEDULE_EFFECT: ("source", "target", "capture", "terms", "block"),
     OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
     OpCode.TAKE_HAND_CARD: ("target", "receiver"), OpCode.CHOOSE_SLOT: ("subject", "candidates", "continuation"),
@@ -1100,7 +1084,7 @@ OPERANDS = {
     OpCode.DIE_FINAL_ADD: ("die", "amount"), OpCode.DIE_LEVEL_ADD: ("die", "amount"),
     OpCode.DIE_BASE_ADD: ("die", "amount"),
     OpCode.REPEAT_DIE: ("die",), OpCode.NEXT_TURN_DUELS: ("target", "amount"),
-    OpCode.SET_SKILL_STATE: ("card", "key", "value"), OpCode.QUEUE_STATUS: ("source", "target", "status", "amount"),
+    OpCode.SET_SKILL_STATE: ("card", "key", "value"),
     OpCode.PLACE: ("side", "duel_index", "card"), OpCode.ROLL: ("low", "high", "bonus", "die"),
     OpCode.REPLACE_SKILL: ("card", "target"),
     OpCode.MOVE_CARD: ("card", "zone"), OpCode.ROUTE_DIE_ATTACK: ("die", "target"),

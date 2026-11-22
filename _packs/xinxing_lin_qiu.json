@@ -372,10 +372,15 @@
                   "trigger": "on_dice_hit",
                   "operation": {
                     "op": "program",
-                    "code": [
-                      "$event.target", "星结", 2, "STATUS", "$event.target",
-                      ["$event.die",-4,"DIE_FINAL_ADD"], "QUEUE_DIE_EFFECT"
-                    ]
+                    "code": ["$event.target", "星结", 2, "STATUS",
+                      {"schedule": {
+                        "event": "before_dice_use", "source": "$self", "target": "$event.target",
+                        "after_turns": 0, "through_turns": null, "uses": 1,
+                        "require_source_alive": false, "require_target_alive": true,
+                        "when": [{"left": "$event.die.card.character", "op": "eq", "right": "$event.scheduled.target"},
+                                 {"left": "$event.die.destroyed", "op": "eq", "right": false}],
+                        "then": ["$event.die", -4, "DIE_FINAL_ADD"]
+                      }}]
                   },
                   "description": "施加2星结，使目标下一实际用骰最终点数−4。"
                 }
@@ -501,7 +506,12 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": "QUEUE_STATUS $self $event.target 虚弱 1",
+                  "operation": {"schedule": {
+                    "event": "on_turn_prepared", "source": "$self", "target": "$event.target",
+                    "after_turns": 1, "through_turns": 1, "uses": 1,
+                    "require_source_alive": false, "require_target_alive": true,
+                    "then": ["$event.scheduled.target","虚弱",1,"STATUS"]
+                  }},
                   "description": "下回合施加1虚弱。"
                 }
               ]
@@ -575,7 +585,18 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {"op":"program","code":["$self",["$event.die",2,"DIE_FINAL_ADD"],"QUEUE_DIE_EFFECT"]},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {"schedule": {
+                        "event": "before_dice_use", "source": "$self", "target": "$self",
+                        "after_turns": 0, "through_turns": null, "uses": 1,
+                        "require_source_alive": false, "require_target_alive": true,
+                        "when": [{"left": "$event.die.card.character", "op": "eq", "right": "$event.scheduled.target"},
+                                 {"left": "$event.die.destroyed", "op": "eq", "right": false}],
+                        "then": ["$event.die", 2, "DIE_FINAL_ADD"]
+                      }}]
+                  },
                   "description": "下骰最终点数+2。"
                 }
               ]
@@ -588,10 +609,15 @@
                   "trigger": "on_clash_win",
                   "operation": {
                     "op": "program",
-                    "code": [
-                      "$self", 2, "HEAL", "$player", 1, "DRAW", "$self",
-                      ["$event.die",4,"DIE_FINAL_ADD"], "QUEUE_DIE_EFFECT"
-                    ]
+                    "code": ["$self", 2, "HEAL", "$player", 1, "DRAW",
+                      {"schedule": {
+                        "event": "before_dice_use", "source": "$self", "target": "$self",
+                        "after_turns": 0, "through_turns": null, "uses": 1,
+                        "require_source_alive": false, "require_target_alive": true,
+                        "when": [{"left": "$event.die.card.character", "op": "eq", "right": "$event.scheduled.target"},
+                                 {"left": "$event.die.destroyed", "op": "eq", "right": false}],
+                        "then": ["$event.die", 4, "DIE_FINAL_ADD"]
+                      }}]
                   },
                   "description": "回复2生命，抽1卡，下骰最终点数+4。"
                 }
@@ -668,7 +694,12 @@
                 {
                   "trigger": "on_dice_hit",
                   "when": [{"left":{"field":"$self.statuses","key":"隧道开启","default":0},"op":"ge","right":1}],
-                  "operation": "QUEUE_STATUS $self $event.target 限制 2",
+                  "operation": {"schedule": {
+                    "event": "on_turn_prepared", "source": "$self", "target": "$event.target",
+                    "after_turns": 1, "through_turns": 1, "uses": 1,
+                    "require_source_alive": false, "require_target_alive": true,
+                    "then": ["$event.scheduled.target","限制",2,"STATUS"]
+                  }},
                   "description": "隧道开启时，下回合施加2限制。"
                 }
               ]
