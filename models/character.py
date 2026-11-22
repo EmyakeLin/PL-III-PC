@@ -417,15 +417,15 @@ class Character:
             stacks = self.statuses.get(name, 0)
             if not stacks and "failure" not in check:
                 continue
-            passed = getattr(self.game, "rng", random).randint(1, check["sides"]) <= stacks
+            roll = getattr(self.game, "rng", random).randint(1, check["sides"])
+            passed = roll <= stacks
             outcome = check.get("success" if passed else "failure")
             if outcome:
                 entry = Entry.from_spec(self, {"trigger": event, "operation": outcome, "origin": "status"})
                 with self._effect_context.binding(source=self, target=self, damage_part=False):
                     self._effect_context._invoke(entry)
-            self.record("status_check", check=event, status=name,
-                        before=stacks, after=self.statuses.get(name, 0), passed=passed,
-                        target_id=getattr(self._effect_context.event.get("target"), "id", None))
+            self.record("status_check", check=event, status=name, roll=roll, sides=check["sides"],
+                        before=stacks, after=self.statuses.get(name, 0), passed=passed)
             succeeded = succeeded or passed
         return succeeded
 
@@ -435,10 +435,14 @@ class Character:
             self.game.context.record("critical", actor=self.name)
             self.game.context.dispatch_pipeline("on_critical", source=self, target=target,
                                                 side=self.player.side, card=die.card, die=die)
+            self.record("critical_resolved", target_id=getattr(target, "id", None), balances=dict(self.statuses))
         return die.critical
 
     def trigger_stagger(self):
-        return self._roll_status_check("stagger")
+        before = dict(self.statuses)
+        passed = self._roll_status_check("stagger")
+        self.record("stagger_resolved", before=before, passed=passed)
+        return passed
 
     def on_turn_end(self):
         self._status_event("on_character_turn_end")

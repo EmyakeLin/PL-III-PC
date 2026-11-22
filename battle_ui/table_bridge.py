@@ -72,13 +72,12 @@ class TableBridge:
         elif kind == "entry_resolved":
             self._append("passive_trigger", side=data["side"], character_id=data["character_id"],
                          character_name=data["character_name"], passive_name=data["group"])
-        elif kind == "status_check":
-            if data["check"] == "stagger" and data["status"] == "失衡":
-                self._append("stagger_check", target_side=data["side"], target_id=data["character_id"],
-                             stacks_before=data["before"], triggered=data["passed"])
-            elif data["check"] == "critical" and data["passed"] and data["status"] == "呼吸":
-                self._append("breath_crit", side=data["side"], character_id=data["character_id"],
-                             target_id=data["target_id"], stacks=data["after"])
+        elif kind == "stagger_resolved":
+            self._append("stagger_check", target_side=data["side"], target_id=data["character_id"],
+                         stacks_before=data["before"].get("失衡", 0), triggered=data["passed"])
+        elif kind == "critical_resolved":
+            self._append("breath_crit", side=data["side"], character_id=data["character_id"],
+                         target_id=data["target_id"], stacks=data["balances"].get("呼吸", 0))
         elif kind == "character_died":
             self._append("character_death", side=data["side"], character_id=data["character_id"],
                          name=data["character_name"])

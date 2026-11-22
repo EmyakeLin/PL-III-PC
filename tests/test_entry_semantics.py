@@ -853,6 +853,27 @@ class ConditionExecutorTests(unittest.TestCase):
                         expected.append(key)
                 self.assertEqual(changes, expected)
 
+    def test_stagger_publishes_one_outcome_even_when_zero_or_multiple_checks_run(self):
+        from battle_ui.table_bridge import TableBridge
+        from unittest.mock import Mock
+        for checks, rolls in (({}, []), ({"a": 3, "b": 3}, [1, 2]), ({"a": 1, "b": 1}, [3, 4])):
+            actor = Character.__new__(Character)
+            rng = Mock()
+            rng.randint.side_effect = rolls
+            actor._effect_context = vm = Context()
+            actor.game = SimpleNamespace(rng=rng, is_over=False, status_rules={
+                name: {"check": {"event": "stagger", "sides": 4}} for name in checks})
+            actor.is_alive, actor.id, actor.name, actor.player = True, "one", "甲", Player(3, "p")
+            actor.statuses = {**checks, "失衡": 8}
+            table = TableBridge(vm)
+            with vm.collect_facts() as facts:
+                outcome = actor.trigger_stagger()
+            self.assertEqual([record["roll"] for kind, record in facts if kind == "status_check"], rolls)
+            self.assertEqual(len(table.events), 1)
+            self.assertEqual(table.events[0]["stacks_before"], 8)
+            self.assertIs(table.events[0]["triggered"], outcome)
+            self.assertIs(outcome, any(r <= n for r, n in zip(rolls, checks.values())))
+
     def test_a_success_does_not_hide_another_status_check(self):
         from unittest.mock import Mock
 
