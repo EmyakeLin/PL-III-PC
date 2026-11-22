@@ -351,7 +351,7 @@ class Game:
         for player in ordered:
             for character in player.characters:
                 character.reset_shields()
-                character.reserved_dice.clear()
+                character.expire_die_responses(self.turn_number)
                 character.used_duels = 0
                 character.turn_duel_bonus = 0
                 for status in self.turn_end_statuses:

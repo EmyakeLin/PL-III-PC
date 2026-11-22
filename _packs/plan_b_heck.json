@@ -187,7 +187,11 @@
               "trigger": "on_skill_use",
               "operation": {
                 "op": "program",
-                "code": ["$card", 1, "$self", "凝聚", "STATUS_COUNT", "RESERVE_DIE"]
+                "code": [
+                  "$self", "$event.card", 1, "CAPTURE_SKILL_DIE",
+                  "$self", "凝聚", "STATUS_COUNT",
+                  "before_one_sided_attack", "$game.turn_number", "use", 1, "GRANT_DIE_RESPONSE"
+                ]
               },
               "description": "每持有1凝聚，本回合即将被单方面攻击时可用本技能的第一枚骰子迎击一次。"
             }

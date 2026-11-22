@@ -193,9 +193,16 @@ class Character:
             balance = str(amount) if threshold is None else f"{amount}/{threshold}"
             parts.append(f"{name}溢出 {balance}")
         parts.extend(f"能力 {label} {count}次" for label, count in self.ability_effects.items())
-        parts.extend(f"迎击「{reply.card.name}」第{reply.position}骰 ×{reply.remaining}"
+        parts.extend(f"迎击「{reply.template.card.name}」第{reply.template.position}骰 ×{reply.remaining}"
                      for reply in self.reserved_dice)
         return " · ".join(parts)
+
+    def available_die_responses(self, trigger, turn_number):
+        return [reply for reply in self.reserved_dice if reply.available(trigger, turn_number)]
+
+    def expire_die_responses(self, finished_turn):
+        self.reserved_dice[:] = [reply for reply in self.reserved_dice
+                                 if reply.through_turn is None or reply.through_turn > finished_turn]
 
     def add_shield(self, kind, amount):
         field = SHIELD_FIELDS[kind]

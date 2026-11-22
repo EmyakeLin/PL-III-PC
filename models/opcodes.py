@@ -6,6 +6,7 @@ from entry.effects import GRADE_RANK
 from entry.play_conditions import record_hand_play
 from entry.program import adjusted_value
 from models.card import Card, CardState
+from models.die_response import DieResponse, SkillDieTemplate
 from models.duel import DuelSlot
 from models.opcode import OpCode
 
@@ -120,9 +121,18 @@ def handle_repeat_die(ctx):
     return die.card is not None and _usable_component(die) and die.request_repeat()
 
 
-def handle_reserve_die(ctx):
-    count, position, card = ctx.pop(), ctx.pop(), ctx.pop()
-    return ctx.game.pipeline.reserve_die(card, position, count)
+def handle_capture_skill_die(ctx):
+    position, card = ctx.pop(), ctx.pop()
+    ctx.push(SkillDieTemplate.capture(card, position))
+
+
+def handle_grant_die_response(ctx):
+    amount, stage, through_turn, trigger = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    count, template, holder = ctx.pop(), ctx.pop(), ctx.pop()
+    if template is None or not holder.is_alive or count <= 0:
+        return False
+    holder.reserved_dice.append(DieResponse(template, trigger, count, through_turn, stage, amount))
+    return True
 
 
 def handle_queue_hit(ctx):
@@ -986,7 +996,7 @@ DISPATCH_TABLE = {
     OpCode.DUEL_OFFSET: handle_duel_offset,
     OpCode.ROUND_TRIGGER_COUNT: handle_round_trigger_count,
     OpCode.RECORD_ROUND_TRIGGER: handle_record_round_trigger,
-    OpCode.RESERVE_DIE: handle_reserve_die,
+    OpCode.CAPTURE_SKILL_DIE: handle_capture_skill_die, OpCode.GRANT_DIE_RESPONSE: handle_grant_die_response,
     OpCode.ACTIVATE_STATUS: handle_activate_status, OpCode.SET_DIE_STATE: handle_set_component_state,
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
@@ -1050,7 +1060,8 @@ OPERANDS = {
     OpCode.DUEL_OFFSET: ("offset",),
     OpCode.ROUND_TRIGGER_COUNT: ("character", "key"),
     OpCode.RECORD_ROUND_TRIGGER: ("character", "key"),
-    OpCode.RESERVE_DIE: ("card", "position", "count"),
+    OpCode.CAPTURE_SKILL_DIE: ("card", "position"),
+    OpCode.GRANT_DIE_RESPONSE: ("target", "template", "count", "trigger", "through_turn", "spend_on", "spend_amount"),
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
