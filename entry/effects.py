@@ -134,34 +134,6 @@ def run_effect(ctx, entry, operation):
         if card is not None:
             ctx.game.place_in_duel(player.side, card, ctx.game.active_duelspace.space.index(duel))
         return
-    if name in ("roll_add", "roll_set", "base_add", "final_add"):
-        die = select_entity(ctx, data.get("target", entry.target or "die"), entry.owner)
-        if die is None or ctx.range_blocks_target(die):
-            return
-        amount = int(data.get("amount", args[0] if args else 0))
-        if name == "base_add":
-            die.base_value += amount
-        elif name == "final_add":
-            die.final_bonus += amount
-        elif ((ctx.event.get("opcode"), ctx.event.get("timing")) == ("ROLL", "AFTER")
-              or ctx.event.get("node_id") == "on_dice_clash"):
-            die.value = amount if name == "roll_set" else die.value + amount
-        else:
-            ctx.roll_adjustments.setdefault(die, []).append((name, amount))
-        return
-    if name in ("damage_add", "damage_multiply", "armor"):
-        if ctx.range_blocks_target(ctx.event.get("target")):
-            return
-        # A conditional program can run between the listener and the pending damage.
-        modifiers = ctx.event.get("modifiers") if ctx.event.get("opcode") == "DAMAGE" else None
-        if modifiers is None:
-            modifiers = ctx.event.get("hit_modifiers")
-        if modifiers is None:
-            raise ValueError(f"{name} 需要命中或伤害的上下文")
-        value = float(data.get("amount", args[0] if args else 0))
-        grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
-        modifiers.append((name, value, grade))
-        return
     selector = data.get("target", entry.target or "target")
     target = select_entity(ctx, selector, entry.owner)
     if target is None:

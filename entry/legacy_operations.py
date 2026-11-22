@@ -10,6 +10,9 @@ def _team_status(action):
 
 
 WORD_ALIASES = {
+    "DAMAGE_ADD": [{"literal": ["amount"]},
+                   ["$event.target", "$active_damage_modifiers", "damage_add", "$bindings.amount", "normal",
+                    "ADD_DAMAGE_MODIFIER"], "WITH_BINDINGS"],
     "BOARD_SKILLS_OF": [{"literal": ["holder"]},
                        ["$bindings.holder.is_alive",
                         ["BOARD_SLOTS", ["$item", "$bindings.holder.player.side", "SLOT_CARDS"], "MAP", "FLATTEN",
@@ -39,6 +42,24 @@ def compile_targeted_action(name, data, args):
     if name == "reveal_lock":
         return compile_program(["placement", "WINDOW_OPEN", "$event.target.state.name", "PLACED_FACE_DOWN", "EQ", "AND",
                                 ["SET_CARD_FACE $event.target up", "SET_PLACEMENT_LOCK $event.target true"], "WHEN"])
+    if name in ("damage_add", "damage_multiply", "armor"):
+        from entry.effects import GRADES
+        value = data.get("amount", args[0] if args else 0)
+        if isinstance(value, str):
+            value = int(value) if value.lstrip("+-").isdecimal() else float(value)
+        grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
+        return compile_program(["$event.target", "$active_damage_modifiers", name, value, grade, "ADD_DAMAGE_MODIFIER"])
+    if name in ("roll_add", "roll_set", "base_add", "final_add"):
+        amount = int(data.get("amount", args[0] if args else 0))
+        die = "$event.target"
+        if name in ("base_add", "final_add"):
+            tokens = [die, amount, OpCode.DIE_BASE_ADD if name == "base_add" else OpCode.DIE_FINAL_ADD]
+        else:
+            mode = name.removeprefix("roll_")
+            tokens = ["$event.opcode", {"literal": "ROLL"}, "EQ", "$event.timing", "AFTER", "EQ", "AND",
+                      "$event.node_id", "on_dice_clash", "EQ", "OR",
+                      [die, mode, amount, "UPDATE_ROLL"], [die, mode, amount, "QUEUE_ROLL_UPDATE"], "IF_ELSE"]
+        return TargetedProgram(data.get("target"), "die", compile_program(tokens))
     default = "self" if name in ("heal", "draw", "draw_card", "discard", "shield") else "target"
     selector = data.get("target")
     target = Field("event.target")

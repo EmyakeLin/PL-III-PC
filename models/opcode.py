@@ -119,3 +119,7 @@ class OpCode(Enum):
     SKILL_RESTRICTED = auto()
     NEXT_PLANNED_DIE = auto()
     DIE_VALUE = auto()
+    UPDATE_ROLL = auto()
+    QUEUE_ROLL_UPDATE = auto()
+    ADD_DAMAGE_MODIFIER = auto()
+    OR = auto()

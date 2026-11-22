@@ -44,9 +44,6 @@ def run_program(ctx, entry, tokens):
         name = vm.pop()
         variables[name] = vm.pop()
 
-    def damage_add(vm):
-        run_effect(vm, entry, {"op": "damage_add", "amount": vm.pop()})
-
     def bind(program):
         block = []
         for instruction in program.instructions:
@@ -63,8 +60,6 @@ def run_program(ctx, entry, tokens):
             elif isinstance(instruction, Word):
                 if instruction.name == "STORE":
                     block.append(store_local)
-                elif instruction.name == "DAMAGE_ADD":
-                    block.append(damage_add)
                 else:
                     block.append(WORDS[instruction.name])
             else:

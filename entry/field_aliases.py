@@ -1,6 +1,9 @@
 """Source-compatible spellings for older printed programs, expressed as entry code."""
 
 FIELD_ALIASES = {
+    "active_damage_modifiers": ["$event.opcode", {"literal": "DAMAGE"}, "EQ",
+                                ["$event.modifiers", "$event.hit_modifiers", "COALESCE"], ["$event.hit_modifiers"],
+                                "IF_ELSE"],
     "opponent_player": ["$player", "OPPONENT"],
     "target_speed_lead": ["$skill_target", "DUP", [{"field": "speed"}, "$self.speed", "SWAP", "SUB"],
                           ["POP", 0], "IF_ELSE"],

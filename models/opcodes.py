@@ -33,7 +33,7 @@ _BINARY_OPERATIONS = {
     OpCode.COALESCE: lambda value, default: default if value is None else value,
     OpCode.ALL_IN: lambda members, collection: all(item in collection for item in members),
     OpCode.LT: operator.lt, OpCode.LE: operator.le, OpCode.GT: operator.gt,
-    OpCode.GE: operator.ge, OpCode.EQ: operator.eq, OpCode.AND: lambda a, b: bool(a and b),
+    OpCode.GE: operator.ge, OpCode.EQ: operator.eq, OpCode.AND: lambda a, b: bool(a and b), OpCode.OR: lambda a, b: bool(a or b),
 }
 
 
@@ -509,12 +509,32 @@ def handle_replace_skill(ctx):
     return ctx.game.special.exchange(card, old_card)
 
 
+def handle_roll_update(ctx):
+    amount, mode, die = ctx.pop(), ctx.pop(), ctx.pop()
+    if mode not in ("set", "add"):
+        raise ValueError(f"未知的掷骰修正 {mode!r}")
+    if ctx.current_op == OpCode.QUEUE_ROLL_UPDATE:
+        ctx.roll_adjustments.setdefault(die, []).append((mode, amount))
+    else:
+        die.value = amount if mode == "set" else die.value + amount
+
+
+def handle_damage_modifier(ctx):
+    grade, amount, kind, channel = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    ctx.pop()  # Subject of the range/authority check.
+    if not isinstance(channel, list):
+        raise ValueError("修正需要待结算的命中或伤害通道")
+    if kind not in ("damage_add", "damage_multiply", "armor") or grade not in GRADE_RANK:
+        raise ValueError(f"无效的伤害修正 {kind!r} / {grade!r}")
+    channel.append((kind, amount, grade))
+
+
 def handle_roll(ctx):
     die, bonus, high, low = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
     rng = getattr(ctx.game, "rng", random)
     die.value = max(low, min(high, rng.randint(low, high) + bonus))
-    for action, amount in ctx.roll_adjustments.pop(die, ()):
-        die.value = amount if action == "roll_set" else die.value + amount
+    for mode, amount in ctx.roll_adjustments.pop(die, ()):
+        ctx.eval_block([die, mode, amount, OpCode.UPDATE_ROLL])
     return die.value
 
 
@@ -882,6 +902,8 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.UPDATE_ROLL: handle_roll_update, OpCode.QUEUE_ROLL_UPDATE: handle_roll_update,
+    OpCode.ADD_DAMAGE_MODIFIER: handle_damage_modifier,
     OpCode.WINDOW_OPEN: lambda ctx: ctx.push(ctx.game.special.window_open(ctx.pop())),
     OpCode.SET_CARD_FACE: handle_set_card_face, OpCode.SET_PLACEMENT_LOCK: handle_placement_lock,
     OpCode.WITH_BINDINGS: handle_with_bindings,
@@ -946,6 +968,8 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.UPDATE_ROLL: ("die", "mode", "amount"), OpCode.QUEUE_ROLL_UPDATE: ("die", "mode", "amount"),
+    OpCode.ADD_DAMAGE_MODIFIER: ("target", "channel", "kind", "amount", "grade"),
     OpCode.WINDOW_OPEN: ("window",), OpCode.SET_CARD_FACE: ("card", "face"),
     OpCode.SET_PLACEMENT_LOCK: ("card", "locked"), OpCode.WITH_BINDINGS: ("names", "block"),
     OpCode.MAP: ("collection", "expression"), OpCode.FLATTEN: ("collection",), OpCode.FIRST: ("collection",),

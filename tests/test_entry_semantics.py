@@ -203,6 +203,46 @@ class CommandTests(unittest.TestCase):
             run_program(vm, entry, ["DIVMOD 42 0"])
         self.assertEqual(vm.stack, ["outer"])
 
+    def test_printed_roll_updates_distinguish_current_and_future_rolls(self):
+        from models.dice import Dice
+        for node, opcode, timing, immediate in (
+                ("other", None, None, False), ("other", "ROLL", "BEFORE", False),
+                ("other", "ROLL", "AFTER", True), ("on_dice_clash", None, None, True)):
+            for verb in ("roll_set", "roll_add"):
+                for amount in (-2**70, 0, 13):
+                    vm = TracedContext()
+                    die = Dice({"type": "blunt", "level": 1})
+                    die.value = 2
+                    entry = Entry.from_spec(None, {"trigger": "tick", "operation": {"op": verb, "amount": amount}})
+                    with vm.binding(node_id=node, opcode=opcode, timing=timing, die=die):
+                        run_effect(vm, entry, entry.compiled_operation)
+                    changed = amount if verb == "roll_set" else 2 + amount
+                    self.assertEqual(die.value, min(4, max(1, changed)) if immediate else 2)
+                    writes = [op for op, timing, _ in vm.trace if timing == "BEFORE"
+                              and op in (OpCode.UPDATE_ROLL, OpCode.QUEUE_ROLL_UPDATE)]
+                    self.assertEqual(writes, [OpCode.UPDATE_ROLL if immediate else OpCode.QUEUE_ROLL_UPDATE])
+                    vm.eval_block([3, 3, 0, die, OpCode.ROLL])
+                    settled = amount if verb == "roll_set" else 3 + amount
+                    self.assertEqual(die.value, 3 if immediate else min(4, max(1, settled)))
+                    self.assertNotIn(die, vm.roll_adjustments)
+
+    def test_damage_modifier_preserves_grade_channel_and_exact_integer(self):
+        for name in ("damage_add", "damage_multiply", "armor"):
+            for grade in ("normal", "pierce", "concept"):
+                for value in (-2**85 - 1, -0.25, 0, 2**96 + 1):
+                    for nested_damage in (True, False):
+                        vm = TracedContext()
+                        damage, hit = [], []
+                        entry = Entry.from_spec(None, {"trigger": "tick", "operation": {
+                            "op": name, "grade": grade, "amount": value}})
+                        with vm.binding(opcode="DAMAGE" if nested_damage else "ROLL", modifiers=damage,
+                                        hit_modifiers=hit):
+                            run_effect(vm, entry, entry.compiled_operation)
+                        self.assertEqual(damage if nested_damage else hit, [(name, value, grade)])
+                        self.assertEqual(hit if nested_damage else damage, [])
+                        self.assertEqual(sum(1 for op, timing, _ in vm.trace
+                                             if op is OpCode.ADD_DAMAGE_MODIFIER and timing == "BEFORE"), 1)
+
     def test_optional_fields_and_unknown_names_have_distinct_results(self):
         vm = TracedContext()
         entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})

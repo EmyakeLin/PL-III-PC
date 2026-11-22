@@ -115,7 +115,7 @@ def compile_program(tokens, *, expand=expand_command):
                     body = [*body, {"field": ".".join(suffix)}]
             elif token in WORD_ALIASES:
                 name, body = token, WORD_ALIASES[token]
-            elif token in WORDS or token in ("STORE", "DAMAGE_ADD"):
+            elif token in WORDS or token == "STORE":
                 yield Word(token)
                 continue
             elif token in OpCode.__members__:
