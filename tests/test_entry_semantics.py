@@ -1218,5 +1218,35 @@ class ExecutionBoundaryTests(unittest.TestCase):
                     self.assertNotIn(node.func.id, ("print", "input"), (source, node.lineno))
 
 
+class StatusAliasTests(unittest.TestCase):
+    def test_data_aliases_obey_canonical_name_precedence_and_keep_snapshot_compatibility(self):
+        import json
+        from pathlib import Path
+        from displayer import Displayer
+        from loader import EffectDefinitions, _add_effects
+        aliases = json.loads((Path(__file__).resolve().parents[1] / "_packs/effects/status_aliases.json")
+                             .read_text(encoding="utf-8"))
+        for order in (True, False):
+            rules = {"status_rules": {"能源": {"aliases": ["battery"], "cap": 12}, "出血": {"aliases": ["bleed"]}}}
+            defs = EffectDefinitions()
+            for pack in ((aliases, rules) if order else (rules, aliases)):
+                _add_effects(defs, pack)
+            defs.resolve_aliases()
+            vm, seat = Context(), Player(2, "乙")
+            seat.game = vm.game = SimpleNamespace(context=vm, status_rules=defs.status_rules, status_entries={},
+                                                   ability_rules={}, turn_end_statuses=set(), cards_revealed=False)
+            actor = Character({"id": "one", "name": "一", "rank": "NORMAL", "skills": [], "max_hp": 4}, seat)
+            self.assertEqual([actor.canonical_status_name(n) for n in ("能源", "energy", "battery", "unknown")],
+                             ["能源", "能源", "能源", "unknown"])
+            actor.game.status_rules["energy"] = {}
+            self.assertEqual(actor.canonical_status_name("energy"), "energy")
+            for active in (True, False):
+                actor.statuses["出血"] = 2
+                actor.active_statuses = {"出血"} if active else set()
+                view = Displayer._character(SimpleNamespace(_game=seat.game), actor, True)
+                self.assertIs(view["bleed_burst"], active)
+            self.assertFalse(hasattr(Character, "bleed_burst"))
+
+
 if __name__ == "__main__":
     unittest.main()

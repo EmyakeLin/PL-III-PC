@@ -256,16 +256,9 @@ class Character:
         return self.game.status_rules if self.game else self._standalone_status_rules
 
     def canonical_status_name(self, name):
-        if name == "energy":
-            return "能源"
         if name in self.status_rules:
             return name
         return next((label for label, rule in self.status_rules.items() if name in rule.get("aliases", ())), name)
-
-    @property
-    def bleed_burst(self):
-        """Compatibility field for the original public battle snapshot."""
-        return self.canonical_status_name("bleed") in self.active_statuses
 
     def status_cap(self, name):
         global_cap = self.status_rules.get(name, {}).get("cap")

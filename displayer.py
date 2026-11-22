@@ -444,7 +444,7 @@ class Displayer:
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
-            "statuses": dict(c.statuses), "bleed_burst": c.bleed_burst,
+            "statuses": dict(c.statuses), "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
             "ability_effects": dict(c.ability_effects),
             "reserved_dice": [{"skill": reserve.card.name, "position": reserve.position, "remaining": reserve.remaining}
                               for reserve in c.reserved_dice],

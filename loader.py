@@ -13,6 +13,13 @@ class EffectDefinitions:
     status_entries: dict = field(default_factory=dict)
     ability_rules: dict = field(default_factory=dict)
     turn_end_statuses: list = field(default_factory=list)
+    status_aliases: dict = field(default_factory=dict)
+
+    def resolve_aliases(self):
+        for name, aliases in self.status_aliases.items():
+            rule = self.status_rules.get(name, {})
+            self.status_rules[name] = {**rule, "aliases": list(dict.fromkeys([*rule.get("aliases", ()), *aliases]))}
+        return self
 
 
 def _add_effects(definitions, pack):
@@ -44,6 +51,10 @@ def _add_effects(definitions, pack):
                 or type(activation.get("remove_after", False)) is not bool):
             raise ValueError(f"{name} 的发动规则须指定有效的操作、名称与移除标记")
         definitions.status_rules[name] = rule
+    for name, aliases in pack.get("status_aliases", {}).items():
+        if not isinstance(aliases, list) or not all(isinstance(alias, str) and alias for alias in aliases):
+            raise ValueError(f"{name} 的别名须为非空字符串列表")
+        definitions.status_aliases.setdefault(name, []).extend(aliases)
     definitions.turn_end_statuses.extend(pack.get("turn_end_statuses", ()))
     for name, entries in pack.get("status_entries", {}).items():
         if name in definitions.status_entries:
@@ -78,7 +89,7 @@ def _shared_effects(directory):
 @lru_cache(maxsize=1)
 def base_effects():
     """Built-in definitions for games and model objects created without a roster loader."""
-    return _shared_effects(PACKS)
+    return _shared_effects(PACKS).resolve_aliases()
 
 
 def load_characters_from_packs(packs_dir=None):
@@ -142,4 +153,5 @@ def load_characters_from_packs(packs_dir=None):
                 characters.append(char)
         except (ValueError, KeyError, TypeError, SyntaxError) as exc:
             raise ValueError(f"卡包 {path.name} 无法载入：{exc}") from exc
+    definitions.resolve_aliases()
     return characters
