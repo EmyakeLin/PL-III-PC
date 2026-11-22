@@ -532,16 +532,16 @@ def handle_place(ctx):
         if (not owner.is_alive or card.destroyed or card not in owner.player.cardspace.hand.content
                 or owner.used_duels >= owner.max_duels or game.special.first_open_slot(side) != idx):
             return False
+    zones = card.player.cardspace
+    if card in zones.hand.content:
+        record_hand_play(card)
     while idx >= len(space.space):
         space.append_new_duel(DuelSlot(game))
     slot = space.space[idx]
     side_cards = slot.content.get(side, [])
-    zones = card.player.cardspace
     if (space is game.duelspace and card.character
             and not any(c.character is card.character for c in side_cards if isinstance(c, Card))):
         card.character.used_duels += 1
-    if card in zones.hand.content:
-        record_hand_play(card)
     slot.add_content(side, card)
     face_up = game.cards_revealed or space is not game.duelspace
     card.state = CardState.PLACED_FACE_UP if face_up else CardState.PLACED_FACE_DOWN

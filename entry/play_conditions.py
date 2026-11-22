@@ -23,12 +23,12 @@ def record_hand_play(card):
 
 
 def denies_skill_use(owner, card):
-    in_hand = card in owner.player.cardspace.hand.content
     for name, stacks in owner.statuses.items():
         if stacks <= 0:
             continue
         for index, rule in enumerate(skill_use_rules(owner.status_rules.get(name, {}))):
-            observed = (observations(rule, owner, card) if in_hand
+            zones = getattr(owner.player, "cardspace", None)
+            observed = (observations(rule, owner, card) if zones and card in zones.hand.content
                         else card.play_observations.get((name, index), {}))
             event = {"card": card, "stacks": stacks, "observed": observed}
             if all(condition.evaluate(owner, event) for condition in compile_when(rule["deny_when"], None, None)):

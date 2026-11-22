@@ -13,13 +13,12 @@ class CardList():
             card.dissolve()
             return
         before = len(self.content)
-        if position == -1:
-            self.content.append(card)
-        elif position > len(self.content): # if the index is too big, we put it at the latest
-            self.content.append(card)
-        elif position >= 0: # if it's a valid index
-            self.content.insert(position, card)
+        if position == -1 or position >= 0:
+            self._insert_card(card, len(self.content) if position == -1 else position)
         self._on_size_changed(before, len(self.content))
+
+    def _insert_card(self, card, position):
+        self.content.insert(min(position, len(self.content)), card)
 
     def _on_size_changed(self, before, after):
         """A zone can publish its count after a completed mutation."""
@@ -64,11 +63,14 @@ class CardList():
         else:
             raise TypeError("Wrong type: index must be int or Card!")
         before, target_before = len(self.content), len(target_deck.content)
-        target_deck.content.append(self.content.pop(idx))
-        if target_deck is not self:
-            # Both zones are settled before a listener can move another card.
-            self._on_size_changed(before, before - 1)
-            target_deck._on_size_changed(target_before, target_before + 1)
+        card = self.content.pop(idx)
+        if target_deck is self:
+            self.content.append(card)
+            return
+        target_deck._insert_card(card, target_before)
+        # Both zones are settled before a listener can move another card.
+        self._on_size_changed(before, before - 1)
+        target_deck._on_size_changed(target_before, target_before + 1)
 
     def shuffle(self, rng=None):
         import random
@@ -78,6 +80,11 @@ class Hand(CardList):
     def __init__(self, player: Player, all_cards = None):
         super().__init__(all_cards)
         self.player = player
+
+    def _insert_card(self, card, position):
+        if isinstance(card, Card):
+            card.play_observations = {}
+        super()._insert_card(card, position)
 
     def _on_size_changed(self, before, after):
         if before != after and self.player.game:

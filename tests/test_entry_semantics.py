@@ -1384,7 +1384,15 @@ class PlayObservationTests(unittest.TestCase):
                                                ("名字", 1, True), ("名字", 2, False)):
                     first.statuses = {name: stacks}
                     self.assertIs(first.skill_restricted(card), expected)
-                card.reset_for_draw()
+                if path == "custom":
+                    seat.cardspace.delayed_discard.push_to_draw()
+                    self.assertIsNone(vm.eval_block([seat, 1, OpCode.DRAW]))
+                    self.assertEqual(card.play_observations, {})
+                    hand.content.remove(card)
+                    hand.content.insert(0, card)
+                    self.assertEqual(vm.eval_block([seat, 1, OpCode.DISCARD]), [card])
+                else:
+                    card.reset_for_draw()
                 self.assertEqual(card.play_observations, {})
                 self.assertFalse(first.skill_restricted(card))
 
