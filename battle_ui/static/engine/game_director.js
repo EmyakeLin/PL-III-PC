@@ -27,6 +27,9 @@ import {
   drawDieIcon,
   drawUnifiedDieFrame,
   drawStatusIcon,
+  mountStatusIcon,
+  setStatusVisuals,
+  getStatusColor,
   drawShieldGlyph,
   drawLightStar,
   drawCostCrystal,
@@ -39,6 +42,7 @@ import {
   buildUnifiedEntryPlate,
 } from './card_print.js';
 import { createCharacterActor, actorPalette, setCharacterSpriteUrls } from './stage_actors.js';
+import { FxDirector } from './fx_director.js';
 import {
   createFactionCostHud,
   createDiegeticDeckPiles,
@@ -115,6 +119,22 @@ export class GameDirector {
     this.h = app.screen.height;
     this.state = null;
     this.lastFxSeq = 0;
+
+    this.fxDirector = new FxDirector({
+      three: threeWorld,
+      physics,
+      audio,
+      getActorNode: (cid) => this.actorNodes.get(cid) || null,
+      getActorPos: (cid) => this._actorPos(cid),
+      getMotion: (cid) => this._getMotion(cid),
+      getClashCenter: () => ({
+        x: (this.layout?.arenaX || 0) + (this.layout?.arenaW || this.w) * 0.5,
+        y: (this.layout?.arenaTop || 60) + 132,
+      }),
+      triggerShake: (power, dur) => this._triggerShake(power, dur),
+      spawnFloater: (x, y, text, color, size, kind) => this._spawnFloater(x, y, text, color, size, kind),
+      showBanner: (text, color, dur) => this._showBanner(text, color, dur),
+    });
 
     // Live kinetic state ticked at 60fps
     this.hpDisplay = new Map();
@@ -555,6 +575,10 @@ export class GameDirector {
     if (nextState.character_sprites) {
       setCharacterSpriteUrls(nextState.character_sprites);
     }
+    if (nextState.status_visuals) {
+      setStatusVisuals(nextState.status_visuals);
+    }
+    this.fxDirector.sync(nextState.character_fx, nextState.fx_scripts);
     this.drawSelected.clear();
 
     const isCombat = Boolean(nextState.frame?.combat);
@@ -803,12 +827,25 @@ export class GameDirector {
   _playPassiveTriggerFx(ev, silent) {
     const node = this.actorNodes.get(ev.character_id);
     const pan = node ? (node.side === 1 ? -0.3 : 0.3) : 0;
-    if (!silent) this.audio.passiveChime(1.0, pan);
     const key = `${ev.character_id}:${ev.passive_name}`;
     this.passivePulses.set(key, 1.65);
 
     const pos = this._actorPos(ev.character_id);
     this._getMotion(ev.character_id).passiveFlare = 1.0;
+
+    const customRecipe = this.fxDirector.resolvePassiveRecipe(ev);
+    const playedCustom = customRecipe && this.fxDirector.playRecipe(customRecipe, {
+      event: ev,
+      attackerId: ev.character_id,
+      defenderId: ev.character_id,
+      attackerSide: node?.side || null,
+      defaultColor: INK.gold,
+    }, { silent });
+
+    if (!playedCustom) {
+      if (!silent) this.audio.passiveChime(1.0, pan);
+      this.three.emitShockwave(pos.x, pos.y, INK.gold);
+    }
 
     const plate = this.passivePlates.get(key);
     if (plate) {
@@ -819,15 +856,23 @@ export class GameDirector {
         duration: 0.46,
       });
     }
-    this.three.emitShockwave(pos.x, pos.y, INK.gold);
     this._spawnFloater(pos.x, pos.y - 50, `${ev.passive_name}`, INK.gold, 14.5, 'passive');
   }
 
   _playStatusChangeFx(ev) {
     const pos = this._actorPos(ev.character_id);
-    const col = STATUS_COLORS[ev.status] || INK.secondary;
+    const col = getStatusColor(ev.status, INK.secondary);
     const sign = ev.delta > 0 ? '+' : '';
-    if (ev.delta > 0) {
+    const customRecipe = ev.delta > 0 ? this.fxDirector.resolveStatusRecipe(ev) : null;
+    if (customRecipe) {
+      this.fxDirector.playRecipe(customRecipe, {
+        event: ev,
+        attackerId: ev.character_id,
+        defenderId: ev.character_id,
+        attackerSide: ev.side || null,
+        defaultColor: col,
+      });
+    } else if (ev.delta > 0) {
       this.three.triggerRipple(pos.x, pos.y, col);
     }
     this._spawnFloater(pos.x, pos.y - 26, `${ev.status} ${sign}${ev.delta}`, col, 13, 'status');
@@ -842,9 +887,25 @@ export class GameDirector {
   }
 
   _playCombatStrikeFx(ev) {
-    const from = this._actorPos(ev.attacker_id);
-    const to = this._actorPos(ev.target_id);
     const ds = DIE_STYLE[ev.die_type] || DIE_STYLE.slash;
+    const customRecipe = this.fxDirector.resolveStrikeRecipe(ev);
+    if (customRecipe) {
+      const ran = this.fxDirector.playRecipe(customRecipe, {
+        event: ev,
+        attackerId: ev.attacker_id,
+        defenderId: ev.target_id,
+        attackerSide: ev.attacker_side,
+        defenderSide: ev.target_side,
+        defaultColor: this._resolveCharColor(ev.attacker_id, ev.attacker_side),
+      });
+      if (ran) return;
+    }
+
+    const from = this.fxDirector.resolveAnchor('attacker.bone_weapon', {
+      attackerId: ev.attacker_id,
+      defenderId: ev.target_id,
+    });
+    const to = this._actorPos(ev.target_id);
 
     // Physical actor lunge & target recoil!
     this._getMotion(ev.attacker_id).lunge = 1.0;
@@ -919,6 +980,18 @@ export class GameDirector {
           this.three.spawnBlockBarrier({ x: pos.x + (sd.side === 1 ? 36 : -36), y: pos.y, colorHex: DIE_STYLE.block.color });
         } else if (sd.result === 'win') {
           this._getMotion(sd.character_id).lunge = 0.65;
+          const winRecipe = this.fxDirector.resolveClashWinRecipe(sd);
+          if (winRecipe) {
+            const opp = (ev.sides || []).find((o) => o.side !== sd.side);
+            this.fxDirector.playRecipe(winRecipe, {
+              event: ev,
+              attackerId: sd.character_id,
+              defenderId: opp?.character_id || null,
+              attackerSide: sd.side,
+              defenderSide: opp?.side || null,
+              defaultColor: this._resolveCharColor(sd.character_id, sd.side),
+            });
+          }
         }
       }
     }
@@ -1807,7 +1880,7 @@ export class GameDirector {
     }
     for (const [name, val] of statuses) {
       if (sx + stBoxSize + 1 > hudW + 6) break;
-      const col = STATUS_COLORS[name] || INK.secondary;
+      const col = getStatusColor(name, INK.secondary);
       const burst = name === '裂血' && ch.bleed_burst;
       const iconBox = new PIXI.Container();
       iconBox.position.set(sx, row3Y);
@@ -1815,9 +1888,17 @@ export class GameDirector {
       ig.roundRect(0, 0, stBoxSize, stBoxSize, 4.5)
         .fill({ color: burst ? 0xfce0e4 : INK.paper })
         .stroke({ width: burst ? 1.6 : 1.1, color: col });
-      drawStatusIcon(ig, name, stBoxSize / 2, stBoxSize * 0.45, compactHud ? 5.8 : 7.2, col);
-      ig.roundRect(stBoxSize * 0.45, stBoxSize * 0.52, stBoxSize * 0.6, stBoxSize * 0.5, 3).fill({ color: col });
       iconBox.addChild(ig);
+
+      const glyphLayer = new PIXI.Container();
+      const glyphG = new PIXI.Graphics();
+      glyphLayer.addChild(glyphG);
+      mountStatusIcon(glyphLayer, glyphG, name, stBoxSize / 2, stBoxSize * 0.45, compactHud ? 5.8 : 7.2, col);
+      iconBox.addChild(glyphLayer);
+
+      const badgeG = new PIXI.Graphics();
+      badgeG.roundRect(stBoxSize * 0.45, stBoxSize * 0.52, stBoxSize * 0.6, stBoxSize * 0.5, 3).fill({ color: col });
+      iconBox.addChild(badgeG);
 
       const valTxt = new PIXI.Text({
         text: String(val),
@@ -1842,7 +1923,7 @@ export class GameDirector {
               name: n,
               value: v,
               burst: n === '裂血' && ch.bleed_burst,
-              color: STATUS_COLORS[n] || INK.secondary,
+              color: getStatusColor(n, INK.secondary),
               text: (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '',
             };
           }),

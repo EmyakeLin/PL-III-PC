@@ -1,0 +1,41 @@
+{
+  "color": "#9c322c",
+  "defaults": {
+    "slash": "猩红重斩刀光并引发暗金震荡波纹与碎裂碎片",
+    "pierce": "猩红突刺破空并伴随金属蜂鸣"
+  },
+  "skills": {
+    "开锋": {
+      "on_strike": {
+        "prompt": "猩红铁契重刀双弧猛烈挥斩，激起暗金冲击波与碎石崩裂",
+        "vfx": [
+          {
+            "primitive": "slash_arc",
+            "from": "attacker.bone_weapon",
+            "to": "defender.center",
+            "color": "#b83b33",
+            "count": 2,
+            "stagger_ms": 100
+          },
+          {
+            "primitive": "ground_shockwave",
+            "to": "defender.center",
+            "color": "#d99b26",
+            "count": 1
+          },
+          {
+            "primitive": "shards",
+            "to": "defender.center",
+            "color": "#9c322c",
+            "count": 12,
+            "heavy": true
+          }
+        ],
+        "motion": { "lunge": 1.25, "recoil": 1.0, "hitFlash": 1.0 },
+        "camera": { "shake": 10.5, "duration_ms": 290 },
+        "sfx": { "preset": "clash_heavy" }
+      }
+    },
+    "勾带": "猩红疾速双弧钩刀连斩，伴随暗金粒子与高频金属蜂鸣"
+  }
+}

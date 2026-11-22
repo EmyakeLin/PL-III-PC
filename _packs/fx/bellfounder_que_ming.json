@@ -1,0 +1,47 @@
+{
+  "color": "#3d826e",
+  "defaults": {
+    "blunt": "青铜重锤砸地激起两圈暗金共鸣波纹与低沉钟鸣",
+    "passive": "青铜共鸣圆环波纹与清脆钟声"
+  },
+  "skills": {
+    "试音锤": {
+      "on_strike": {
+        "prompt": "青铜试音重锤砸地激起三圈共鸣波纹，伴随低沉悠长青铜钟鸣",
+        "vfx": [
+          {
+            "primitive": "ground_shockwave",
+            "to": "defender.center",
+            "color": "#d4962c",
+            "count": 1
+          },
+          {
+            "primitive": "shockwave_ring",
+            "to": "defender.center",
+            "color": "#3d826e",
+            "count": 3,
+            "stagger_ms": 135
+          },
+          {
+            "primitive": "sparks",
+            "to": "defender.center",
+            "color": "#f2c464",
+            "count": 28,
+            "heavy": true
+          }
+        ],
+        "motion": { "lunge": 1.1, "recoil": 0.9, "hitFlash": 0.9 },
+        "camera": { "shake": 9.5, "duration_ms": 300 },
+        "sfx": {
+          "waveform": "sine",
+          "freq_start": 311.1,
+          "freq_end": 309.0,
+          "harmonics": [0.5, 1.0, 1.5, 2.005, 2.98],
+          "duration_ms": 720,
+          "gain": 0.16
+        }
+      }
+    },
+    "穿耳钉": "青铜暗金突刺破空并引发共鸣钟声与高频蜂鸣"
+  }
+}
