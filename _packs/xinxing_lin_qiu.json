@@ -371,10 +371,12 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      {"op": "discard", "target": "target", "amount": 1}, "$target", "星结", 1, "STATUS", "$is_repeat",
+                      "$event.target.player", "DUP", {"field":"cardspace.hand.content"}, "FIRST",
+                      "DISCARD", "$target", "星结", 1, "STATUS", "$is_repeat",
                       [
-                        "$target", "星结", "STATUS_COUNT", 4, "FLOOR_DIV", 3, "MIN", "extra", "STORE", {"local": "extra"}, 0,
-                        "GT", ["$target", {"local": "extra"}, "concept", "pierce", "DAMAGE"], "WHEN"
+                        "$target", "星结", "STATUS_COUNT", 4, "FLOOR_DIV", 3, "MIN", "extra", "STORE",
+                        {"local":"extra"}, 0, "GT",
+                        ["$target",{"local":"extra"},"concept","pierce","DAMAGE"], "WHEN"
                       ],
                       "WHEN"
                     ]

@@ -261,8 +261,8 @@ def recover_hp(amount, target="$recipient"):
 
 
 @builtins.define("DISCARD")
-def discard_cards(amount, player="$recipient_player"):
-    return [player, amount, OpCode.DISCARD]
+def discard_card(card, player="$recipient_player"):
+    return [player, card, OpCode.DISCARD]
 
 
 @builtins.define("STATUS")

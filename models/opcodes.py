@@ -968,16 +968,11 @@ def handle_destroy(ctx):
 
 
 def handle_discard(ctx):
-    amount, player = ctx.pop(), ctx.pop()
+    card, player = ctx.pop(), ctx.pop()
     hand = player.cardspace.hand
-    discarded = []
-    for _ in range(min(max(0, amount), len(hand.content))):
-        if not hand.content:
-            break
-        card = hand.content[0]
-        hand.move_card_to(0, player.cardspace.delayed_discard)
-        discarded.append(card)
-    return discarded
+    if card is not None and card in hand.content:
+        hand.move_card_to(card, player.cardspace.delayed_discard)
+        return card
 
 
 DISPATCH_TABLE = {
@@ -1096,7 +1091,7 @@ OPERANDS = {
     OpCode.IF_ELSE: ("condition", "then_block", "else_block"),
     OpCode.CLAMP: ("value", "low", "high"), OpCode.DUP: ("value",), OpCode.POP: ("value",),
     OpCode.SWAP: ("a", "b"), OpCode.EVAL: ("block",),
-    OpCode.DRAW: ("player", "amount"), OpCode.DISCARD: ("player", "amount"),
+    OpCode.DRAW: ("player", "amount"), OpCode.DISCARD: ("player", "discarded_card"),
     OpCode.RESET_COST: ("player", "common", "personal"), OpCode.PAY_COST: ("card", "amount"),
     OpCode.NEXT_TURN_COST: ("player", "amount"),
     OpCode.SKILL_FINAL_ADD: ("card", "amount"), OpCode.SKILL_LEVEL_ADD: ("card", "amount"),

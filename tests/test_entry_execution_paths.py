@@ -190,6 +190,23 @@ class HitOriginTests(unittest.TestCase):
 
 
 class CollectionAndTargetTests(unittest.TestCase):
+    def test_discard_settles_the_selected_physical_card_at_any_hand_position(self):
+        from player.card_space import CardSpace
+        ctx = TraceContext()
+        for size in (0, 1, 5):
+            for position in range(-1, size):
+                player = SimpleNamespace(game=None)
+                player.cardspace = CardSpace(player)
+                hand = player.cardspace.hand
+                cards = [Card(player, {"id": str(i), "name": str(i), "cost": 0}) for i in range(size)]
+                hand.content.extend(cards)
+                selected = cards[position] if position >= 0 else object()
+                with ctx.binding():
+                    result = ctx.eval_block([player, selected, OpCode.DISCARD])
+                self.assertEqual(result is selected, position >= 0)
+                self.assertEqual(hand.content, [c for c in cards if c is not selected])
+                self.assertEqual(player.cardspace.delayed_discard.content, [selected] if position >= 0 else [])
+
     def test_known_and_missing_targets_do_not_request_a_second_selection(self):
         from unittest.mock import Mock
 
