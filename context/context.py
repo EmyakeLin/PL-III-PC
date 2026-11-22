@@ -5,6 +5,7 @@ import random
 
 from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
+from entry.legacy_operations import normalize_activation_options
 from models.opcode import OpCode
 from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
 from models.values import ValueBounds
@@ -289,8 +290,7 @@ class Context:
             # keyword may instead credit its initiating die, skill or status.
             fields.setdefault("activation_owner", None)
             fields.setdefault("activation_kind", None)
-            fields.setdefault("activation_multiplier", 1)
-            fields.setdefault("activation_final_divisor", 1)
+            normalize_activation_options(fields)
             owner = fields["activation_owner"]
             fields["activation_origin"] = (
                 originating_entry.entry.origin if originating_entry and owner is originating_entry.entry.owner
@@ -358,13 +358,7 @@ class Context:
             fields.setdefault("base_amount", fields["amount"])
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
-                fields["damage_final_divisor"] = 1
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
-                if originating_entry and originating_entry.entry.trigger == "activate_status":
-                    multiplier = self.event.get("activation_multiplier", 1)
-                    if multiplier != 1:
-                        fields["modifiers"].append(("damage_multiply", multiplier, "concept"))
-                    fields["damage_final_divisor"] = self.event.get("activation_final_divisor", 1)
             elif opcode in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE):
                 fields["damage_amount"] = fields["amount"]
                 if opcode == OpCode.FINALIZE_DAMAGE:

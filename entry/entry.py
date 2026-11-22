@@ -49,14 +49,15 @@ class Entry:
     def __init__(self, owner, trigger_type, trigger, operation, timing="AFTER", *,
                  scope="global", subject="any", target=None, authority=0, when=None,
                  period=None, origin=None, turn_limit=None, damage_cause=None, status_name=None,
-                 choice_prompt=None):
+                 choice_prompt=None, adjustments=None, call_adjustments=None):
         self.owner = owner
         self.group_name = None
         self.trigger_type = trigger_type
         self.trigger = trigger
-        from entry.compiler import prepare_effect
+        from entry.compiler import compile_adjustments, prepare_effect
         self.operation = operation
         self.compiled_operation = prepare_effect(operation)
+        self.adjustments = compile_adjustments(adjustments, call_adjustments)
         self.timing = timing
         self.scope = scope
         self.subject = subject
@@ -98,7 +99,7 @@ class Entry:
                    authority=spec.get("authority", 0), when=spec.get("when"),
                    period=spec.get("period"), origin=spec.get("origin", kind), turn_limit=spec.get("turn_limit"),
                    damage_cause=spec.get("damage_cause"), status_name=spec.get("status_name"),
-                   choice_prompt=spec.get("choice_prompt", spec.get("description")))
+                   choice_prompt=spec.get("choice_prompt", spec.get("description")), adjustments=spec.get("adjustments"))
 
 
 @dataclass(eq=False)

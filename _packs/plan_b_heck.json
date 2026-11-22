@@ -605,7 +605,7 @@
                 "1穿甲",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {"op":"ignite","multiplier":2},
+                  "operation": {"op":"ignite","adjustments":{"damage_multiplier":[2,"MUL"]}},
                   "description": "由本骰触发一次引燃，该次烧伤伤害翻倍。"
                 },
                 {

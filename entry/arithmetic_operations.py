@@ -11,3 +11,9 @@ def divide_with_remainder(dividend, divisor):
          "$bindings.divisor", "MUL", "$bindings.dividend", "SWAP", "SUB"],
         "WITH_BINDINGS",
     ]
+
+
+@builtins.define("CEIL_DIV")
+def ceiling_divide():
+    """Consume a dividend and divisor. ceil(a / b) equals -floor(-a / b)."""
+    return ["SWAP", -1, "MUL", "SWAP", "FLOOR_DIV", -1, "MUL"]

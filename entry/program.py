@@ -71,6 +71,26 @@ def run_program(ctx, entry, tokens):
         return execute_program_block(ctx, bind(program))
 
 
+def adjusted_value(ctx, stage, value):
+    """Apply the current entry's numeric program without exposing the enclosing operand stack."""
+    if not ctx.executions:
+        return value
+    entry = ctx.executions[-1].entry
+    program = entry.adjustments.get(stage)
+    if program is None:
+        return value
+    previous = ctx.stack
+    ctx.stack = [value]
+    try:
+        run_program(ctx, entry, program)
+        result = ctx.pop()
+        if type(result) not in (int, float):
+            raise ValueError(f"{stage} 的结果须为数值")
+        return result
+    finally:
+        ctx.stack = previous
+
+
 def execute_program_block(ctx, block):
     """Execute a compiled program or its deferred branch at the current stack depth."""
     previous_stack = ctx.stack.copy()

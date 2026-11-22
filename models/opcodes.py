@@ -4,6 +4,7 @@ import random
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.effects import GRADE_RANK
 from entry.play_conditions import record_hand_play
+from entry.program import adjusted_value
 from models.card import Card, CardState
 from models.duel import DuelSlot
 from models.opcode import OpCode
@@ -658,8 +659,10 @@ def handle_finalize_damage(ctx):
     amount = ctx.pop()
     ctx.pop()  # target
     final = max(0, int(ctx.event["value_ref"].apply(amount)))
-    divisor = ctx.event.get("damage_final_divisor", 1)
-    final = (final + divisor - 1) // divisor
+    final = max(0, int(adjusted_value(ctx, "final_damage", final)))
+    if ctx.executions and ctx.executions[-1].cancelled:
+        ctx.current_op = None
+        return
     ctx.event.update(amount=final, damage_amount=final)
     return final
 
@@ -708,6 +711,11 @@ def handle_damage(ctx):
             multiplier *= value
         else:
             fixed += -value if kind == "armor" else value
+    if not precomputed:
+        multiplier = adjusted_value(ctx, "damage_multiplier", multiplier)
+        if ctx.executions and ctx.executions[-1].cancelled:
+            ctx.current_op = None
+            return
     proposed = max(0, int(amount * multiplier + fixed))
     ctx.stack.extend((target, proposed))
     damage = ctx.execute_op(OpCode.RESOLVE_DAMAGE, base_amount=amount)
@@ -814,7 +822,8 @@ def handle_activate_status(ctx):
     if origin == "status":
         status_name = ctx.executions[-1].entry.status_name if ctx.event.get("activation_owner") else name
     entry = Entry(owner, TriggerType.PIPELINE, "activate_status", spec["operation"],
-                  origin=origin, damage_cause=spec.get("label", name), status_name=status_name)
+                  origin=origin, damage_cause=spec.get("label", name), status_name=status_name,
+                  adjustments=spec.get("adjustments"), call_adjustments=ctx.event["adjustments"])
     target.activating_statuses.add(name)
     try:
         source = character_of(owner)

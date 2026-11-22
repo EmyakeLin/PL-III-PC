@@ -30,6 +30,7 @@ import re
 
 from entry.compiler import Program, TargetedProgram, prepare_effect
 from entry.entry import character_of
+from entry.legacy_operations import keyword_activation_options
 from models.opcode import OpCode
 
 
@@ -143,9 +144,6 @@ def run_effect(ctx, entry, operation):
         keywords = rule.get("activation", {}).get("keywords", ())
         if name in keywords:
             owner = entry.owner
-            final_divisor = data.get("final_divisor", 1)
-            if type(final_divisor) is not int or final_divisor < 1:
-                raise ValueError("状态发动的最终伤害除数须为正整数")
             if data.get("from_die"):
                 owner = (ctx.event.get("activation_die") if ctx.event.get("opcode") == "ACTIVATE_STATUS"
                          else ctx.event.get("die"))
@@ -155,6 +153,5 @@ def run_effect(ctx, entry, operation):
             ctx.stack.extend((target, status))
             return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
                                   activation_owner=owner, activation_kind=keywords[0],
-                                  activation_multiplier=data.get("multiplier", 1),
-                                  activation_final_divisor=final_divisor)
+                                  **keyword_activation_options(data))
     raise ValueError(f"未知词条操作 {name!r}")

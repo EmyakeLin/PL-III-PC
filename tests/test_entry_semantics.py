@@ -1389,5 +1389,142 @@ class PlayObservationTests(unittest.TestCase):
                 self.assertFalse(first.skill_restricted(card))
 
 
+class NumericAdjustmentTests(unittest.TestCase):
+    def test_ceil_div_expands_to_integer_arithmetic_and_restores_the_outer_stack(self):
+        from entry.compiler import compile_adjustments
+        from entry.entry import EntryExecution
+        from entry.program import adjusted_value
+        ops = [OpCode.SWAP, OpCode.MUL, OpCode.SWAP, OpCode.FLOOR_DIV, OpCode.MUL]
+        vm = TracedContext()
+        outer = vm.stack
+        outer.append("outer")
+        for divisor in (-2**69, -3, -1, 0, 1, 2, 17, 2**80):
+            entry = Entry.from_spec(None, {"trigger": "arbitrary", "operation": [],
+                                          "adjustments": {"final_damage": [divisor, "CEIL_DIV"]}})
+            self.assertEqual([op for op in entry.adjustments["final_damage"].instructions
+                              if isinstance(op, OpCode)], ops)
+            vm.executions[:] = [EntryExecution(entry)]
+            for amount in (-2**103, -8, -1, 0, 1, 8, 2**102 + 1):
+                vm.trace.clear()
+                if divisor:
+                    self.assertEqual(adjusted_value(vm, "final_damage", amount), -(-amount // divisor))
+                    self.assertEqual([op for op, timing, _ in vm.trace if timing == "BEFORE"], ops)
+                else:
+                    with self.assertRaises(ZeroDivisionError):
+                        adjusted_value(vm, "final_damage", amount)
+                self.assertIs(vm.stack, outer)
+                self.assertEqual(vm.stack, ["outer"])
+                self.assertTrue(all("outer" not in stack for _, _, stack in vm.trace))
+        for spec in ({"typo": []}, {"final_damage": [1]}, {"final_damage": ["MUL"]},
+                     {"final_damage": ["DRAW"]}, {"final_damage": ["POP"]}):
+            with self.assertRaises(ValueError):
+                compile_adjustments(spec)
+
+    def test_printed_activation_rules_act_at_the_named_stage_and_only_for_their_own_damage(self):
+        import json
+        from pathlib import Path
+        from models.dice import Dice
+        directory = Path(__file__).resolve().parents[1] / "_packs"
+        def load_character(filename):
+            return json.loads((directory / filename).read_text(encoding="utf-8-sig"))["characters"][0]
+        heck = load_character("plan_b_heck.json")
+        skill = next(card for card in heck["skills"] if card["id"] == "heck_decisive_thrust")
+        double = next(rule["operation"] for rule in skill["dice"][0]["entries"]
+                      if isinstance(rule, dict) and rule["trigger"] == "on_dice_hit")
+        li = load_character("plan_b_li_ling.json")
+        passive = next(p for p in li["passive_skills"] if p["name"] == "洞穿")
+        repeat = passive["entries"][0]["operation"]["code"][-2][0]
+        for keyword, bound, at_resolve, final in (
+            (double, 20, 11, 11), (repeat, 5, 8, 3),
+            ({"op": "ignite", "multiplier": 2}, 20, 11, 11),
+            ({"op": "ignite", "from_die": True, "final_divisor": 2}, 5, 8, 3),
+        ):
+            for grade in ("normal", "pierce", "concept"):
+                with self.subTest(keyword=keyword, grade=grade):
+                    vm, seat = TracedContext(), Player(4, "甲")
+                    vm.game = seat.game = SimpleNamespace(players=[seat], context=vm, status_entries={},
+                        turn_end_statuses=set(), ability_rules={}, card_serial=0, is_over=False,
+                        status_rules={"试验": {"activation": {"keywords": ["ignite"], "label": "发动伤害",
+                            "operation": {"op": "damage", "amount": 3, "grade": grade}}}})
+                    actor = Character({"id": "a", "name": "甲", "rank": "NORMAL", "skills": [], "max_hp": 200}, seat)
+                    seat.characters.append(actor)
+                    die = Dice({"type": "pierce", "level": 2})
+                    die.card = Card(seat, {"name": "源", "id": "s", "cost": 0}, actor)
+                    actor.statuses["试验"] = 3
+                    actor.shield = actor.reinforced_shield = actor.concept_shield = 2
+                    receipts = []
+                    def after_damage(ctx):
+                        e = ctx.event
+                        receipts.append((e["base_amount"], e["damage_amount"], e["hp_lost"], e["damage_die"]))
+                    vm.register_entries(None, [
+                        {"trigger": "BEFORE DAMAGE", "operation": lambda ctx:
+                            ctx.event["modifiers"].append(("damage_add", 5, "normal"))},
+                        {"trigger": "BEFORE FINALIZE_DAMAGE", "operation": lambda ctx:
+                            ctx.eval_block([ctx.event["value_ref"], bound, OpCode.VALUE_CEILING])},
+                        {"trigger": "AFTER DAMAGE", "operation": after_damage},
+                        {"trigger": "AFTER DAMAGE", "when": {"damage_cause": "发动伤害"},
+                         "operation": lambda ctx: ctx.deal_damage(actor, actor, 1, damage_cause="独立追击")}])
+                    caller = actor if keyword.get("from_die") else die
+                    entry = Entry.from_spec(caller, {"trigger": "arbitrary", "operation": keyword})
+                    with vm.binding(source=actor, target=actor, die=die):
+                        vm._invoke(entry)
+                    expected_loss = max(0, final - (4 if grade == "normal" else 2))
+                    self.assertEqual(receipts[0], (3, final, expected_loss, die))
+                    self.assertEqual(receipts[1][0:2], (1, min(6, bound)))
+                    self.assertIsNone(receipts[1][3])
+                    pending = [(op, stack[-1]) for op, timing, stack in vm.trace if timing == "BEFORE"
+                               and op in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE)]
+                    self.assertEqual(pending, [(OpCode.RESOLVE_DAMAGE, at_resolve), (OpCode.FINALIZE_DAMAGE, at_resolve),
+                                               (OpCode.RESOLVE_DAMAGE, 6), (OpCode.FINALIZE_DAMAGE, 6)])
+                    self.assertEqual((vm.executions, vm.stack, actor.activating_statuses), ([], [], set()))
+
+    def test_an_after_activation_repeat_keeps_the_die_and_opens_a_fresh_adjustment_scope(self):
+        from models.dice import Dice
+        vm, player = TracedContext(), Player(6, "甲")
+        activation = {"keywords": ["ignite"], "operation": {"op": "damage", "amount": 5}}
+        vm.game = player.game = SimpleNamespace(players=[player], context=vm, status_entries={}, turn_end_statuses=set(),
+            ability_rules={}, card_serial=0, is_over=False, status_rules={"s": {"activation": activation}})
+        actor = Character({"id": "a", "name": "甲", "rank": "NORMAL", "skills": [], "max_hp": 50}, player)
+        player.characters.append(actor)
+        actor.statuses["s"] = 2
+        die = Dice({"type": "pierce", "level": 2})
+        die.card = Card(player, {"id": "c", "name": "卡", "cost": 1}, actor)
+        vm.register_entries(actor, [{"trigger": "AFTER ACTIVATE_STATUS", "subject": "source",
+            "when": {"activation_die_type": "pierce", "result": True},
+            "operation": {"op": "ignite", "from_die": True, "adjustments": {"final_damage": [2, "CEIL_DIV"]}}}])
+        receipts = []
+        vm.register_entries(None, [{"trigger": "AFTER DAMAGE", "operation":
+            lambda ctx: receipts.append((ctx.event["result"], ctx.event["damage_die"]))}])
+        with vm.binding(target=actor):
+            vm._invoke(Entry.from_spec(die, {"trigger": "hit", "operation":
+                {"op": "ignite", "adjustments": {"damage_multiplier": [2, "MUL"]}}}))
+        self.assertEqual(receipts, [(10, die), (3, die)])
+        self.assertEqual(actor.hp, 37)
+
+        # Cancelling a numeric substep cancels the owning entry before settlement.
+        def cancel_entry(ctx):
+            ctx.event["execution"].cancelled = True
+        vm.register_entries(None, [{"trigger": "BEFORE MUL", "operation": cancel_entry}])
+        for stage in ("damage_multiplier", "final_damage"):
+            with vm.binding(target=actor):
+                vm._invoke(Entry.from_spec(die, {"trigger": "ordinary", "operation": {"op": "damage", "amount": 5},
+                                                 "adjustments": {stage: [3, "MUL"]}}))
+            self.assertEqual((actor.hp, len(receipts), vm.stack, vm.executions), (37, 2, [], []))
+
+    def test_ordinary_entry_and_composed_activation_use_the_same_programs(self):
+        from entry.entry import EntryExecution
+        from entry.program import adjusted_value
+        entry = Entry.from_spec(None, {"trigger": "any_event", "operation": [],
+                                      "adjustments": {"final_damage": ["$event.offset", "ADD"]}})
+        vm = TracedContext()
+        vm.executions.append(EntryExecution(entry))
+        for offset in (-2**91, 0, 20):
+            with vm.binding(offset=offset):
+                self.assertEqual(adjusted_value(vm, "final_damage", 9), 9 + offset)
+        from entry.compiler import compile_adjustments
+        entry.adjustments = compile_adjustments({"final_damage": [1, "ADD"]}, {"final_damage": [2, "CEIL_DIV"]})
+        self.assertEqual(adjusted_value(vm, "final_damage", 9), 5)
+
+
 if __name__ == "__main__":
     unittest.main()

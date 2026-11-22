@@ -69,6 +69,28 @@ def skill_use_rules(status):
     yield from status.get("skill_use", ())
 
 
+def keyword_activation_options(data):
+    fields = {"adjustments": data.get("adjustments")}
+    for old, name in (("multiplier", "activation_multiplier"), ("final_divisor", "activation_final_divisor")):
+        if old in data:
+            fields[name] = data[old]
+    return fields
+
+
+def normalize_activation_options(fields):
+    # Old field names remain observable to listeners on this activation event.
+    factor = fields.setdefault("activation_multiplier", 1)
+    divisor = fields.setdefault("activation_final_divisor", 1)
+    if type(divisor) is not int or divisor < 1:
+        raise ValueError("状态发动的最终伤害除数须为正整数")
+    rules = dict(fields.get("adjustments") or {})
+    if factor != 1:
+        rules["damage_multiplier"] = [factor, "MUL", *rules.get("damage_multiplier", ())]
+    if divisor != 1:
+        rules["final_damage"] = [divisor, "CEIL_DIV", *rules.get("final_damage", ())]
+    fields["adjustments"] = rules
+
+
 def compile_ability_requirements(spec):
     from entry.predicates import compile_when
 

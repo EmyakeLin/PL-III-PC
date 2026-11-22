@@ -134,6 +134,43 @@ def compile_program(tokens, *, expand=expand_command):
     return Program(tuple(compile_items(tokens, ())))
 
 
+# Each stage accepts one numeric input and produces one numeric result.
+NUMERIC_STAGES = {"damage_multiplier", "final_damage"}
+_NUMERIC_RESULTS = {OpCode.ADD: 1, OpCode.SUB: 1, OpCode.MUL: 1, OpCode.FLOOR_DIV: 1,
+                    OpCode.MIN: 1, OpCode.CLAMP: 1, OpCode.POP: 0, OpCode.DUP: 2, OpCode.SWAP: 2}
+
+
+def compile_adjustments(*declarations):
+    from models.opcodes import OPERANDS
+    stages = {}
+    for spec in declarations:
+        if spec is None:
+            continue
+        if not isinstance(spec, dict):
+            raise ValueError("数值修正需要阶段与程序的映射")
+        for stage, tokens in spec.items():
+            if stage not in NUMERIC_STAGES:
+                raise ValueError(f"未知的数值修正阶段 {stage!r}")
+            program = compile_program(tokens)
+            depth = 1
+            for instruction in program.instructions:
+                if type(instruction) in (int, float) or isinstance(instruction, (Field, Local)):
+                    depth += 1
+                elif isinstance(instruction, Access) and depth:
+                    continue
+                elif isinstance(instruction, OpCode) and instruction in _NUMERIC_RESULTS:
+                    needed = len(OPERANDS[instruction])
+                    if depth < needed:
+                        raise ValueError(f"{stage} 的 {instruction.name} 缺少操作数")
+                    depth += _NUMERIC_RESULTS[instruction] - needed
+                else:
+                    raise ValueError(f"{stage} 需要只读数值指令，收到 {instruction!r}")
+            if depth != 1:
+                raise ValueError(f"{stage} 须留下一个数值")
+            stages.setdefault(stage, []).extend(program.instructions)
+    return {stage: Program(tuple(code)) for stage, code in stages.items()}
+
+
 def prepare_effect(operation):
     if isinstance(operation, list) and all(isinstance(item, (str, dict)) for item in operation):
         prepared = [prepare_effect(item) for item in operation]
