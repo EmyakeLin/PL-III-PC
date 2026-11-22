@@ -26,8 +26,6 @@ class CommandSet:
         try:
             arguments = parameters.bind(*read_operands(operands))
         except (TypeError, ValueError) as error:
-            if not operands:
-                return None  # A bare parameterized word retains its postfix or legacy meaning.
             raise ValueError(f"{name}{parameters} 的参数无效：{operands}") from error
         return expand(*arguments.args)
 

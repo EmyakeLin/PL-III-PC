@@ -5,7 +5,6 @@ import random
 
 from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
-from entry.legacy_operations import normalize_activation_options
 from models.opcode import OpCode
 from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
 from models.values import ValueBounds
@@ -292,7 +291,7 @@ class Context:
             # keyword may instead credit its initiating die, skill or status.
             fields.setdefault("activation_owner", None)
             fields.setdefault("activation_kind", None)
-            normalize_activation_options(fields)
+            fields.setdefault("adjustments", None)
             owner = fields["activation_owner"]
             fields["activation_origin"] = (
                 originating_entry.entry.origin if originating_entry and owner is originating_entry.entry.owner

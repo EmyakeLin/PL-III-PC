@@ -32,8 +32,6 @@ def run_program(ctx, entry, tokens):
             value = ctx.game
         elif root == "event":
             value = event
-        elif root in event:
-            value = event[root]
         else:
             raise ValueError(f"当前事件没有词条字段 ${root}")
         return read_path(value, path)

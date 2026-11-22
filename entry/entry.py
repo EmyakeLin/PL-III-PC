@@ -67,7 +67,7 @@ class Entry:
         if self.authority not in (0, 1, 2):
             raise ValueError(f"未知的话语权 {authority!r}")
         from entry.predicates import compile_when
-        self.when = when or {}
+        self.when = [] if when is None else when
         self.conditions = compile_when(self.when, trigger, timing)
         self.period = period
         self.origin = origin or kind_of(owner)

@@ -59,6 +59,49 @@ def fire(ctx, owner, trigger, **fields):
 
 
 class PrintedCountingTests(unittest.TestCase):
+    def test_draw_command_reaches_the_same_draw_opcode_for_each_amount(self):
+        from entry.compiler import prepare_effect
+        from player.card_space import CardSpace
+
+        for count in (0, 1, 2, 10**12):
+            ctx = TraceContext()
+            actor = actor_for(ctx, 1)
+            player = actor.player
+            player.cardspace = CardSpace(player)
+            cards = [Card(player, {"id": str(i), "name": str(i), "cost": 0}, actor) for i in range(3)]
+            player.cardspace.draw.content.extend(cards)
+            operation = f"DRAW {count}"
+            self.assertEqual(prepare_effect(operation).instructions[-2:], (count, OpCode.DRAW))
+            resolve_entry(ctx, actor, {"trigger": "on_skill_use", "operation": operation}, source=actor)
+            self.assertEqual(ctx.operations, [OpCode.DRAW])
+            self.assertEqual(player.cardspace.hand.content, cards[:count])
+            self.assertEqual(player.cardspace.draw.content, cards[count:])
+
+    def test_retired_words_conditions_and_damage_options_fail_when_compiled(self):
+        from entry.compiler import compile_program
+
+        for tokens in (["ONCE_PER_ROUND"], ["$enemies"], ["DAMAGE_ADD"], [{"op": "damage_add", "amount": 2}],
+                       [{"op": "damage", "amount": 2, "from_die": True}],
+                       [{"keyword": "引燃", "final_divisor": 2}]):
+            with self.subTest(tokens=tokens), self.assertRaises(ValueError):
+                compile_program(tokens)
+        with self.assertRaises(ValueError):
+            Entry.from_spec(None, {"trigger": "BEFORE STATUS", "when": {"amount_at_least": 1},
+                                   "operation": {"op": "program", "code": []}})
+        self.assertEqual(compile_program([{"literal": "DAMAGE_ADD"}]).instructions, ("DAMAGE_ADD",))
+
+    def test_a_public_keyword_named_after_a_structured_operation_activates_its_status(self):
+        for keyword in ("damage", "cancel", "program"):
+            ctx = TraceContext()
+            actor = actor_for(ctx, 1)
+            actor.statuses["样本"] = 1
+            actor.game.status_rules["样本"] = {"activation": {"keywords": [keyword],
+                "operation": {"op": "program", "code": ["$event.target", "已发动", 1, "STATUS"]}}}
+            with ctx.binding(source=actor, target=actor):
+                ctx._invoke(Entry.from_spec(actor, {"trigger": "on_dice_hit", "operation": {"keyword": keyword}}))
+            self.assertEqual(actor.statuses["已发动"], 1)
+            self.assertEqual(ctx.operations, [OpCode.ACTIVATE_STATUS, OpCode.STATUS])
+
     def test_victories_are_read_from_this_use_even_if_win_effects_were_suppressed(self):
         outcomes = ("win", "lose", "draw", None)
         for pair in itertools.product(outcomes, repeat=2):
@@ -92,7 +135,7 @@ class PrintedCountingTests(unittest.TestCase):
 
 
 def actor_for(ctx, side):
-    game = SimpleNamespace(context=ctx, status_entries={}, status_rules={}, ability_rules={},
+    game = SimpleNamespace(context=ctx, card_serial=0, status_entries={}, status_rules={}, ability_rules={},
                            turn_end_statuses=set(), resolving_duel=None)
     seat = SimpleNamespace(side=side, name=str(side), game=game, register_faction_passives=lambda actor: None)
     actor = Character({"id": str(side), "name": str(side), "rank": "NORMAL", "max_hp": 9, "skills": []}, seat)
@@ -190,6 +233,27 @@ class HitOriginTests(unittest.TestCase):
 
 
 class CollectionAndTargetTests(unittest.TestCase):
+    def test_vortex_is_spent_from_the_character_marked_at_skill_use(self):
+        from unittest.mock import Mock
+
+        skill = printed_skill("wind_plan_b.json", "annolin_vortex_sword")
+        for initial, left in itertools.product((0, 1, 9), (0, 1, 4)):
+            with self.subTest(initial=initial, left=left):
+                ctx = TraceContext()
+                actor, chosen, later = [actor_for(ctx, side) for side in (1, 2, 2)]
+                card = Card(None, skill, actor)
+                choose = Mock(return_value=chosen)
+                ctx.game = SimpleNamespace(pipeline=SimpleNamespace(resolve_skill_target=choose))
+                ctx.register_entries(card, skill["entries"])
+                chosen.statuses["涡流"] = initial
+                ctx.dispatch_pipeline("on_skill_use", source=actor, card=card, target=None)
+                chosen.statuses["涡流"], later.statuses["涡流"] = left, 9
+                ctx.dispatch_pipeline("after_skill_use", source=actor, card=card, target=later)
+                self.assertEqual(choose.call_count, 1)
+                self.assertEqual(ctx.operations.count(OpCode.SPEND_STATUS), int(initial > 0))
+                self.assertEqual(chosen.statuses.get("涡流", 0), max(0, left - int(initial > 0)))
+                self.assertEqual(later.statuses["涡流"], 9)
+
     def test_discard_settles_the_selected_physical_card_at_any_hand_position(self):
         from player.card_space import CardSpace
         ctx = TraceContext()
@@ -200,7 +264,7 @@ class CollectionAndTargetTests(unittest.TestCase):
                 hand = player.cardspace.hand
                 cards = [Card(player, {"id": str(i), "name": str(i), "cost": 0}) for i in range(size)]
                 hand.content.extend(cards)
-                selected = cards[position] if position >= 0 else object()
+                selected = cards[position] if position >= 0 else Card(player, {"id":"absent","name":"absent","cost":0})
                 with ctx.binding():
                     result = ctx.eval_block([player, selected, OpCode.DISCARD])
                 self.assertEqual(result is selected, position >= 0)
@@ -282,6 +346,25 @@ class CollectionAndTargetTests(unittest.TestCase):
 
 
 class DamageAndPaymentTests(unittest.TestCase):
+    def test_tunnel_checks_the_pending_gain_after_other_listeners(self):
+        pack = json.loads((PACKS / "xinxing_lin_qiu.json").read_text(encoding="utf-8"))
+        passives = pack["characters"][0]["passive_skills"]
+        node = next(p for p in passives if p["name"] == "新星隧道节点 D-VII型")
+        listener = next(e for e in node["entries"] if e["trigger"] == "BEFORE STATUS")
+        for opened, printed, shift in itertools.product((0, 1), (0, 1, 7), (-2, 0, 4)):
+            with self.subTest(opened=opened, printed=printed, shift=shift):
+                ctx = TraceContext()
+                actor = actor_for(ctx, 1)
+                actor.statuses["隧道开启"] = opened
+                ctx.register_entries(actor, [
+                    {"trigger": "BEFORE STATUS", "operation": {"op": "program", "code": [shift, "ADD"]}},
+                    listener,
+                ])
+                ctx.eval_block([actor, "隧道", printed, OpCode.STATUS])
+                reduction = int(opened and printed + shift >= 1)
+                self.assertEqual(ctx.operations.count(OpCode.SUB), reduction)
+                self.assertEqual(actor.statuses.get("隧道", 0), max(0, printed + shift - reduction))
+
     def test_star_lock_snapshot_selects_once_in_seat_order_and_settles_after_publication(self):
         pack = json.loads((PACKS / "xinxing_lin_qiu.json").read_text(encoding="utf-8"))
         for threshold in (1, 6, 23):
@@ -371,7 +454,7 @@ class DamageAndPaymentTests(unittest.TestCase):
             "when":[{"left":"$event.status","op":"eq","right":"烧伤"}],
             "operation":{"op":"program","code":["$event.target","烧伤",-1,"STATUS"]}}])
         with ctx.binding(source=actor, target=target, card=card, die=die):
-            ctx._invoke(Entry.from_spec(actor, {"trigger":"on_dice_hit","operation":{"op":"ignite","credit":"die"}}))
+            ctx._invoke(Entry.from_spec(actor, {"trigger":"on_dice_hit","operation":{"keyword":"ignite","credit":"die"}}))
         self.assertEqual(target.statuses["烧伤"], 6)
         self.assertEqual(actor.statuses["能源"], 2)
         self.assertEqual(ctx.operations.count(OpCode.STATUS), 3)

@@ -2,21 +2,12 @@
 from dataclasses import dataclass
 
 from entry.commands import expand_command
-from entry.field_aliases import FIELD_ALIASES
-from entry.legacy_operations import WORD_ALIASES, compile_targeted_action
 from models.opcode import OpCode
 
 
 @dataclass(frozen=True)
 class Program:
     instructions: tuple
-
-
-@dataclass(frozen=True)
-class TargetedProgram:
-    selector: object
-    default: str
-    program: Program
 
 
 @dataclass(frozen=True)
@@ -106,15 +97,10 @@ def compile_program(tokens, *, expand=expand_command):
                     if len(suffix) > 1:
                         yield Access(tuple(suffix[1:]))
                     continue
-                body = FIELD_ALIASES.get(root)
-                if body is None:
-                    yield Field(token[1:])
-                    continue
-                name = "$" + root
-                if suffix:
-                    body = [*body, {"field": ".".join(suffix)}]
-            elif token in WORD_ALIASES:
-                name, body = token, WORD_ALIASES[token]
+                if root not in ("event", "self", "player", "owner", "game", "recipient", "recipient_player"):
+                    raise ValueError(f"未知词条字段根 ${root}")
+                yield Field(token[1:])
+                continue
             elif token in WORDS or token == "STORE":
                 yield Word(token)
                 continue
@@ -125,6 +111,8 @@ def compile_program(tokens, *, expand=expand_command):
                 name = token.split(maxsplit=1)[0] if token.strip() else token
                 body = expand(token)
                 if body is None:
+                    if token.isascii() and token.isupper() and token.isidentifier():
+                        raise ValueError(f"未知指令 {token!r}，文本常量须使用 literal")
                     yield token
                     continue
             if name in path:
@@ -185,19 +173,21 @@ def prepare_effect(operation):
         part = independent_damage_part(operation)
         if part:
             amount, opcode = part
-            data, args, name = {"amount": amount}, [], opcode.name
-        else:
-            name, _, operands = operation.partition(":")
-            args = [item.strip() for item in operands.split(",") if item.strip()]
-            data = {}
-    elif isinstance(operation, dict):
-        name, args, data = operation["op"], operation.get("args", []), operation
-    else:
+            return Program((Field("event.target"), amount, opcode))
         return operation
-
-    name = name.lower().strip().replace("-", "_")
-    if name == "program":
-        if isinstance(data["code"], Program):
-            return operation
-        return {**data, "code": compile_program(data["code"])}
-    return compile_targeted_action(name, data, args) or operation
+    if isinstance(operation, dict):
+        if "keyword" in operation:
+            if not isinstance(operation["keyword"], str) or set(operation) - {"keyword", "target", "credit", "adjustments"}:
+                raise ValueError("关键词可声明目标、归属和结算修正")
+        elif operation.get("op") == "program":
+            if set(operation) - {"op", "code", "damage_part"}:
+                raise ValueError(f"程序含有未知字段 {operation!r}")
+            code = operation["code"]
+            if not isinstance(code, Program):
+                return {**operation, "code": compile_program(code)}
+        elif operation.get("op") == "damage":
+            if "amount" not in operation or set(operation) - {"op", "amount", "target", "grade", "credit", "attack_type", "damage_part"}:
+                raise ValueError(f"伤害操作缺少数值或含有未知字段 {operation!r}")
+        elif operation != {"op": "cancel"}:
+            raise ValueError(f"未知词条操作 {operation!r}")
+    return operation

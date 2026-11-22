@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 
 from entry.entry import Entry, TriggerType, character_of
 from entry.effects import run_effect
-from entry.legacy_operations import compile_ability_requirements
+from entry.predicates import compile_when
 from entry.play_conditions import record_hand_play
 from models.card import Card, CardState
 from models.character import Character
@@ -104,12 +104,10 @@ class SpecialActions:
             return False
         origins = {card: (card.character, card in card.player.cardspace.hand.content) for card in cards}
         event = ctx.event.copy()
-        if "use_discount" in spec:
-            event["choice_discount"] = spec["use_discount"]  # Older continuations read this event field.
         event["bindings"] = {**event.get("bindings", {}), **spec.get("bindings", {})}
         self._card_choices.append(CardDecision(chooser.player, cards, origins, bool(spec.get("optional")),
                                                spec["then"], invocation, event,
-                                               spec.get("require_playable_hand", True), spec))
+                                               spec.get("require_playable_hand", False), spec))
         return True
 
     def _valid_candidates(self, decision):
@@ -268,7 +266,7 @@ class SpecialActions:
                     continue
                 cached = self._ability_conditions.get(key)
                 if cached is None or cached[0] is not spec:
-                    cached = spec, compile_ability_requirements(spec)
+                    cached = spec, compile_when(spec.get("when", []), None, None)
                     self._ability_conditions[key] = cached
                 if not all(test.evaluate(actor, {"player": player}) for test in cached[1]):
                     continue

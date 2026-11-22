@@ -31,10 +31,14 @@
       {
         "name": "超·炎·刺剑",
         "entries": [
-          {"trigger": "before_speed_roll", "operation": {"op": "program", "code": [
-            "$die", "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_LEVEL_ADD",
-            "$value_ref", "$printed_min", "$self", "凝聚", "STATUS_COUNT", "ADD", "VALUE_FLOOR"
-          ]}, "description": "每持有4能源，速度骰提升1级（至多2级）。每持有1凝聚，速度骰最小值+1。"},
+          {"trigger": "before_speed_roll", "operation": {
+            "op": "program",
+            "code": [
+              "$event.die", "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_LEVEL_ADD",
+              "$event.value_ref", "$event.printed_min", "$self", "凝聚", "STATUS_COUNT", "ADD",
+              "VALUE_FLOOR"
+            ]
+          }, "description": "每持有4能源，速度骰提升1级（至多2级）。每持有1凝聚，速度骰最小值+1。"},
           {
             "trigger": "BEFORE RESOLVE_DIE_LEVEL",
             "operation": {
@@ -51,7 +55,7 @@
           {
             "trigger": "BEFORE STATUS",
             "subject": "source",
-            "when": {"status":"烧伤","amount_at_least":1},
+            "when": [{"left":"$event.status","op":"eq","right":"烧伤"},{"left":"$pending.amount","op":"ge","right":1}],
             "operation": {
               "op": "program",
               "code": [
@@ -63,10 +67,14 @@
             },
             "description": "个人速度每领先目标2点，本次施加的烧伤+1（至多+3）。"
           },
-          {"trigger": "on_dice_hit", "when": {"one_sided": true}, "operation": "QUEUE_STATUS $self $self 迅捷 1", "description": "自身骰子单方面攻击命中时，下回合获得1迅捷。"},
+          {"trigger": "on_dice_hit", "when": [{"left":"$event.one_sided","op":"eq","right":true}], "operation": "QUEUE_STATUS $self $self 迅捷 1", "description": "自身骰子单方面攻击命中时，下回合获得1迅捷。"},
           {"trigger": "AFTER ACTIVATE_STATUS", "subject": "source",
-           "when": {"status": "烧伤", "activation_kind": "ignite", "result": true},
-           "operation": "QUEUE_STATUS $self $target 束缚 1",
+           "when": [
+             {"left":"$event.status","op":"eq","right":"烧伤"},
+             {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+             {"left":"$event.result","op":"eq","right":true}
+           ],
+           "operation": "QUEUE_STATUS $self $event.target 束缚 1",
            "description": "每次自身触发引燃，下回合对引燃目标施加1束缚。"}
         ]
       },
@@ -75,16 +83,21 @@
         "entries": [{
           "trigger": "AFTER ACTIVATE_STATUS",
           "subject": "source",
-          "when": {"status":"烧伤","activation_kind":"ignite","activation_die_type":"pierce","result":true},
+          "when": [
+            {"left":"$event.status","op":"eq","right":"烧伤"},
+            {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+            {"left":"$event.activation_die_type","op":"eq","right":"pierce"},
+            {"left":"$event.result","op":"eq","right":true}
+          ],
           "operation": {
             "op": "program",
             "code": [
               "$self", "凝聚", "STATUS_COUNT",
               [
-                "$target_alive", "$target", "烧伤", "STATUS_COUNT", 0, "GT", "AND",
-                [1,20,"RANDOM_INT","$target","烧伤","STATUS_COUNT","LE"], [false], "IF_ELSE"
+                "$event.target.is_alive", "$event.target", "烧伤", "STATUS_COUNT", 0, "GT", "AND",
+                [1,20,"RANDOM_INT","$event.target","烧伤","STATUS_COUNT","LE"], [false], "IF_ELSE"
               ],
-              [{"op":"ignite","credit":"activation_die","adjustments":{"final_damage":[2,"CEIL_DIV"]}}],
+              [{"keyword":"ignite","credit":"activation_die","adjustments":{"final_damage":[2,"CEIL_DIV"]}}],
               "REPEAT_WHILE"
             ]
           },
@@ -94,15 +107,20 @@
       {
         "name": "能源聚集",
         "entries": [{
-          "trigger": "on_status_changed", "subject": "target", "when": {"status":"能源"},
-          "operation": {"op":"program","code":[
-            "$actual_delta", 0, "LT", [
-              "$self", "能源消耗余量", "CHARACTER_STATE", "$actual_delta", "SUB", "total", "STORE",
-              "DIVMOD $local.total 8", "remainder", "STORE", "earned", "STORE",
-              "$self", "能源消耗余量", "$local.remainder", "SET_CHARACTER_STATE",
-              {"local":"earned"}, 0, "GT", ["$self", "凝聚", {"local":"earned"}, "STATUS"], "WHEN"
-            ], "WHEN"
-          ]}, "description":"每累计实际消耗8能源，获得1凝聚，余数跨回合保留。"
+          "trigger": "on_status_changed", "subject": "target", "when": [{"left":"$event.status","op":"eq","right":"能源"}],
+          "operation": {
+            "op": "program",
+            "code": [
+              "$event.actual_delta", 0, "LT",
+              [
+                "$self.rule_state", "能源消耗余量", 0, "LOOKUP", "$event.actual_delta", "SUB", "total",
+                "STORE", "DIVMOD $local.total 8", "remainder", "STORE", "earned", "STORE", "$self",
+                "能源消耗余量", "$local.remainder", "SET_CHARACTER_STATE", {"local":"earned"}, 0, "GT",
+                ["$self","凝聚",{"local":"earned"},"STATUS"], "WHEN"
+              ],
+              "WHEN"
+            ]
+          }, "description":"每累计实际消耗8能源，获得1凝聚，余数跨回合保留。"
         }]
       }
     ],
@@ -112,7 +130,7 @@
         "entries": [
           {"trigger":"on_skill_use", "operation":"STATUS 能源 4 $self",
            "description":"使用时获得4能源。"},
-          {"trigger":"before_dice_use", "operation":{"op":"program","code":["$die","$self","凝聚","STATUS_COUNT","DIE_FINAL_ADD"]},
+          {"trigger":"before_dice_use", "operation":{"op":"program","code":["$event.die","$self","凝聚","STATUS_COUNT","DIE_FINAL_ADD"]},
            "description":"每持有1凝聚，本技能最终点数+1。"}
         ],
         "dice": [
@@ -129,31 +147,51 @@
       {
         "id":"li_ling_chain", "name":"连环穿刺", "cost":2,
         "entries":[
-          {"trigger":"on_skill_use","operation":{"op":"program","code":[
-            "$opponent_player","烧伤","DUEL_STATUS_LOST",4,"FLOOR_DIV","bands","STORE",
-            "$owner",{"local":"bands"},"$owner","烧伤档位","SKILL_STATE","SUB",2,"MUL","SKILL_FINAL_ADD",
-            "$owner","烧伤档位",{"local":"bands"},"SET_SKILL_STATE"
-          ]}, "description":"本交锋内对方每失去4烧伤，本技能最终点数+2，计入本技能使用前的消耗。"},
-          {"trigger":"on_status_changed","subject":"enemy","when":{"status":"烧伤"},"operation":{"op":"program","code":[
-            "$actual_delta",0,"LT",[
-              "$opponent_player","烧伤","DUEL_STATUS_LOST",4,"FLOOR_DIV","bands","STORE",
-              "$owner",{"local":"bands"},"$owner","烧伤档位","SKILL_STATE","SUB",2,"MUL","SKILL_FINAL_ADD",
-              "$owner","烧伤档位",{"local":"bands"},"SET_SKILL_STATE"
-            ],"WHEN"
-          ]}, "description":"交锋中的烧伤继续减少时，立即更新本技能最终点数。"},
-          {"trigger":"AFTER ACTIVATE_STATUS","subject":"source","when":{"status":"烧伤","activation_kind":"ignite","result":true},
-           "operation":{"op":"program","code":["$owner","引燃次数","$owner","引燃次数","SKILL_STATE",1,"ADD","SET_SKILL_STATE"]},
+          {"trigger":"on_skill_use","operation":{
+            "op": "program",
+            "code": [
+              "$player", "OPPONENT", {"field":"side"}, "烧伤", "PAIR", "$game.resolving_duel.status_lost",
+              "SWAP", 0, "LOOKUP", 4, "FLOOR_DIV", "bands", "STORE", "$owner", {"local":"bands"},
+              "$owner.use_state", "烧伤档位", 0, "LOOKUP", "SUB", 2, "MUL", "SKILL_FINAL_ADD", "$owner",
+              "烧伤档位", {"local":"bands"}, "SET_SKILL_STATE"
+            ]
+          }, "description":"本交锋内对方每失去4烧伤，本技能最终点数+2，计入本技能使用前的消耗。"},
+          {"trigger":"on_status_changed","subject":"enemy","when":[{"left":"$event.status","op":"eq","right":"烧伤"}],"operation":{
+            "op": "program",
+            "code": [
+              "$event.actual_delta", 0, "LT",
+              [
+                "$player", "OPPONENT", {"field":"side"}, "烧伤", "PAIR",
+                "$game.resolving_duel.status_lost", "SWAP", 0, "LOOKUP", 4, "FLOOR_DIV", "bands",
+                "STORE", "$owner", {"local":"bands"}, "$owner.use_state", "烧伤档位", 0, "LOOKUP", "SUB", 2,
+                "MUL", "SKILL_FINAL_ADD", "$owner", "烧伤档位", {"local":"bands"}, "SET_SKILL_STATE"
+              ],
+              "WHEN"
+            ]
+          }, "description":"交锋中的烧伤继续减少时，立即更新本技能最终点数。"},
+          {"trigger":"AFTER ACTIVATE_STATUS","subject":"source","when":[
+            {"left":"$event.status","op":"eq","right":"烧伤"},
+            {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+            {"left":"$event.result","op":"eq","right":true}
+          ],
+           "operation":{
+             "op": "program",
+             "code": ["$owner","引燃次数","$owner.use_state","引燃次数",0,"LOOKUP",1,"ADD","SET_SKILL_STATE"]
+           },
            "description":"记录本技能持续期间自身触发的每次引燃。"},
-          {"trigger":"after_skill_use","operation":{"op":"program","code":[
-            "$owner","引燃次数","SKILL_STATE","count","STORE",{"local":"count"},0,"GT",
-            ["$self","能源",{"local":"count"},"STATUS"],"WHEN"
-          ]},"description":"使用后，每触发一次引燃，获得1能源。"}
+          {"trigger":"after_skill_use","operation":{
+            "op": "program",
+            "code": [
+              "$owner.use_state", "引燃次数", 0, "LOOKUP", "count", "STORE", {"local":"count"}, 0, "GT",
+              ["$self","能源",{"local":"count"},"STATUS"], "WHEN"
+            ]
+          },"description":"使用后，每触发一次引燃，获得1能源。"}
         ],
         "dice":[
           {"type":"pierce","level":3,"resource_cost":{"status":"能源","amount":4},"entries":["引燃"]},
-          {"type":"pierce","level":2,"entries":[{"trigger":"on_dice_hit","operation":"STATUS 烧伤 3 $target","description":"施加3烧伤。"}]},
+          {"type":"pierce","level":2,"entries":[{"trigger":"on_dice_hit","operation":"STATUS 烧伤 3 $event.target","description":"施加3烧伤。"}]},
           {"type":"pierce","level":2,"resource_cost":{"status":"能源","amount":2},"entries":["引燃"]},
-          {"type":"pierce","level":1,"entries":[{"trigger":"on_dice_hit","operation":"STATUS 烧伤 3 $target","description":"施加3烧伤。"}]}
+          {"type":"pierce","level":1,"entries":[{"trigger":"on_dice_hit","operation":"STATUS 烧伤 3 $event.target","description":"施加3烧伤。"}]}
         ]
       },
       {
@@ -161,12 +199,18 @@
         "pre_reveal_requires_status":{"凝聚":3},
         "range_level_when":{"speed_lead":4,"amount":1}, "ignore_range_when":{"speed_lead":4,"amount":3},
         "entries":[
-          {"trigger":"on_skill_use","operation":{"op":"program","code":[
-            "$self","能源",8,"SPEND_STATUS_IN_FULL",["$owner","增压",true,"SET_SKILL_STATE"],"WHEN"
-          ]}, "description":"使用时消耗8能源以使本技能所有骰子基础值+2。"},
-          {"trigger":"before_dice_use","operation":{"op":"program","code":[
-            "$owner","增压","SKILL_STATE",["$die",2,"DIE_BASE_ADD"],"WHEN"
-          ]},"description":"付足能源后每颗骰子基础值+2。"}
+          {"trigger":"on_skill_use","operation":{
+            "op": "program",
+            "code": [
+              "$self", "能源", 8,
+              {"call":"SPEND_STATUS","with":{"require_full":true},"result":"paid_in_full","default":false},
+              ["$owner","增压",true,"SET_SKILL_STATE"], "WHEN"
+            ]
+          }, "description":"使用时消耗8能源以使本技能所有骰子基础值+2。"},
+          {"trigger":"before_dice_use","operation":{
+            "op": "program",
+            "code": ["$owner.use_state","增压",false,"LOOKUP",["$event.die",2,"DIE_BASE_ADD"],"WHEN"]
+          },"description":"付足能源后每颗骰子基础值+2。"}
         ],
         "dice":[
           {"type":"pierce","level":3,"entries":["3穿甲",{"trigger":"on_dice_hit","operation":"QUEUE_STATUS $self $self 迅捷 2","description":"下回合获得2迅捷。"}]},

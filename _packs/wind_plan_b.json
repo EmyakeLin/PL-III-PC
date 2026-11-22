@@ -5,26 +5,31 @@
     "涡流": [
       {
         "trigger": "BEFORE RESOLVE_CLASH_SCORE",
-        "operation": {"op": "program", "code": [
-          "$value_ref", "$self", "涡流", "STATUS_COUNT", 10, "MIN", "VALUE_FLOOR"
-        ]},
+        "operation": {"op":"program","code":["$event.value_ref","$self","涡流","STATUS_COUNT",10,"MIN","VALUE_FLOOR"]},
         "description": "自身拼点点数至少为当前涡流层数，保底最多计入10点。"
       },
       {
         "trigger": "on_turn_end",
-        "operation": {"op": "program", "code": [
-          "$self", "涡流", 2, "SPEND_STATUS", "POP",
-          "$self", "$self", "骰子等级降低", 1, "QUEUE_STATUS"
-        ]},
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "涡流", 2, {"call":"SPEND_STATUS","result":"result","default":0}, "POP", "$self",
+            "$self", "骰子等级降低", 1, "QUEUE_STATUS"
+          ]
+        },
         "description": "回合结束时消耗2层涡流，并在下回合获得1层骰子等级降低。"
       }
     ],
     "骰级免疫": [
       {
         "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-        "operation": {"op": "program", "code": [
-          "$value_ref", "$printed_level", "VALUE_FLOOR", "$value_ref", "$printed_level", "VALUE_CEILING"
-        ]},
+        "operation": {
+          "op": "program",
+          "code": [
+            "$event.value_ref", "$event.die.printed_level.value", "VALUE_FLOOR", "$event.value_ref",
+            "$event.die.printed_level.value", "VALUE_CEILING"
+          ]
+        },
         "description": "本回合自身按印刷骰级使用骰子。"
       }
     ]
@@ -70,17 +75,19 @@
           "entries": [
             {
               "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-              "when": {"owner_status_at_least": {"涡流": 1}},
-              "operation": {"op": "program", "code": [
-                "$value_ref", "$printed_level", "VALUE_FLOOR", "$value_ref", "$printed_level", "VALUE_CEILING"
-              ]},
+              "when": [{"left":{"field":"$self.statuses","key":"涡流","default":0},"op":"ge","right":1}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.value_ref", "$event.die.printed_level.value", "VALUE_FLOOR",
+                  "$event.value_ref", "$event.die.printed_level.value", "VALUE_CEILING"
+                ]
+              },
               "description": "自身带有涡流时，无视骰子等级增减效果。"
             },
             {
               "trigger": "on_turn_start",
-              "operation": {"op": "program", "code": [
-                "$turn_number", 1, "EQ", ["$self", "涡流", 4, "STATUS"], "WHEN"
-              ]},
+              "operation": {"op":"program","code":["$game.turn_number",1,"EQ",["$self","涡流",4,"STATUS"],"WHEN"]},
               "description": "首个回合开始时获得4层涡流。"
             }
           ]
@@ -90,21 +97,21 @@
           "entries": [
             {
               "trigger": "on_clash_lose",
-              "when": {"die_type": "evade"},
+              "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
               "description": "自身闪避骰拼点失败、打平或跳过拼点时，回复1生命值并获得1层涡流，每回合合计至多2次。"
             },
             {
               "trigger": "on_clash_draw",
-              "when": {"die_type": "evade"},
+              "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
               "description": "自身闪避骰拼点打平时同样触发翠流漂泊。"
             },
             {
               "trigger": "on_clash_skip",
-              "when": {"die_type": "evade"},
+              "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
               "description": "自身闪避骰跳过拼点时同样触发翠流漂泊。"
@@ -119,19 +126,21 @@
           "cost": 1,
           "entries": [{
             "trigger": "after_skill_use",
-            "operation": {"op": "program", "code": [
-              "$card", "first_die_hit", "SKILL_STATE", ["$card", "hand", "MOVE_CARD"], "WHEN"
-            ]},
+            "operation": {
+              "op": "program",
+              "code": [
+                "$event.card.use_state", "first_die_hit", false, "LOOKUP",
+                ["$event.card","hand","MOVE_CARD"], "WHEN"
+              ]
+            },
             "description": "若首骰命中，本技能使用结束后回到手中。"
           }],
           "dice": [
             {"type": "slash", "level": 2, "entries": ["1物理",
-              {"trigger": "AFTER RESOLVE_HIT", "when": {"result": true}, "operation": {"op": "program", "code": [
-                "$card", "first_die_hit", 1, "SET_SKILL_STATE"
-              ]}, "description": "命中时使本技能在使用结束后回手。"}
+              {"trigger": "AFTER RESOLVE_HIT", "when": [{"left":"$event.result","op":"eq","right":true}], "operation": {"op":"program","code":["$event.card","first_die_hit",1,"SET_SKILL_STATE"]}, "description": "命中时使本技能在使用结束后回手。"}
             ]},
             {"type": "slash", "level": 3, "entries": [
-              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1, "target": "self"},
+              {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$self","涡流",1,"STATUS"]},
                "description": "命中时获得1层涡流。"}
             ]},
             {"type": "evade", "level": 2, "entries": [
@@ -143,7 +152,7 @@
                 "operation": {
                   "op": "program",
                   "code": [
-                    "$die", "$game.active_duelspace", 1, "SLOT_AT_OFFSET", "$player", "OPPONENT",
+                    "$event.die", "$game.active_duelspace", 1, "SLOT_AT_OFFSET", "$player", "OPPONENT",
                     {"field":"side"}, "REMAINING_CARDS",
                     [
                       "$event.item.character.is_alive", "$event.item.destroyed", "NOT", "AND",
@@ -155,7 +164,7 @@
                 "description": "对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"
               },
               "1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "骰子等级降低", "amount": 1},
+              {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$event.target","骰子等级降低",1,"STATUS"]},
                "description": "命中时施加1层骰子等级降低。"}
             ]}
           ]
@@ -176,7 +185,7 @@
                     "$local.skill_recipient", "enemy", "STORE", {"local":"enemy"},
                     [
                       {"local":"enemy"}, "涡流", "STATUS_COUNT", 1, "GE",
-                      ["$card","vortex_target",{"local":"enemy"},"SET_SKILL_STATE"], "WHEN"
+                      ["$event.card","vortex_target",{"local":"enemy"},"SET_SKILL_STATE"], "WHEN"
                     ],
                     "WHEN"
                   ],
@@ -190,7 +199,7 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$card", "vortex_target", "SKILL_STATE",
+                  "$event.card.use_state", "vortex_target", null, "LOOKUP",
                   ["$event.target","$event.hit_modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"],
                   "WHEN"
                 ]
@@ -199,10 +208,15 @@
             },
             {
               "trigger": "after_skill_use",
-              "operation": {"op": "program", "code": [
-                "$card", "vortex_target", "SKILL_STATE", "enemy", "STORE",
-                {"local": "enemy"}, [{"local": "enemy"}, "涡流", 1, "SPEND_STATUS", "POP"], "WHEN"
-              ]},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card.use_state", "vortex_target", null, "LOOKUP", "enemy", "STORE",
+                  {"local":"enemy"},
+                  [{"local":"enemy"},"涡流",1,{"call":"SPEND_STATUS","result":"result","default":0},"POP"],
+                  "WHEN"
+                ]
+              },
               "description": "使用后结算已标记目标的涡流消耗。"
             }
           ],
@@ -217,7 +231,7 @@
               ]}, "description": "拼点胜利时获得1层涡流与1点护盾。"}
             ]},
             {"type": "pierce", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1, "target": "self"},
+              {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$self","涡流",1,"STATUS"]},
                "description": "命中时获得1层涡流。"}
             ]}
           ]
@@ -229,17 +243,18 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "operation": {"op": "program", "code": ["$card", "gain_on_damage", 1, "SET_SKILL_STATE"]},
+              "operation": {"op":"program","code":["$event.card","gain_on_damage",1,"SET_SKILL_STATE"]},
               "description": "使用时，本交锋内自身受到伤害时获得1层涡流。"
             },
             {
               "trigger": "AFTER DAMAGE",
               "scope": "duel",
               "subject": "target",
-              "when": {"result_at_least": 1},
-              "operation": {"op": "program", "code": [
-                "$owner", "gain_on_damage", "SKILL_STATE", ["$self", "涡流", 1, "STATUS"], "WHEN"
-              ]},
+              "when": [{"left":"$event.result","op":"ge","right":1}],
+              "operation": {
+                "op": "program",
+                "code": ["$owner.use_state","gain_on_damage",false,"LOOKUP",["$self","涡流",1,"STATUS"],"WHEN"]
+              },
               "description": "本技能发动后，每次在本交锋受到伤害时获得1层涡流。"
             }
           ],
@@ -253,7 +268,7 @@
             {"type": "slash", "level": 3, "entries": ["0物理",
               {
                 "trigger": "before_dice_hit",
-                "when": {"owner_status_at_least":{"涡流":3}},
+                "when": [{"left":{"field":"$self.statuses","key":"涡流","default":0},"op":"ge","right":3}],
                 "operation": {
                   "op": "program",
                   "code": ["$event.target","$event.hit_modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"]
@@ -262,7 +277,7 @@
               }
             ]},
             {"type": "blunt", "level": 3, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "status", "name": "涡流", "amount": 1},
+              {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$event.target","涡流",1,"STATUS"]},
                "description": "命中时对目标施加1层涡流。"}
             ]}
           ]
@@ -273,22 +288,33 @@
           "cost": 3,
           "entries": [{
             "trigger": "on_skill_use",
-            "operation": {"op": "program", "code": ["$self", "涡流", 2, "SPEND_STATUS", "POP"]},
+            "operation": {
+              "op": "program",
+              "code": ["$self","涡流",2,{"call":"SPEND_STATUS","result":"result","default":0},"POP"]
+            },
             "description": "使用时消耗2层涡流。"
           }, {
             "trigger": "before_dice_use",
-            "operation": {"op": "program", "code": [
-              "$card", "next_die_bonus", "SKILL_STATE", "bonus", "STORE", {"local": "bonus"}, 0, "GT", [
-                "$die", {"local": "bonus"}, "DIE_FINAL_ADD", "$card", "next_die_bonus", 0, "SET_SKILL_STATE"
-              ], "WHEN"
-            ]},
+            "operation": {
+              "op": "program",
+              "code": [
+                "$event.card.use_state", "next_die_bonus", 0, "LOOKUP", "bonus", "STORE",
+                {"local":"bonus"}, 0, "GT",
+                [
+                  "$event.die", {"local":"bonus"}, "DIE_FINAL_ADD", "$event.card", "next_die_bonus", 0,
+                  "SET_SKILL_STATE"
+                ],
+                "WHEN"
+              ]
+            },
             "description": "下骰使用时结算并清除首骰给予的最终点数加成。"
           }],
           "dice": [
             {"type": "slash", "level": 4, "entries": ["1物理",
-              {"trigger": "on_dice_hit", "operation": {"op": "program", "code": [
-                "$self", 4, "LOSE_HP", "$card", "next_die_bonus", 15, "SET_SKILL_STATE"
-              ]}, "description": "命中时自身失去4生命值，以使下骰最终点数+15。"}
+              {"trigger": "on_dice_hit", "operation": {
+                "op": "program",
+                "code": ["$self",4,"LOSE_HP","$event.card","next_die_bonus",15,"SET_SKILL_STATE"]
+              }, "description": "命中时自身失去4生命值，以使下骰最终点数+15。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
               {
@@ -301,8 +327,8 @@
                     "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
                     "$event.target", "FIRST_IN_ORDER",
                     [
-                      "$target", 4, "$is_primary_target", [{"local":"primary_bonus"},"ADD"], "WHEN",
-                      "normal", "slash", "DAMAGE"
+                      "$event.target", 4, "$event.target", "$event.primary_target", "IS",
+                      [{"local":"primary_bonus"},"ADD"], "WHEN", "normal", "slash", "DAMAGE"
                     ],
                     "FOR_EACH_TARGET"
                   ]
@@ -320,18 +346,23 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "operation": {"op": "program", "code": [
-                "$self", "涡流", "all", "SPEND_STATUS", "spent", "STORE",
-                {"local": "spent"}, 0, "GT", [
-                  "$self", "强壮", {"local": "spent"}, "STATUS",
-                  "$self", "$self", "强壮", {"local": "spent"}, "QUEUE_STATUS"
-                ], "WHEN"
-              ]},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "涡流", "all", {"call":"SPEND_STATUS","result":"result","default":0}, "spent",
+                  "STORE", {"local":"spent"}, 0, "GT",
+                  [
+                    "$self", "强壮", {"local":"spent"}, "STATUS", "$self", "$self", "强壮",
+                    {"local":"spent"}, "QUEUE_STATUS"
+                  ],
+                  "WHEN"
+                ]
+              },
               "description": "使用时消耗全部涡流，并在本回合与下回合获得等于实际消耗量的强壮。"
             },
             {
               "trigger": "on_skill_use",
-              "operation": {"op": "status", "name": "骰级免疫", "amount": 1, "target": "self"},
+              "operation": {"op":"program","code":["$self","骰级免疫",1,"STATUS"]},
               "description": "使用时，本回合自身无视骰子等级增减效果。"
             }
           ],
@@ -354,7 +385,10 @@
                   "code": [
                     "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
                     "$event.target", "FIRST_IN_ORDER",
-                    ["$target",2,"normal","slash","DAMAGE","$self","$target","骰子等级降低",1,"QUEUE_STATUS"],
+                    [
+                      "$event.target", 2, "normal", "slash", "DAMAGE", "$self", "$event.target",
+                      "骰子等级降低", 1, "QUEUE_STATUS"
+                    ],
                     "FOR_EACH_TARGET"
                   ]
                 },

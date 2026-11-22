@@ -1,5 +1,4 @@
 """Read the observations declared for a hand play, and apply active use conditions."""
-from entry.legacy_operations import skill_use_rules
 from entry.predicates import Rank, Reference, compile_value, compile_when
 
 
@@ -18,7 +17,7 @@ def record_hand_play(card):
     card.play_observations = {
         (name, index): observations(rule, owner, card)
         for name, status in getattr(owner, "status_rules", {}).items()
-        for index, rule in enumerate(skill_use_rules(status))
+        for index, rule in enumerate(status.get("skill_use", ()))
     }
 
 
@@ -26,7 +25,7 @@ def denies_skill_use(owner, card):
     for name, stacks in owner.statuses.items():
         if stacks <= 0:
             continue
-        for index, rule in enumerate(skill_use_rules(owner.status_rules.get(name, {}))):
+        for index, rule in enumerate(owner.status_rules.get(name, {}).get("skill_use", ())):
             zones = getattr(owner.player, "cardspace", None)
             observed = (observations(rule, owner, card) if zones and card in zones.hand.content
                         else card.play_observations.get((name, index), {}))

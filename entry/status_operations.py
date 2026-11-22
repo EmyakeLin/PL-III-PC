@@ -7,9 +7,9 @@ def cap_status(holder, status, limit):
     """Remove the excess over the given limit, with one ordinary STATUS action."""
     return [
         holder, status, limit, {"literal": ["holder", "status", "limit"]},
-        ["$bindings.limit", "$bindings.holder", "$bindings.status", "STATUS_COUNT", "SUB",
+        ["$event.bindings.limit", "$event.bindings.holder", "$event.bindings.status", "STATUS_COUNT", "SUB",
          {"literal": ["delta"]}, [
-             "$bindings.delta", 0, "LT",
-             ["$bindings.holder", "$bindings.status", "$bindings.delta", "STATUS"], "WHEN"
+             "$event.bindings.delta", 0, "LT",
+             ["$event.bindings.holder", "$event.bindings.status", "$event.bindings.delta", "STATUS"], "WHEN"
          ], "WITH_BINDINGS"], "WITH_BINDINGS",
     ]

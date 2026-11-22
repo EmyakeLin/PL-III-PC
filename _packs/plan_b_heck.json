@@ -54,12 +54,12 @@
           "entries": [
             {
               "trigger": "on_turn_start",
-              "when": {"owner_status_at_least":{"能源":12}},
+              "when": [{"left":{"field":"$self.statuses","key":"能源","default":0},"op":"ge","right":12}],
               "operation": {
                 "op": "program",
                 "code": [
                   "$self", "全开", 1, "STATUS", "$player", 2, "TURN_COST_ADD", "$self", 1,
-                  "TURN_DUELS_ADD", "$self", "首次全开", "CHARACTER_STATE", "NOT",
+                  "TURN_DUELS_ADD", "$self.rule_state", "首次全开", false, "LOOKUP", "NOT",
                   [
                     "$self", "首次全开", true, "SET_CHARACTER_STATE", "$self", "heck_decisive_thrust",
                     "out_of_combat", {"literal":["holder","skill_id","zone"]},
@@ -106,18 +106,18 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$is_attack",
+                  "$event.die.is_attack",
                   [
-                    "$self", "剑刃近战命中", "CHARACTER_STATE", 3, "LT",
+                    "$self.rule_state", "剑刃近战命中", 0, "LOOKUP", 3, "LT",
                     [
-                      "$die_range", 0, "EQ",
+                      "$event.die.effective_range", 0, "EQ",
                       [
-                        "$target", "烧伤", 1, "STATUS", "$self", "剑刃近战命中", "$self", "剑刃近战命中",
-                        "CHARACTER_STATE", 1, "ADD", "SET_CHARACTER_STATE"
+                        "$event.target", "烧伤", 1, "STATUS", "$self", "剑刃近战命中", "$self.rule_state",
+                        "剑刃近战命中", 0, "LOOKUP", 1, "ADD", "SET_CHARACTER_STATE"
                       ],
                       "WHEN"
                     ],
-                    [{"op":"ignite","credit":"die"}], "IF_ELSE"
+                    [{"keyword":"ignite","credit":"die"}], "IF_ELSE"
                   ],
                   "WHEN"
                 ]
@@ -143,11 +143,11 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$is_attack", "$target", "烧伤", "STATUS_COUNT", 4, "GE", "AND",
+                  "$event.die.is_attack", "$event.target", "烧伤", "STATUS_COUNT", 4, "GE", "AND",
                   [
-                    "$target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "$die_owner", "$self", "EQ", [4], [2],
-                    "IF_ELSE", "MIN", "$die_range", 0, "GT", [2, "MUL"], "WHEN", "ADD", "$die", "$self", true,
-                    "SET_DIE_STATE"
+                    "$event.target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "$event.die", "CHARACTER_OF",
+                    "$self", "EQ", [4], [2], "IF_ELSE", "MIN", "$event.die.effective_range", 0, "GT",
+                    [2,"MUL"], "WHEN", "ADD", "$event.die", "$self", true, "SET_DIE_STATE"
                   ],
                   "WHEN"
                 ]
@@ -157,15 +157,15 @@
             {
               "trigger": "on_dice_hit",
               "subject": "ally",
-              "when": {"clash_result":"win"},
+              "when": [{"left":"$event.clash_result","op":"eq","right":"win"}],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$die", "$self", "DIE_STATE", "$self", "信标耗能", "CHARACTER_STATE", 6, "LT", "AND", "$self",
-                  "能源", "STATUS_COUNT", 0, "GT", "AND",
+                  "$event.die.use_state", "$self", false, "LOOKUP", "$self.rule_state", "信标耗能", 0,
+                  "LOOKUP", 6, "LT", "AND", "$self", "能源", "STATUS_COUNT", 0, "GT", "AND",
                   [
-                    "$self", "信标耗能", "$self", "信标耗能", "CHARACTER_STATE", "$self", "能源", 1, "SPEND_STATUS", "ADD",
-                    "SET_CHARACTER_STATE"
+                    "$self", "信标耗能", "$self.rule_state", "信标耗能", 0, "LOOKUP", "$self", "能源", 1,
+                    {"call":"SPEND_STATUS","result":"result","default":0}, "ADD", "SET_CHARACTER_STATE"
                   ],
                   "WHEN"
                 ]
@@ -180,16 +180,16 @@
             {
               "trigger": "on_status_changed",
               "subject": "target",
-              "when": {"status":"能源"},
+              "when": [{"left":"$event.status","op":"eq","right":"能源"}],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$actual_delta", 0, "LT",
+                  "$event.actual_delta", 0, "LT",
                   [
-                    "$self", "能源消耗余量", "CHARACTER_STATE", "$actual_delta", "SUB", "total", "STORE",
-                    "DIVMOD $local.total 8", "remainder", "STORE", "earned", "STORE",
-                    "$self", "能源消耗余量", "$local.remainder", "SET_CHARACTER_STATE", {"local":"earned"}, 0, "GT",
-                    ["$self", "凝聚", {"local":"earned"}, "STATUS"], "WHEN"
+                    "$self.rule_state", "能源消耗余量", 0, "LOOKUP", "$event.actual_delta", "SUB", "total",
+                    "STORE", "DIVMOD $local.total 8", "remainder", "STORE", "earned", "STORE", "$self",
+                    "能源消耗余量", "$local.remainder", "SET_CHARACTER_STATE", {"local":"earned"}, 0, "GT",
+                    ["$self","凝聚",{"local":"earned"},"STATUS"], "WHEN"
                   ],
                   "WHEN"
                 ]
@@ -228,13 +228,13 @@
                   "trigger": "before_dice_use",
                   "operation": {
                     "op": "program",
-                    "code": ["$die", "$self", "能源", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN", "DIE_FINAL_ADD"]
+                    "code": ["$event.die","$self","能源","STATUS_COUNT",4,"FLOOR_DIV",2,"MIN","DIE_FINAL_ADD"]
                   },
                   "description": "自身每持有4能源，本骰最终点数+1，至多+2。"
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "operation": "STATUS 烧伤 1 $target",
+                  "operation": "STATUS 烧伤 1 $event.target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -250,20 +250,34 @@
               "trigger": "on_skill_use",
               "operation": {
                 "op": "program",
-                "code": ["$self", "能源", 4, "SPEND_STATUS_IN_FULL", ["$card", 2, "SKILL_LEVEL_ADD"], "WHEN"]
+                "code": [
+                  "$self", "能源", 4,
+                  {
+                    "call": "SPEND_STATUS",
+                    "with": {"require_full":true},
+                    "result": "paid_in_full",
+                    "default": false
+                  },
+                  ["$event.card",2,"SKILL_LEVEL_ADD"], "WHEN"
+                ]
               },
               "description": "消耗4能源以使本技能骰子等级提升2。"
             },
             {
               "trigger": "AFTER ACTIVATE_STATUS",
               "subject": "source",
-              "when": {"status":"烧伤","activation_kind":"ignite","result":true},
+              "when": [
+                {"left":"$event.status","op":"eq","right":"烧伤"},
+                {"left":"$event.activation_kind","op":"eq","right":"ignite"},
+                {"left":"$event.result","op":"eq","right":true}
+              ],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$card", "extra_ignite", "SKILL_STATE", "NOT",
+                  "$event.card.use_state", "extra_ignite", false, "LOOKUP", "NOT",
                   [
-                    "$card", "extra_ignite", true, "SET_SKILL_STATE", {"op":"ignite"}, "$self", "能源", 2, "STATUS"
+                    "$event.card", "extra_ignite", true, "SET_SKILL_STATE", {"keyword":"ignite"}, "$self",
+                    "能源", 2, "STATUS"
                   ],
                   "WHEN"
                 ]
@@ -278,7 +292,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "operation": "STATUS 烧伤 2 $target",
+                  "operation": "STATUS 烧伤 2 $event.target",
                   "description": "施加2烧伤。"
                 }
               ]
@@ -292,8 +306,14 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$target", "烧伤", 1, "STATUS", "$self", "能源", 2, "SPEND_STATUS_IN_FULL",
-                      ["$target", "烧伤", 3, "STATUS"], "WHEN"
+                      "$event.target", "烧伤", 1, "STATUS", "$self", "能源", 2,
+                      {
+                        "call": "SPEND_STATUS",
+                        "with": {"require_full":true},
+                        "result": "paid_in_full",
+                        "default": false
+                      },
+                      ["$event.target","烧伤",3,"STATUS"], "WHEN"
                     ]
                   },
                   "description": "施加1烧伤，消耗2能源以施加3烧伤。"
@@ -307,7 +327,7 @@
                 "1穿甲",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": "STATUS 烧伤 1 $target",
+                  "operation": "STATUS 烧伤 1 $event.target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -322,9 +342,10 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$event.card.instantiated_dice", ["$event.item.clash_result", "win", "EQ"], "FILTER",
+                      "$event.card.instantiated_dice", ["$event.item.clash_result","win","EQ"], "FILTER",
                       "SIZE", 2, "GE",
-                      ["$die", 2, "DIE_LEVEL_ADD", "$die", "lunge_finish", true, "SET_DIE_STATE"], "WHEN"
+                      ["$event.die",2,"DIE_LEVEL_ADD","$event.die","lunge_finish",true,"SET_DIE_STATE"],
+                      "WHEN"
                     ]
                   },
                   "description": "本技能之前至少两次拼点胜利时，本骰等级提升2、伤害+1，命中时引燃并摧毁对阵技能。"
@@ -332,11 +353,12 @@
                 {
                   "trigger": "BEFORE DAMAGE",
                   "subject": "source",
-                  "when": {"damage_part":true},
+                  "when": [{"left":"$event.damage_part","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$damage_die", "$owner", "EQ", "$die", "lunge_finish", "DIE_STATE", "AND",
+                      "$event.damage_die", "$owner", "EQ", "$event.die.use_state", "lunge_finish", false,
+                      "LOOKUP", "AND",
                       [
                         1, "amount", "STORE", "$event.target", "$event.modifiers", "damage_add",
                         "$local.amount", "normal", "ADD_DAMAGE_MODIFIER"
@@ -351,7 +373,8 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$die", "lunge_finish", "DIE_STATE", [{"op":"ignite"}, "$opponent_card", "DESTROY"], "WHEN"
+                      "$event.die.use_state", "lunge_finish", false, "LOOKUP",
+                      [{"keyword":"ignite"},"$event.opponent_card","DESTROY"], "WHEN"
                     ]
                   },
                   "description": "达成前两胜时，命中触发引燃并摧毁对方技能。"
@@ -380,7 +403,7 @@
                     "1穿甲",
                     {
                       "trigger": "on_dice_hit",
-                      "operation": "STATUS 烧伤 1 $target",
+                      "operation": "STATUS 烧伤 1 $event.target",
                       "description": "施加1烧伤。"
                     }
                   ]
@@ -393,7 +416,7 @@
                     "1穿甲",
                     {
                       "trigger": "on_dice_hit",
-                      "operation": "STATUS 烧伤 1 $target",
+                      "operation": "STATUS 烧伤 1 $event.target",
                       "description": "施加1烧伤。"
                     }
                   ]
@@ -490,7 +513,7 @@
                 {
                   "trigger": "BEFORE DAMAGE",
                   "subject": "source",
-                  "when": {"damage_part":true},
+                  "when": [{"left":"$event.damage_part","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
                     "code": [
@@ -522,8 +545,9 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$die", "analysis_burn", "DIE_STATE", "bonus", "STORE", {"local":"bonus"}, 0, "GT",
-                      ["$target", "烧伤", {"local":"bonus"}, "STATUS"], "WHEN"
+                      "$event.die.use_state", "analysis_burn", 0, "LOOKUP", "bonus", "STORE",
+                      {"local":"bonus"}, 0, "GT", ["$event.target","烧伤",{"local":"bonus"},"STATUS"],
+                      "WHEN"
                     ]
                   },
                   "description": "施加与本次增伤等量的烧伤。"
@@ -544,8 +568,9 @@
                 "code": [
                   "$self", "能源", "STATUS_COUNT", 16, "GT",
                   [
-                    "$card", "base_bonus", "$self", "能源", "$self", "能源", "STATUS_COUNT", 16, "SUB",
-                    "SPEND_STATUS", 2, "FLOOR_DIV", "SET_SKILL_STATE"
+                    "$event.card", "base_bonus", "$self", "能源", "$self", "能源", "STATUS_COUNT", 16, "SUB",
+                    {"call":"SPEND_STATUS","result":"result","default":0}, 2, "FLOOR_DIV",
+                    "SET_SKILL_STATE"
                   ],
                   "WHEN"
                 ]
@@ -556,7 +581,7 @@
               "trigger": "before_dice_use",
               "operation": {
                 "op": "program",
-                "code": ["$die", "$card", "base_bonus", "SKILL_STATE", "DIE_BASE_ADD"]
+                "code": ["$event.die","$event.card.use_state","base_bonus",0,"LOOKUP","DIE_BASE_ADD"]
               },
               "description": "以本次技能已获得的加成提升当前骰的基础值。"
             }
@@ -571,9 +596,16 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$self", "能源", 2, "SPEND_STATUS_IN_FULL",
+                      "$self", "能源", 2,
+                      {
+                        "call": "SPEND_STATUS",
+                        "with": {"require_full":true},
+                        "result": "paid_in_full",
+                        "default": false
+                      },
                       [
-                        "$card", "base_bonus", "$card", "base_bonus", "SKILL_STATE", 2, "ADD", "SET_SKILL_STATE"
+                        "$event.card", "base_bonus", "$event.card.use_state", "base_bonus", 0, "LOOKUP",
+                        2, "ADD", "SET_SKILL_STATE"
                       ],
                       "WHEN"
                     ]
@@ -598,8 +630,9 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$player", 1, "DRAW", "$final_score", 4, "FLOOR_DIV", "burn", "STORE", {"local":"burn"}, 0,
-                      "GT", ["$target", "烧伤", {"local":"burn"}, "STATUS"], "WHEN", "$opponent_card", "DESTROY"
+                      "$player", 1, "DRAW", "$event.die", "DIE_VALUE", 4, "FLOOR_DIV", "burn", "STORE",
+                      {"local":"burn"}, 0, "GT", ["$event.target","烧伤",{"local":"burn"},"STATUS"],
+                      "WHEN", "$event.opponent_card", "DESTROY"
                     ]
                   },
                   "description": "抽1卡，每4最终点数施加1烧伤，摧毁对方技能。"
@@ -619,7 +652,7 @@
               "trigger": "on_skill_use",
               "operation": {
                 "op": "program",
-                "code": ["$card", "repeat_limit", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"]
+                "code": ["$event.card","repeat_limit","$self","凝聚","STATUS_COUNT","SET_SKILL_STATE"]
               },
               "description": "决战技。本技能首骰的重复上限等于使用时的凝聚层数。"
             }
@@ -633,17 +666,21 @@
                 "1穿甲",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": {"op":"ignite","adjustments":{"damage_multiplier":[2,"MUL"]}},
+                  "operation": {"keyword":"ignite","adjustments":{"damage_multiplier":[2,"MUL"]}},
                   "description": "由本骰触发一次引燃，该次烧伤伤害翻倍。"
                 },
                 {
                   "trigger": "AFTER DAMAGE",
                   "subject": "source",
-                  "when": {"damage_amount_at_least":1},
+                  "when": [{"left":"$event.damage_amount","op":"ge","right":1}],
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$damage_die", "$owner", "EQ", ["$self", "能源", "$damage_amount", "SPEND_STATUS", "POP"],
+                      "$event.damage_die", "$owner", "EQ",
+                      [
+                        "$self", "能源", "$event.damage_amount",
+                        {"call":"SPEND_STATUS","result":"result","default":0}, "POP"
+                      ],
                       "WHEN"
                     ]
                   },
@@ -698,7 +735,7 @@
                 "0物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": "STATUS 烧伤 1 $target",
+                  "operation": "STATUS 烧伤 1 $event.target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -711,7 +748,7 @@
                 "0物理",
                 {
                   "trigger": "on_dice_hit",
-                  "operation": "STATUS 烧伤 1 $target",
+                  "operation": "STATUS 烧伤 1 $event.target",
                   "description": "施加1烧伤。"
                 }
               ]
@@ -724,20 +761,17 @@
                 "0穿甲",
                 {
                   "trigger": "before_dice_use",
-                  "operation": {
-                    "op": "program",
-                    "code": ["$die", "$self", "凝聚", "STATUS_COUNT", "DIE_FINAL_ADD"]
-                  },
+                  "operation": {"op":"program","code":["$event.die","$self","凝聚","STATUS_COUNT","DIE_FINAL_ADD"]},
                   "description": "每层凝聚使本骰最终点数+1。"
                 },
                 {
                   "trigger": "BEFORE DAMAGE",
                   "subject": "source",
-                  "when": {"damage_part":true},
+                  "when": [{"left":"$event.damage_part","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$damage_die", "$owner", "EQ",
+                      "$event.damage_die", "$owner", "EQ",
                       [
                         "$self", "凝聚", "STATUS_COUNT", "amount", "STORE", "$event.target",
                         "$event.modifiers", "damage_add", "$local.amount", "normal",
@@ -754,8 +788,8 @@
                     "op": "program",
                     "code": [
                       "$self", "凝聚", "STATUS_COUNT", 0, "GT",
-                      ["$target", "烧伤", "$self", "凝聚", "STATUS_COUNT", "STATUS"], "WHEN", "$self", "能源", "all",
-                      "SPEND_STATUS", "POP"
+                      ["$event.target","烧伤","$self","凝聚","STATUS_COUNT","STATUS"], "WHEN", "$self", "能源",
+                      "all", {"call":"SPEND_STATUS","result":"result","default":0}, "POP"
                     ]
                   },
                   "description": "施加等于凝聚层数的烧伤，随后消耗全部能源。"

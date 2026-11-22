@@ -969,6 +969,8 @@ def handle_destroy(ctx):
 def handle_discard(ctx):
     card, player = ctx.pop(), ctx.pop()
     hand = player.cardspace.hand
+    if card is not None and not isinstance(card, Card):
+        raise ValueError("弃置对象必须是实体手牌")
     if card is not None and card in hand.content:
         hand.move_card_to(card, player.cardspace.delayed_discard)
         return card

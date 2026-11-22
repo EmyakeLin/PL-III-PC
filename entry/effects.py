@@ -1,36 +1,8 @@
-"""Card-pack rules.
-
-Use {"trigger": "on_clash_win", "operation": "Shield: 1"} on a die, card or
-passive. "BEFORE DAMAGE" and "AFTER STATUS" listen to operation events.
-Operations may be a list in printed order or a dict, e.g.
-{"op":"place_skill","card_id":"reserve","zone":"out_of_combat"}.
-BEFORE DAMAGE accepts modifiers on the incoming base amount. AFTER RESOLVE_DAMAGE
-exposes $damage_amount after modifiers and before shields, HP loss, and death.
-AFTER DAMAGE exposes $damage_dealt (including a settled zero), $damage_received
-(positive damage before shields), $damage_amount and $hp_lost. $damage_die is
-the originating die, if any. At after_dice_use, $did_deal_damage reports whether
-any direct damage from this use settled. A character entry can attribute its own
-follow-up to the current die with {"op":"damage","from_die":true}.
-BEFORE PAY_COST observes the acting card and its proposed amount. AFTER PAY_COST
-also reports result, personal_spent and common_spent. RESET_COST addresses one
-player and supplies the new common and per-character personal budgets.
-Target selectors include self (owner's character), source, target, card, die,
-opponent_card, opponent_die, and execution. Subscription subject (whose event)
-is independent of effect target. The default subject is the owner; use
-source, target, ally, enemy or any for explicit reactions.
-
-Scope defaults to the owner's lifetime; duel, turn, next_skill or global can
-be specified. A period {"from":"after_turn_start","until":"on_turn_end"}
-narrows it. The when mapping compares event fields, e.g. {"status":"烧伤"},
-or checks thresholds, e.g. {"owner_status_at_least":{"能源":2}}.
-Authority (0/1/2 or 常规/较高话语权/最高话语权) arbitrates attempts to cancel
-a pending operation. Entries with the same source execute in printed order.
-"""
+"""Resolve printed damage segments, executable programs and public status keywords."""
 import re
 
-from entry.compiler import Program, TargetedProgram, prepare_effect
+from entry.compiler import Program, prepare_effect
 from entry.entry import character_of
-from entry.legacy_operations import keyword_activation_options
 from models.opcode import OpCode
 
 
@@ -70,18 +42,11 @@ def run_effect(ctx, entry, operation):
     """Execute one rule in its triggering event, retaining its actual source."""
     if isinstance(operation, (str, dict)):
         operation = prepare_effect(operation)
-    if isinstance(operation, TargetedProgram):
-        selector = operation.selector if operation.selector is not None else entry.target or operation.default
-        target = select_entity(ctx, selector, entry.owner)
-        if target is None:
-            return
-        with ctx.binding(target=target, selected_player=getattr(target, "player", target)):
-            return run_effect(ctx, entry, operation.program)
     if isinstance(operation, Program):
         from entry.program import run_program
         return run_program(ctx, entry, operation)
     if isinstance(operation, list):
-        if all(isinstance(item, (dict, str, Program, TargetedProgram)) for item in operation):
+        if all(isinstance(item, (dict, str, Program)) for item in operation):
             for item in operation:
                 if ctx.executions and ctx.executions[-1].cancelled:
                     break
@@ -92,16 +57,13 @@ def run_effect(ctx, entry, operation):
     if callable(operation):
         operation(ctx)
         return
-    if isinstance(operation, str):
-        name, _, rest = operation.partition(":")
-        args = [x.strip() for x in rest.split(",") if x.strip()]
-        data = {}
-    elif isinstance(operation, dict):
+    if isinstance(operation, dict):
         data = operation
-        name, args = data["op"], data.get("args", [])
+    elif isinstance(operation, str):
+        data = {"keyword": operation}
     else:
         raise ValueError(f"无效词条操作 {operation!r}")
-    name = name.lower().strip().replace("-", "_")
+    name = data.get("op")
     if name == "program":
         from entry.program import run_program
         if "damage_part" in data:
@@ -117,8 +79,8 @@ def run_effect(ctx, entry, operation):
         return
     source = character_of(entry.owner) or ctx.event.get("source")
     if name == "damage":
-        amount = int(data.get("amount", args[0] if args else 1))
-        grade = GRADES[data.get("grade", args[1] if len(args) > 1 else "normal")]
+        amount = int(data["amount"])
+        grade = GRADES[data.get("grade", "normal")]
         die = ctx.event.get("die")
         attack_type = data.get("attack_type", getattr(die, "type", "none"))
         fields = {}
@@ -134,7 +96,7 @@ def run_effect(ctx, entry, operation):
     # rule on a target, with credit for the damage going to the caller.
     for status, rule in getattr(target, "status_rules", {}).items():
         keywords = rule.get("activation", {}).get("keywords", ())
-        if name in keywords:
+        if data["keyword"] in keywords:
             owner = entry.owner
             if "credit" in data:
                 owner = select_entity(ctx, data["credit"], entry.owner)
@@ -144,5 +106,5 @@ def run_effect(ctx, entry, operation):
             ctx.stack.extend((target, status))
             return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,
                                   activation_owner=owner, activation_kind=keywords[0],
-                                  **keyword_activation_options(data))
-    raise ValueError(f"未知词条操作 {name!r}")
+                                  adjustments=data.get("adjustments"))
+    raise ValueError(f"未知词条关键词 {data['keyword']!r}")

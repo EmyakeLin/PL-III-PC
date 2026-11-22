@@ -188,8 +188,8 @@ def _card_choice_view(card, viewer):
         if choice and choice.player is viewer:
             preview = choice.specification.get("preview", {})
             key = preview.get("skill_discount")
-            discount = (choice.event["bindings"].get(key) if key is not None
-                        else choice.specification.get("use_discount"))
+            if key is not None:
+                discount = choice.event["bindings"].get(key)
         if discount is not None:
             cost = max(0, card.cost - discount)
             extra = card.data.get("resource_cost")

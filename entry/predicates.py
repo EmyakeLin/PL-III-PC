@@ -6,7 +6,6 @@ import operator
 from entry.entry import character_of
 from entry.references import read_path
 from models.conditions import COMPARISONS
-from models.opcode import OpCode
 
 
 @dataclass(frozen=True)
@@ -84,7 +83,6 @@ class Comparison:
     left: object
     op: str
     right: object
-    numeric: bool = False
 
     def matches(self, ctx, entry, ordering):
         if ordering and (isinstance(self.left, Operand) or isinstance(self.right, Operand)):
@@ -95,8 +93,6 @@ class Comparison:
         def read(value):
             return peek(value.offset) if isinstance(value, Operand) else read_value(value, owner, event)
         left, right = read(self.left), read(self.right)
-        if self.numeric and not isinstance(left, (int, float)):
-            return False
         try:
             return COMPARISONS[self.op](left, right)
         except TypeError:
@@ -137,34 +133,12 @@ def compile_when(when, trigger, timing):
 
     operands = OPERANDS.get(trigger, ()) if timing == "BEFORE" else ()
 
-    if isinstance(when, list):
-        result = []
-        for clause in when:
-            if not isinstance(clause, dict) or not {"left", "op", "right"} <= clause.keys() or clause["op"] not in COMPARISONS:
-                raise ValueError(f"无效的词条条件 {clause!r}")
-            result.append(Comparison(compile_value(clause["left"], operands), clause["op"], compile_value(clause["right"], operands)))
-        return tuple(result)
-
+    if not isinstance(when, list):
+        raise ValueError("when 需要由 left、op、right 组成的条件列表")
     result = []
-    for name, value in when.items():
-        if name == "die_type":
-            result.append(Comparison(Reference(("event", "die", "type")), "eq", value))
-        elif name in ("owner_status_at_least", "target_status_at_least", "owner_status_below_status"):
-            path = ("event", "target", "statuses") if name.startswith("target") else ("self", "statuses")
-            for status, limit in value.items():
-                current = Reference(path, status, 0)
-                if name == "owner_status_below_status":
-                    result.append(Comparison(current, "lt", Reference(path, limit, 0)))
-                else:
-                    result.append(Comparison(current, "ge", limit))
-        elif name in ("owner_hp_at_most", "target_hp_at_most"):
-            path = ("self", "hp") if name.startswith("owner") else ("event", "target", "hp")
-            result.append(Comparison(Reference(path), "le", value))
-        elif name in ("amount_at_least", "result_at_least", "hp_lost_at_least", "damage_amount_at_least"):
-            field = name.removesuffix("_at_least")
-            pending = field == "amount" or field == "damage_amount" and trigger == OpCode.RESOLVE_DAMAGE
-            left = compile_value("$pending.amount", operands) if pending and "amount" in operands else Reference(("event", field))
-            result.append(Comparison(left, "ge", value, numeric=True))
-        else:
-            result.append(Comparison(Reference(("event",), name), "eq", value))
+    for clause in when:
+        if not isinstance(clause, dict) or set(clause) != {"left", "op", "right"} or clause["op"] not in COMPARISONS:
+            raise ValueError(f"无效的词条条件 {clause!r}")
+        result.append(Comparison(compile_value(clause["left"], operands), clause["op"],
+                                 compile_value(clause["right"], operands)))
     return tuple(result)
