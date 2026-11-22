@@ -94,7 +94,7 @@ class PrintedCountingTests(unittest.TestCase):
 def actor_for(ctx, side):
     game = SimpleNamespace(context=ctx, status_entries={}, status_rules={}, ability_rules={},
                            turn_end_statuses=set(), resolving_duel=None)
-    seat = SimpleNamespace(side=side, game=game, register_faction_passives=lambda actor: None)
+    seat = SimpleNamespace(side=side, name=str(side), game=game, register_faction_passives=lambda actor: None)
     actor = Character({"id": str(side), "name": str(side), "rank": "NORMAL", "max_hp": 9, "skills": []}, seat)
     seat.characters = [actor]
     game.players = [seat]
@@ -265,6 +265,33 @@ class CollectionAndTargetTests(unittest.TestCase):
 
 
 class DamageAndPaymentTests(unittest.TestCase):
+    def test_star_lock_snapshot_selects_once_in_seat_order_and_settles_after_publication(self):
+        pack = json.loads((PACKS / "xinxing_lin_qiu.json").read_text(encoding="utf-8"))
+        for threshold in (1, 6, 23):
+            class PublicationTrace(TraceContext):
+                def publish(self, name, fields):
+                    publications.append((name, list(fields["targets"])))
+                    late.status_overflow["星结"] = threshold + 1
+                    super().publish(name, fields)
+            ctx = PublicationTrace()
+            a, b, late = [actor_for(ctx, n) for n in (1, 2, 1)]
+            a.player.characters.append(late)
+            rules = pack["status_rules"].copy()
+            rules["星结"] = dict(rules["星结"], overflow_threshold=threshold)
+            ctx.game = SimpleNamespace(players=[a.player, b.player], first_player=b.player, status_rules=rules)
+            for character in (a, b, late):
+                character.statuses["星结"] = 10
+                character.status_overflow["星结"] = threshold - int(character is late)
+            publications = []
+            ctx.register_status_programs(rules)
+            ctx.register_status_programs(rules)
+            ctx.dispatch_pipeline("before_turn_end")
+            ctx.dispatch_pipeline("before_turn_end")
+            self.assertEqual(publications, [("on_star_lock", [b, a])])
+            self.assertEqual([c.statuses["星结"] for c in (a, b, late)], [6, 6, 10])
+            self.assertEqual(ctx.operations.count(OpCode.SET_STATUS_OVERFLOW), 2)
+            self.assertEqual(ctx.operations.count(OpCode.PUBLISH), 1)
+
     def test_finish_damage_and_destruction_follow_victories_even_when_win_effects_were_skipped(self):
         for wins in range(4):
             ctx = TraceContext()

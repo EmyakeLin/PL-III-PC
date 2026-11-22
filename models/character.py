@@ -85,6 +85,7 @@ class Character:
             self._effect_context = self.game.context
             self.game.status_entries.update(data.get("status_entries", {}))
             self.game.status_rules.update(data.get("status_rules", {}))
+            self.game.context.register_status_programs(data.get("status_rules", {}))
             self.game.ability_rules.update(data.get("ability_rules", {}))
             self.game.turn_end_statuses.update(data.get("turn_end_statuses", ()))
             self.game.context.register_entries(self, self.passive_skill_data)
@@ -189,7 +190,7 @@ class Character:
                 label = self.status_rules[label].get("active_label", label)
             parts.append(f"{label} {value}")
         for name, amount in self.status_overflow.items():
-            threshold = self.status_rules.get(name, {}).get("overflow_batch", {}).get("threshold")
+            threshold = self.status_rules.get(name, {}).get("overflow_threshold")
             balance = str(amount) if threshold is None else f"{amount}/{threshold}"
             parts.append(f"{name}溢出 {balance}")
         parts.extend(f"能力 {label} {count}次" for label, count in self.ability_effects.items())
@@ -299,7 +300,7 @@ class Character:
         cap = self.status_cap(name)
         if amount > 0 and cap is not None:
             accepted = min(amount, max(0, cap - self.statuses.get(name, 0)))
-            if accepted < amount and (rule.get("track_overflow") or "overflow_batch" in rule):
+            if accepted < amount and rule.get("track_overflow"):
                 self.status_overflow[name] = self.status_overflow.get(name, 0) + amount - accepted
             amount = accepted
         return self._set_status(name, max(0, self._ordinary_status(name) + amount),

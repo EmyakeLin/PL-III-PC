@@ -7,6 +7,7 @@ from models.opcode import OpCode
 class TriggerType(Enum):
     PIPELINE = auto()
     OPCODE = auto()
+    EVENT = auto()
 
 
 AUTHORITY = {"常规": 0, "较高话语权": 1, "最高话语权": 2,
@@ -92,6 +93,8 @@ class Entry:
             if len(words) == 2 and words[0] in ("BEFORE", "AFTER"):
                 timing, trigger = words[0], OpCode[words[1]]
         trigger_type = TriggerType.OPCODE if isinstance(trigger, OpCode) else TriggerType.PIPELINE
+        if spec.get("trigger_type") == "event":
+            trigger_type = TriggerType.EVENT
         scope = spec.get("scope", kind)
         subject = spec.get("subject", "owner" if kind != "global" else "any")
         return cls(owner, trigger_type, trigger, spec["operation"], timing,

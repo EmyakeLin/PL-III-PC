@@ -19,6 +19,7 @@ class Context:
         self.stack = []
         self.entries = []
         self.register = {}
+        self.shared_entry_groups = set()
         self.interceptions = []
         self.meta = {}
         self.code_stream = None
@@ -406,6 +407,16 @@ class Context:
                     member.group_name = spec.get("name")
                 registered.extend(group)
             elif isinstance(spec, dict):
+    def register_status_programs(self, rules):
+        for name, rule in rules.items():
+            if rule.get("global_entries") and name not in self.shared_entry_groups:
+                self.register_entries(None, rule["global_entries"])
+                self.shared_entry_groups.add(name)
+
+    def publish(self, name, fields):
+        with self.binding(**fields):
+            self._dispatch(TriggerType.EVENT, name)
+
                 entry = Entry.from_spec(owner, spec)
                 self.entries.append(entry)
                 registered.append(entry)
@@ -619,7 +630,7 @@ class Context:
         side, card, die = fields.get("side"), fields.get("card"), fields.get("die")
         if node_id == "before_turn_end":
             self.game.turn_ending = True
-            self.game.resolve_status_batches()
+            self.dispatch_pipeline("on_turn_closing", **fields)
         if node_id == "before_turn_start":
             self.game.open_turn()
         if node_id == "before_skill_use":

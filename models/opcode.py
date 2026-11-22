@@ -46,6 +46,7 @@ class OpCode(Enum):
     STAGGER = auto()
     DISCARD = auto()
     ENTRY = auto()
+    PUBLISH = auto()
     RESET_COST = auto()
     PAY_COST = auto()
     SPEND_STATUS = auto()

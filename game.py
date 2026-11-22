@@ -2,8 +2,6 @@ import random
 from types import SimpleNamespace
 
 from context.context import Context
-from entry.entry import Entry
-from entry.legacy_operations import overflow_followup
 from gamerule import GameRule
 from loader import base_effects
 from models.card import CardState
@@ -47,10 +45,10 @@ class Game:
         self.status_entries = dict(effects.status_entries)
         self.status_rules = dict(effects.status_rules)
         self.ability_rules = dict(effects.ability_rules)
-        self._overflow_settled_turn = -1
         self.turn_end_statuses = set(effects.turn_end_statuses)
         self.is_over = False
         self.winner = None
+        self.context.register_status_programs(self.status_rules)
         self.context = Context(game=self)
         self.duelspace = DuelSpace(self)
         self.pre_reveal = PreRevealPhase(self)
@@ -310,33 +308,6 @@ class Game:
         for number, slot in enumerate(self.duelspace.space, 1):
             sides = tuple((p.name, tuple(card.name for card in slot.get_content(p.side))) for p in self.players)
             self.context.record("slot_revealed", number=number, sides=sides)
-
-    def resolve_status_batches(self):
-        """Freeze all eligible holders before any end-of-turn batch listener runs."""
-        if self.is_over or self._overflow_settled_turn == self.turn_count:
-            return
-        self._overflow_settled_turn = self.turn_count
-        ordered = sorted(self.players, key=lambda player: player is not self.first_player)
-        characters = [char for player in ordered for char in player.characters if char.is_alive]
-        batches = []
-        for name, rule in self.status_rules.items():
-            batch = rule.get("overflow_batch")
-            if batch:
-                targets = tuple(char for char in characters
-                                if char.status_overflow.get(name, 0) >= batch["threshold"])
-                if targets:
-                    batches.append((name, batch, targets))
-        for name, batch, targets in batches:
-            if self.is_over:
-                break
-            self.context.record("status_batch", effect=batch.get("label", name), targets=tuple(c.combat_name for c in targets))
-            event = dict(source=None, target=None, card=None, die=None, side=None, targets=targets, status=name)
-            self.context.dispatch_pipeline(batch["event"], **event)
-            followup = overflow_followup(batch)
-            if followup is not None:
-                entry = Entry.from_spec(None, {"trigger": batch["event"], "operation": followup})
-                with self.context.binding(**event):
-                    self.context._invoke(entry)
 
     def finish_turn(self):
         if not self.turn_ending:

@@ -449,7 +449,7 @@ class Displayer:
             "ability_effects": dict(c.ability_effects),
             "reserved_dice": [{"skill": reserve.card.name, "position": reserve.position, "remaining": reserve.remaining}
                               for reserve in c.reserved_dice],
-            "status_overflow": {name: {"amount": n, "threshold": c.status_rules.get(name, {}).get("overflow_batch", {}).get("threshold")}
+            "status_overflow": {name: {"amount": n, "threshold": c.status_rules.get(name, {}).get("overflow_threshold")}
                                 for name, n in c.status_overflow.items()},
             "cost": {"available": c.available_cost, "refill": c.independent_cost, "spent": c.used_independent_cost},
             "duels": {"max": c.max_duels, "used": c.used_duels if own or self._game.cards_revealed else None},

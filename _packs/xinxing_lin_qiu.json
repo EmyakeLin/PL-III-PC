@@ -5,15 +5,34 @@
     "隧道": {"description": "新星组织资源。林秋在回合开始时持有至少8层即可开启隧道。"},
     "星结": {
       "cap": 12,
-      "overflow_batch": {
-        "threshold": 6, "event": "on_star_lock", "label": "星结锁定",
-        "then": {"op": "program", "code": [
-          "$targets", [
-            "SET_STATUS_OVERFLOW $item $event.status 0",
-            "$item.is_alive", ["CAP_STATUS $item $event.status 6"], "WHEN"
-          ], "EACH"
-        ]}
-      },
+      "track_overflow": true,
+      "overflow_threshold": 6,
+      "global_entries": [
+        {
+          "trigger": "on_turn_closing",
+          "turn_limit": {"key":"星结锁定名单","count":1},
+          "operation": {
+            "op": "program",
+            "code": [
+              "$game.players", "$game.first_player", "FIRST_IN_ORDER", ["$event.item.characters"], "MAP",
+              "FLATTEN",
+              ["$event.item.is_alive","$event.item.status_overflow","星结",0,"LOOKUP",
+               "$game.status_rules.星结.overflow_threshold","GE","AND"],
+              "FILTER", "targets", "STORE", "$local.targets",
+              [
+                "$local.targets", {"literal":["targets"]}, ["on_star_lock","$event.bindings","PUBLISH"],
+                "WITH_BINDINGS", "$local.targets",
+                [
+                  "SET_STATUS_OVERFLOW $event.item 星结 0", "$event.item.is_alive",
+                  ["CAP_STATUS $event.item 星结 6"], "WHEN"
+                ],
+                "EACH"
+              ],
+              "WHEN"
+            ]
+          }
+        }
+      ],
       "description": "上限12。累计溢出跨回合保留。达到6点溢出的角色在回合结束前一同成为锁定目标，结算完毕清零累计，各目标星结至多保留6层。"
     },
     "羽流·林秋": {"cap": 12, "description": "上限12。拼赢即将命中时，d12不高于层数则追加一次命中。本回合判定至少成功三次，回合末清空。"},
@@ -201,7 +220,9 @@
                   "隧道", 3, "STATUS"
                 ]
               },
-              "description": "星结锁定时，对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。"
+              "description": "星结锁定时，对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。",
+              "trigger_type": "event",
+              "subject": "any"
             }
           ]
         }
