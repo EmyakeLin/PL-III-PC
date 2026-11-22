@@ -27,20 +27,6 @@ class DuelSpace:
     def has_next_duel(self):
         return any(any(slot.content.values()) for slot in self.space[self.current_duel_index:])
 
-    def next_duel_enemy_skills(self, attacking_side):
-        index = self.current_duel_index + 1
-        if index >= len(self.space):
-            return []
-        slot = self.space[index]
-        side = next(p.side for p in self.game.players if p.side != attacking_side)
-        cards = slot.get_content(side)[slot.current_card_index.get(side, 0):]
-        return [card for card in cards if card.character.is_alive
-                and not card.destroyed and card.state != CardState.NEGATED]
-
-    def next_duel_target(self, attacking_side):
-        cards = self.next_duel_enemy_skills(attacking_side)
-        return cards[0].character if cards else None
-
 
 class DuelSlot:
     def __init__(self, game=None):

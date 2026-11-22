@@ -84,12 +84,6 @@ class SpecialActions:
                 if card.character is actor and actor.is_alive and not card.destroyed
                 and not actor.skill_restricted(card)]
 
-    def board_skills(self, target):
-        if target is None:
-            return []
-        return [card for slot in self.game.board_slots() for card in slot.get_content(target.player.side)
-                if card.character is target and not card.destroyed and target.is_alive]
-
     def choose_card(self, ctx, candidates, spec):
         """Suspend a printed choice until its controller supplies an answer."""
         if not ctx.executions or self.game.is_over:

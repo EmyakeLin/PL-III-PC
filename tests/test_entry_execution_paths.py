@@ -249,6 +249,68 @@ class HitOriginTests(unittest.TestCase):
 
 
 class CollectionAndTargetTests(unittest.TestCase):
+    def test_redirect_skips_used_and_invalid_cards_only_in_the_next_slot(self):
+        from models.card import CardState
+        from models.duel import DuelSlot
+
+        skill = printed_skill("wind_plan_b.json", "annolin_drifting_sword")
+        for has_next, eligible in itertools.product((False, True), repeat=2):
+            ctx = TraceContext()
+            actor, enemy = actor_for(ctx, 1), actor_for(ctx, 2)
+            card = Card(None, skill, actor)
+            die = Dice(skill["dice"][3])
+            die.card = card
+            slot = DuelSlot()
+            cards = [Card(enemy.player, skill, enemy) for _ in range(5)]
+            slot.content[2] = cards
+            slot.current_card_index[2] = 1
+            cards[1].destroyed = True
+            cards[2].state = CardState.NEGATED
+            cards[3].character = SimpleNamespace(is_alive=False)
+            cards[4].destroyed = not eligible
+            space = SimpleNamespace(current_duel_index=0, space=[DuelSlot()] + ([slot] if has_next else []))
+            ctx.game = SimpleNamespace(active_duelspace=space, players=[actor.player, enemy.player])
+            resolve_entry(ctx, die, die.entries[0], source=actor, card=card, die=die)
+            self.assertTrue(die.attack_redirected)
+            self.assertIs(die.attack_target, enemy if has_next and eligible else None)
+            for op in (OpCode.SLOT_AT_OFFSET, OpCode.REMAINING_CARDS, OpCode.FILTER, OpCode.FIRST, OpCode.ROUTE_DIE_ATTACK):
+                self.assertEqual(ctx.operations.count(op), 1)
+
+    def test_boundary_declares_candidates_and_revalidates_the_chosen_physical_card(self):
+        from models.duel import DuelSlot
+        from models.special_actions import SpecialAction, SpecialActions
+        from player.card_space import CardSpace
+
+        skill = printed_skill("xinxing_lin_qiu.json", "lin_qiu_boundary")
+        ctx = TraceContext()
+        actor, target, teammate = [actor_for(ctx, side) for side in (1, 2, 2)]
+        for char in (actor, target, teammate):
+            char.player.cardspace = CardSpace(char.player)
+        card = Card(actor.player, skill, actor)
+        die = Dice(skill["dice"][0])
+        die.card = card
+        first, second, dead, other = [Card(c.player, skill, c) for c in (target, target, target, teammate)]
+        dead.destroyed = True
+        slots = [DuelSlot(), DuelSlot()]
+        slots[0].content[2], slots[1].content[2] = [first, dead, other], [second]
+        game = SimpleNamespace(is_over=False, players=[actor.player, target.player], context=ctx, board_slots=lambda: slots)
+        ctx.game = game
+        game.special = SpecialActions(game)
+        event = dict(source=actor, target=target, die=die, card=card)
+        entry = die.entries[2]
+        resolve_entry(ctx, die, entry, **event)
+        choices = game.special.options(actor.player)
+        self.assertEqual(choices, [SpecialAction("choose_card", target_card=c) for c in (first, second)])
+        slots[0].content[2].remove(first)
+        with self.assertRaises(ValueError):
+            game.special.apply(actor.player, choices[0])
+        self.assertTrue(game.special.apply(actor.player, choices[1]))
+        resolve_entry(ctx, die, entry, **event)
+        self.assertTrue(second.destroyed)
+        self.assertFalse(first.destroyed or other.destroyed)
+        self.assertEqual(ctx.operations.count(OpCode.CHOOSE_CARD), 1)
+        self.assertEqual(ctx.operations.count(OpCode.DESTROY), 1)
+
     def test_vortex_is_spent_from_the_character_marked_at_skill_use(self):
         from unittest.mock import Mock
 
