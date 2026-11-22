@@ -616,7 +616,7 @@ class Context:
                 protected_operands = (self.stack.copy() if self.event.get("timing") == "BEFORE"
                                       and self._range_blocks_op(self.current_op, self.event) else None)
                 try:
-                    run_effect(self, entry, entry.operation)
+                    run_effect(self, entry, entry.compiled_operation)
                 finally:
                     if protected_operands is not None:
                         self.stack[:] = protected_operands

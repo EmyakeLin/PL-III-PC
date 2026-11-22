@@ -67,6 +67,38 @@ class RoundCounterTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_compiler_keeps_literals_quotes_and_fields_distinct(self):
+        from entry.compiler import Field, Local, Program, Word, compile_program
+        vocabulary = CommandSet()
+
+        @vocabulary.define("INNER")
+        def inner():
+            return ["$event.number", {"local": "n"}, {"literal": "ADD"}, "ADD"]
+
+        @vocabulary.define("OUTER")
+        def outer():
+            return [["INNER"], "STORE"]
+
+        self.assertEqual(compile_program(["OUTER"], expand=vocabulary.expand),
+                         Program((Program((Field("event.number"), Local("n"), "ADD", OpCode.ADD)),
+                                  Word("STORE"))))
+        vocabulary.define("CYCLE")(lambda: [["CYCLE"]])
+        with self.assertRaisesRegex(ValueError, "CYCLE → CYCLE"):
+            compile_program(["CYCLE"], expand=vocabulary.expand)
+
+    def test_registered_program_reads_each_invocations_event(self):
+        entry = Entry.from_spec(None, {"trigger": "tick", "operation": {
+            "op": "program", "code": ["$event.number", "n", "STORE", {"local": "n"}, "POP"]}})
+        vm = TracedContext()
+        program = entry.compiled_operation["code"]
+        for n in (-2**94, 0, 31):
+            with vm.binding(number=n):
+                vm._invoke(entry)
+            self.assertIs(entry.compiled_operation["code"], program)
+            self.assertEqual([stack for op, timing, stack in vm.trace
+                              if op == OpCode.POP and timing == "BEFORE"][-1], (n,))
+
+
     def test_legacy_hand_condition_exposes_filter_membership_and_nonempty_check(self):
         from models.opcode import OpCode as O
         regular = SimpleNamespace(out_of_combat=False)

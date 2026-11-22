@@ -18,10 +18,13 @@ class CommandSet:
 
     def expand(self, line):
         parts = line.split(maxsplit=1)
-        if len(parts) != 2 or parts[0] not in self.definitions:
+        if not parts or parts[0] not in self.definitions:
             return None
-        name, operands = parts
+        name = parts[0]
+        operands = parts[1] if len(parts) > 1 else ""
         parameters, expand = self.definitions[name]
+        if not operands and any(p.default is p.empty for p in parameters.parameters.values()):
+            return None  # A bare parameterized word retains its postfix or legacy meaning.
         try:
             arguments = parameters.bind(*read_operands(operands))
         except (TypeError, ValueError) as error:

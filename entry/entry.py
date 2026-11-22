@@ -53,7 +53,9 @@ class Entry:
         self.owner = owner
         self.trigger_type = trigger_type
         self.trigger = trigger
+        from entry.compiler import prepare_effect
         self.operation = operation
+        self.compiled_operation = prepare_effect(operation)
         self.timing = timing
         self.scope = scope
         self.subject = subject

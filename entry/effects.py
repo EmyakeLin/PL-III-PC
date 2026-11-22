@@ -28,7 +28,7 @@ a pending operation. Entries with the same source execute in printed order.
 """
 import re
 
-from entry.commands import expand_command
+from entry.compiler import Program, prepare_effect
 from entry.entry import character_of
 from models.opcode import OpCode
 
@@ -76,10 +76,13 @@ def select_entity(ctx, selector, owner):
 
 def run_effect(ctx, entry, operation):
     """Execute one rule in its triggering event, retaining its actual source."""
+    if isinstance(operation, Program):
+        from entry.program import run_program
+        return run_program(ctx, entry, operation)
     if isinstance(operation, list):
-        if all(isinstance(item, (dict, str)) for item in operation):
+        if all(isinstance(item, (dict, str, Program)) for item in operation):
             for item in operation:
-                if ctx.executions[-1].cancelled:
+                if ctx.executions and ctx.executions[-1].cancelled:
                     break
                 run_effect(ctx, entry, item)
         else:
@@ -89,10 +92,9 @@ def run_effect(ctx, entry, operation):
         operation(ctx)
         return
     if isinstance(operation, str):
-        expansion = expand_command(operation) if len(operation.split(maxsplit=1)) > 1 else None
-        if expansion is not None:
-            from entry.program import run_program
-            return run_program(ctx, entry, expansion)
+        prepared = prepare_effect(operation)
+        if isinstance(prepared, Program):
+            return run_effect(ctx, entry, prepared)
         part = independent_damage_part(operation)
         if part:
             amount, opcode = part
