@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,140">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
   <defs>
     <linearGradient id="ann_body" x1="0" y1="0" x2="0.8" y2="1">
       <stop offset="0%" stop-color="#22A679"/>
@@ -12,43 +12,45 @@
       <stop offset="0%" stop-color="#F5CF6B"/>
       <stop offset="100%" stop-color="#CC8B1C"/>
     </linearGradient>
+    <clipPath id="ann_tc"><path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z"/></clipPath>
+    <clipPath id="ann_hc"><circle cx="80" cy="56" r="13.5"/></clipPath>
   </defs>
 
-  <!-- 1. Luminous Sunlit Halo -->
-  <g id="bone_back_hair" data-pivot="80,82">
-    <circle cx="80" cy="82" r="44" fill="#DEF7EC" fill-opacity="0.72" stroke="#1C946B" stroke-width="1.3" stroke-opacity="0.32"/>
+  <!-- 1. Soft Sunlit Halo -->
+  <g id="bone_back_hair" data-pivot="80,86">
+    <circle cx="80" cy="86" r="42" fill="#DEF7EC" fill-opacity="0.72" stroke="#1C946B" stroke-width="1.3" stroke-opacity="0.30"/>
   </g>
 
-  <!-- 2. Airy Twin Emerald Wind Ribbons (Borderless Watercolor Flow) -->
-  <g id="bone_cape_back" data-pivot="74,84">
-    <path d="M 74 70 Q 40 52 16 70 Q 44 82 72 88 Z" fill="url(#ann_rib)" opacity="0.78"/>
-    <path d="M 74 84 Q 44 102 22 118 Q 52 118 76 102 Z" fill="#1C946B" opacity="0.56"/>
-    <path d="M 28 70 Q 48 76 68 76" fill="none" stroke="#FFFDF7" stroke-width="1.4" stroke-linecap="round" opacity="0.75"/>
+  <!-- 2. Airy Twin Emerald Wind Ribbons (Tucked Cleanly Behind Shoulder) -->
+  <g id="bone_cape_back" data-pivot="70,82">
+    <path d="M 74 82 Q 46 66 20 78 Q 46 90 74 96 Z" fill="url(#ann_rib)" opacity="0.78"/>
+    <path d="M 74 94 Q 48 108 26 122 Q 54 122 76 108 Z" fill="#1C946B" opacity="0.56"/>
+    <path d="M 30 78 Q 48 84 68 85" fill="none" stroke="#FFFDF7" stroke-width="1.3" stroke-linecap="round" opacity="0.78"/>
   </g>
 
-  <!-- 3. Compact Sculpted Mantle Figurine (No Legs — Pure Minimal Chess-Piece Grace) -->
-  <g id="bone_torso" data-pivot="80,114">
-    <polygon points="80,66 104,98 96,138 62,138 56,96"
-             fill="url(#ann_body)" stroke="#FFFDF7" stroke-width="2.0" stroke-linejoin="round"/>
-    <!-- Bright Jade Inner Chevron -->
-    <polygon points="80,74 93,98 80,116 68,98" fill="#DEF7EC" opacity="0.92"/>
-    <!-- Subtle Gold Waist Seal -->
-    <path d="M 62 128 L 96 128" stroke="url(#ann_gold)" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
-    <polygon points="80,94 85,100 80,106 75,100" fill="url(#ann_gold)"/>
+  <!-- 3. Grounded Compact Emerald Mantle (Clip-Perfect Unbroken Border) -->
+  <g id="bone_torso" data-pivot="80,136">
+    <path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z" fill="url(#ann_body)"/>
+    <g clip-path="url(#ann_tc)">
+      <polygon points="80,76 92,99 80,116 68,99" fill="#DEF7EC" opacity="0.92"/>
+      <polygon points="80,94 85,100 80,106 75,100" fill="url(#ann_gold)"/>
+      <line x1="58" y1="126" x2="102" y2="126" stroke="url(#ann_gold)" stroke-width="2.2" opacity="0.88"/>
+    </g>
+    <path d="M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z" fill="none" stroke="#FFFDF7" stroke-width="2.2" stroke-linejoin="round"/>
   </g>
 
-  <!-- 4. Clean Ivory Sphere Head + Crisp Wind Hair-Crest -->
-  <g id="bone_head" data-pivot="80,66">
-    <circle cx="82" cy="54" r="14.5" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
-    <path d="M 67 52 L 83 34 L 98 50 L 82 46 Z" fill="#1C946B"/>
-    <polygon points="78,42 83,46 78,50 73,46" fill="url(#ann_gold)"/>
+  <!-- 4. Clean Ivory Sphere Head + Sculpted Wind Crest -->
+  <g id="bone_head" data-pivot="80,68">
+    <circle cx="80" cy="56" r="13.5" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
+    <path d="M 67 51 Q 78 36 93 49 Q 81 45 67 51 Z" fill="#1C946B"/>
+    <polygon points="78,43 82,46.5 78,50 74,46.5" fill="url(#ann_gold)"/>
   </g>
 
-  <!-- 5. Sweeping Emerald-Gold Wind Blade -->
-  <g id="bone_weapon" data-pivot="92,102">
-    <path d="M 90 100 Q 120 78 144 46 Q 130 90 98 110 Z"
-          fill="#FFFDF7" stroke="#1C946B" stroke-width="2.0" stroke-linejoin="round"/>
-    <line x1="95" y1="101" x2="138" y2="54" stroke="url(#ann_gold)" stroke-width="2.0" stroke-linecap="round"/>
-    <circle cx="94" cy="103" r="3.2" fill="url(#ann_gold)"/>
+  <!-- 5. Sweeping Emerald-Gold Wind Blade (Cleanly Poised on Front Flank) -->
+  <g id="bone_weapon" data-pivot="98,102">
+    <path d="M 96 102 Q 122 82 144 52 Q 132 92 102 110 Z"
+          fill="#FFFDF7" stroke="#1C946B" stroke-width="1.9" stroke-linejoin="round"/>
+    <line x1="100" y1="102" x2="138" y2="60" stroke="url(#ann_gold)" stroke-width="2.0" stroke-linecap="round"/>
+    <circle cx="99" cy="104" r="3.0" fill="url(#ann_gold)"/>
   </g>
 </svg>

@@ -2,17 +2,14 @@
  * Layered Minimalist SVG Character Rig Engine & Compact Figurine Builder
  * for 《光点计划 III》.
  *
- * Art Direction (Compact, Luminous, Iconic Boardgame Figurine):
- *  - Preserves the clean, compact, sunlit geometric elegance of the original stage actors ("小而简洁").
- *  - Standard canvas: `viewBox="0 0 160 160"`, base anchor `data-foot="80,140"`, facing RIGHT (+X).
- *  - Crisp warm-white `#FFFDF7` torso edges, borderless airy watercolor halos/ribbons,
- *    compact chess-figurine mantle seated cleanly on the floor plinth (no cluttered limbs),
- *    ivory sphere/hex head with 1 iconic crest or visor, and crisp signature weapon.
- *  - 5 core semantic `<g id="bone_*">` groups (+ optional `bone_arm_back` for offhand props):
- *      bone_back_hair (halo/emblem), bone_cape_back (ribbons/cloak), bone_arm_back (optional offhand),
- *      bone_torso (figurine body), bone_head (head + crest/visor), bone_weapon (signature weapon).
- *  - Supersamples each bone SVG once (2.5x HiDPI Canvas -> PIXI.Texture) and caches by key,
- *    giving O(1) GPU bone animation at 60fps across 1v1 and 10v10 rosters.
+ * Art & Engineering Guarantees:
+ *  - Standard canvas: `viewBox="0 0 160 160"`, grounded base `data-foot="80,136"`, facing RIGHT (+X).
+ *  - Clean `<clipPath>` clipping on both torso & head so visors, straps, split robes, and armor plates
+ *    NEVER bleed outside borders or break the crisp warm-white `#FFFDF7` silhouette edge.
+ *  - Grounded hierarchical bone animation: torso breathes via subtle squash-and-stretch anchored at
+ *    the floor base `(80, 136)` so the miniature NEVER floats or clips below the floor plinth, and
+ *    head / cape / weapon inherit torso displacement so parts NEVER drift apart on lunge or recoil.
+ *  - Supersamples each `<g id="bone_*">` once (2.5x HiDPI Canvas -> PIXI.Texture) and caches by key.
  */
 
 import * as PIXI from '../vendor/pixi.min.mjs';
@@ -20,7 +17,7 @@ import * as PIXI from '../vendor/pixi.min.mjs';
 export const SVG_VIEW_W = 160;
 export const SVG_VIEW_H = 160;
 export const SVG_FOOT_X = 80;
-export const SVG_FOOT_Y = 140;
+export const SVG_FOOT_Y = 136;
 
 export const BONE_ORDER = [
   'bone_back_hair',
@@ -32,12 +29,12 @@ export const BONE_ORDER = [
 ];
 
 export const DEFAULT_BONE_PIVOTS = {
-  bone_back_hair: [80, 82],
-  bone_cape_back: [74, 84],
+  bone_back_hair: [80, 86],
+  bone_cape_back: [70, 82],
   bone_arm_back: [96, 98],
-  bone_torso: [80, 114],
-  bone_head: [80, 66],
-  bone_weapon: [94, 102],
+  bone_torso: [80, 136],
+  bone_head: [80, 68],
+  bone_weapon: [98, 102],
 };
 
 const PAPER = '#FFFDF7';
@@ -196,7 +193,7 @@ export function compileSvgRig(svgText, cacheKey, supersample = 2.5) {
       }
     } else {
       asset.footX = viewW * 0.5;
-      asset.footY = viewH * 0.875;
+      asset.footY = viewH * 0.85;
     }
 
     const serializer = new XMLSerializer();
@@ -224,7 +221,7 @@ export function compileSvgRig(svgText, cacheKey, supersample = 2.5) {
         rasterizeSvgToTexture(whole, viewW, viewH, supersample).then((texture) => ({
           id: 'bone_torso',
           pivotX: viewW * 0.5,
-          pivotY: viewH * 0.7,
+          pivotY: viewH * 0.85,
           texture,
         }))
       );
@@ -314,27 +311,28 @@ export function preloadExternalSvgRig(url) {
 }
 
 /* ============================================================================
- *  TIER 2: COMPACT MINIMALIST FIGURINE 160x160 SVG BUILDER
- *  Matches the original clean, compact, jewel-like miniature aesthetic!
+ *  TIER 2: CLIP-PERFECT COMPACT MINIMALIST FIGURINE 160x160 SVG BUILDER
+ *  Zero bleed, zero protruding visors, seamless shoulder-tucked capes,
+ *  and crisp front-flank weapons for all roster & future characters.
  * ============================================================================ */
 
 const COMPACT_PROFILES = {
   plan_b_annolin: { halo: 'soft', cape: 'wind_ribbons', torso: 'mantle', head: 'crest', weapon: 'wind_blade' },
-  plan_b_heck: { halo: 'ember', cape: 'tattered', torso: 'coat_diamond', head: 'flame_visor', weapon: 'flame_sword' },
+  plan_b_heck: { halo: 'ember', cape: 'draped_cloak', torso: 'coat_diamond', head: 'flame_visor', weapon: 'flame_sword' },
   plan_b_heris: { halo: 'ember', cape: 'scarf', torso: 'tactical_strap', head: 'goggles', weapon: 'warhammer' },
-  plan_b_li_ling: { halo: 'prism', cape: 'wing_cape', torso: 'mantle', head: 'visor', weapon: 'energy_lance' },
+  plan_b_li_ling: { halo: 'prism', cape: 'flowing_cape', torso: 'mantle', head: 'visor', weapon: 'energy_lance' },
   plan_b_sa: { halo: 'boss_sun', cape: 'royal_cloak', torso: 'boss_robe', head: 'crown_visor', weapon: 'boss_blade' },
   iron_qi_zheng: { halo: 'boss_sun', cape: 'royal_cloak', torso: 'armored', head: 'hex_crown', weapon: 'hook_saber' },
   char_iron_vanguard: { halo: 'soft', cape: 'none', torso: 'armored', head: 'hex_visor', weapon: 'tower_shield' },
   char_crimson_duelist: { halo: 'soft', cape: 'flowing_cape', torso: 'mantle', head: 'plume', weapon: 'rapier' },
-  waa_lake: { halo: 'soft', cape: 'tactical_cape', torso: 'tactical_strap', head: 'visor', weapon: 'saber' },
-  waa_grolina: { halo: 'compass', cape: 'wing_cape', torso: 'tactical_strap', head: 'visor', weapon: 'needle_lance' },
-  waa_erkes: { halo: 'prism', cape: 'none', torso: 'hex_reactor', head: 'hex_plain', weapon: 'cannon_gauntlet' },
+  waa_lake: { halo: 'soft', cape: 'draped_cape', torso: 'tactical_strap', head: 'visor', weapon: 'saber' },
+  waa_grolina: { halo: 'compass', cape: 'scarf', torso: 'tactical_strap', head: 'visor', weapon: 'needle_lance' },
+  waa_erkes: { halo: 'prism', cape: 'none', torso: 'hex_reactor', head: 'hex_visor', weapon: 'cannon_gauntlet' },
   nova_lin_qiu: { halo: 'feather', cape: 'royal_cloak', torso: 'split_robe', head: 'feather_crest', weapon: 'inscribe_sword' },
-  mistport_cen_yao: { halo: 'astrolabe', cape: 'none', torso: 'mantle', head: 'cap', weapon: 'sight_rule' },
+  mistport_cen_yao: { halo: 'astrolabe', cape: 'draped_cape', torso: 'mantle', head: 'cap', weapon: 'sight_rule' },
   ember_wen_sheng: { halo: 'spotlight', cape: 'none', torso: 'theatre_sash', head: 'half_mask', weapon: 'war_fan' },
   bellfounder_que_ming: { halo: 'bell_rings', cape: 'royal_cloak', torso: 'coat_diamond', head: 'halo_ring', weapon: 'bell_mallet' },
-  shipbreaker_shen_li: { halo: 'boss_sun', cape: 'tattered', torso: 'armored', head: 'bandana_visor', weapon: 'cleaver' },
+  shipbreaker_shen_li: { halo: 'boss_sun', cape: 'draped_cloak', torso: 'armored', head: 'bandana_visor', weapon: 'cleaver' },
   blank_boss: { halo: 'mirror', cape: 'royal_cloak', torso: 'kintsugi', head: 'halo_mirror', weapon: 'prism_blade' },
   drill_scout: { halo: 'soft', cape: 'scarf', torso: 'coat_diamond', head: 'hood', weapon: 'twin_daggers' },
   drill_medic: { halo: 'medic_cross', cape: 'none', torso: 'mantle', head: 'cap', weapon: 'staff' },
@@ -357,7 +355,7 @@ function resolveCompactProfile(ch, pal) {
   const h = hashStr(`${id}:${ch?.name || ''}`);
   const isBoss = ch?.rank === 'BOSS' || ch?.rank === 'EMPOWERED_BOSS';
   const halos = ['soft', 'astrolabe', 'ember', 'prism', 'compass'];
-  const capes = ['wind_ribbons', 'tactical_cape', 'flowing_cape', 'scarf', 'tattered'];
+  const capes = ['wind_ribbons', 'draped_cape', 'flowing_cape', 'scarf', 'draped_cloak'];
   const torsos = ['mantle', 'tactical_strap', 'coat_diamond', 'armored', 'split_robe'];
   const heads = ['crest', 'visor', 'plume', 'hood', 'hex_visor'];
   const weaponMap = {
@@ -378,39 +376,56 @@ function resolveCompactProfile(ch, pal) {
   };
 }
 
+function getTorsoPolygonPath(torso) {
+  if (torso === 'hex_reactor') {
+    return 'M 80 70 L 106 86 L 104 120 L 80 136 L 56 120 L 54 86 Z';
+  }
+  if (torso === 'armored') {
+    return 'M 62 76 L 98 76 L 102 136 L 58 136 Z';
+  }
+  if (torso === 'tactical_strap' || torso === 'coat_diamond') {
+    return 'M 64 76 L 97 78 L 100 136 L 60 136 Z';
+  }
+  if (torso === 'theatre_sash') {
+    return 'M 80 70 L 102 94 L 106 136 L 54 136 L 58 94 Z';
+  }
+  // mantle / split_robe / boss_robe / kintsugi
+  return 'M 80 70 L 101 94 L 98 136 L 62 136 L 59 94 Z';
+}
+
 function renderCompactHalo(halo, primary, sec, hi) {
-  const base = `<circle cx="80" cy="82" r="44" fill="${hi}" fill-opacity="0.72" stroke="${primary}" stroke-width="1.3" stroke-opacity="0.34"/>`;
+  const base = `<circle cx="80" cy="86" r="42" fill="${hi}" fill-opacity="0.72" stroke="${primary}" stroke-width="1.3" stroke-opacity="0.30"/>`;
   if (halo === 'boss_sun') {
     return `
-      <circle cx="80" cy="82" r="46" fill="${hi}" fill-opacity="0.74" stroke="${sec}" stroke-width="1.6" stroke-opacity="0.52"/>
-      <polygon points="80,30 84,39 76,39" fill="${sec}" opacity="0.86"/>
-      <polygon points="28,82 37,78 37,86" fill="${sec}" opacity="0.86"/>
-      <polygon points="132,82 123,78 123,86" fill="${sec}" opacity="0.86"/>
+      <circle cx="80" cy="86" r="44" fill="${hi}" fill-opacity="0.72" stroke="${sec}" stroke-width="1.5" stroke-opacity="0.48"/>
+      <polygon points="80,35 84,43 76,43" fill="${sec}" opacity="0.82"/>
+      <polygon points="30,86 38,82 38,90" fill="${sec}" opacity="0.82"/>
+      <polygon points="130,86 122,82 122,90" fill="${sec}" opacity="0.82"/>
     `;
   }
   if (halo === 'astrolabe' || halo === 'bell_rings') {
     return base + `
-      <circle cx="80" cy="82" r="48" fill="none" stroke="${sec}" stroke-width="1.4" opacity="0.65"/>
-      <path d="M 80 30 L 80 42 M 80 122 L 80 134 M 28 82 L 40 82 M 120 82 L 132 82" stroke="${sec}" stroke-width="1.6"/>
+      <circle cx="80" cy="86" r="46" fill="none" stroke="${sec}" stroke-width="1.3" opacity="0.60"/>
+      <path d="M 80 36 L 80 46 M 80 126 L 80 136 M 30 86 L 40 86 M 120 86 L 130 86" stroke="${sec}" stroke-width="1.5" opacity="0.75"/>
     `;
   }
   if (halo === 'ember') {
     return base + `
-      <polygon points="36,68 41,58 44,70 38,75" fill="${sec}" opacity="0.86"/>
-      <polygon points="28,98 35,88 38,100 31,105" fill="${primary}" opacity="0.72"/>
+      <polygon points="39,72 44,63 47,74 41,79" fill="${sec}" opacity="0.85"/>
+      <polygon points="33,102 39,93 42,104 35,109" fill="${primary}" opacity="0.68"/>
     `;
   }
   if (halo === 'spotlight') {
-    return base + `<polygon points="80,32 124,132 36,132" fill="${sec}" opacity="0.18"/>`;
+    return base + `<polygon points="80,38 120,132 40,132" fill="${sec}" opacity="0.18"/>`;
   }
   if (halo === 'medic_cross') {
     return base + `
-      <rect x="74" y="54" width="12" height="36" rx="2" fill="${sec}" opacity="0.28"/>
-      <rect x="62" y="66" width="36" height="12" rx="2" fill="${sec}" opacity="0.28"/>
+      <rect x="74" y="60" width="12" height="34" rx="2" fill="${sec}" opacity="0.28"/>
+      <rect x="63" y="71" width="34" height="12" rx="2" fill="${sec}" opacity="0.28"/>
     `;
   }
   if (halo === 'prism') {
-    return base + `<polygon points="80,36 124,82 80,128 36,82" fill="none" stroke="${sec}" stroke-width="1.3" opacity="0.58"/>`;
+    return base + `<polygon points="80,41 122,86 80,131 38,86" fill="none" stroke="${sec}" stroke-width="1.2" opacity="0.55"/>`;
   }
   return base;
 }
@@ -419,222 +434,241 @@ function renderCompactCape(cape, primary, priDark, sec) {
   if (cape === 'none') return '';
   if (cape === 'wind_ribbons') {
     return `
-      <path d="M 74 70 Q 40 52 16 70 Q 44 82 72 88 Z" fill="${sec}" opacity="0.74"/>
-      <path d="M 74 84 Q 44 102 22 118 Q 52 118 76 102 Z" fill="${primary}" opacity="0.56"/>
+      <path d="M 74 82 Q 46 66 20 78 Q 46 90 74 96 Z" fill="${sec}" opacity="0.74"/>
+      <path d="M 74 94 Q 48 108 26 122 Q 54 122 76 108 Z" fill="${primary}" opacity="0.54"/>
     `;
   }
   if (cape === 'royal_cloak') {
     return `
-      <path d="M 74 72 Q 36 80 20 128 L 66 126 Z" fill="${priDark}" opacity="0.82"/>
-      <path d="M 28 120 L 64 120" stroke="${sec}" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M 74 80 Q 44 88 28 132 Q 52 134 74 128 Z" fill="${priDark}" opacity="0.82"/>
+      <path d="M 35 126 Q 54 127 72 123" fill="none" stroke="${sec}" stroke-width="2.2" stroke-linecap="round"/>
     `;
   }
-  if (cape === 'tactical_cape' || cape === 'wing_cape') {
-    return `<polygon points="72,70 22,${cape === 'wing_cape' ? 58 : 82} 38,122 70,114" fill="${sec}" opacity="0.80" stroke="${primary}" stroke-width="1.3" stroke-linejoin="round"/>`;
+  if (cape === 'draped_cape' || cape === 'draped_cloak') {
+    const col = cape === 'draped_cloak' ? priDark : sec;
+    return `
+      <path d="M 72 80 Q 46 88 32 126 Q 52 130 72 120 Z" fill="${col}" opacity="0.80"/>
+      <path d="M 39 120 Q 54 122 70 115" fill="none" stroke="${cape === 'draped_cloak' ? sec : PAPER}" stroke-width="1.6" stroke-linecap="round" opacity="0.75"/>
+    `;
   }
   if (cape === 'flowing_cape') {
-    return `<path d="M 74 70 Q 38 68 20 118 L 64 126 Z" fill="${primary}" opacity="0.78" stroke="${sec}" stroke-width="1.4"/>`;
-  }
-  if (cape === 'tattered') {
-    return `<polygon points="74,70 26,86 38,118 52,110 56,124 74,116" fill="${priDark}" opacity="0.78"/>`;
+    return `
+      <path d="M 74 80 Q 44 84 26 124 Q 50 130 74 124 Z" fill="${primary}" opacity="0.76"/>
+      <path d="M 33 118 Q 52 122 72 118" fill="none" stroke="${sec}" stroke-width="1.8" stroke-linecap="round"/>
+    `;
   }
   // scarf
-  return `<path d="M 74 70 Q 46 74 26 94" fill="none" stroke="${sec}" stroke-width="5.5" stroke-linecap="round"/>`;
-}
-
-function renderCompactTorso(torso, primary, priDark, sec, hi, metal) {
-  if (torso === 'hex_reactor') {
-    return `
-      <polygon points="80,68 112,86 112,122 80,140 48,122 48,86" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-      <polygon points="82,86 94,93 94,107 82,114 70,107 70,93" fill="${sec}" stroke="${PAPER}" stroke-width="1.5"/>
-    `;
-  }
-  if (torso === 'armored') {
-    return `
-      <polygon points="56,72 104,72 100,138 60,138" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-      <polygon points="68,74 94,74 91,110 81,118 71,110" fill="${metal}" stroke="${PAPER}" stroke-width="1.4"/>
-      <polygon points="81,82 87,94 81,106 75,94" fill="${sec}"/>
-      <rect x="46" y="68" width="24" height="16" rx="5" fill="${metal}" stroke="${sec}" stroke-width="1.8"/>
-      <path d="M 62 128 L 98 128" stroke="${sec}" stroke-width="2.4" stroke-linecap="round"/>
-    `;
-  }
-  if (torso === 'tactical_strap') {
-    return `
-      <polygon points="60,72 103,76 98,138 62,138" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-      <line x1="64" y1="78" x2="96" y2="122" stroke="${sec}" stroke-width="3.6" stroke-linecap="round"/>
-      <circle cx="82" cy="96" r="7.5" fill="${PAPER}" stroke="${sec}" stroke-width="2.0"/>
-      <circle cx="82" cy="96" r="3.2" fill="${sec}"/>
-    `;
-  }
-  if (torso === 'theatre_sash') {
-    return `
-      <polygon points="80,66 106,94 110,138 50,138 54,94" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-      <polygon points="66,78 96,88 88,132 62,126" fill="${sec}" opacity="0.88"/>
-    `;
-  }
-  if (torso === 'split_robe' || torso === 'boss_robe') {
-    return `
-      <polygon points="80,66 104,96 98,138 60,138 56,96" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-      <polygon points="80,68 102,96 96,136 80,136" fill="${torso === 'split_robe' ? PAPER : priDark}" opacity="0.92"/>
-      <path d="M 62 128 L 96 128" stroke="${sec}" stroke-width="2.4" stroke-linecap="round"/>
-      <polygon points="80,92 86,100 80,108 74,100" fill="${sec}"/>
-    `;
-  }
-  if (torso === 'coat_diamond') {
-    return `
-      <polygon points="58,72 102,74 98,138 62,138" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-      <polygon points="80,76 92,98 80,114 69,98" fill="${hi}" opacity="0.92"/>
-      <polygon points="80,86 86,96 80,106 74,96" fill="${sec}"/>
-      <path d="M 64 126 L 96 126" stroke="${sec}" stroke-width="2.2" stroke-linecap="round"/>
-    `;
-  }
-  // mantle (default classic Anolin-like sculpted pawn)
   return `
-    <polygon points="80,66 104,98 96,138 62,138 56,96" fill="${primary}" stroke="${PAPER}" stroke-width="2.0" stroke-linejoin="round"/>
-    <polygon points="80,74 93,98 80,116 68,98" fill="${hi}" opacity="0.92"/>
-    <path d="M 62 128 L 96 128" stroke="${sec}" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
-    <polygon points="80,94 85,100 80,106 75,100" fill="${sec}"/>
+    <path d="M 74 80 Q 48 84 28 102" fill="none" stroke="${sec}" stroke-width="5.2" stroke-linecap="round"/>
+    <path d="M 72 88 Q 50 98 34 114" fill="none" stroke="${primary}" stroke-width="3.2" stroke-linecap="round" opacity="0.65"/>
   `;
 }
 
-function renderCompactHead(head, primary, sec, metal) {
-  if (head === 'hex_visor' || head === 'hex_crown' || head === 'hex_plain') {
-    return `
-      <polygon points="82,39 95,46 95,61 82,68 69,61 69,46" fill="${PAPER}" stroke="${TRIM_DARK}" stroke-width="1.9" stroke-linejoin="round"/>
-      ${head !== 'hex_plain' ? `<rect x="75" y="51" width="21" height="5.5" rx="2.5" fill="${primary}"/>` : ''}
-      ${head === 'hex_crown' ? `<polygon points="82,31 87,42 82,47 77,42" fill="${sec}"/>` : ''}
+function renderCompactTorso(torso, clipId, primary, priDark, sec, hi, metal) {
+  const pathD = getTorsoPolygonPath(torso);
+  let inner = '';
+  if (torso === 'hex_reactor') {
+    inner = `<polygon points="81,90 93,97 93,111 81,118 69,111 69,97" fill="${sec}" stroke="${PAPER}" stroke-width="1.5"/>`;
+  } else if (torso === 'armored') {
+    inner = `
+      <polygon points="70,76 92,76 90,110 81,118 72,110" fill="${metal}" stroke="${PAPER}" stroke-width="1.3"/>
+      <polygon points="81,84 86,95 81,106 76,95" fill="${sec}"/>
+      <line x1="58" y1="126" x2="102" y2="126" stroke="${sec}" stroke-width="2.4"/>
+    `;
+  } else if (torso === 'tactical_strap') {
+    inner = `
+      <line x1="60" y1="78" x2="100" y2="124" stroke="${sec}" stroke-width="3.8"/>
+      <circle cx="81" cy="100" r="7.2" fill="${PAPER}" stroke="${sec}" stroke-width="2.0"/>
+      <circle cx="81" cy="100" r="3.0" fill="${sec}"/>
+    `;
+  } else if (torso === 'theatre_sash') {
+    inner = `<polygon points="64,78 96,90 88,136 60,136" fill="${sec}" opacity="0.88"/>`;
+  } else if (torso === 'split_robe' || torso === 'boss_robe') {
+    inner = `
+      <rect x="80" y="70" width="26" height="68" fill="${torso === 'split_robe' ? PAPER : priDark}" opacity="0.90"/>
+      <line x1="58" y1="126" x2="102" y2="126" stroke="${sec}" stroke-width="2.2"/>
+      <polygon points="80,94 86,102 80,110 74,102" fill="${sec}"/>
+    `;
+  } else if (torso === 'coat_diamond') {
+    inner = `
+      <polygon points="80,78 91,99 80,115 69,99" fill="${hi}" opacity="0.92"/>
+      <polygon points="80,88 85,98 80,108 75,98" fill="${sec}"/>
+      <line x1="58" y1="125" x2="102" y2="125" stroke="${sec}" stroke-width="2.2"/>
+    `;
+  } else {
+    // mantle
+    inner = `
+      <polygon points="80,76 92,99 80,116 68,99" fill="${hi}" opacity="0.92"/>
+      <polygon points="80,94 85,100 80,106 75,100" fill="${sec}"/>
+      <line x1="58" y1="126" x2="102" y2="126" stroke="${sec}" stroke-width="2.2" opacity="0.88"/>
     `;
   }
-  const baseSphere = `<circle cx="82" cy="54" r="14" fill="${PAPER}" stroke="${TRIM_DARK}" stroke-width="1.8"/>`;
-  if (head === 'visor' || head === 'flame_visor' || head === 'bandana_visor') {
-    return baseSphere + `
-      <rect x="78" y="49.5" width="19.5" height="7" rx="3.2" fill="${sec}"/>
-      ${head === 'flame_visor' ? `<path d="M 68 48 L 76 32 L 84 42 L 94 34 L 94 46 Z" fill="${primary}"/>` : ''}
-      ${head === 'bandana_visor' ? `<path d="M 68 46 Q 82 40 96 46 L 94 50 Q 82 45 70 50 Z" fill="${primary}"/>` : ''}
+
+  const pauldron = torso === 'armored'
+    ? `<rect x="54" y="74" width="18" height="12" rx="4.5" fill="${metal}" stroke="${PAPER}" stroke-width="1.5"/>`
+    : '';
+
+  // Base fill + strictly clipped inner details + crisp unbroken outer paper border on top!
+  return `
+    <path d="${pathD}" fill="${primary}"/>
+    <g clip-path="url(#${clipId})">${inner}</g>
+    <path d="${pathD}" fill="none" stroke="${PAPER}" stroke-width="2.2" stroke-linejoin="round"/>
+    ${pauldron}
+  `;
+}
+
+function renderCompactHead(head, headClipId, primary, sec, metal) {
+  const isHex = head === 'hex_visor' || head === 'hex_crown' || head === 'hex_plain';
+  const basePath = isHex
+    ? 'M 80 42 L 92 49 L 92 63 L 80 70 L 68 63 L 68 49 Z'
+    : null;
+  const baseFill = isHex
+    ? `<path d="${basePath}" fill="${PAPER}"/>`
+    : `<circle cx="80" cy="56" r="13.5" fill="${PAPER}"/>`;
+  const baseStroke = isHex
+    ? `<path d="${basePath}" fill="none" stroke="${TRIM_DARK}" stroke-width="1.8" stroke-linejoin="round"/>`
+    : `<circle cx="80" cy="56" r="13.5" fill="none" stroke="${TRIM_DARK}" stroke-width="1.8"/>`;
+
+  // Clipped interior details (NEVER poke outside the head circle/hex!)
+  let inside = '';
+  if (head === 'visor' || head === 'flame_visor' || head === 'bandana_visor' || head === 'crown_visor' || head === 'hex_visor' || head === 'hex_crown') {
+    const vCol = (head === 'crown_visor' || head === 'hex_visor' || head === 'hex_crown' || head === 'bandana_visor') ? primary : sec;
+    inside += `<rect x="76" y="52.5" width="20" height="6" rx="2.5" fill="${vCol}"/>`;
+    if (head === 'bandana_visor') {
+      inside += `<path d="M 65 48 Q 80 44 95 48 L 95 52 Q 80 48 65 52 Z" fill="${sec}"/>`;
+    }
+  } else if (head === 'half_mask') {
+    inside += `<polygon points="80,41 96,46 96,67 80,62" fill="${sec}"/>`;
+  } else if (head === 'goggles') {
+    inside += `
+      <rect x="66" y="50" width="28" height="4" fill="${TRIM_DARK}" opacity="0.75"/>
+      <circle cx="79" cy="52" r="4.4" fill="${metal}" stroke="${TRIM_DARK}" stroke-width="1.3"/>
+      <circle cx="79" cy="52" r="2.3" fill="${sec}"/>
+      <circle cx="89" cy="52" r="4.0" fill="${metal}" stroke="${TRIM_DARK}" stroke-width="1.3"/>
+      <circle cx="89" cy="52" r="2.1" fill="${sec}"/>
     `;
+  } else if (head === 'halo_mirror') {
+    inside += `<circle cx="84" cy="56" r="5.0" fill="none" stroke="${sec}" stroke-width="1.5"/>`;
   }
-  if (head === 'goggles') {
-    return baseSphere + `
-      <circle cx="81" cy="50" r="5" fill="${metal}" stroke="${TRIM_DARK}" stroke-width="1.4"/>
-      <circle cx="81" cy="50" r="2.8" fill="${sec}"/>
-      <circle cx="92" cy="50" r="4.6" fill="${metal}" stroke="${TRIM_DARK}" stroke-width="1.4"/>
-      <circle cx="92" cy="50" r="2.5" fill="${sec}"/>
+
+  // External crown/crest accents seated cleanly on the top arc
+  let crown = '';
+  if (head === 'crest') {
+    crown = `
+      <path d="M 67 51 Q 78 36 93 49 Q 81 45 67 51 Z" fill="${primary}"/>
+      <polygon points="78,43 82,46.5 78,50 74,46.5" fill="${sec}"/>
     `;
-  }
-  if (head === 'plume') {
-    return baseSphere + `<path d="M 74 42 Q 52 28 42 50" fill="none" stroke="${sec}" stroke-width="3.2" stroke-linecap="round"/>`;
-  }
-  if (head === 'half_mask') {
-    return baseSphere + `<polygon points="82,40 96,48 94,62 82,58" fill="${sec}"/>`;
-  }
-  if (head === 'hood') {
-    return baseSphere + `<polygon points="62,56 78,34 94,48 80,46" fill="${primary}"/>`;
-  }
-  if (head === 'cap') {
-    return baseSphere + `
-      <path d="M 66 48 Q 82 34 98 46 Z" fill="${primary}" stroke="${TRIM_DARK}" stroke-width="1.4"/>
-      <line x1="86" y1="46" x2="104" y2="50" stroke="${TRIM_DARK}" stroke-width="2.4" stroke-linecap="round"/>
-      <circle cx="82" cy="43" r="2.6" fill="${sec}"/>
+  } else if (head === 'flame_visor') {
+    crown = `<path d="M 69 47 L 75 35 L 82 43 L 90 36 L 91 47 Q 80 44 69 47 Z" fill="${primary}"/>`;
+  } else if (head === 'plume') {
+    crown = `<path d="M 74 44 Q 54 32 45 50" fill="none" stroke="${sec}" stroke-width="3.0" stroke-linecap="round"/>`;
+  } else if (head === 'hood') {
+    crown = `<path d="M 65 56 L 76 37 L 91 48 Q 78 46 65 56 Z" fill="${primary}"/>`;
+  } else if (head === 'cap') {
+    crown = `
+      <path d="M 67 48 Q 80 37 93 47 Z" fill="${primary}" stroke="${TRIM_DARK}" stroke-width="1.3"/>
+      <line x1="84" y1="47" x2="99" y2="50" stroke="${TRIM_DARK}" stroke-width="2.2" stroke-linecap="round"/>
+      <circle cx="80" cy="44" r="2.3" fill="${sec}"/>
     `;
+  } else if (head === 'crown_visor') {
+    crown = `<polygon points="70,45 75,35 80,41 85,35 90,45" fill="${sec}" stroke="${TRIM_DARK}" stroke-width="1.2" stroke-linejoin="round"/>`;
+  } else if (head === 'hex_crown') {
+    crown = `<polygon points="80,33 85,43 80,48 75,43" fill="${sec}"/>`;
+  } else if (head === 'halo_ring' || head === 'halo_mirror') {
+    crown = `<ellipse cx="80" cy="36" rx="16" ry="3.6" fill="none" stroke="${sec}" stroke-width="2.0"/>`;
   }
-  if (head === 'crown_visor') {
-    return baseSphere + `
-      <rect x="77" y="51" width="19" height="5.5" rx="2.5" fill="${primary}"/>
-      <polygon points="70,44 76,34 82,40 88,34 94,44" fill="${sec}" stroke="${TRIM_DARK}" stroke-width="1.2" stroke-linejoin="round"/>
-    `;
-  }
-  if (head === 'halo_ring') {
-    return baseSphere + `<ellipse cx="82" cy="34" rx="17" ry="3.8" fill="none" stroke="${sec}" stroke-width="2.0"/>`;
-  }
-  // crest (classic Annolin emerald crest)
-  return baseSphere + `
-    <path d="M 67 52 L 83 34 L 98 50 L 82 46 Z" fill="${primary}"/>
-    <polygon points="78,42 83,46 78,50 73,46" fill="${sec}"/>
+
+  return `
+    ${baseFill}
+    ${inside ? `<g clip-path="url(#${headClipId})">${inside}</g>` : ''}
+    ${baseStroke}
+    ${crown}
   `;
 }
 
 function renderCompactWeapon(weapon, primary, sec, metal) {
+  // All weapons cleanly positioned on the front flank (x >= 94) so they NEVER slice across the chest crest!
   if (weapon === 'tower_shield') {
     return `
-      <polygon points="94,58 124,68 128,112 108,136 90,116" fill="${primary}" stroke="${sec}" stroke-width="2.4" stroke-linejoin="round"/>
-      <line x1="109" y1="68" x2="109" y2="122" stroke="${sec}" stroke-width="2.4"/>
-      <line x1="96" y1="92" x2="122" y2="92" stroke="${sec}" stroke-width="2.4"/>
+      <polygon points="98,68 124,76 127,114 110,134 95,116" fill="${primary}" stroke="${sec}" stroke-width="2.2" stroke-linejoin="round"/>
+      <line x1="111" y1="77" x2="111" y2="122" stroke="${sec}" stroke-width="2.2"/>
+      <line x1="100" y1="98" x2="122" y2="98" stroke="${sec}" stroke-width="2.2"/>
     `;
   }
   if (weapon === 'warhammer') {
     return `
-      <line x1="88" y1="118" x2="128" y2="68" stroke="${TRIM_DARK}" stroke-width="4.2" stroke-linecap="round"/>
-      <rect x="112" y="50" width="32" height="22" rx="4" transform="rotate(-38 128 61)" fill="${metal}" stroke="${primary}" stroke-width="2.0"/>
-      <line x1="120" y1="54" x2="136" y2="68" stroke="${sec}" stroke-width="3.2" stroke-linecap="round"/>
+      <line x1="96" y1="114" x2="128" y2="74" stroke="${TRIM_DARK}" stroke-width="4.0" stroke-linecap="round"/>
+      <rect x="112" y="54" width="30" height="20" rx="4" transform="rotate(-38 127 64)" fill="${metal}" stroke="${primary}" stroke-width="2.0"/>
+      <line x1="120" y1="58" x2="135" y2="70" stroke="${sec}" stroke-width="3.2" stroke-linecap="round"/>
     `;
   }
   if (weapon === 'energy_lance' || weapon === 'needle_lance') {
     return `
-      <polygon points="88,88 152,70 90,100" fill="${PAPER}" stroke="${primary}" stroke-width="2.0" stroke-linejoin="round"/>
-      <line x1="92" y1="94" x2="146" y2="72" stroke="${sec}" stroke-width="2.2" stroke-linecap="round"/>
-      ${weapon === 'energy_lance' ? `<circle cx="116" cy="84" r="6" fill="none" stroke="${sec}" stroke-width="2.0"/>` : ''}
+      <polygon points="95,94 150,74 96,105" fill="${PAPER}" stroke="${primary}" stroke-width="1.9" stroke-linejoin="round"/>
+      <line x1="98" y1="99" x2="144" y2="76" stroke="${sec}" stroke-width="2.0" stroke-linecap="round"/>
+      ${weapon === 'energy_lance' ? `<circle cx="118" cy="89" r="5.5" fill="none" stroke="${sec}" stroke-width="1.9"/>` : ''}
     `;
   }
   if (weapon === 'rapier') {
     return `
-      <circle cx="100" cy="96" r="8.5" fill="${PAPER}" stroke="${sec}" stroke-width="2.0"/>
-      <line x1="104" y1="95" x2="152" y2="74" stroke="${TRIM_DARK}" stroke-width="2.6" stroke-linecap="round"/>
-      <line x1="106" y1="94" x2="148" y2="76" stroke="${sec}" stroke-width="1.3" stroke-linecap="round"/>
+      <circle cx="101" cy="99" r="7.5" fill="${PAPER}" stroke="${sec}" stroke-width="1.9"/>
+      <line x1="105" y1="98" x2="149" y2="78" stroke="${TRIM_DARK}" stroke-width="2.4" stroke-linecap="round"/>
+      <line x1="107" y1="97" x2="145" y2="80" stroke="${sec}" stroke-width="1.2" stroke-linecap="round"/>
     `;
   }
   if (weapon === 'cannon_gauntlet') {
     return `
-      <rect x="102" y="70" width="26" height="40" rx="5" fill="${metal}" stroke="${sec}" stroke-width="2.0"/>
-      <rect x="108" y="78" width="14" height="24" rx="3" fill="${sec}" opacity="0.88"/>
+      <rect x="102" y="76" width="24" height="36" rx="5" fill="${metal}" stroke="${sec}" stroke-width="1.9"/>
+      <rect x="107" y="83" width="14" height="22" rx="3" fill="${sec}" opacity="0.88"/>
     `;
   }
   if (weapon === 'sight_rule') {
     return `
-      <line x1="70" y1="102" x2="150" y2="74" stroke="${sec}" stroke-width="3.6" stroke-linecap="round"/>
-      <circle cx="134" cy="80" r="8.5" fill="${PAPER}" fill-opacity="0.92" stroke="${primary}" stroke-width="1.8"/>
+      <line x1="94" y1="104" x2="148" y2="80" stroke="${sec}" stroke-width="3.4" stroke-linecap="round"/>
+      <circle cx="132" cy="87" r="7.8" fill="${PAPER}" fill-opacity="0.92" stroke="${primary}" stroke-width="1.8"/>
     `;
   }
   if (weapon === 'war_fan') {
     return `
-      <path d="M 94 102 L 116 66 A 38 38 0 0 1 148 96 Z" fill="${primary}" stroke="${sec}" stroke-width="2.2" stroke-linejoin="round"/>
-      <path d="M 94 102 L 126 76 M 94 102 L 138 86" stroke="${sec}" stroke-width="1.4"/>
+      <path d="M 97 104 L 118 70 A 35 35 0 0 1 146 98 Z" fill="${primary}" stroke="${sec}" stroke-width="2.0" stroke-linejoin="round"/>
+      <path d="M 97 104 L 126 80 M 97 104 L 136 89" stroke="${sec}" stroke-width="1.3"/>
     `;
   }
   if (weapon === 'bell_mallet') {
     return `
-      <line x1="88" y1="116" x2="132" y2="66" stroke="${TRIM_DARK}" stroke-width="4.0" stroke-linecap="round"/>
-      <rect x="118" y="50" width="22" height="28" rx="6" transform="rotate(-44 129 64)" fill="${metal}" stroke="${sec}" stroke-width="2.0"/>
+      <line x1="96" y1="114" x2="130" y2="72" stroke="${TRIM_DARK}" stroke-width="3.8" stroke-linecap="round"/>
+      <rect x="116" y="54" width="20" height="26" rx="6" transform="rotate(-42 126 67)" fill="${metal}" stroke="${sec}" stroke-width="1.9"/>
     `;
   }
   if (weapon === 'hook_saber' || weapon === 'cleaver') {
     return `
-      <path d="M 94 102 C 114 82 132 62 146 44 C 154 50 152 64 142 74 L 132 70 L 136 80 C 124 92 110 102 98 110 Z"
-            fill="${PAPER}" stroke="${primary}" stroke-width="2.0" stroke-linejoin="round"/>
-      <line x1="98" y1="100" x2="140" y2="56" stroke="${sec}" stroke-width="2.2" stroke-linecap="round"/>
+      <path d="M 98 104 C 116 86 132 68 144 50 C 151 56 150 68 140 78 L 132 74 L 135 83 C 124 94 112 103 101 110 Z"
+            fill="${PAPER}" stroke="${primary}" stroke-width="1.9" stroke-linejoin="round"/>
+      <line x1="102" y1="102" x2="139" y2="62" stroke="${sec}" stroke-width="2.1" stroke-linecap="round"/>
     `;
   }
   if (weapon === 'twin_daggers') {
     return `
-      <line x1="94" y1="96" x2="138" y2="72" stroke="${TRIM_DARK}" stroke-width="2.8" stroke-linecap="round"/>
-      <line x1="96" y1="110" x2="134" y2="100" stroke="${sec}" stroke-width="2.6" stroke-linecap="round"/>
+      <line x1="97" y1="98" x2="138" y2="76" stroke="${TRIM_DARK}" stroke-width="2.6" stroke-linecap="round"/>
+      <line x1="99" y1="110" x2="134" y2="101" stroke="${sec}" stroke-width="2.4" stroke-linecap="round"/>
     `;
   }
   if (weapon === 'staff') {
     return `
-      <line x1="92" y1="128" x2="134" y2="56" stroke="${TRIM_DARK}" stroke-width="3.6" stroke-linecap="round"/>
-      <circle cx="136" cy="52" r="9.5" fill="${PAPER}" stroke="${sec}" stroke-width="2.2"/>
-      <circle cx="136" cy="52" r="4.2" fill="${primary}"/>
+      <line x1="98" y1="126" x2="132" y2="60" stroke="${TRIM_DARK}" stroke-width="3.4" stroke-linecap="round"/>
+      <circle cx="134" cy="56" r="8.8" fill="${PAPER}" stroke="${sec}" stroke-width="2.0"/>
+      <circle cx="134" cy="56" r="3.8" fill="${primary}"/>
     `;
   }
   // saber / wind_blade / flame_sword / boss_blade / inscribe_sword / prism_blade
   return `
-    <polygon points="94,100 144,54 136,82 99,108" fill="${PAPER}" stroke="${primary}" stroke-width="2.0" stroke-linejoin="round"/>
-    <line x1="98" y1="99" x2="138" y2="62" stroke="${sec}" stroke-width="2.2" stroke-linecap="round"/>
+    <polygon points="97,102 144,58 136,84 102,109" fill="${PAPER}" stroke="${primary}" stroke-width="1.9" stroke-linejoin="round"/>
+    <line x1="101" y1="101" x2="138" y2="66" stroke="${sec}" stroke-width="2.1" stroke-linecap="round"/>
   `;
 }
 
 /**
- * Generate a clean, compact 160x160 5-bone SVG figurine for any character & palette.
+ * Generate a clip-perfect, compact 160x160 5-bone SVG figurine for any character & palette.
  */
 export function buildParametricCharacterSvg(ch, pal) {
   const profile = resolveCompactProfile(ch, pal);
@@ -644,20 +678,33 @@ export function buildParametricCharacterSvg(ch, pal) {
   const metal = hexNumToCss(pal.metal, '#7C6E60');
   const priDark = shadeHex(primary, 0.28);
 
+  const safeId = `p_${hashStr(`${ch?.id || 'c'}_${pal.primary}`).toString(36)}`;
+  const torsoClip = `${safeId}_tc`;
+  const headClip = `${safeId}_hc`;
+  const torsoPath = getTorsoPolygonPath(profile.torso);
+  const isHex = profile.head === 'hex_visor' || profile.head === 'hex_crown' || profile.head === 'hex_plain';
+  const headClipShape = isHex
+    ? '<path d="M 80 42 L 92 49 L 92 63 L 80 70 L 68 63 L 68 49 Z"/>'
+    : '<circle cx="80" cy="56" r="13.5"/>';
+
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${SVG_VIEW_W} ${SVG_VIEW_H}" data-foot="${SVG_FOOT_X},${SVG_FOOT_Y}">
-  <g id="bone_back_hair" data-pivot="80,82">
+  <defs>
+    <clipPath id="${torsoClip}"><path d="${torsoPath}"/></clipPath>
+    <clipPath id="${headClip}">${headClipShape}</clipPath>
+  </defs>
+  <g id="bone_back_hair" data-pivot="80,86">
     ${renderCompactHalo(profile.halo, primary, sec, hi)}
   </g>
-  <g id="bone_cape_back" data-pivot="74,84">
+  <g id="bone_cape_back" data-pivot="70,82">
     ${renderCompactCape(profile.cape, primary, priDark, sec)}
   </g>
-  <g id="bone_torso" data-pivot="80,114">
-    ${renderCompactTorso(profile.torso, primary, priDark, sec, hi, metal)}
+  <g id="bone_torso" data-pivot="80,136">
+    ${renderCompactTorso(profile.torso, torsoClip, primary, priDark, sec, hi, metal)}
   </g>
-  <g id="bone_head" data-pivot="80,66">
-    ${renderCompactHead(profile.head, primary, sec, metal)}
+  <g id="bone_head" data-pivot="80,68">
+    ${renderCompactHead(profile.head, headClip, primary, sec, metal)}
   </g>
-  <g id="bone_weapon" data-pivot="94,102">
+  <g id="bone_weapon" data-pivot="98,102">
     ${renderCompactWeapon(profile.weapon, primary, sec, metal)}
   </g>
 </svg>`;
@@ -675,7 +722,7 @@ export function resolveCharacterRig(ch, pal) {
       return ext;
     }
   }
-  const cacheKey = `compact_v6:${charId}:${pal.primary}:${pal.secondary}:${pal.metal}`;
+  const cacheKey = `compact_v7:${charId}:${pal.primary}:${pal.secondary}:${pal.metal}`;
   if (RIG_CACHE.has(cacheKey)) {
     return RIG_CACHE.get(cacheKey);
   }
@@ -684,21 +731,21 @@ export function resolveCharacterRig(ch, pal) {
 }
 
 /**
- * Build a live animated PixiJS layered SVG rig container from a RigAsset.
+ * Build a live animated PixiJS layered SVG rig container with grounded hierarchical bone motion.
  */
 export function createSkeletalSvgRig(ch, pal, targetRadius = 38) {
   const rigRoot = new PIXI.Container();
   const boneMap = new Map();
   let mounted = false;
 
-  // Match the original compact stage_actors.js footprint (~1.42 * r visual height from crown to base!)
-  const desiredHeight = targetRadius * 1.44;
-  let svgScale = desiredHeight / 104;
+  // Compact footprint matching the original stage_actors.js miniature scale
+  const desiredHeight = targetRadius * 1.42;
+  let svgScale = desiredHeight / 100;
 
   const placeholderG = new PIXI.Graphics();
   const pri = typeof pal.primary === 'number' ? pal.primary : 0x2a9d8f;
-  placeholderG.circle(0, -targetRadius * 0.08, targetRadius * 0.54)
-    .fill({ color: pri, alpha: 0.22 });
+  placeholderG.circle(0, -targetRadius * 0.08, targetRadius * 0.50)
+    .fill({ color: pri, alpha: 0.20 });
   rigRoot.addChild(placeholderG);
 
   const mountBones = (asset) => {
@@ -707,9 +754,9 @@ export function createSkeletalSvgRig(ch, pal, targetRadius = 38) {
     placeholderG.visible = false;
 
     const footX = asset.footX ?? (asset.viewW * 0.5);
-    const footY = asset.footY ?? (asset.viewH * 0.875);
-    svgScale = desiredHeight / (asset.viewH * 0.65);
-    const groundY = targetRadius * 0.63;
+    const footY = asset.footY ?? (asset.viewH * 0.85);
+    svgScale = desiredHeight / (asset.viewH * 0.625);
+    const groundY = targetRadius * 0.62;
 
     for (const b of asset.bones) {
       const joint = new PIXI.Container();
@@ -733,7 +780,7 @@ export function createSkeletalSvgRig(ch, pal, targetRadius = 38) {
     if (res.ready) {
       mountBones(res);
     } else if (res.failed && primaryAsset.key.startsWith('url:')) {
-      const fallbackKey = `compact_v6:${ch?.id || 'unknown'}:${pal.primary}:${pal.secondary}:${pal.metal}`;
+      const fallbackKey = `compact_v7:${ch?.id || 'unknown'}:${pal.primary}:${pal.secondary}:${pal.metal}`;
       const fallbackAsset = compileSvgRig(buildParametricCharacterSvg(ch, pal), fallbackKey, 2.5);
       fallbackAsset.onReady(mountBones);
     }
@@ -751,7 +798,7 @@ export function createSkeletalSvgRig(ch, pal, targetRadius = 38) {
     const def = DEFAULT_BONE_PIVOTS[boneId] || [SVG_FOOT_X, 96];
     return {
       x: (def[0] - SVG_FOOT_X) * svgScale,
-      y: targetRadius * 0.63 + (def[1] - SVG_FOOT_Y) * svgScale,
+      y: targetRadius * 0.62 + (def[1] - SVG_FOOT_Y) * svgScale,
     };
   };
 
@@ -763,46 +810,71 @@ export function createSkeletalSvgRig(ch, pal, targetRadius = 38) {
     const t = time + phaseOffset;
     const amp = alive ? animAmp : 0;
 
-    const breath = Math.sin(t * 2.8) * (targetRadius * 0.042) * amp;
-    const flutter = Math.sin(t * 4.2) * 0.065 * amp;
+    // Grounded hierarchical kinematics:
+    // Torso stays firmly planted at its base (y = 136) and breathes via gentle squash-and-stretch,
+    // while head, cape, and weapon rigidly follow the torso's top lean so parts NEVER drift apart!
+    const breathWave = Math.sin(t * 2.8) * amp;
+    const scaleY = 1 + breathWave * 0.028;
+    const scaleX = 1 - breathWave * 0.014;
+    const torsoRot = lunge * 0.11 - recoil * 0.14 + (alive ? 0 : -0.18);
+    const flutter = Math.sin(t * 4.2) * 0.055 * amp;
 
     rigRoot.alpha = alive ? 1 : 0.42;
 
+    const torso = boneMap.get('bone_torso');
+    const torsoBaseY = torso ? torso.baseY : (targetRadius * 0.62);
+    const torsoBaseX = torso ? torso.baseX : 0;
+
+    // Helper: transform any upper-body joint by the torso's grounded base pivot so it stays 100% locked
+    const followTorso = (entry) => {
+      const dx = (entry.baseX - torsoBaseX) * scaleX;
+      const dy = (entry.baseY - torsoBaseY) * scaleY;
+      const cosR = Math.cos(torsoRot);
+      const sinR = Math.sin(torsoRot);
+      return {
+        x: torsoBaseX + dx * cosR - dy * sinR,
+        y: torsoBaseY + dx * sinR + dy * cosR,
+      };
+    };
+
+    if (torso) {
+      torso.joint.position.set(torsoBaseX, torsoBaseY);
+      torso.joint.scale.set(scaleX, scaleY);
+      torso.joint.rotation = torsoRot;
+    }
+
     const halo = boneMap.get('bone_back_hair');
     if (halo) {
-      halo.joint.y = halo.baseY + breath * 0.5;
-      halo.joint.rotation = Math.sin(t * 1.4) * 0.03 * amp;
+      halo.joint.position.set(halo.baseX, halo.baseY - breathWave * (targetRadius * 0.025));
+      halo.joint.rotation = Math.sin(t * 1.4) * 0.025 * amp;
     }
 
     const cape = boneMap.get('bone_cape_back');
     if (cape) {
-      cape.joint.y = cape.baseY + breath * 0.9;
-      cape.joint.rotation = flutter - lunge * 0.24 + recoil * 0.16;
-    }
-
-    const torso = boneMap.get('bone_torso');
-    if (torso) {
-      torso.joint.y = torso.baseY + breath + (alive ? 0 : 4 * svgScale);
-      torso.joint.rotation = lunge * 0.11 - recoil * 0.14 + (alive ? 0 : -0.18);
+      const p = followTorso(cape);
+      cape.joint.position.set(p.x, p.y);
+      cape.joint.rotation = torsoRot + flutter - lunge * 0.22 + recoil * 0.14;
     }
 
     const head = boneMap.get('bone_head');
     if (head) {
-      head.joint.y = head.baseY + breath * 1.1 + (alive ? 0 : 5 * svgScale);
-      head.joint.rotation = Math.sin(t * 2.1) * 0.025 * amp + lunge * 0.06 - recoil * 0.16 + (alive ? 0 : 0.2);
+      const p = followTorso(head);
+      head.joint.position.set(p.x, p.y);
+      head.joint.rotation = torsoRot + Math.sin(t * 2.1) * 0.02 * amp + lunge * 0.04 - recoil * 0.10 + (alive ? 0 : 0.16);
     }
 
     const weapon = boneMap.get('bone_weapon');
     if (weapon) {
-      weapon.joint.y = weapon.baseY + breath - lunge * 2.8;
-      weapon.joint.x = weapon.baseX + lunge * 4.5;
-      weapon.joint.rotation = Math.sin(t * 2.8) * 0.045 * amp + lunge * 0.42 - recoil * 0.18;
+      const p = followTorso(weapon);
+      weapon.joint.position.set(p.x + lunge * 3.8, p.y - lunge * 2.2);
+      weapon.joint.rotation = torsoRot + Math.sin(t * 2.8) * 0.04 * amp + lunge * 0.36 - recoil * 0.14;
     }
 
     const armBack = boneMap.get('bone_arm_back');
     if (armBack) {
-      armBack.joint.y = armBack.baseY + breath * 0.9;
-      armBack.joint.rotation = lunge * 0.18 - recoil * 0.14;
+      const p = followTorso(armBack);
+      armBack.joint.position.set(p.x, p.y);
+      armBack.joint.rotation = torsoRot + lunge * 0.14 - recoil * 0.12;
     }
   };
 
