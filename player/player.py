@@ -14,7 +14,6 @@ class Player:
         self.turn_cost_adjustment = 0
         self.next_turn_common_cost = 0
         self.turn_common_cost_bonus = 0
-        self.lost_duels = set()
         self.faction_representatives = {}
         self.speed = 0
         self.default_target_character = None
@@ -43,7 +42,7 @@ class Player:
 
     def lost_clash_in_previous_duel(self):
         series, index = self.game.duel_position()
-        return (series, index - 1) in self.lost_duels
+        return self.game.turn_history.clash_count(self, "lose", (series, index - 1)) > 0
 
     def set_default_target(self, target):
         self.default_target_character = target

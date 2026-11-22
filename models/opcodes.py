@@ -173,6 +173,22 @@ def handle_set_character_state(ctx):
         return value
 
 
+def handle_skill_use_count(ctx):
+    skill_id, actor = ctx.pop(), ctx.pop()
+    ctx.push(ctx.game.turn_history.skill_uses[actor, skill_id])
+
+
+def handle_clash_count(ctx):
+    position, result, subject = ctx.pop(), ctx.pop(), ctx.pop()
+    ctx.push(ctx.game.turn_history.clash_count(subject, result, position))
+
+
+def handle_duel_offset(ctx):
+    offset = ctx.pop()
+    series, index = ctx.game.duel_position()
+    ctx.push((series, index + offset))
+
+
 def handle_round_trigger_count(ctx):
     key, character = ctx.pop(), ctx.pop()
     ctx.push(character.round_triggers[key])
@@ -749,6 +765,8 @@ def handle_discard(ctx):
 
 
 DISPATCH_TABLE = {
+    OpCode.SKILL_USE_COUNT: handle_skill_use_count, OpCode.CLASH_COUNT: handle_clash_count,
+    OpCode.DUEL_OFFSET: handle_duel_offset,
     OpCode.ROUND_TRIGGER_COUNT: handle_round_trigger_count,
     OpCode.RECORD_ROUND_TRIGGER: handle_record_round_trigger,
     OpCode.RESERVE_DIE: handle_reserve_die,
@@ -796,6 +814,8 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.SKILL_USE_COUNT: ("actor", "skill_id"), OpCode.CLASH_COUNT: ("subject", "outcome", "position"),
+    OpCode.DUEL_OFFSET: ("offset",),
     OpCode.ROUND_TRIGGER_COUNT: ("character", "key"),
     OpCode.RECORD_ROUND_TRIGGER: ("character", "key"),
     OpCode.RESERVE_DIE: ("card", "position", "count"),

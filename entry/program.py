@@ -209,10 +209,6 @@ def run_program(ctx, entry, tokens):
         name, die = vm.pop(), vm.pop()
         vm.push(die.use_state.get(name, 0) if die is not None else 0)
 
-    def used_skill_this_turn(vm):
-        skill_id, character = vm.pop(), vm.pop()
-        vm.push((character, skill_id) in vm.game.used_skill_ids)
-
     def find_skill(vm):
         zone, skill_id, character = vm.pop(), vm.pop(), vm.pop()
         if zone not in ("hand", "draw", "delayed_discard", "out_of_combat"):
@@ -282,7 +278,7 @@ def run_program(ctx, entry, tokens):
             OpCode.SPEND_ABILITY_EFFECT, require_full=True, result_field="paid_in_full"))),
         "CHARACTER_STATE": character_state, "SKILL_STATE": skill_state,
         "STORE": store_local, "SPEND_STATUS": spend,
-        "USED_SKILL_THIS_TURN": used_skill_this_turn, "FIND_SKILL": find_skill,
+        "FIND_SKILL": find_skill,
         "SPEND_STATUS_IN_FULL": spend_in_full,
         "TEAM_STATUS": lambda vm: team_status(vm, False),
         "NEXT_TEAM_STATUS": lambda vm: team_status(vm, True),
@@ -301,6 +297,8 @@ def run_program(ctx, entry, tokens):
                 block.append(lambda vm, operation=token: run_effect(vm, entry, operation))
             elif isinstance(token, str) and token.startswith("$"):
                 block.append(lambda vm, field=token[1:]: vm.push(read(field)))
+            elif token == "USED_SKILL_THIS_TURN":
+                block.extend([OpCode.SKILL_USE_COUNT, 0, OpCode.GT])
             elif token == "ONCE_PER_ROUND":
                 # Old programs consume a key and receive the pre-record comparison.
                 block.extend([OpCode.DUP, actor, OpCode.SWAP, OpCode.ROUND_TRIGGER_COUNT, 1, OpCode.LT,

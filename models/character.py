@@ -50,7 +50,6 @@ class Character:
         self.rank = CharacterRank[data["rank"]]
         self.turn_duel_bonus = 0
         self.next_turn_duels = 0
-        self.won_clash_this_turn = False
         self.speed = 0
         self.original_max_hp = data["max_hp"]
         self._base_max_hp = self.original_max_hp
@@ -99,6 +98,10 @@ class Character:
             self._standalone_status_rules = {**shared.status_rules, **data.get("status_rules", {})}
             self._standalone_status_entries = {**shared.status_entries, **data.get("status_entries", {})}
             self._standalone_ability_rules = {**shared.ability_rules, **data.get("ability_rules", {})}
+
+    @property
+    def won_clash_this_turn(self):
+        return self.game is not None and self.game.turn_history.clash_count(self, "win") > 0
 
     @property
     def max_hp(self):

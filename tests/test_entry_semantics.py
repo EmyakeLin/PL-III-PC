@@ -13,6 +13,7 @@ from game import Game
 from models.character import Character
 from models.opcode import OpCode
 from models.roster import RosterDraft
+from models.turn_history import TurnHistory
 from player.draw_choice import DrawChoice
 from player.player import Player
 from player.target_order import TargetOrder
@@ -286,6 +287,36 @@ class TargetExecutorTests(unittest.TestCase):
         self.assertFalse(order.offered.done())
         with self.assertRaises(ValueError):
             order.submit(target)
+
+
+class TurnHistoryTests(unittest.TestCase):
+    def test_queries_preserve_multiplicity_owner_series_outcome_and_turn(self):
+        class Actor:
+            pass
+        a, b = Actor(), Actor()
+        a.player = b.player = object()
+        other = Actor()
+        other.player = object()
+        history = TurnHistory()
+        vm = TracedContext()
+        regular, instant = object(), object()
+        vm.game = SimpleNamespace(turn_history=history, duel_position=lambda: (regular, 3))
+        for subject, uses in ((a, 5), (b, 3), (other, 1)):
+            for _ in range(uses):
+                history.record_skill(subject, "same")
+            vm.eval_block([subject, "same", OpCode.SKILL_USE_COUNT])
+            self.assertEqual(vm.pop(), uses)
+        for outcome in ("win", "lose", "draw"):
+            for position, actor in (((regular, 2), a), ((regular, 2), a), ((regular, 2), b),
+                                    ((instant, 2), a), ((regular, 3), a), ((regular, 2), other)):
+                history.record_clash(position, actor, outcome)
+            vm.eval_block([a.player, outcome, -1, OpCode.DUEL_OFFSET, OpCode.CLASH_COUNT])
+            self.assertEqual(vm.pop(), 3)
+            vm.eval_block([a, outcome, None, OpCode.CLASH_COUNT])
+            self.assertEqual(vm.pop(), 4)
+        history.clear()
+        self.assertEqual(history.clash_count(a.player, "draw"), 0)
+        self.assertEqual(history.skill_uses[a, "same"], 0)
 
 
 if __name__ == "__main__":

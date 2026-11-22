@@ -92,3 +92,6 @@ class OpCode(Enum):
     INSERT_SKILL = auto()
     ROUND_TRIGGER_COUNT = auto()
     RECORD_ROUND_TRIGGER = auto()
+    SKILL_USE_COUNT = auto()
+    CLASH_COUNT = auto()
+    DUEL_OFFSET = auto()

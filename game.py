@@ -10,6 +10,7 @@ from models.duel import DuelSpace
 from models.opcode import OpCode
 from models.pre_reveal import PreRevealPhase
 from models.special_actions import SpecialActions
+from models.turn_history import TurnHistory
 from pipeline.pipeline import Pipeline
 from pipeline.pipeline_steps import step_list
 
@@ -29,7 +30,7 @@ class Game:
         self.placed_this_window = 0
         self.placement_capacity = 1
         self.used_cards = []
-        self.used_skill_ids = set()
+        self.turn_history = TurnHistory()
         self.pending_draw = None
         self._drawing_players = None
         self.cards_revealed = False
@@ -120,7 +121,7 @@ class Game:
             self.turn_number = number
             self.turn_ending = False
             self.context.turn_entry_uses.clear()
-            self.used_skill_ids.clear()
+            self.turn_history.clear()
             self.context.dispatch_pipeline("on_turn_limits_reset", source=None, target=None, side=None)
 
     def prepare_turn(self):
@@ -131,9 +132,7 @@ class Game:
         pending, self.next_turn_statuses = self.next_turn_statuses, []
         for player in self.players:
             player.turn_common_cost_bonus, player.next_turn_common_cost = player.next_turn_common_cost, 0
-            player.lost_duels.clear()
             for char in player.characters:
-                char.won_clash_this_turn = False
                 char.turn_duel_bonus, char.next_turn_duels = char.next_turn_duels, 0
         for source, target, name, amount, authority in pending:
             if target.is_alive and not self.is_over:
@@ -141,10 +140,7 @@ class Game:
                     self.context.eval_block([target, name, amount, OpCode.STATUS])
 
     def record_clash_result(self, character, result):
-        if result == "win":
-            character.won_clash_this_turn = True
-        elif result == "lose":
-            character.player.lost_duels.add(self.duel_position())
+        self.turn_history.record_clash(self.duel_position(), character, result)
 
     def draw_phase(self):
         self.prepare_turn()

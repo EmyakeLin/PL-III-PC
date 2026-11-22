@@ -1079,7 +1079,7 @@ class Pipeline:
         if not name.startswith("logic_"):
             if name == "on_skill_use":
                 pipe.used = True
-                self.game.used_skill_ids.add((pipe.card.character, pipe.card.id))
+                self.game.turn_history.record_skill(pipe.card.character, pipe.card.id)
             self.game.context.dispatch_pipeline(name, **event)
         elif name == "logic_duel_start" and not self._frame.started:
             self._frame.started = True
