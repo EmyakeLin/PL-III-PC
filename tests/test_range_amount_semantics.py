@@ -44,6 +44,32 @@ class RangeAmountTests(unittest.TestCase):
             self.assertEqual(card.effective_ignore_range, 0)
         self.assertIn("至多3级", "".join(describe_range_traits(die.data)))
 
+    def test_speed_gap_uses_the_current_opponent_and_handles_an_empty_slot(self):
+        card = self.printed_skill("plan_b_li_ling.json", "li_ling_sky")
+        self.actor.speed = 12
+        enemy = SimpleNamespace(speed=8)
+        for speed in (None, 9, 8, 0, 99):
+            card.range_opponent = SimpleNamespace(character=enemy) if speed is not None else None
+            enemy.speed = speed
+            active = speed is not None and self.actor.speed - speed >= 4
+            self.assertEqual((card.effective_range, card.effective_ignore_range), (1, 3) if active else (0, 0))
+
+    def test_tunnel_and_repeat_are_independently_read_from_their_printed_sources(self):
+        cut = self.printed_skill("xinxing_lin_qiu.json", "lin_qiu_void_cut")
+        boundary = self.printed_skill("xinxing_lin_qiu.json", "lin_qiu_boundary")
+        counter = self.printed_skill("xinxing_lin_qiu.json", "lin_qiu_counterflow")
+        counter.advance_die()
+        die = counter.get_current_die(self.game, register=False)
+        for opened in (0, 1, 9):
+            for marked in (False, True):
+                self.actor.statuses["隧道开启"] = opened
+                counter.use_state["ranged_repeat"] = marked
+                self.assertEqual(cut.effective_range, 3 if opened else 1)
+                self.assertEqual(boundary.effective_ignore_range, 3 if opened else 0)
+                self.assertEqual(die.effective_range, int(marked))
+        with self.assertRaises(ValueError):
+            Dice({"type": "block", "level": 1, "range_level_when": {"speed_lead": 4, "amount": 1}})
+
     def test_heris_uses_current_stacks_before_use_and_the_recorded_value_afterward(self):
         card = self.printed_skill("plan_b_heris.json", "heris_crush")
         self.actor.statuses["凝聚"] = 2

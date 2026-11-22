@@ -389,7 +389,14 @@
             {
               "type": "pierce",
               "level": 3,
-              "range_level_when": {"skill_state": "ranged_repeat", "amount": 1},
+              "range_level_amount": {
+                "value": {
+                  "if": {"field":"$event.card.use_state","key":"ranged_repeat","default":false},
+                  "then": 1,
+                  "else": 0
+                },
+                "description": "本次技能已标记远程重复时，本骰获得1级远程。"
+              },
               "entries": [
                 "0物理",
                 {
@@ -683,7 +690,14 @@
           "name": "空断",
           "cost": 4,
           "range_level": 1,
-          "range_level_when": {"status": "隧道开启", "amount": 3},
+          "range_level_amount": {
+            "value": {
+              "if": {"left":{"field":"$self.statuses","key":"隧道开启","default":0},"op":"ge","right":1},
+              "then": 3,
+              "else": 0
+            },
+            "description": "隧道开启时，获得3级远程。"
+          },
           "resource_cost": {"status": "隧道", "amount": 2},
           "dice": [
             {
@@ -761,7 +775,14 @@
           "name": "分界",
           "cost": 4,
           "pre_reveal": true,
-          "ignore_range_when": {"status": "隧道开启", "amount": 3},
+          "ignore_range_amount": {
+            "value": {
+              "if": {"left":{"field":"$self.statuses","key":"隧道开启","default":0},"op":"ge","right":1},
+              "then": 3,
+              "else": 0
+            },
+            "description": "隧道开启时，无视3级远程。"
+          },
           "resource_cost": {"status": "隧道", "amount": 2},
           "entries": [
             {

@@ -214,7 +214,37 @@
       {
         "id":"li_ling_sky", "name":"机动·贯彻长空", "cost":3,
         "pre_reveal_requires_status":{"凝聚":3},
-        "range_level_when":{"speed_lead":4,"amount":1}, "ignore_range_when":{"speed_lead":4,"amount":3},
+        "range_level_amount":{
+          "value": {
+            "if": {
+              "if": "$event.card.range_target",
+              "then": {
+                "left": {"left":"$self.speed","op":"sub","right":"$event.card.range_target.speed"},
+                "op": "ge",
+                "right": 4
+              },
+              "else": false
+            },
+            "then": 1,
+            "else": 0
+          },
+          "description": "个人速度领先目标至少4时，获得1级远程。"
+        }, "ignore_range_amount":{
+          "value": {
+            "if": {
+              "if": "$event.card.range_target",
+              "then": {
+                "left": {"left":"$self.speed","op":"sub","right":"$event.card.range_target.speed"},
+                "op": "ge",
+                "right": 4
+              },
+              "else": false
+            },
+            "then": 3,
+            "else": 0
+          },
+          "description": "个人速度领先目标至少4时，无视3级远程。"
+        },
         "entries":[
           {"trigger":"on_skill_use","operation":{
             "op": "program",
