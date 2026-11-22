@@ -12,12 +12,14 @@ from urllib.parse import urlsplit
 from .match import BattleMatch
 
 
-ASSETS = {
-    "/": ("index.html", "text/html"),
-    "/style.css": ("style.css", "text/css"),
-    "/app.js": ("app.js", "text/javascript"),
+STATIC_DIR = Path(__file__).with_name("static").resolve()
+CONTENT_TYPES = {
+    ".html": "text/html",
+    ".css": "text/css",
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".json": "application/json",
 }
-STATIC_DIR = Path(__file__).with_name("static")
 
 
 class BattleSession:
@@ -42,21 +44,44 @@ class BattleSession:
             action = request.get("action")
             if action == "new":
                 roster = request.get("roster")
-                if (not isinstance(roster, list) or len(roster) != 2
-                        or not all(isinstance(item, str) for item in roster)):
-                    raise ValueError("请为两位玩家选择出战角色。")
                 self.match = BattleMatch(roster, seed=self.seed, initial_handoff=True)
                 frame = self.match.snapshot()
             else:
                 if action not in ("place", "end", "pass", "ready", "next",
                                   "attack", "end_attack", "intercept", "let_through", "switch_side",
-                                  "open_special", "leave_special", "use_special"):
+                                  "open_special", "leave_special", "use_special",
+                                  "draw_bottom", "set_default_target"):
                     raise ValueError("未知的对战操作。")
-                frame = self.match.act(action, self.match.revision, card_id=request.get("card_id"),
-                                       target=request.get("target"), side=request.get("side"),
-                                       duel_number=request.get("duel_number"), option=request.get("option"))
+                frame = self.match.act(
+                    action,
+                    self.match.revision,
+                    card_id=request.get("card_id"),
+                    card_ids=request.get("card_ids"),
+                    target=request.get("target"),
+                    side=request.get("side"),
+                    duel_number=request.get("duel_number"),
+                    option=request.get("option"),
+                    character_id=request.get("character_id"),
+                )
             self.revision += 1
             return HTTPStatus.OK, {**frame, "revision": self.revision}
+
+
+def _resolve_static(path):
+    rel = "index.html" if path == "/" else path.lstrip("/")
+    if not rel or "\\" in rel or ".." in rel.split("/"):
+        return None
+    target = (STATIC_DIR / rel).resolve()
+    try:
+        target.relative_to(STATIC_DIR)
+    except ValueError:
+        return None
+    if not target.is_file():
+        return None
+    ctype = CONTENT_TYPES.get(target.suffix.lower())
+    if ctype is None:
+        return None
+    return target, ctype
 
 
 class BattleHandler(BaseHTTPRequestHandler):
@@ -92,11 +117,13 @@ class BattleHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/state":
             self._json(HTTPStatus.OK, self.server.session.state())
-        elif path in ASSETS:
-            name, content_type = ASSETS[path]
-            self._send(HTTPStatus.OK, (STATIC_DIR / name).read_bytes(), content_type)
-        else:
-            self._json(HTTPStatus.NOT_FOUND, {"error": "未找到页面。"})
+            return
+        resolved = _resolve_static(path)
+        if resolved is not None:
+            file_path, content_type = resolved
+            self._send(HTTPStatus.OK, file_path.read_bytes(), content_type)
+            return
+        self._json(HTTPStatus.NOT_FOUND, {"error": "未找到资源。"})
 
     def do_POST(self):
         if not self._local_request():

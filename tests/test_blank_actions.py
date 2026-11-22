@@ -161,6 +161,26 @@ class BlankDecisionTests(unittest.TestCase):
         self.game.next_step()
         self.assertFalse(self.game.pipeline.before_duel_start)
 
+    def test_web_status_animation_follows_committed_payments(self):
+        game = BattleMatch(["blank_boss", "iron_qi_zheng"], seed=11).game
+        actor = game.players[0].characters[0]
+        actor.add_status("能源", 2)
+        actor.add_ability_effect("抽卡资格", 1)
+        energy = actor.statuses["能源"]
+        permits = actor.ability_effects["抽卡资格"]
+        game.fx_events.clear()
+        pay = game.context.pay_action_costs
+
+        self.assertTrue(pay(actor, {}, {"能源": 1}))
+        self.assertFalse(pay(actor, {"抽卡资格": 1}, {"能源": energy}))
+        self.assertEqual(actor.ability_effects["抽卡资格"], permits)
+        self.assertTrue(pay(actor, {"抽卡资格": 1}, {"能源": 1}))
+        self.assertEqual(actor.ability_effects.get("抽卡资格", 0), permits - 1)
+        self.assertEqual(actor.statuses.get("能源", 0), energy - 2)
+        energy_changes = [(event["before"], event["after"]) for event in game.fx_events
+                          if event["kind"] == "status_change" and event["status"] == "能源"]
+        self.assertEqual(energy_changes, [(energy, energy - 1), (energy - 1, energy - 2)])
+
     def test_web_mirror_can_select_second_copy_of_same_printed_card(self):
         table = BattleMatch(["blank_boss", "blank_boss"], seed=11)
         table.game.placing = table.game.players[0]
