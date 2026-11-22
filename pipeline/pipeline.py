@@ -2,7 +2,7 @@ from collections import deque
 from contextlib import contextmanager
 from weakref import WeakSet
 
-from models.card import Card, CardState
+from models.card import CardState
 from models.duel import ClashPair, DuelSpace
 from models.opcode import OpCode
 from models.pack_types import PackType
@@ -69,6 +69,8 @@ class CombatFrame:
         self.started = False
         self.round_id = 0
         self.before_use_sides = set()
+        self.move_after_die = {}
+        self.pairing_copies = {}
         self.active_cards = {}
         self.active_dice = {}
         self.runner = None
@@ -191,6 +193,7 @@ class Pipeline:
     def _planned_slot_dice(self, slot, target):
         side = target.player.side
         cards = slot.get_content(side)[slot.current_card_index.get(side, 0):]
+        cards.extend(card for card in slot.dice_tails if card.player.side == side and slot.tail_is_live(card))
         anchored = {}
         for card in cards:
             anchor = card.use_state.get("die_anchor")
@@ -285,6 +288,37 @@ class Pipeline:
 
     def can_join(self, slot):
         return slot not in self._closed_slots
+
+    def defer_remaining_dice(self, card, destination):
+        if card is None or not self.in_duel_phase:
+            return False
+        space = self._frame.space
+        if destination not in space.space[space.current_duel_index + 1:]:
+            return False
+        pipe = self.side_pipelines[card.player.side]
+        if pipe.card is not card or not self._die_live(pipe):
+            return False
+        self._frame.move_after_die[card] = destination
+        return True
+
+    def pair_skill_copy(self, card, sample):
+        from models.special_actions import SkillCopy
+
+        if not self.in_duel_phase or card is None or not isinstance(sample, SkillCopy):
+            return False
+        slot = self._get_current_duel()
+        if (not self.in_use(slot, card) or card in self._frame.pairing_copies
+                or not sample.owner.is_alive or sample.owner.player is card.player or not sample.data.get("dice")):
+            return False
+        rival = sample.instantiate()
+        side = rival.player.side
+        cards = slot.content.setdefault(side, [])
+        index = slot.current_card_index.get(side, 0)
+        if index < len(cards) and cards[index] is self.side_pipelines[side].card:
+            index += 1
+        cards.insert(index, rival)
+        self._frame.pairing_copies[card] = rival
+        return True
 
     def insert_skill(self, use, anchor, event):
         """Commit the physical card; only its own side changes its use order."""
@@ -484,7 +518,7 @@ class Pipeline:
                     continue
             for pipe in self.side_pipelines.values():
                 pipe.opposing_card = pipe.target = None
-            pipes = [p for p in self.side_pipelines.values() if slot.next_playable_card(p.side)]
+            pipes = [p for p in self.side_pipelines.values() if slot.next_combat_card(p.side)]
             if pipes:
                 if not pre_reveal:
                     self.game.context.record("duel_started", series="regular", number=space.current_duel_index + 1)
@@ -510,22 +544,25 @@ class Pipeline:
             # A side with no skill left is idle, so it cannot block a solo die.
             # An effect may have placed a skill for a previously empty side.
             joiners = [p for p in self.side_pipelines.values()
-                       if p not in pipes and slot.next_playable_card(p.side)]
+                       if p not in pipes and slot.next_combat_card(p.side)]
             if joiners:
                 for pipe in joiners:
                     pipe.push_pack(steps.DUEL)
                 yield from self._run_to(joiners, steps.NEXT_CARD)
                 pipes[:] = [p for p in self.side_pipelines.values() if p in pipes or p in joiners]
-            entering = [p for p in pipes if p.is_blocked_at(steps.NEXT_CARD) and slot.next_playable_card(p.side)]
+            entering = [p for p in pipes if p.is_blocked_at(steps.NEXT_CARD) and slot.next_combat_card(p.side)]
             if entering:
                 frame = self._frame
-                frame.before_use_sides = {p.side for p in entering}
-                yield tuple("before_skill_choice" if p.side in frame.before_use_sides else None
-                            for p in self.game.players)
+                frame.before_use_sides = {p.side for p in entering
+                                          if slot.get_current_card(p.side) is not None
+                                          and slot.get_current_card(p.side) not in frame.pairing_copies.values()}
+                if frame.before_use_sides:
+                    yield tuple("before_skill_choice" if p.side in frame.before_use_sides else None
+                                for p in self.game.players)
                 frame.before_use_sides.clear()
                 entrants = []
                 for pipe in entering:
-                    card = slot.next_playable_card(pipe.side)
+                    card = slot.next_combat_card(pipe.side)
                     if card is None:
                         continue
                     pipe.card = card
@@ -535,10 +572,15 @@ class Pipeline:
                     pipe.opposing_card = None
                     pipe.target = (slot.resolve_target_character(pipe.side)
                                    if frame.interrupt or frame.space is self.game.pre_reveal.space else None)
+                    if card in frame.pairing_copies.values() or slot.tail_is_live(card):
+                        pipe.paid = pipe.used = True
+                        frame.active_cards[pipe.side] = card
+                        pipe.push_pack(steps.REMAINING_SKILL)
+                        pipe.step()
+                        continue
                     pipe.push_pack(steps.SKILL)
                     entrants.append(pipe)
-                if entrants:
-                    yield from self._start_skills(pipes, entrants)
+                yield from self._start_skills(pipes, entrants)
                 # Skill-use effects can insert a card into an empty opposing side.
                 # Let it reach its first die before pairing this round.
                 continue
@@ -549,6 +591,10 @@ class Pipeline:
                     pipe.die = self._next_live_die(pipe)
                     (ready if pipe.die is not None else spent).append(pipe)
             if spent:
+                for pipe in spent:
+                    copy = self._frame.pairing_copies.pop(pipe.card, None)
+                    if copy is not None:
+                        copy.dissolve()
                 yield from self._run_to(spent, steps.NEXT_CARD)
                 for pipe in spent:
                     if not pipe.withdrawn:
@@ -564,16 +610,23 @@ class Pipeline:
 
             # Refill both sides before forming a pair. A rejected die consumes no
             # round and gives neither side a clash or skip result.
-            if not self._pay_dice_costs(ready):
+            live = [p for p in ready if not p.die.destroyed]
+            if not self._pay_dice_costs(live):
                 continue
 
-            for pipe in ready:
+            for pipe in live:
                 pipe.die.register_entries()
-            yield from self._play_round(ready)
+            yield from self._play_round(live)
             for pipe in ready:
                 die = pipe.die
                 if self._card_live(pipe):
                     pipe.card.advance_die()
+                destination = self._frame.move_after_die.pop(pipe.card, None)
+                if destination is not None and self._card_live(pipe) and pipe.card.has_next_die():
+                    destination.dice_tails[pipe.card] = slot.dice_tails.get(
+                        pipe.card, (slot, pipe.card.instantiated_dice))
+                    slot.finish_card(pipe.side, pipe.card)
+                    pipe.withdrawn = True
                 pipe.die = None
                 self._start_inserted(slot, pipes, pipe.side, die, "after_die")
             self._frame.pair = None
@@ -594,6 +647,7 @@ class Pipeline:
             pipe.range_pairing = None
         if len(current) == 2:
             far, near = sorted(current, key=lambda p: p.card.effective_range, reverse=True)
+            far.opposing_card, near.opposing_card = near.card, far.card
             if far.card.effective_range > near.card.effective_range + near.card.effective_ignore_range:
                 # A card must actually pay before it can blank the opposing
                 # pre-use and fee entries. Its price hooks can still alter or cancel payment.
@@ -625,7 +679,8 @@ class Pipeline:
     def _card_live(self, pipe):
         return (pipe.card is not None and not pipe.withdrawn and pipe.card.character.is_alive
                 and not pipe.card.destroyed and pipe.card.state != CardState.NEGATED
-                and (pipe.is_response or pipe.card in self._get_current_duel().get_content(pipe.side)))
+                and (pipe.is_response or pipe.card in self._get_current_duel().get_content(pipe.side)
+                     or self._get_current_duel().tail_is_live(pipe.card)))
 
     def _die_live(self, pipe):
         return self._card_live(pipe) and pipe.die is not None and not pipe.die.destroyed
@@ -633,7 +688,7 @@ class Pipeline:
     def _next_live_die(self, pipe):
         if self._card_live(pipe) and pipe.paid:
             while (die := pipe.card.get_current_die(self.game, register=False)) is not None:
-                if not die.destroyed:
+                if not die.destroyed or die.keep_position:
                     return die
                 pipe.card.advance_die()
         return None
@@ -888,8 +943,12 @@ class Pipeline:
             pipe.push_pack(steps.PASSIVE_SKIP)
             yield from self._run_to([pipe], "on_clash_skip")
         else:
-            with self.game.context.binding(**self._event(pipe)):
-                pipe.die.resolve_level()
+            event = self._event(pipe)
+            if not pipe.die.attack_redirected and event["target"] is None:
+                event["target"] = self.resolve_skill_target(pipe.card)
+            with self.game.context.binding(**event):
+                score = pipe.die.roll()
+                pipe.die.resolve_value(OpCode.RESOLVE_FINAL_SCORE, score)
             yield from self._hit(pipe)
 
     def _clash(self, participants):
@@ -942,8 +1001,10 @@ class Pipeline:
         if len(live) == 1 and not (self.current_clash_pair.split or self.current_clash_pair.skipped):
             # A formed pair lost its die before a result. The vanished side has
             # no result at all, including skip. Only the survivor enters a branch.
-            results = {live[0].side: "win"}
-            self.game.context.record("unopposed_clash_win", actor=live[0].card.character.combat_name)
+            survivor = live[0]
+            result = self.current_clash_pair.unopposed_results.get(survivor.die, "win")
+            results = {survivor.side: result}
+            self.game.context.record(f"unopposed_clash_{result}", actor=survivor.card.character.combat_name)
         if results and live:
             yield from self._resolve_results(live, results)
         yield from self._run_to(participants, "after_dice_clash")
@@ -992,18 +1053,22 @@ class Pipeline:
         if target is None or not target.is_alive:
             return
         if not self.current_clash_pair:
-            self.game.context.record("solo_attack", actor=pipe.card.character.combat_name, target=target.combat_name)
+            self.game.context.record("solo_attack", actor=pipe.card.character.combat_name, target=target.combat_name,
+                                     rolled=pipe.die.value, final_score=pipe.die.final_score)
         die = pipe.die
         die.hit_target = target
         if automatic:
             die.queued_hits.appendleft(("full", None))
         try:
-            while die.queued_hits and self._die_live(pipe) and target.is_alive and not self.game.is_over:
-                die.hit_mode, die.hit_origin = die.queued_hits.popleft()
+            while die.queued_hits and self._die_live(pipe) and not self.game.is_over:
+                die.hit_mode, die.hit_origin, *recipient = die.queued_hits.popleft()
+                die.hit_target = recipient[0] if recipient else target
+                if not die.hit_target.is_alive:
+                    continue
                 die.hit_index = die.landed_hits + 1
                 pipe.push_pack(steps.HIT)
                 yield from self._run_to([pipe], "after_dice_hit")
-                if die.landed_hits < die.hit_index:
+                if die.landed_hits < die.hit_index and not recipient:
                     break
         finally:
             die.hit_mode = die.hit_origin = die.hit_target = None
@@ -1070,6 +1135,9 @@ class Pipeline:
             elif name == "after_dice_use":
                 self.game.context.close_cancelled_use(pipe.side, die=pipe.die)
             return None
+        if name == "after_skill_use" and pipe.card in self._frame.pairing_copies.values():
+            self.game.context.close_cancelled_use(pipe.side, card=pipe.card)
+            return None
         # The skip packet's last wait is internal bookkeeping. A skipped die may
         # only trigger its explicit skip effect, not any other dice event.
         if pipe.die and pipe.die.clash_result == "skip" and name != "on_clash_skip":
@@ -1084,6 +1152,7 @@ class Pipeline:
         if not name.startswith("logic_"):
             if name == "on_skill_use":
                 pipe.used = True
+                event["duel"].used_skill_faces.setdefault(pipe.side, []).append(pipe.card.data)
                 self.game.turn_history.record_skill(pipe.card.character, pipe.card.id)
             valid = (lambda: self._die_live(pipe)) if name == "before_dice_use" else None
             self.game.context.dispatch_pipeline(name, valid=valid, **event)
@@ -1094,6 +1163,8 @@ class Pipeline:
                     if char.is_alive and not self.game.is_over:
                         char.on_duel_start()
         elif name == "logic_skill_use":
+            if (pipe.card.printed_data.get("form_when") or {}).get("snapshot") == "use":
+                pipe.card.form_locked = True
             discount = pipe.card.use_state.pop("use_discount", 0)
             with self.game.context.binding(**event):
                 pipe.payment = self.game.context.pay_skill_cost(pipe.card, discount)

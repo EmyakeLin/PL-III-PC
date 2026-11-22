@@ -14,6 +14,9 @@ def observations(rule, owner, card):
 
 def record_hand_play(card):
     owner = card.character
+    history = getattr(getattr(owner, "game", None), "turn_history", None)
+    if history is not None:
+        history.hand_plays[owner] += 1
     card.play_observations = {
         (name, index): observations(rule, owner, card)
         for name, status in getattr(owner, "status_rules", {}).items()

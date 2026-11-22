@@ -307,7 +307,7 @@ class Game:
     def finish_turn(self):
         if not self.turn_ending:
             self.context.dispatch_pipeline("before_turn_end")
-        if self.is_over:
+        if self.is_over or self.special.decision_owner is not None:
             return
         ordered = sorted(self.players, key=lambda player: player is not self.first_player)
         for player in ordered:

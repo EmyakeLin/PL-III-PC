@@ -99,6 +99,7 @@ class Dice:
         self.clash_result = None
         self.win_branch_skipped = False
         self.destroyed = False
+        self.keep_position = False
         self.critical = False
 
     @property

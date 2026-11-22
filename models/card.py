@@ -45,6 +45,8 @@ def validate_range_trait(data, key):
 
 
 def validate_skill_traits(data):
+    if (data.get("form_when") or {}).get("snapshot") not in (None, "use"):
+        raise ValueError("形态快照的时点必须是 use")
     for key in ("range_level", "ignore_range"):
         validate_range_trait(data, key)
     for key in ("pre_reveal", "interceptable", "anytime_replace", "before_duel_attack"):
@@ -130,6 +132,7 @@ class Card:
         self.printed_data = data
         self.data = data
         self._form = None
+        self.form_locked = False
         self.id = data["id"]
         self.name = data["name"]
         self.cost = data["cost"]
@@ -250,7 +253,7 @@ class Card:
 
     def refresh_status_form(self):
         condition = self.printed_data.get("form_when")
-        if condition:
+        if condition and not self.form_locked:
             value = self.character.statuses.get(condition["status"], 0)
             key = condition["form"] if matches_value(value, condition) else None
             if key != self._form:
@@ -373,7 +376,9 @@ class Card:
 
     def reset_for_draw(self):
         self.play_observations = {}
+        self.form_locked = False
         self.set_form(self._form if "form_when" in self.printed_data else None)
+        self.refresh_status_form()
         self.final_bonus = self.level_bonus = 0
         self.range_opponent = None
         self.range_deficit = 0

@@ -7,8 +7,11 @@ class TurnHistory:
     def __init__(self):
         self.skill_uses = Counter()
         self.clashes = Counter()
+        self.hand_plays = Counter()
+        self.previous_hand_plays = Counter()
 
     def clear(self):
+        self.previous_hand_plays, self.hand_plays = self.hand_plays, Counter()
         self.skill_uses.clear()
         self.clashes.clear()
 

@@ -132,6 +132,8 @@ def load_characters_from_packs(packs_dir=None):
                         raise ValueError(f"{char['name']} 的速度骰需要有效的正整数范围")
                 if "base_max_duels" in char and (type(char["base_max_duels"]) is not int or char["base_max_duels"] < 1):
                     raise ValueError(f"{char['name']} 的基础交锋上限必须为正整数")
+                if "min_max_duels" in char and (type(char["min_max_duels"]) is not int or char["min_max_duels"] < 0):
+                    raise ValueError(f"{char['name']} 的交锋额度下限须为非负整数")
                 regular = [card for card in char["skills"] if not card.get("out_of_combat")]
                 if len(regular) != RANK_SKILL_COUNT[rank]:
                     raise ValueError(f"{char['name']} 应有 {RANK_SKILL_COUNT[rank]} 张常规技能")

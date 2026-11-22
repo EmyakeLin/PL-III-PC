@@ -1,0 +1,1525 @@
+{
+  "faction": "经值事务所",
+  "turn_end_statuses": ["残雪·本回合基础值","涌流灌注","电击","麻痹","电流"],
+  "status_rules": {
+    "电叉·回环舞·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
+    "电叉·极锐刺·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
+    "深秋·风卷残叶·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
+    "残雪·幽蓝流光·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
+    "涌流灌注": {"per_stack":{"final_score":1}},
+    "电击": {"description":"每次实际被命中时获得等同层数的电流及一半层数（向下取整）的失衡。受到的麻痹至多额外增加3层，回合末解除。"},
+    "麻痹": {"description":"战斗骰的变动点数改取两枚同范围骰点差的绝对值，按正常下限处理，随后减少1层。回合末清空。"},
+    "电流": {"description":"回合末每4层（向上取整）造成1点穿甲，至多3点。超出上限的每点由持有者选择弃置一张手牌，然后解除。"}
+  },
+  "status_entries": {
+    "电击": [
+      {
+        "trigger": "AFTER RESOLVE_HIT",
+        "description": "被命中时按当前电击获得电流与失衡。",
+        "subject": "target",
+        "when": [{"left":"$event.result","op":"eq","right":true}],
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "电击", "STATUS_COUNT", "stacks", "STORE", "$self", "电流", "$local.stacks", "STATUS",
+            "$self", "失衡", "$local.stacks", 2, "FLOOR_DIV", "STATUS"
+          ]
+        }
+      },
+      {
+        "trigger": "BEFORE STATUS",
+        "description": "被施加的麻痹数量增加电击层数，至多+3。",
+        "subject": "target",
+        "when": [{"left":"$event.status","op":"eq","right":"麻痹"},{"left":"$pending.amount","op":"gt","right":0}],
+        "operation": {"op":"program","code":["$self","电击","STATUS_COUNT",3,"MIN","ADD"]}
+      }
+    ],
+    "麻痹": [
+      {
+        "trigger": "BEFORE RESOLVE_ROLL_VALUE",
+        "description": "本次战斗骰取两枚同范围骰的绝对差，随后减少1麻痹。",
+        "subject": "source",
+        "when": [{"left":"$event.die.card","op":"ne","right":null}],
+        "operation": {
+          "op": "program",
+          "code": [
+            "$event.low", "$event.high", "SAMPLE_INT", "SUB", "DUP", 0, "LT", [-1,"MUL"], "WHEN", "$self",
+            "麻痹", -1, "STATUS"
+          ]
+        }
+      }
+    ],
+    "电流": [
+      {
+        "trigger": "on_turn_closing",
+        "description": "电流按层数造成穿甲伤害，持有者选择弃置溢出数量的手牌。",
+        "subject": "any",
+        "damage_cause": "电流",
+        "turn_limit": {"key":"电流回合末","count":1},
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "电流", "STATUS_COUNT", 4, "CEIL_DIV", "amount", "STORE", "$self", "$local.amount", 3,
+            "MIN", "pierce", "none", "DAMAGE", "$local.amount", 3, "SUB", "$player.cardspace.hand.content",
+            "SIZE", "MIN", ["$self.is_alive"],
+            [
+              "$player.cardspace.hand.content",
+              {
+                "literal": {"optional":false,"then":{"op":"program","code":["$player","$event.chosen_card","DISCARD"]}}
+              },
+              "CHOOSE_CARD"
+            ],
+            "REPEAT_WHILE"
+          ]
+        }
+      }
+    ]
+  },
+  "characters": [
+    {
+      "id": "lan_qing",
+      "name": "澜清",
+      "title": "幽兰残雪",
+      "rank": "EMPOWERED_BOSS",
+      "max_hp": 18,
+      "base_max_duels": 3,
+      "min_max_duels": 2,
+      "passive_skills": [
+        {
+          "name": "经值事务所",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "description": "初始3交锋，始终至少2交锋。上一回合自身至少打出3张手牌时，回复1生命，本回合费用上限+1。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.turn_history.previous_hand_plays", "$self", 0, "LOOKUP", 3, "GE",
+                  ["$self",1,"HEAL","$player",1,"TURN_COST_ADD"], "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "幽兰残雪",
+          "entries": [
+            {
+              "trigger": "before_clash_result",
+              "description": "本回合首次即将拼负时摧毁目标骰，视为自身拼负，此后本回合骰子基础值+2。",
+              "when": [{"left":"$event.prospective_result","op":"eq","right":"lose"}],
+              "turn_limit": {"key":"幽兰残雪","count":1},
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.opponent_die", "DESTROY", "$event.die", "lose", "SET_UNOPPOSED_RESULT", "$self",
+                  "残雪·本回合基础值", 2, "STATUS"
+                ]
+              }
+            },
+            {
+              "trigger": "before_dice_use",
+              "description": "使用本骰时计入已获得的本回合与永久基础值。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.die", "$self", "残雪·本回合基础值", "STATUS_COUNT", "$self.rule_state", "永久基础值", 0, "LOOKUP",
+                  "ADD", "DIE_BASE_ADD"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "电叉工坊X",
+          "entries": [
+            {
+              "trigger": "AFTER RESOLVE_HIT",
+              "description": "命中带有电击的敌方目标时，对其施加1虚弱。",
+              "subject": "source",
+              "when": [
+                {"left":"$event.result","op":"eq","right":true},
+                {"left":"$event.target.player","op":"ne","right":"$self.player"},
+                {"left":{"field":"$event.target.statuses","key":"电击","default":0},"op":"gt","right":0}
+              ],
+              "operation": {"op":"program","code":["$event.target","虚弱",1,"STATUS"]}
+            }
+          ]
+        },
+        {
+          "name": "力量把握",
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_DAMAGE_STATUS",
+              "description": "自身造成的直伤在结算致命失衡前不足2点时不触发，不翻倍也不扣层。触发时该段转为穿甲。",
+              "subject": "source",
+              "when": [{"left":"$event.status","op":"eq","right":"致命失衡"}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.incoming", 2, "LT", [{"op":"cancel"}], ["factor","STORE","POP","pierce","$local.factor"],
+                  "IF_ELSE"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "lan_open",
+          "name": "起势·蓝电缠身",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "活化「电叉·回环舞」1次，同名牌共享。",
+              "operation": {"op":"program","code":["$self","电叉·回环舞·活化",1,"STATUS"]}
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "失去1生命，本回合首次拼点失败时对目标施加2电击。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", 1, "LOSE_HP", "$self", "lose", null, "CLASH_COUNT", 0, "EQ",
+                  [
+                    {
+                      "schedule": {
+                        "event": "on_clash_lose",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 0,
+                        "through_turns": 0,
+                        "uses": 1,
+                        "require_source_alive": false,
+                        "require_target_alive": true,
+                        "when": [{"left":"$event.source","op":"eq","right":"$event.scheduled.target"}],
+                        "then": ["$event.observed.target","电击",2,"STATUS"]
+                      }
+                    }
+                  ],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "对全体敌方角色施加1电击。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER", ["$event.target","电击",1,"STATUS"], "FOR_EACH_TARGET"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "施加1麻痹。",
+                  "operation": {"op":"program","code":["$event.target","麻痹",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_dance_2",
+          "name": "电叉·回环舞",
+          "cost": 2,
+          "form_when": {"status":"电叉·回环舞·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "电叉·回环舞",
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","电叉·回环舞·活化",1,"SPEND_STATUS"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "block",
+                  "level": 6,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "施加3电击。",
+                      "operation": {"op":"program","code":["$event.target","电击",3,"STATUS"]}
+                    }
+                  ]
+                },
+                {
+                  "type": "blunt",
+                  "level": 3,
+                  "entries": [
+                    "1物理",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "下回合施加1麻痹。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          {
+                            "schedule": {
+                              "event": "on_turn_prepared",
+                              "source": "$self",
+                              "target": "$event.target",
+                              "after_turns": 1,
+                              "through_turns": 1,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": true,
+                              "then": ["$event.scheduled.target","麻痹",1,"STATUS"]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "施加1电击。",
+                      "operation": {"op":"program","code":["$event.target","电击",1,"STATUS"]}
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "施加1电击。",
+                  "operation": {"op":"program","code":["$event.target","电击",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合施加1麻痹。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","麻痹",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "本技能回到手中。",
+                  "operation": {"op":"program","code":["$event.card","hand","MOVE_CARD"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_dance_3",
+          "name": "电叉·回环舞",
+          "cost": 3,
+          "form_when": {"status":"电叉·回环舞·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "电叉·回环舞",
+              "range_level": 1,
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","电叉·回环舞·活化",1,"SPEND_STATUS"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 5,
+                  "entries": [
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "群伤2。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target",2,"normal","slash","DAMAGE"], "FOR_EACH_TARGET"
+                        ],
+                        "damage_part": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "entries": [
+                    "1物理",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "施加2电击。",
+                      "operation": {"op":"program","code":["$event.target","电击",2,"STATUS"]}
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "下回合对全体敌方角色施加1麻痹。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER",
+                          [
+                            {
+                              "schedule": {
+                                "event": "on_turn_prepared",
+                                "source": "$self",
+                                "target": "$event.target",
+                                "after_turns": 1,
+                                "through_turns": 1,
+                                "uses": 1,
+                                "require_source_alive": false,
+                                "require_target_alive": true,
+                                "then": ["$event.scheduled.target","麻痹",1,"STATUS"]
+                              }
+                            }
+                          ],
+                          "FOR_EACH_TARGET"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "摧毁目标当前技能。",
+                  "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]}
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "反击1，对当前目标造成1普通伤害。",
+                  "operation": {"op":"program","code":["$event.target",1,"normal","evade","DAMAGE"]}
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "description": "施加3失衡。",
+                  "operation": {"op":"program","code":["$event.target","失衡",3,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "回复1生命值。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_turn",
+          "name": "转势·涌流灌注",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "活化「电叉·极锐刺」1次，同名牌共享。",
+              "operation": {"op":"program","code":["$self","电叉·极锐刺·活化",1,"STATUS"]}
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "本回合自身所有骰子最终点数+2。",
+              "operation": {"op":"program","code":["$self","涌流灌注",2,"STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "自身下一颗实际用骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "before_dice_use",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 0,
+                          "through_turns": null,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "when": [{"left":"$event.source","op":"eq","right":"$event.scheduled.target"}],
+                          "then": ["$event.die",4,"DIE_FINAL_ADD"]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "施加2失衡。",
+                  "operation": {"op":"program","code":["$event.target","失衡",2,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "「电叉·极锐刺」所有骰子基础值永久+1，至多4次。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self","极锐刺基础","$self.rule_state","极锐刺基础",0,"LOOKUP",1,"ADD",4,"MIN","SET_CHARACTER_STATE"]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_spike_2",
+          "name": "电叉·极锐刺",
+          "cost": 2,
+          "form_when": {"status":"电叉·极锐刺·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "电叉·极锐刺",
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","电叉·极锐刺·活化",1,"SPEND_STATUS"]}
+                },
+                {
+                  "trigger": "before_dice_use",
+                  "description": "计入「电叉·极锐刺」永久基础值提升。",
+                  "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 5,
+                  "entries": [
+                    "1物理",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "摧毁目标当前技能。",
+                      "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]}
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "将本技能剩余骰子置于最后一交锋。实体牌留在原位，原牌被摧毁时余骰随之失效。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.card","$game.active_duelspace.space",-1,null,"LOOKUP","DEFER_REMAINING_DICE"]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "entries": [
+                    "1物理",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "单方面攻击时，下回合施加2电击。",
+                      "when": [{"left":"$event.one_sided","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          {
+                            "schedule": {
+                              "event": "on_turn_prepared",
+                              "source": "$self",
+                              "target": "$event.target",
+                              "after_turns": 1,
+                              "through_turns": 1,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": true,
+                              "then": ["$event.scheduled.target","电击",2,"STATUS"]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "before_dice_use",
+              "description": "计入「电叉·极锐刺」永久基础值提升。",
+              "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "施加1电击。",
+                  "operation": {"op":"program","code":["$event.target","电击",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "触发失衡爆发。",
+                  "operation": {"op":"program","code":["$event.target","STAGGER"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_spike_3",
+          "name": "电叉·极锐刺",
+          "cost": 3,
+          "form_when": {"status":"电叉·极锐刺·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "电叉·极锐刺",
+              "range_level": 1,
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","电叉·极锐刺·活化",1,"SPEND_STATUS"]}
+                },
+                {
+                  "trigger": "before_dice_use",
+                  "description": "计入「电叉·极锐刺」永久基础值提升。",
+                  "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "multiplier": 3,
+                  "entries": [
+                    "3穿甲",
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "拼点胜利时触发失衡爆发。",
+                      "operation": {"op":"program","code":["$event.target","STAGGER"]}
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "施加4电击。",
+                      "operation": {"op":"program","code":["$event.target","电击",4,"STATUS"]}
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "摧毁目标当前技能。",
+                      "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]}
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "before_dice_use",
+              "description": "计入「电叉·极锐刺」永久基础值提升。",
+              "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
+            },
+            {
+              "trigger": "on_clash_lose",
+              "description": "本技能骰子拼负时，对全体敌方角色施加1电击。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                  "FIRST_IN_ORDER", ["$event.target","电击",1,"STATUS"], "FOR_EACH_TARGET"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {"type":"pierce","level":3,"entries":["1物理"]},
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "下回合施加1麻痹。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","麻痹",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "下回合对全体敌方角色施加2麻痹。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER",
+                      [
+                        {
+                          "schedule": {
+                            "event": "on_turn_prepared",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 1,
+                            "through_turns": 1,
+                            "uses": 1,
+                            "require_source_alive": false,
+                            "require_target_alive": true,
+                            "then": ["$event.scheduled.target","麻痹",2,"STATUS"]
+                          }
+                        }
+                      ],
+                      "FOR_EACH_TARGET"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_close",
+          "name": "收势·灵器同思",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "活化「深秋·风卷残叶」1次，同名牌共享。",
+              "operation": {"op":"program","code":["$self","深秋·风卷残叶·活化",1,"STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "「深秋·风卷残叶」骰级永久+1，至多3次。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self","风卷残叶骰级","$self.rule_state","风卷残叶骰级",0,"LOOKUP",1,"ADD",3,"MIN","SET_CHARACTER_STATE"]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "施加2失衡。",
+                  "operation": {"op":"program","code":["$event.target","失衡",2,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "抽2张牌。",
+                  "operation": {"op":"program","code":["$player",2,"DRAW"]}
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "description": "施加4失衡。",
+                  "operation": {"op":"program","code":["$event.target","失衡",4,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "施加4失衡。",
+                  "operation": {"op":"program","code":["$event.target","失衡",4,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_leaf_3",
+          "name": "深秋·风卷残叶",
+          "cost": 3,
+          "form_when": {"status":"深秋·风卷残叶·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "深秋·风卷残叶",
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","深秋·风卷残叶·活化",1,"SPEND_STATUS"]}
+                },
+                {
+                  "trigger": "on_skill_use",
+                  "description": "计入「深秋·风卷残叶」永久骰级提升。",
+                  "operation": {"op":"program","code":["$event.card","$self.rule_state","风卷残叶骰级",0,"LOOKUP","SKILL_LEVEL_ADD"]}
+                },
+                {
+                  "trigger": "after_skill_use",
+                  "description": "本技能回到手中。",
+                  "operation": {"op":"program","code":["$event.card","hand","MOVE_CARD"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "evade",
+                  "level": 1,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "摧毁目标下一颗待用骰，保留其骰位。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target","NEXT_PLANNED_DIE",{"call":"DESTROY","with":{"keep_position":true}}]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "群伤2。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target",2,"normal","slash","DAMAGE"], "FOR_EACH_TARGET"
+                        ],
+                        "damage_part": true
+                      }
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "下回合获得2强壮。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          {
+                            "schedule": {
+                              "event": "on_turn_prepared",
+                              "source": "$self",
+                              "target": "$self",
+                              "after_turns": 1,
+                              "through_turns": 1,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": true,
+                              "then": ["$event.scheduled.target","强壮",2,"STATUS"]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "blunt",
+                  "level": 4,
+                  "entries": [
+                    "1物理",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "依次触发两次失衡爆发。",
+                      "operation": {"op":"program","code":["$event.target","STAGGER","$event.target","STAGGER"]}
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "计入「深秋·风卷残叶」永久骰级提升。",
+              "operation": {"op":"program","code":["$event.card","$self.rule_state","风卷残叶骰级",0,"LOOKUP","SKILL_LEVEL_ADD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "摧毁目标下一颗待用骰，后续骰顺位递补。",
+                  "operation": {"op":"program","code":["$event.target","NEXT_PLANNED_DIE","DESTROY"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "群伤2。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER", ["$event.target",2,"normal","slash","DAMAGE"], "FOR_EACH_TARGET"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "抽1张牌。",
+                  "operation": {"op":"program","code":["$player",1,"DRAW"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_leaf_4",
+          "name": "深秋·风卷残叶",
+          "cost": 4,
+          "form_when": {"status":"深秋·风卷残叶·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "深秋·风卷残叶",
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","深秋·风卷残叶·活化",1,"SPEND_STATUS"]}
+                },
+                {
+                  "trigger": "on_skill_use",
+                  "description": "计入「深秋·风卷残叶」永久骰级提升。",
+                  "operation": {"op":"program","code":["$event.card","$self.rule_state","风卷残叶骰级",0,"LOOKUP","SKILL_LEVEL_ADD"]}
+                },
+                {
+                  "trigger": "on_skill_use",
+                  "description": "抽1张牌，回复1生命值。",
+                  "operation": {"op":"program","code":["$player",1,"DRAW","$self",1,"HEAL"]}
+                },
+                {
+                  "trigger": "after_skill_use",
+                  "description": "本技能回到手中。",
+                  "operation": {"op":"program","code":["$event.card","hand","MOVE_CARD"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "evade",
+                  "level": 3,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "摧毁目标下一颗待用骰，保留其骰位。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target","NEXT_PLANNED_DIE",{"call":"DESTROY","with":{"keep_position":true}}]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "pierce",
+                  "level": 3,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "群伤3。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target",3,"normal","pierce","DAMAGE"], "FOR_EACH_TARGET"
+                        ],
+                        "damage_part": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "群伤1。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target",1,"normal","slash","DAMAGE"], "FOR_EACH_TARGET"
+                        ],
+                        "damage_part": true
+                      }
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "对全体敌方角色分别触发失衡爆发。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target","STAGGER"], "FOR_EACH_TARGET"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "blunt",
+                  "level": 1,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "下回合施加1骰子等级降低。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          {
+                            "schedule": {
+                              "event": "on_turn_prepared",
+                              "source": "$self",
+                              "target": "$event.target",
+                              "after_turns": 1,
+                              "through_turns": 1,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": true,
+                              "then": ["$event.scheduled.target","骰子等级降低",1,"STATUS"]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "计入「深秋·风卷残叶」永久骰级提升。",
+              "operation": {"op":"program","code":["$event.card","$self.rule_state","风卷残叶骰级",0,"LOOKUP","SKILL_LEVEL_ADD"]}
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "摧毁当前对阵技能，与上一交锋敌方实际使用的第一张技能的空白复制品拼点。首场取下一场首张敌牌；命中仍归当前敌手，无样本时单方面攻击。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "SELECT_SKILL_TARGET", "victim", "STORE", "$event.opponent_card", "DESTROY",
+                  "$player", "OPPONENT", {"field":"side"}, "side", "STORE",
+                  "$game.active_duelspace.current_duel_index", 0, "EQ",
+                  ["$game.active_duelspace",1,"SLOT_AT_OFFSET","$local.side","SLOT_CARDS","FIRST",{"field":"data"}],
+                  [
+                    "$game.active_duelspace", -1, "SLOT_AT_OFFSET", {"field":"used_skill_faces"}, "$local.side",
+                    {"literal":[]}, "LOOKUP", "FIRST"
+                  ],
+                  "IF_ELSE", "face", "STORE", "$event.card", "$local.victim", "$local.face",
+                  "BLANK_SKILL_FACE", "SKILL_COPY", "PAIR_SKILL_COPY"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "对全体敌方角色施加2失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER", ["$event.target","失衡",2,"STATUS"], "FOR_EACH_TARGET"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "multiplier": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "群伤2。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER", ["$event.target",2,"normal","slash","DAMAGE"], "FOR_EACH_TARGET"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "抽1张手牌。",
+                  "operation": {"op":"program","code":["$player",1,"DRAW"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 1,
+              "multiplier": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "回复1生命值。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_light",
+          "name": "残雪·幽蓝流光",
+          "cost": 5,
+          "form_when": {"status":"残雪·幽蓝流光·活化","form":"active","snapshot":"use"},
+          "forms": {
+            "active": {
+              "name": "残雪·幽蓝流光",
+              "entries": [
+                {
+                  "trigger": "before_skill_use",
+                  "description": "有至少两个不同名字活化且本技能尚未活化时，使本次大招活化并令其他技能常态化；否则活化其余所有常态技能。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "电叉·回环舞·活化", "STATUS_COUNT", "$self", "电叉·极锐刺·活化", "STATUS_COUNT", "ADD", "$self",
+                      "深秋·风卷残叶·活化", "STATUS_COUNT", "ADD", 2, "GE", "$self", "残雪·幽蓝流光·活化", "STATUS_COUNT", 0, "EQ",
+                      "AND",
+                      [
+                        "$self", "残雪·幽蓝流光·活化", 1, "STATUS", "$self", "电叉·回环舞·活化", "all", "SPEND_STATUS", "$self",
+                        "电叉·极锐刺·活化", "all", "SPEND_STATUS", "$self", "深秋·风卷残叶·活化", "all", "SPEND_STATUS"
+                      ],
+                      [
+                        "$self", "电叉·回环舞·活化", "STATUS_COUNT", 0, "EQ", ["$self","电叉·回环舞·活化",1,"STATUS"], "WHEN", "$self",
+                        "电叉·极锐刺·活化", "STATUS_COUNT", 0, "EQ", ["$self","电叉·极锐刺·活化",1,"STATUS"], "WHEN", "$self",
+                        "深秋·风卷残叶·活化", "STATUS_COUNT", 0, "EQ", ["$self","深秋·风卷残叶·活化",1,"STATUS"], "WHEN"
+                      ],
+                      "IF_ELSE"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_skill_use",
+                  "description": "本次使用活化态，消耗同名技能共享的1次活化。",
+                  "operation": {"op":"program","code":["$self","残雪·幽蓝流光·活化",1,"SPEND_STATUS"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "evade",
+                  "level": 6,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "摧毁目标当前技能。",
+                      "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]}
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "群伤2。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target",2,"normal","slash","DAMAGE"], "FOR_EACH_TARGET"
+                        ],
+                        "damage_part": true
+                      }
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "下回合对全体敌方角色施加1骰子等级降低。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER",
+                          [
+                            {
+                              "schedule": {
+                                "event": "on_turn_prepared",
+                                "source": "$self",
+                                "target": "$event.target",
+                                "after_turns": 1,
+                                "through_turns": 1,
+                                "uses": 1,
+                                "require_source_alive": false,
+                                "require_target_alive": true,
+                                "then": ["$event.scheduled.target","骰子等级降低",1,"STATUS"]
+                              }
+                            }
+                          ],
+                          "FOR_EACH_TARGET"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "pierce",
+                  "level": 3,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "群伤3。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                          "FIRST_IN_ORDER", ["$event.target",3,"normal","pierce","DAMAGE"], "FOR_EACH_TARGET"
+                        ],
+                        "damage_part": true
+                      }
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "自身骰子基础值永久+1。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$self","永久基础值","$self.rule_state","永久基础值",0,"LOOKUP",1,"ADD","SET_CHARACTER_STATE"]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "before_skill_use",
+              "description": "有至少两个不同名字活化且本技能尚未活化时，使本次大招活化并令其他技能常态化；否则活化其余所有常态技能。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "电叉·回环舞·活化", "STATUS_COUNT", "$self", "电叉·极锐刺·活化", "STATUS_COUNT", "ADD", "$self",
+                  "深秋·风卷残叶·活化", "STATUS_COUNT", "ADD", 2, "GE", "$self", "残雪·幽蓝流光·活化", "STATUS_COUNT", 0, "EQ",
+                  "AND",
+                  [
+                    "$self", "残雪·幽蓝流光·活化", 1, "STATUS", "$self", "电叉·回环舞·活化", "all", "SPEND_STATUS", "$self",
+                    "电叉·极锐刺·活化", "all", "SPEND_STATUS", "$self", "深秋·风卷残叶·活化", "all", "SPEND_STATUS"
+                  ],
+                  [
+                    "$self", "电叉·回环舞·活化", "STATUS_COUNT", 0, "EQ", ["$self","电叉·回环舞·活化",1,"STATUS"], "WHEN", "$self",
+                    "电叉·极锐刺·活化", "STATUS_COUNT", 0, "EQ", ["$self","电叉·极锐刺·活化",1,"STATUS"], "WHEN", "$self",
+                    "深秋·风卷残叶·活化", "STATUS_COUNT", 0, "EQ", ["$self","深秋·风卷残叶·活化",1,"STATUS"], "WHEN"
+                  ],
+                  "IF_ELSE"
+                ]
+              }
+            },
+            {
+              "trigger": "on_dice_hit",
+              "description": "对下一交锋所属的敌方角色追加一次命中，同一角色不重复命中。",
+              "when": [{"left":"$event.hit_origin","op":"ne","right":"幽蓝流光"}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.active_duelspace", 1, "SLOT_AT_OFFSET", "$player", "OPPONENT", {"field":"side"},
+                  "SLOT_CARDS", "FIRST", {"field":"character"}, "recipient", "STORE", "$local.recipient",
+                  "$local.recipient", "$event.target", "IS", "NOT", "AND",
+                  ["$event.die","full","幽蓝流光","$local.recipient","QUEUE_TARGET_HIT"],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 6,
+              "multiplier": 2,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "对全体敌方角色施加2电击。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER", ["$event.target","电击",2,"STATUS"], "FOR_EACH_TARGET"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 5,
+              "multiplier": 2,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "自身骰子基础值永久+1。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self","永久基础值","$self.rule_state","永久基础值",0,"LOOKUP",1,"ADD","SET_CHARACTER_STATE"]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "lan_end",
+          "name": "终雪",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "活化「残雪·幽蓝流光」1次，同名牌共享。",
+              "operation": {"op":"program","code":["$self","残雪·幽蓝流光·活化",1,"STATUS"]}
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "敌方每有8层失衡（致命失衡每层折4层），本技能拼点点数+1，至多+8。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  0, "sum", "STORE", "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"],
+                  "FILTER",
+                  [
+                    "$local.sum", "$event.item", "失衡", "STATUS_COUNT", "ADD", "$event.item", "致命失衡", "STATUS_COUNT", 4,
+                    "MUL", "ADD", "sum", "STORE"
+                  ],
+                  "EACH", "$event.card", "拼点加值", "$local.sum", 8, "FLOOR_DIV", 8, "MIN", "SET_SKILL_STATE"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESOLVE_CLASH_SCORE",
+              "description": "按使用时记录的总量修正本技能的拼点点数。",
+              "operation": {"op":"program","code":["$event.card.use_state","拼点加值",0,"LOOKUP","ADD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "触发失衡爆发，本次成功时再施加3失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", {"call":"STAGGER","result":"result","default":false},
+                      ["$event.target","失衡",3,"STATUS"], "WHEN"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "对全体敌方角色施加2电击。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "$event.target",
+                      "FIRST_IN_ORDER", ["$event.target","电击",2,"STATUS"], "FOR_EACH_TARGET"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "对每个其他存活敌人各造成一次命中。",
+                  "when": [{"left":"$event.hit_origin","op":"ne","right":"终雪"}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                      ["$event.item","$event.target","IS","NOT"], "FILTER",
+                      ["$event.die","full","终雪","$event.item","QUEUE_TARGET_HIT"],
+                      "EACH"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "触发失衡爆发。",
+                  "operation": {"op":"program","code":["$event.target","STAGGER"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "施加1麻痹。",
+                  "operation": {"op":"program","code":["$event.target","麻痹",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -25,7 +25,8 @@ class DuelSpace:
                     len(self.space))
 
     def has_next_duel(self):
-        return any(any(slot.content.values()) for slot in self.space[self.current_duel_index:])
+        return any(any(slot.content.values()) or any(slot.tail_is_live(card) for card in slot.dice_tails)
+                   for slot in self.space[self.current_duel_index:])
 
 
 class DuelSlot:
@@ -34,6 +35,9 @@ class DuelSlot:
         self.content = {}
         self.settled = False
         self.current_card_index = {}
+        self.used_skill_faces = {}
+        # A continuation plays the original dice. The physical card stays in its own slot.
+        self.dice_tails = {}
         self.damage_taken = {}
         self.status_lost = {}
 
@@ -67,6 +71,20 @@ class DuelSlot:
             self.advance_card(side)
         return None
 
+    def tail_is_live(self, card):
+        if card not in self.dice_tails:
+            return False
+        origin, instances = self.dice_tails[card]
+        return (not card.destroyed and card.character.is_alive and card.instantiated_dice is instances
+                and card in origin.get_content(card.player.side))
+
+    def next_combat_card(self, side):
+        ordinary = self.next_playable_card(side)
+        if ordinary is not None:
+            return ordinary
+        return next((card for card in self.dice_tails
+                     if card.player.side == side and self.tail_is_live(card)), None)
+
     def get_current_opposing_card(self, attacking_side):
         if self.game:
             side = next(p.side for p in self.game.players if p.side != attacking_side)
@@ -81,6 +99,7 @@ class DuelSlot:
         # Death may already have removed the current card and shifted its successor into place.
         if self.get_current_card(side) is card:
             self.advance_card(side)
+        self.dice_tails.pop(card, None)
 
     def remove_card(self, card):
         """Detach this exact card; keep the cursor pointing at the next playable card."""
@@ -131,6 +150,7 @@ class ClashPair:
         self.dice_dict = dict(dice_dict)
         self.split = False
         self.skipped = False
+        self.unopposed_results = {}
 
     def clash_roll(self):
         for die in self.dice_dict.values():

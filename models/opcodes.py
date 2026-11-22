@@ -137,11 +137,16 @@ def handle_grant_die_response(ctx):
 
 
 def handle_queue_hit(ctx):
+    targeted = ctx.current_op == OpCode.QUEUE_TARGET_HIT
+    target = ctx.pop() if targeted else None
     origin, mode, die = ctx.pop(), ctx.pop(), ctx.pop()
     if mode not in ("full", "damage_only", "effects_only"):
         raise ValueError(f"未知命中结算方式 {mode!r}")
     if die is not None and die.is_attack and _usable_component(die):
-        die.queued_hits.append((mode, origin))
+        if targeted and (target is None or not target.is_alive):
+            return False
+        recipient = target if targeted else die.hit_target
+        die.queued_hits.append((mode, origin, recipient) if recipient is not None else (mode, origin))
         return True
     return False
 
@@ -151,6 +156,17 @@ def handle_skip_round(ctx):
     pair = ctx.game.pipeline.current_clash_pair
     if pair is not None and die in pair.dice_dict.values():
         pair.skipped = True
+        return True
+    return False
+
+
+def handle_unopposed_result(ctx):
+    result, die = ctx.pop(), ctx.pop()
+    if result not in ("win", "lose", "draw"):
+        raise ValueError(f"未知的拼点结果 {result!r}")
+    pair = ctx.game.pipeline.current_clash_pair
+    if pair is not None and die in pair.dice_dict.values() and not die.destroyed:
+        pair.unopposed_results[die] = result
         return True
     return False
 
@@ -581,10 +597,31 @@ def handle_damage_modifier(ctx):
 def handle_roll(ctx):
     die, bonus, high, low = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
     rng = getattr(ctx.game, "rng", random)
-    die.value = max(low, min(high, rng.randint(low, high) + bonus))
+    ctx.stack.extend((die, rng.randint(low, high)))
+    rolled = ctx.execute_op(OpCode.RESOLVE_ROLL_VALUE, low=low, high=high)
+    if rolled is None:
+        ctx.current_op = None
+        return
+    die.value = max(low, min(high, rolled + bonus))
     for mode, amount in ctx.roll_adjustments.pop(die, ()):
         ctx.eval_block([die, mode, amount, OpCode.UPDATE_ROLL])
     return die.value
+
+
+def handle_roll_value(ctx):
+    value = ctx.pop()
+    ctx.pop()
+    return value
+
+
+def handle_defer_remaining_dice(ctx):
+    slot, card = ctx.pop(), ctx.pop()
+    return ctx.game.pipeline.defer_remaining_dice(card, slot)
+
+
+def handle_pair_skill_copy(ctx):
+    sample, card = ctx.pop(), ctx.pop()
+    return ctx.game.pipeline.pair_skill_copy(card, sample)
 
 
 def handle_move_card(ctx):
@@ -695,6 +732,30 @@ def handle_random_int(ctx):
     ctx.push(roll)
 
 
+def damage_adjustments(modifiers, grade, multiplier):
+    fixed = 0
+    for kind, value, defense_grade in modifiers:
+        reduction = (kind == "armor" or kind == "damage_add" and value < 0
+                     or kind == "damage_multiply" and value < 1)
+        if reduction and GRADE_RANK[defense_grade] < GRADE_RANK[grade]:
+            continue
+        if kind == "damage_multiply":
+            multiplier *= value
+        else:
+            fixed += -value if kind == "armor" else value
+    return multiplier, fixed
+
+
+def handle_damage_status(ctx):
+    factor, grade = ctx.pop(), ctx.pop()
+    ctx.pop()
+    ctx.pop()
+    if grade not in GRADE_RANK or not isinstance(factor, (int, float)) or factor < 0:
+        raise ValueError("状态伤害修正需要有效的伤害等级与非负倍率")
+    ctx.event["penetration"] = grade
+    return factor
+
+
 def handle_damage(ctx):
     attack_type, grade, amount, target = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
     if target == "target":
@@ -705,18 +766,24 @@ def handle_damage(ctx):
     source = ctx.event.get("source")
     ctx.event["base_amount"] = amount
     precomputed = ctx.event["damage_precomputed"]
-    multiplier = 1 if precomputed else target.damage_multiplier()
-    fixed = 0
     modifiers = () if precomputed else ctx.event["modifiers"]
-    for kind, value, defense_grade in modifiers:
-        reduction = (kind == "armor" or kind == "damage_add" and value < 0
-                     or kind == "damage_multiply" and value < 1)
-        if reduction and GRADE_RANK[defense_grade] < GRADE_RANK[grade]:
+    status_factor = 1
+    suppressed = []
+    for name in tuple(target.statuses):
+        factor = target.status_rules.get(name, {}).get("incoming_damage_multiplier")
+        if factor is None or precomputed:
             continue
-        if kind == "damage_multiply":
-            multiplier *= value
+        multiplier, fixed = damage_adjustments(modifiers, grade, status_factor)
+        preview = max(0, int(amount * adjusted_value(ctx, "damage_multiplier", multiplier) + fixed))
+        ctx.stack.extend((target, name, grade, factor))
+        receipt = ctx.execute_op(OpCode.RESOLVE_DAMAGE_STATUS, result_field=None, incoming=preview)
+        if receipt is None or receipt["result"] is None:
+            suppressed.append(name)
         else:
-            fixed += -value if kind == "armor" else value
+            grade = receipt["penetration"]
+            status_factor *= receipt["result"]
+    ctx.event.update(suppressed_damage_statuses=suppressed, penetration=grade)
+    multiplier, fixed = damage_adjustments(modifiers, grade, status_factor)
     if not precomputed:
         multiplier = adjusted_value(ctx, "damage_multiplier", multiplier)
         if ctx.executions and ctx.executions[-1].cancelled:
@@ -944,6 +1011,7 @@ def handle_destroy(ctx):
     elif hasattr(target, "card") and hasattr(target, "roll"):
         if not target.destroyed:
             ctx.record("die_destroyed", position=getattr(target, "position", None))
+            target.keep_position = ctx.event.get("keep_position", False)
         target.destroyed = True
     else:
         raise ValueError("摧毁只能作用于技能、骰子或一次词条执行")
@@ -992,9 +1060,12 @@ DISPATCH_TABLE = {
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
     OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
+    OpCode.QUEUE_TARGET_HIT: handle_queue_hit, OpCode.SET_UNOPPOSED_RESULT: handle_unopposed_result,
     OpCode.SCHEDULE_EFFECT: schedule_effect,
     OpCode.SET_SKILL_FORM: handle_set_skill_form, OpCode.SPLIT_CLASH: handle_split_clash,
     OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
+    OpCode.DEFER_REMAINING_DICE: handle_defer_remaining_dice, OpCode.RESOLVE_ROLL_VALUE: handle_roll_value,
+    OpCode.PAIR_SKILL_COPY: handle_pair_skill_copy, OpCode.RESOLVE_DAMAGE_STATUS: handle_damage_status,
     OpCode.TAKE_HAND_CARD: handle_take_hand_card, OpCode.CHOOSE_SLOT: handle_choose_slot,
     OpCode.CHECK_DEATH: handle_check_death, OpCode.RANDOM_INT: handle_random_int,
     OpCode.RESOLVE_DAMAGE: handle_resolve_damage, OpCode.FINALIZE_DAMAGE: handle_finalize_damage,
@@ -1059,9 +1130,14 @@ OPERANDS = {
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
     OpCode.QUEUE_HIT: ("die", "mode", "origin"), OpCode.SKIP_ROUND: ("die",),
+    OpCode.QUEUE_TARGET_HIT: ("die", "mode", "origin", "target"),
+    OpCode.SET_UNOPPOSED_RESULT: ("die", "result_value"),
     OpCode.SCHEDULE_EFFECT: ("source", "target", "capture", "terms", "block"),
     OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
+    OpCode.DEFER_REMAINING_DICE: ("card", "slot"), OpCode.RESOLVE_ROLL_VALUE: ("die", "value"),
+    OpCode.PAIR_SKILL_COPY: ("card", "sample"),
+    OpCode.RESOLVE_DAMAGE_STATUS: ("target", "status", "penetration", "factor"),
     OpCode.TAKE_HAND_CARD: ("target", "receiver"), OpCode.CHOOSE_SLOT: ("subject", "candidates", "continuation"),
     OpCode.CHECK_DEATH: ("target",), OpCode.RANDOM_INT: ("low", "high"),
     OpCode.RESOLVE_DAMAGE: ("target", "amount"), OpCode.FINALIZE_DAMAGE: ("target", "amount"),

@@ -31,6 +31,9 @@ class SkillCopy:
     owner: Character
     data: dict
 
+    def instantiate(self):
+        return Card(self.owner.player, self.data, self.owner, temporary=True)
+
 
 @dataclass(frozen=True)
 class SkillUse:
@@ -159,7 +162,7 @@ class SpecialActions:
             spec = use.card
             if not spec.owner.is_alive or self.game.is_over:
                 return False
-            copy = Card(spec.owner.player, spec.data, spec.owner, temporary=True)
+            copy = spec.instantiate()
             inserted = self.game.pipeline.insert_skill(replace(use, card=copy), anchor, ctx.event)
             if not inserted:
                 copy.dissolve()

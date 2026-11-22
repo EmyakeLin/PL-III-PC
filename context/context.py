@@ -264,6 +264,10 @@ class Context:
                     return None
                 fields["status"] = self.stack[mark + names.index("status")] = name
             fields["ability"] = None
+        if opcode == OpCode.DESTROY:
+            fields.setdefault("keep_position", False)
+            if type(fields["keep_position"]) is not bool:
+                raise ValueError("摧毁骰位的保留标记须为布尔值")
         if opcode == OpCode.DAMAGE:
             # Nested status and character effects own their damage independently of
             # the die whose event they observed. A die entry owns its own segments.
@@ -326,7 +330,7 @@ class Context:
             fields.setdefault("require_full", False)
             fields["defer_spend_effects"] = defer_payment is not None
         elif opcode in (OpCode.SKILL_FINAL_ADD, OpCode.SKILL_LEVEL_ADD, OpCode.SET_SKILL_STATE,
-                        OpCode.QUEUE_HIT, OpCode.SKIP_ROUND,
+                        OpCode.QUEUE_HIT, OpCode.QUEUE_TARGET_HIT, OpCode.SET_UNOPPOSED_RESULT, OpCode.SKIP_ROUND,
                         OpCode.DIE_FINAL_ADD, OpCode.DIE_BASE_ADD, OpCode.DIE_LEVEL_ADD, OpCode.SET_DIE_STATE,
                         OpCode.REPEAT_DIE, OpCode.ROUTE_DIE_ATTACK):
             part = fields.get("die") or fields["card"]

@@ -1,6 +1,5 @@
 from collections import Counter
 from enum import Enum, auto
-from math import prod
 import random
 
 from models.card import Card
@@ -114,7 +113,7 @@ class Character:
 
     @property
     def max_duels(self):
-        return max(0, self.base_duels(self.data) + self.turn_duel_bonus)
+        return max(self.data.get("min_max_duels", 0), self.base_duels(self.data) + self.turn_duel_bonus)
 
     @property
     def combat_name(self):
@@ -374,9 +373,6 @@ class Character:
         # An interrupt retains the outer round's counter until it resumes.
         self.round_triggers = Counter()
 
-    def damage_multiplier(self):
-        return prod(self.status_rules.get(name, {}).get("incoming_damage_multiplier", 1) for name in self.statuses)
-
     def _status_event(self, event, **fields):
         if self.is_alive:
             self._effect_context.dispatch_pipeline(event, source=self, target=self, side=getattr(self.player, "side", None),
@@ -500,7 +496,8 @@ class Character:
             eroded[field] = worn
         lost = min(self.hp, remaining)
         self.hp -= lost
-        self._status_event("on_direct_damage_applied")
+        self._status_event("on_direct_damage_applied",
+                           suppressed_damage_statuses=self._effect_context.event.get("suppressed_damage_statuses", ()))
         self.check_death()
         self.record("damage_settled", grade=grade, incoming=incoming, multiplier=multiplier,
                     absorbed=absorbed, eroded=eroded, hp_lost=lost, hp=self.hp, maximum=self.max_hp,

@@ -41,6 +41,21 @@ def skill_copy(vm):
     vm.push(SkillCopy(owner, data) if data is not None and owner is not None else None)
 
 
+def blank_skill_face(vm):
+    """Keep a face's printed dice and numeric formula, removing its effects and costs."""
+    face = vm.pop()
+    if face is None:
+        vm.push(None)
+        return
+    dice = []
+    for printed in face.get("dice", ()):
+        die = {key: printed[key] for key in ("level", "roll_max", "base_value", "multiplier",
+                                              "calc_formula", "calc_fomula") if key in printed}
+        die["type"] = "skip" if printed["type"] == "skip" else "blank"
+        dice.append(die)
+    vm.push(dict(id=face["id"], name=face["name"] + "（空白复制品）", cost=0, dice=dice))
+
+
 def contains(vm):
     element, collection = vm.pop(), vm.pop()
     vm.push(element in collection)
@@ -56,6 +71,7 @@ WORDS = {
     "CHARACTER_OF": lambda vm: vm.push(character_of(vm.pop())),
     "STATUS_ACTIVE": status_active,
     "SKILL_USE": skill_use, "SKILL_COPY": skill_copy, "INSERT_AT": insert_at,
+    "BLANK_SKILL_FACE": blank_skill_face,
     "CARD_COST": lambda vm: vm.push(vm.pop().cost), "CONTAINS": contains,
     "SHIELD_COUNT": shield_count,
     "STATUS_COUNT": status_count,

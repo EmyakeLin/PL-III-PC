@@ -57,7 +57,8 @@
       "trigger": "on_direct_damage_applied",
       "description": "持有至少 1 层时，所受直伤翻倍，多层共用这一倍率。受到至少 1 点直伤后减少 1 层，每轮用骰至多因此减少 1 层。即使护盾挡下全部伤害，也会消耗层数。",
       "operation": {"op": "program", "code": [
-        "$self", "致命失衡损耗", "ROUND_TRIGGER_COUNT", 1, "LT",
+        "$event.suppressed_damage_statuses", "致命失衡", "CONTAINS", "NOT",
+        "$self", "致命失衡损耗", "ROUND_TRIGGER_COUNT", 1, "LT", "AND",
         ["$self", "致命失衡损耗", "RECORD_ROUND_TRIGGER", "$self", "致命失衡", -1, "STATUS"], "WHEN"
       ]}
     }]
