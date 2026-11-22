@@ -17,3 +17,6 @@ Thumbs.db
 
 # Local battle reports
 /战斗日志/
+
+# Local archive of retired character packs
+/_packs_legacy/
