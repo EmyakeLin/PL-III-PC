@@ -15,6 +15,8 @@ from models.dice import TYPE_NAMES
 from pipeline.pipeline_errors import PipelineFinished
 from player.player import Player
 
+from .fx_compiler import discover_character_fx, discover_fx_scripts
+
 
 class StaleActionError(ValueError):
     """The client submitted an action for an earlier position."""
@@ -522,6 +524,8 @@ class BattleMatch:
         teams = _normalize_roster(roster, pool)
         self._character_colors = _assign_character_colors(pool)
         self._character_sprites = _discover_character_sprites(pool)
+        self._character_fx = discover_character_fx(pool, self._character_colors)
+        self._fx_scripts = discover_fx_scripts()
         self.choices = [
             {
                 **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")},
@@ -647,6 +651,8 @@ class BattleMatch:
             "speed_rolls": list(self.game.last_speed_rolls),
             "character_colors": dict(self._character_colors),
             "character_sprites": dict(self._character_sprites),
+            "character_fx": dict(self._character_fx),
+            "fx_scripts": dict(self._fx_scripts),
             "card_owners": card_owners,
             "default_targets": {
                 str(p.side): p.default_target_character.id
@@ -1112,8 +1118,10 @@ class BattleMatch:
                         target_id=target.id,
                         target_name=target.name,
                         die_type=die["type"],
+                        die_number=side.get("die_number"),
                         one_sided=die["result"] is None,
                         card_id=side["card_id"],
+                        card_name=pipe.card.name if pipe.card else None,
                     )
                 else:
                     actions.append(f"{character.combat_name}{attack}")

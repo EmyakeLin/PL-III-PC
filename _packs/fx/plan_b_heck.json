@@ -1,0 +1,49 @@
+{
+  "color": "#d95724",
+  "defaults": {
+    "slash": "烈焰炽红刀光斩击并飞溅灼燃火星粒子",
+    "pierce": "烈焰突刺破空并飞溅琥珀火星粒子",
+    "status:烧伤": "烈焰余烬火星扩散波纹"
+  },
+  "skills": {
+    "灼燃斩": {
+      "on_strike": {
+        "prompt": "烈焰双弧重斩并爆裂灼燃火星粒子与低沉轰鸣",
+        "vfx": [
+          {
+            "primitive": "slash_arc",
+            "from": "attacker.bone_weapon",
+            "to": "defender.center",
+            "color": "#d95724",
+            "count": 2,
+            "stagger_ms": 95
+          },
+          {
+            "primitive": "sparks",
+            "to": "defender.center",
+            "color": "#f29422",
+            "count": 38,
+            "heavy": true
+          },
+          {
+            "primitive": "shockwave_ring",
+            "to": "defender.center",
+            "color": "#d95724",
+            "count": 1
+          }
+        ],
+        "motion": { "lunge": 1.15, "recoil": 0.95, "hitFlash": 1.0 },
+        "camera": { "shake": 8.5, "duration_ms": 240 },
+        "sfx": {
+          "waveform": "sine",
+          "freq_start": 190,
+          "freq_end": 62,
+          "noise_freq": 980,
+          "duration_ms": 300,
+          "gain": 0.19
+        }
+      }
+    },
+    "烈焰刺挑": "烈焰双连突刺破空，伴随金色火星飞溅与清脆金属蜂鸣"
+  }
+}

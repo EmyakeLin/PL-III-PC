@@ -16,6 +16,7 @@ from .match import BattleMatch
 
 STATIC_DIR = Path(__file__).with_name("static").resolve()
 SPRITES_DIR = (PACKS / "sprites").resolve()
+FX_SCRIPTS_DIR = (PACKS / "fx_scripts").resolve()
 CONTENT_TYPES = {
     ".html": "text/html",
     ".css": "text/css",
@@ -84,6 +85,19 @@ def _resolve_static(path):
         if not target.is_file():
             return None
         return target, CONTENT_TYPES[".svg"]
+
+    if path.startswith("/fx_scripts/"):
+        rel = path[len("/fx_scripts/"):]
+        if not rel or "\\" in rel or ".." in rel.split("/") or not rel.lower().endswith(".js"):
+            return None
+        target = (FX_SCRIPTS_DIR / rel).resolve()
+        try:
+            target.relative_to(FX_SCRIPTS_DIR)
+        except ValueError:
+            return None
+        if not target.is_file():
+            return None
+        return target, CONTENT_TYPES[".js"]
 
     rel = "index.html" if path == "/" else path.lstrip("/")
     if not rel or "\\" in rel or ".." in rel.split("/"):

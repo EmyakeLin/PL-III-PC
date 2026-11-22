@@ -885,6 +885,100 @@ export class TabletopAudio {
       });
     }
   }
+
+  /**
+   * Play a declarative FX DSL audio recipe (either named preset or procedural WebAudio synth params).
+   */
+  playSynthRecipe(recipe, pan = 0) {
+    if (!recipe || typeof recipe !== 'object') return false;
+    const preset = recipe.preset;
+    if (preset && !recipe.waveform) {
+      if (preset === 'slash' || preset === 'clash_heavy') this.clashImpact(true, pan);
+      else if (preset === 'pierce' || preset === 'clash') this.clashImpact(false, pan);
+      else if (preset === 'blunt') {
+        this.clashImpact(true, pan);
+        this.hitDamage(true, pan);
+      } else if (preset === 'bell') this.turnBell();
+      else if (preset === 'passive') this.passiveChime(1.0, pan);
+      else if (preset === 'shield') this.shieldBlock(pan);
+      else if (preset === 'shatter') this.shieldErode(pan);
+      else if (preset === 'heal') this.healChime(pan);
+      else if (preset === 'coin') this.coinClink(1.0, pan);
+      else if (preset === 'wind') {
+        const ctx = this._ensure();
+        if (ctx) {
+          this._noiseBurst(ctx, {
+            start: ctx.currentTime,
+            duration: 0.26,
+            filterType: 'bandpass',
+            freqStart: 1550,
+            freqEnd: 420,
+            q: 2.2,
+            peak: 0.14,
+            attack: 0.015,
+            pan,
+          });
+        }
+      }
+      return true;
+    }
+
+    const ctx = this._ensure();
+    if (!ctx) return false;
+    const now = ctx.currentTime;
+    const durSec = Math.max(0.04, Math.min(1.2, (Number(recipe.duration_ms) || 240) / 1000));
+    const f0 = Math.max(45, Math.min(5000, Number(recipe.freq_start) || 440));
+    const f1 = Math.max(40, Math.min(5000, Number(recipe.freq_end) || f0));
+    const gain = Math.max(0.02, Math.min(0.26, Number(recipe.gain) || 0.13));
+
+    if (recipe.waveform === 'noise') {
+      this._noiseBurst(ctx, {
+        start: now,
+        duration: durSec,
+        filterType: 'bandpass',
+        freqStart: f0,
+        freqEnd: f1,
+        q: 2.0,
+        peak: gain,
+        attack: Math.min(0.02, durSec * 0.15),
+        pan,
+      });
+      return true;
+    }
+
+    const type = ['sine', 'triangle', 'sawtooth', 'square'].includes(recipe.waveform) ? recipe.waveform : 'sine';
+    const harmonics = Array.isArray(recipe.harmonics) && recipe.harmonics.length ? recipe.harmonics.slice(0, 6) : [1.0];
+    const perGain = gain / Math.sqrt(harmonics.length);
+    harmonics.forEach((ratio, idx) => {
+      const r = Math.max(0.25, Math.min(6.0, Number(ratio) || 1.0));
+      this._tone(ctx, {
+        start: now + idx * 0.004,
+        duration: durSec * (1 - idx * 0.08),
+        type,
+        freqStart: Math.min(8000, f0 * r),
+        freqEnd: Math.min(8000, f1 * r),
+        peak: perGain * Math.pow(0.82, idx),
+        attack: 0.006,
+        pan: Math.max(-0.8, Math.min(0.8, pan + (idx % 2 === 0 ? -0.06 : 0.06))),
+      });
+    });
+
+    if (recipe.noise_freq) {
+      const nf = Math.max(120, Math.min(6000, Number(recipe.noise_freq) || 900));
+      this._noiseBurst(ctx, {
+        start: now,
+        duration: Math.min(0.16, durSec * 0.55),
+        filterType: 'bandpass',
+        freqStart: nf,
+        freqEnd: nf * 0.45,
+        q: 1.4,
+        peak: gain * 0.55,
+        attack: 0.003,
+        pan,
+      });
+    }
+    return true;
+  }
 }
 
 export const SoundEngine = TabletopAudio;

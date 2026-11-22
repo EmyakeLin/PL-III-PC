@@ -1,0 +1,49 @@
+{
+  "color": "#1c946b",
+  "defaults": {
+    "slash": "翠绿疾速刀光挥斩，伴随清脆风鸣与金色散射粒子",
+    "passive": "翠绿涡流扩散波纹与轻盈风鸣"
+  },
+  "skills": {
+    "漂泊剑法": "翠绿双弧回旋风刃连斩，伴随清脆风鸣",
+    "剑携涡流": "翡翠风刃斩击并激起两圈翠绿涡流扩散波纹，伴随金色粒子",
+    "翠流迸发": {
+      "on_strike": {
+        "prompt": "翠绿三连风刃回旋重斩，炸开金色散射粒子与双层扩散光环",
+        "vfx": [
+          {
+            "primitive": "slash_arc",
+            "from": "attacker.bone_weapon",
+            "to": "defender.center",
+            "color": "#1c946b",
+            "count": 3,
+            "stagger_ms": 80
+          },
+          {
+            "primitive": "shockwave_ring",
+            "to": "defender.center",
+            "color": "#52c496",
+            "count": 2,
+            "stagger_ms": 110
+          },
+          {
+            "primitive": "sparks",
+            "to": "defender.center",
+            "color": "#e8a430",
+            "count": 32,
+            "heavy": true
+          }
+        ],
+        "motion": { "lunge": 1.15, "recoil": 0.9, "hitFlash": 0.95 },
+        "camera": { "shake": 7.5, "duration_ms": 220 },
+        "sfx": {
+          "waveform": "noise",
+          "freq_start": 1720,
+          "freq_end": 460,
+          "duration_ms": 280,
+          "gain": 0.16
+        }
+      }
+    }
+  }
+}
