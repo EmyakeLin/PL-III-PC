@@ -71,3 +71,22 @@ class TerminalBridge:
         zone = "战斗外" if skill.get("out_of_combat") else ""
         print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
                                               describe_skill_traits(skill), dice, entries, zone) if s))
+
+    def settle_draws(self):
+        while self.game.pending_draw is not None:
+            choice = self.game.pending_draw
+            player = choice.player
+            candidates, discard_count = choice.candidates, choice.discard_count
+            self.game.begin_private_view(player)
+            print(f"{player.name} 从 {len(candidates)} 张候选牌中选 {discard_count} 张置于牌堆底。")
+            for number, card in enumerate(candidates, 1):
+                print(f"  [{number}] {card.character.name} · {card.describe()}")
+            while True:
+                raw = input("输入弃置编号，多个编号以空格或逗号隔开 ").strip()
+                values = raw.replace("，", " ").replace(",", " ").split()
+                if len(values) == discard_count and all(value.isdecimal() for value in values):
+                    indices = [int(value) - 1 for value in values]
+                    if len(set(indices)) == discard_count and all(0 <= i < len(candidates) for i in indices):
+                        break
+                print(f"请选择 {discard_count} 个不同的有效编号。")
+            self.game.complete_draw(choice, [candidates[index] for index in indices])

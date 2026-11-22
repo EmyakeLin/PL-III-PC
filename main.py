@@ -14,9 +14,11 @@ from terminal_bridge import TerminalBridge
 
 def play_game(game, step=False):
     """Drive one match to victory. Human decisions are made by the active Player."""
+    bridge = TerminalBridge(game)
     while not game.is_over:
         try:
             action = game.next_step()
+            bridge.settle_draws()
         except PipelineFinished:
             if game.is_over:
                 break

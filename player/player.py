@@ -1,4 +1,5 @@
 from models.opcode import OpCode
+from .draw_choice import DrawChoice
 
 
 class Player:
@@ -104,30 +105,13 @@ class Player:
         if alive_count == 1:
             self.draw_card(keep)
         else:
-            self.select_card(keep + alive_count - 1, keep)
+            return self.select_card(keep + alive_count - 1, keep)
 
     def select_card(self, total_draw, draw_count):
-        """在真实抽到的候选中选择弃底，牌库不足时优先保留能抽到的牌。"""
-        draw = self.cardspace.draw
-        candidates = draw.content[:total_draw]
-        keep = min(len(candidates), draw_count)
-        discard_count = len(candidates) - keep
-        if discard_count:
-            self.game.begin_private_view(self)
-            print(f"{self.name} 从 {len(candidates)} 张候选牌中选 {discard_count} 张置于牌堆底。")
-            for number, card in enumerate(candidates, 1):
-                print(f"  [{number}] {card.character.name} · {card.describe()}")
-            while True:
-                raw = input("输入弃置编号，多个编号以空格或逗号隔开 ").strip()
-                values = raw.replace("，", " ").replace(",", " ").split()
-                if len(values) == discard_count and all(value.isdecimal() for value in values):
-                    indices = [int(value) - 1 for value in values]
-                    if len(set(indices)) == discard_count and all(0 <= i < len(candidates) for i in indices):
-                        break
-                print(f"请选择 {discard_count} 个不同的有效编号。")
-            for index in indices:
-                draw.move_card_to(candidates[index], draw)
-        self.draw_card(keep)
+        choice = DrawChoice.from_deck(self, total_draw, draw_count)
+        if choice.discard_count:
+            return choice
+        choice.settle(())
 
     def place_card(self, game):
         hand = self.cardspace.hand.content

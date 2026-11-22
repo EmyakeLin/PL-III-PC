@@ -166,21 +166,6 @@ class _TableCharacter(Character):
 
 
 class _TablePlayer(Player):
-    def select_card(self, total_draw, draw_count):
-        draw = self.cardspace.draw
-        candidates = list(draw.content[:total_draw])
-        keep = min(len(candidates), draw_count)
-        discard_count = len(candidates) - keep
-        if discard_count:
-            self.game._pending_draws.append({
-                "player": self,
-                "candidates": candidates,
-                "keep": keep,
-                "discard_count": discard_count,
-            })
-        else:
-            self.draw_card(keep)
-
     def choose_one_sided_target(self, enemy_player):
         return self.get_default_target(enemy_player)
 
@@ -284,7 +269,6 @@ class _TableGame(Game):
         self.context = _TableContext(game=self)
         self.fx_events = deque(maxlen=220)
         self._fx_seq = 0
-        self._pending_draws = []
         self.last_speed_rolls = []
 
     def emit_fx(self, kind, **payload):
@@ -560,15 +544,15 @@ class BattleMatch:
                 and card.meets_use_requirements()]
 
     def _current_draw_prompt(self):
-        if not self.game._pending_draws:
+        if self.game.pending_draw is None:
             return None
-        pending = self.game._pending_draws[0]
-        if self.mode != "draw_select" or self._draw_seat is not pending["player"]:
+        pending = self.game.pending_draw
+        if self.mode != "draw_select" or self._draw_seat is not pending.player:
             return None
         return {
-            "side": pending["player"].side,
-            "keep": pending["keep"],
-            "discard_count": pending["discard_count"],
+            "side": pending.player.side,
+            "keep": pending.keep,
+            "discard_count": pending.discard_count,
             "candidates": [
                 {
                     **_printed_skill(c.data),
@@ -576,7 +560,7 @@ class BattleMatch:
                     "character_name": c.character.name,
                     "cost": c.cost,
                 }
-                for c in pending["candidates"]
+                for c in pending.candidates
             ],
         }
 
@@ -735,27 +719,23 @@ class BattleMatch:
         return self.snapshot()
 
     def _draw_bottom_action(self, card_ids):
-        if not self.game._pending_draws:
+        if self.game.pending_draw is None:
             raise ValueError("当前没有待挑选的抽牌候选。")
-        pending = self.game._pending_draws[0]
-        player = pending["player"]
-        candidates = pending["candidates"]
-        discard_count = pending["discard_count"]
+        pending = self.game.pending_draw
+        player = pending.player
+        candidates = pending.candidates
+        discard_count = pending.discard_count
         if (not isinstance(card_ids, list) or len(card_ids) != discard_count
                 or len(set(card_ids)) != discard_count):
             raise ValueError(f"请选择 {discard_count} 张不同的牌置于抽牌堆底。")
         by_id = {c.id: c for c in candidates}
         if any(cid not in by_id for cid in card_ids):
             raise ValueError("所选置底牌不在当前候选范围内。")
-        draw = player.cardspace.draw
-        for cid in card_ids:
-            draw.move_card_to(by_id[cid], draw)
         self.game.emit_fx("draw_bottom", side=player.side, count=discard_count)
-        player.draw_card(pending["keep"])
-        self._history.append(f"{player.name}看顶选 {discard_count} 张置底，保留 {pending['keep']} 张手牌。")
-        self.game._pending_draws.pop(0)
-        if self.game._pending_draws:
-            self._draw_seat = self.game._pending_draws[0]["player"]
+        self.game.complete_draw(pending, [by_id[cid] for cid in card_ids])
+        self._history.append(f"{player.name}看顶选 {discard_count} 张置底，保留 {pending.keep} 张手牌。")
+        if self.game.pending_draw:
+            self._draw_seat = self.game.pending_draw.player
             self.mode = "handoff"
         else:
             last_drawer = self._draw_seat
@@ -995,8 +975,8 @@ class BattleMatch:
                 self._timing = "返回原交锋"
                 return
             self._timing = timing_label(node)
-            if node == "logic_draw_cards" and game._pending_draws:
-                self._draw_seat = game._pending_draws[0]["player"]
+            if node == "logic_draw_cards" and game.pending_draw:
+                self._draw_seat = game.pending_draw.player
                 self.mode = "handoff" if self._require_handoff else "draw_select"
                 self._require_handoff = False
                 return

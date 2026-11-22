@@ -12,6 +12,7 @@ from entry.program import run_program
 from models.character import Character
 from models.opcode import OpCode
 from models.roster import RosterDraft
+from player.draw_choice import DrawChoice
 
 
 class TracedContext(Context):
@@ -120,6 +121,44 @@ class RosterExecutorTests(unittest.TestCase):
         self.assertEqual(draft.teams, [[mirror], [mirror]])
         with self.assertRaises(ValueError):
             draft.submit([mirror])
+
+
+class DrawExecutorTests(unittest.TestCase):
+    def test_every_candidate_can_be_kept_or_bottomed_in_any_order(self):
+        from itertools import permutations
+
+        for deck_size in range(5):
+            deck = tuple(range(deck_size))
+            for look in range(6):
+                for keep in range(look + 1):
+                    candidates = deck[:look]
+                    for bottom in permutations(candidates, max(0, len(candidates) - keep)):
+                        calls = []
+                        draw = SimpleNamespace(content=list(deck))
+                        def move(card, destination):
+                            self.assertIs(draw, destination)
+                            calls.append(("bottom", card))
+                            draw.content.remove(card)
+                            draw.content.append(card)
+                        draw.move_card_to = move
+                        player = SimpleNamespace(cardspace=SimpleNamespace(draw=draw),
+                                                 draw_card=lambda n: calls.append(("draw", n)))
+                        choice = DrawChoice.from_deck(player, look, keep)
+                        choice.settle(bottom)
+                        self.assertEqual(calls, [("bottom", card) for card in bottom]
+                                         + [("draw", min(keep, len(candidates)))])
+                        self.assertEqual(draw.content, [card for card in deck if card not in bottom] + list(bottom))
+
+    def test_rejects_stale_foreign_duplicate_and_wrong_count_before_moving(self):
+        draw = SimpleNamespace(content=list("abcd"))
+        player = SimpleNamespace(cardspace=SimpleNamespace(draw=draw))
+        choice = DrawChoice.from_deck(player, 3, 1)
+        for invalid in ((), ("a",), ("a", "a"), ("a", "d"), ("a", "b", "c")):
+            with self.assertRaises(ValueError):
+                choice.settle(invalid)
+        draw.content.reverse()
+        with self.assertRaises(ValueError):
+            choice.settle(("a", "b"))
 
 
 if __name__ == "__main__":

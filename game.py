@@ -30,6 +30,8 @@ class Game:
         self.placed_this_window = 0
         self.used_cards = []
         self.used_skill_ids = set()
+        self.pending_draw = None
+        self._drawing_players = None
         self.cards_revealed = False
         self.turn_count = 0
         self.turn_number = 0
@@ -79,6 +81,8 @@ class Game:
         self._private_player = None
 
     def next_step(self):
+        if self.pending_draw is not None and not self.is_over:
+            return "wait_draw_choice"
         if self.special.card_decision is not None and not self.is_over:
             return "wait_card_choice"
         if self.special.placement_owner is not None and not self.is_over:
@@ -181,10 +185,24 @@ class Game:
         print(f"\n第 {self.turn_count + 1} 回合")
         self.cards_revealed = False
         self._private_player = None
-        for player in self.players:
+        self._drawing_players = iter(self.players)
+        self._continue_drawing()
+
+    def _continue_drawing(self):
+        for player in self._drawing_players:
             if self.is_over:
                 break
-            player.draw_for_turn()
+            self.pending_draw = player.draw_for_turn()
+            if self.pending_draw is not None:
+                return
+        self._drawing_players = None
+
+    def complete_draw(self, choice, bottom):
+        if self.is_over or choice is None or choice is not self.pending_draw:
+            raise ValueError("此次选牌已经结束。")
+        choice.settle(bottom)
+        self.pending_draw = None
+        self._continue_drawing()
 
     def start_turn(self):
         self.prepare_turn()
