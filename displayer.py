@@ -447,7 +447,8 @@ class Displayer:
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": dict(c.statuses), "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
             "ability_effects": dict(c.ability_effects),
-            "reserved_dice": [{"skill": reserve.card.name, "position": reserve.position, "remaining": reserve.remaining}
+            "reserved_dice": [{"skill": reserve.template.card.name, "position": reserve.template.position,
+                               "remaining": reserve.remaining}
                               for reserve in c.reserved_dice],
             "status_overflow": {name: {"amount": n, "threshold": c.status_rules.get(name, {}).get("overflow_threshold")}
                                 for name, n in c.status_overflow.items()},

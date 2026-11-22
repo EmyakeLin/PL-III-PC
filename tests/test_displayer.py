@@ -41,6 +41,20 @@ class DisplayerTests(unittest.TestCase):
             player.draw_card(2)
             self.assertTrue(game.auto_place_in_duel(player.side, player.cardspace.hand.content[0]))
 
+    def test_reserved_dice_publish_the_captured_face_and_remaining_opportunities(self):
+        game = self.make_game()
+        actor = game.players[0].characters[0]
+        card = actor.skills[0]
+        card.dice.append({"type": "evade", "level": 2})
+        game.context.eval_block([actor, card, 2, OpCode.CAPTURE_SKILL_DIE, 3,
+                                 "before_one_sided_attack", 4, "use", 1, OpCode.GRANT_DIE_RESPONSE])
+        card.name = "换面后"
+        actor.reserved_dice[0].spend("use")
+        for seat in (None, 1, 2):
+            view = Displayer(game, viewer_side=seat).snapshot()
+            self.assertEqual(view["players"][0]["characters"][0]["reserved_dice"],
+                             [{"skill": "甲置入", "position": 2, "remaining": 2}])
+
     def test_unstarted_match_is_safe_to_read(self):
         game = Game([Player(1, "A"), Player(2, "B")])
         view = Displayer(game).snapshot()
@@ -186,7 +200,7 @@ class DisplayerTests(unittest.TestCase):
             actor.add_status("强壮", 1)
             game.context.register_entries(actor, [{
                 "trigger": "BEFORE RESOLVE_CLASH_SCORE", "operation": {
-                    "op": "program", "code": ["$value_ref", 10, "VALUE_FLOOR"],
+                    "op": "program", "code": ["$event.value_ref", 10, "VALUE_FLOOR"],
                 },
             }])
             game.players[1].characters[0].hp = 1
