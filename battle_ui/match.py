@@ -527,6 +527,10 @@ class BattleMatch:
         self.revision = 0
         self._advance()
 
+    @property
+    def _window_size(self):
+        return self.game.placement_capacity
+
     def _legal_cards(self):
         return self.game.legal_placements()
 
@@ -637,7 +641,7 @@ class BattleMatch:
             "eligible_sides": [p.side for p in seats] if self._special_open else frame["pre_reveal"]["eligible_sides"],
             "response_times": [dict(timing) for timing in self._response_times],
             "can_pass": self.mode == "placement" and self.game.placed_this_window > 0,
-            "window_remaining": self.game.placement_capacity - self.game.placed_this_window if self.mode == "placement" else 0,
+            "window_remaining": self._window_size - self.game.placed_this_window if self.mode == "placement" else 0,
             "history": list(self._history),
         }
 
