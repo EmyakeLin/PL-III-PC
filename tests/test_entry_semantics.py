@@ -1097,6 +1097,69 @@ class RangeConditionTests(unittest.TestCase):
                         self.assertEqual(getattr(die, field), expected)
 
 
+class HistoryNodeTests(unittest.TestCase):
+    def test_only_live_paid_uses_increment_before_on_use_listeners(self):
+        from pipeline import combat_steps
+        from pipeline.pipeline import Pipeline, SidePipeline
+
+        history = TurnHistory()
+        vm = TracedContext()
+        game = vm.game = SimpleNamespace(context=vm, turn_history=history)
+        owner = object()
+        card = SimpleNamespace(character=owner, id="same")
+        pipe = SidePipeline(9)
+        pipe.card = card
+        driver = SimpleNamespace(game=game, _card_live=lambda p: not p.withdrawn, _event=lambda p: {"card": p.card})
+        node = next(n for n in combat_steps.SKILL if n.id == "on_skill_use")
+        observed = []
+        vm.register_entries(None, [{"trigger": node.id, "operation": lambda ctx: observed.append(
+            (ctx.event["card"], history.skill_uses[owner, card.id], pipe.used))}])
+        for withdrawn, paid in ((False, None), (False, False), (True, True), (False, True), (False, True)):
+            pipe.withdrawn, pipe.paid, pipe.used = withdrawn, paid, False
+            Pipeline._execute(driver, node, pipe)
+            self.assertEqual(pipe.used, bool(paid and not withdrawn))
+        self.assertEqual(observed, [(card, 1, True), (card, 2, True)])
+
+    def test_clash_history_precedes_result_branches_even_when_the_winning_branch_is_suppressed(self):
+        from pipeline.pipeline import Pipeline, SidePipeline
+
+        game = Game.__new__(Game)
+        game.context, game.turn_history = Context(), TurnHistory()
+        position = ("series", 2)
+        game.duel_position = lambda: position
+        left, right = Player(3, "甲席"), Player(9, "乙席")
+        pipes = [SidePipeline(p.side) for p in (left, right)]
+        for pipe, player in zip(pipes, (left, right)):
+            actor = Character.__new__(Character)
+            actor.player, actor.game, actor.name = player, None, player.name
+            pipe.card = SimpleNamespace(character=actor, range_deficit=0)
+            pipe.die = SimpleNamespace(type="block", final_score=6, clash_score=4, queued_hits=(), win_branch_skipped=False)
+        for outcomes, deficit in ((("win", "lose"), 0), (("win", "lose"), 2), (("draw", "draw"), 3),
+                                  (("lose", "win"), 1)):
+            game.turn_history.clear()
+            pipes[0].card.range_deficit = deficit
+            for pipe in pipes:
+                pipe.die.win_branch_skipped = False
+                pipe.queue.clear()
+            visited, hits = [], []
+            def advance(result_pipes, stops):
+                for pipe, result in zip(pipes, outcomes):
+                    self.assertEqual(game.turn_history.clash_count(pipe.card.character, result, position), 1)
+                    self.assertEqual(pipe.die.clash_result, result)
+                visited.append(tuple(p.side for p in result_pipes))
+                return ()
+            def hit(pipe):
+                hits.append(pipe.side)
+                return ()
+            driver = SimpleNamespace(game=game, _frame=SimpleNamespace(), _run_to=advance, _hit=hit)
+            list(Pipeline._resolve_results(driver, pipes, dict(zip((left.side, right.side), outcomes))))
+            allowed = [p.side for p in pipes if not p.die.win_branch_skipped]
+            self.assertEqual(visited[0], tuple(allowed))
+            self.assertEqual(hits, [p.side for p, result in zip(pipes, outcomes)
+                                    if result == "win" and not p.die.win_branch_skipped])
+            self.assertEqual(pipes[0].die.win_branch_skipped, outcomes[0] == "win" and deficit >= 2)
+
+
 class ExecutionBoundaryTests(unittest.TestCase):
     def test_cancelling_the_invocation_restores_the_stack_and_skips_its_next_instruction(self):
         vm = TracedContext()
