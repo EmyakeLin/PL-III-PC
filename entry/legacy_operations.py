@@ -9,7 +9,20 @@ def _team_status(action):
             "WITH_BINDINGS"]
 
 
+def _lookup(path):
+    return ["SWAP", {"field": path}, "SWAP", 0, "LOOKUP"]
+
+
 WORD_ALIASES = {
+    "DIE_STATE": _lookup("use_state"), "SKILL_STATE": _lookup("use_state"),
+    "CHARACTER_STATE": _lookup("rule_state"), "ABILITY_COUNT": _lookup("ability_effects"),
+    "SPENT_STATUS_COUNT": _lookup("use_state.spent_statuses"),
+    "DUEL_STATUS_LOST": ["SWAP", {"field": "side"}, "SWAP", "PAIR", "$game.resolving_duel.status_lost",
+                         "SWAP", 0, "LOOKUP"],
+    "FIND_SKILL": [{"literal": ["holder", "id", "zone"]},
+                   ["$bindings.holder.player", "$bindings.zone", "ZONE_CARDS",
+                    ["$item.id", "$bindings.id", "EQ", "$item.character", "$bindings.holder", "IS", "AND",
+                     "$item.destroyed", "NOT", "AND"], "FILTER", "FIRST"], "WITH_BINDINGS"],
     "DAMAGE_ADD": [{"literal": ["amount"]},
                    ["$event.target", "$active_damage_modifiers", "damage_add", "$bindings.amount", "normal",
                     "ADD_DAMAGE_MODIFIER"], "WITH_BINDINGS"],
@@ -39,6 +52,14 @@ WORD_ALIASES = {
 def compile_targeted_action(name, data, args):
     from entry.compiler import Field, Program, TargetedProgram, compile_program
 
+    if name == "place_skill":
+        zone = data.get("zone", "out_of_combat")
+        card_id = data.get("card_id", args[0] if args else None)
+        return compile_program(["$game.active_duelspace.space", "$event.duel", "CONTAINS", [
+            "$player", {"literal": zone}, "ZONE_CARDS",
+            ["$item.id", {"literal": card_id}, "EQ", "$item.player", "$player", "IS", "AND",
+             "$item.character.is_alive", "AND", "$item.destroyed", "NOT", "AND"], "FILTER", "FIRST",
+            "DUP", ["$event.duel", "PLACE_IN_DUEL"], ["POP"], "IF_ELSE"], "WHEN"])
     if name == "reveal_lock":
         return compile_program(["placement", "WINDOW_OPEN", "$event.target.state.name", "PLACED_FACE_DOWN", "EQ", "AND",
                                 ["SET_CARD_FACE $event.target up", "SET_PLACEMENT_LOCK $event.target true"], "WHEN"])

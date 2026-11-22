@@ -123,3 +123,6 @@ class OpCode(Enum):
     QUEUE_ROLL_UPDATE = auto()
     ADD_DAMAGE_MODIFIER = auto()
     OR = auto()
+    ZONE_CARDS = auto()
+    PLACE_IN_DUEL = auto()
+    PAIR = auto()

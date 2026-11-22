@@ -119,21 +119,6 @@ def run_effect(ctx, entry, operation):
     if name == "cancel":
         ctx.cancel_op(entry.authority, frame=ctx.event.get("opcode_frame", -1))
         return
-    if name == "place_skill":
-        player = character_of(entry.owner).player
-        duel = ctx.event.get("duel")
-        if duel not in ctx.game.active_duelspace.space:
-            return
-        zone_name = data.get("zone", "out_of_combat")
-        if zone_name not in ("hand", "draw", "delayed_discard", "out_of_combat"):
-            raise ValueError(f"未知牌区 {zone_name!r}")
-        zone = getattr(player.cardspace, zone_name)
-        card_id = data.get("card_id", args[0] if args else None)
-        card = next((c for c in zone.content if c.id == card_id and c.player is player
-                     and c.character.is_alive and not c.destroyed), None)
-        if card is not None:
-            ctx.game.place_in_duel(player.side, card, ctx.game.active_duelspace.space.index(duel))
-        return
     selector = data.get("target", entry.target or "target")
     target = select_entity(ctx, selector, entry.owner)
     if target is None:

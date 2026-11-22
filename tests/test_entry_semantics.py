@@ -243,6 +243,35 @@ class CommandTests(unittest.TestCase):
                         self.assertEqual(sum(1 for op, timing, _ in vm.trace
                                              if op is OpCode.ADD_DAMAGE_MODIFIER and timing == "BEFORE"), 1)
 
+    def test_zone_search_and_placement_have_separate_subjects_and_commit_points(self):
+        from models.duel import DuelSlot
+        vm = TracedContext()
+        player = Player(2, "甲")
+        owner, teammate = (SimpleNamespace(is_alive=True, player=player) for _ in range(2))
+        first = SimpleNamespace(id="x", destroyed=False, character=teammate, player=player)
+        second = SimpleNamespace(id="x", destroyed=False, character=owner, player=player)
+        dead = SimpleNamespace(id="x", destroyed=True, character=owner, player=player)
+        slot = DuelSlot()
+        placements = []
+        vm.game = SimpleNamespace(active_duelspace=SimpleNamespace(space=[slot]),
+                                  place_in_duel=lambda *args: placements.append(args))
+        for zone in ("hand", "draw", "delayed_discard", "out_of_combat"):
+            pile = player.cardspace.zone(zone)
+            pile.content[:] = [dead, first, second]
+            entry = Entry.from_spec(owner, {"trigger": "tick", "operation": {"op": "place_skill",
+                                    "card_id": "x", "zone": zone}})
+            with vm.binding(duel=slot):
+                run_effect(vm, entry, entry.compiled_operation)
+                run_program(vm, entry, ["$self", "x", zone, "FIND_SKILL", "POP"])
+            self.assertEqual(placements.pop(), (player.side, first, 0))
+            self.assertIs(vm.trace[-2][2][-1], second)
+            with vm.binding(duel=DuelSlot()):
+                run_effect(vm, entry, entry.compiled_operation)
+            self.assertEqual(placements, [])
+            pile.content.clear()
+        with self.assertRaisesRegex(ValueError, "未知牌区"):
+            run_program(vm, entry, ["$self", "x", "missing", "FIND_SKILL", "POP"])
+
     def test_optional_fields_and_unknown_names_have_distinct_results(self):
         vm = TracedContext()
         entry = Entry.from_spec(None, {"trigger": "tick", "operation": []})

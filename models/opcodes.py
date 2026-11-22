@@ -29,7 +29,7 @@ def handle_clamp(ctx):
 
 
 _BINARY_OPERATIONS = {
-    OpCode.IS: operator.is_, OpCode.FLOOR_DIV: operator.floordiv, OpCode.MIN: min,
+    OpCode.PAIR: lambda left, right: (left, right), OpCode.IS: operator.is_, OpCode.FLOOR_DIV: operator.floordiv, OpCode.MIN: min,
     OpCode.COALESCE: lambda value, default: default if value is None else value,
     OpCode.ALL_IN: lambda members, collection: all(item in collection for item in members),
     OpCode.LT: operator.lt, OpCode.LE: operator.le, OpCode.GT: operator.gt,
@@ -207,6 +207,19 @@ def handle_lookup(ctx):
         ctx.push(source[key])
     except (KeyError, IndexError):
         ctx.push(default)
+
+
+def handle_zone_cards(ctx):
+    name, player = ctx.pop(), ctx.pop()
+    ctx.push(player.cardspace.zone(name).content if player is not None else ())
+
+
+def handle_place_in_duel(ctx):
+    slot, card = ctx.pop(), ctx.pop()
+    space = ctx.game.active_duelspace.space
+    if card is not None and slot in space:
+        return ctx.game.place_in_duel(card.player.side, card, space.index(slot))
+    return False
 
 
 def handle_slot_cards(ctx):
@@ -912,6 +925,7 @@ DISPATCH_TABLE = {
     OpCode.FIRST: lambda ctx: ctx.push(next(iter(ctx.pop()), None)), OpCode.LOOKUP: handle_lookup,
     OpCode.OPPONENT: handle_opponent,
     OpCode.BOARD_SLOTS: lambda ctx: ctx.push(tuple(ctx.game.board_slots())),
+    OpCode.ZONE_CARDS: handle_zone_cards, OpCode.PLACE_IN_DUEL: handle_place_in_duel,
     OpCode.SLOT_CARDS: handle_slot_cards, OpCode.REMAINING_CARDS: handle_slot_cards,
     OpCode.SLOT_AT_OFFSET: handle_slot_offset, OpCode.SKILL_RESTRICTED: handle_skill_restricted,
     OpCode.CAN_JOIN_DUEL: lambda ctx: ctx.push(ctx.game.pipeline.can_join(ctx.pop())),
@@ -974,6 +988,7 @@ OPERANDS = {
     OpCode.SET_PLACEMENT_LOCK: ("card", "locked"), OpCode.WITH_BINDINGS: ("names", "block"),
     OpCode.MAP: ("collection", "expression"), OpCode.FLATTEN: ("collection",), OpCode.FIRST: ("collection",),
     OpCode.LOOKUP: ("collection", "key", "default"), OpCode.OPPONENT: ("seat",), OpCode.BOARD_SLOTS: (),
+    OpCode.ZONE_CARDS: ("seat", "zone"), OpCode.PLACE_IN_DUEL: ("card", "slot"),
     OpCode.SLOT_CARDS: ("slot", "side"), OpCode.REMAINING_CARDS: ("slot", "side"),
     OpCode.SLOT_AT_OFFSET: ("space", "offset"), OpCode.SKILL_RESTRICTED: ("holder", "skill"),
     OpCode.CAN_JOIN_DUEL: ("slot",), OpCode.NEXT_PLANNED_DIE: ("holder",), OpCode.DIE_VALUE: ("component",),

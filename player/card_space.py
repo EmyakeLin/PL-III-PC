@@ -123,6 +123,11 @@ class OutOfCombat(CardList):
         self.player = player
 
 class CardSpace():
+    def zone(self, name):
+        if name not in ("hand", "draw", "delayed_discard", "out_of_combat"):
+            raise ValueError(f"未知牌区 {name!r}")
+        return getattr(self, name)
+
     def __init__(self, player: Player):
         """Default: only Hand, Draw, DelayedDiscard, and OutOfCombat"""
         self.hand = Hand(player)
