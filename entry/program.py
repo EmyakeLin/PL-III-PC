@@ -1,12 +1,13 @@
 """Translate JSON effect programs into blocks for the existing postfix VM."""
 
+from entry.commands import expand_command
 from entry.entry import character_of
 from models.character import SHIELD_FIELDS
 from models.opcode import OpCode
 
 
 def run_program(ctx, entry, tokens):
-    from entry.effects import run_effect
+    from entry.effects import run_effect, select_entity
 
     actor = character_of(entry.owner)
     if actor is None or not actor.is_alive:
@@ -16,6 +17,9 @@ def run_program(ctx, entry, tokens):
 
     def read(field):
         event = ctx.event
+        if field in ("recipient", "recipient_player"):
+            recipient = select_entity(ctx, entry.target or "self", entry.owner)
+            return getattr(recipient, "player", recipient) if field == "recipient_player" else recipient
         if field == "hp":
             return actor.hp
         if field == "original_max_hp":
@@ -302,7 +306,11 @@ def run_program(ctx, entry, tokens):
                 block.extend([OpCode.DUP, actor, OpCode.SWAP, OpCode.ROUND_TRIGGER_COUNT, 1, OpCode.LT,
                               OpCode.SWAP, actor, OpCode.SWAP, OpCode.RECORD_ROUND_TRIGGER])
             elif isinstance(token, str):
-                block.append(words.get(token, OpCode.__members__.get(token, token)))
+                expansion = expand_command(token) if len(token.split(maxsplit=1)) > 1 else None
+                if expansion is None:
+                    block.append(words.get(token, OpCode.__members__.get(token, token)))
+                else:
+                    block.extend(compile_block(expansion))
             else:
                 block.append(token)
         return block

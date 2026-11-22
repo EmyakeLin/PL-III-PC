@@ -42,7 +42,7 @@
           "name": "A级条目",
           "entries": [{
             "trigger": "on_turn_start",
-            "operation": {"op": "program", "code": ["$player", 1, "DRAW", "$self", 2, "HEAL"]},
+            "operation": ["DRAW 1", "HEAL 2"],
             "description": "初始交锋上限为3。回合开始时，额外抽1张手牌并回复2生命值。"
           }]
         },

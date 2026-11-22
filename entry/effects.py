@@ -28,6 +28,7 @@ a pending operation. Entries with the same source execute in printed order.
 """
 import re
 
+from entry.commands import expand_command
 from entry.entry import character_of
 from models.opcode import OpCode
 
@@ -88,6 +89,10 @@ def run_effect(ctx, entry, operation):
         operation(ctx)
         return
     if isinstance(operation, str):
+        expansion = expand_command(operation) if len(operation.split(maxsplit=1)) > 1 else None
+        if expansion is not None:
+            from entry.program import run_program
+            return run_program(ctx, entry, expansion)
         part = independent_damage_part(operation)
         if part:
             amount, opcode = part

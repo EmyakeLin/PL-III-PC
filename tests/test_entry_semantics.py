@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import unittest
 
 from context.context import Context
+from entry.commands import CommandSet, expand_command
 from entry.entry import Entry
+from entry.effects import run_effect
 from entry.program import run_program
 from models.character import Character
 from models.opcode import OpCode
@@ -52,3 +54,48 @@ class RoundCounterTests(unittest.TestCase):
         Character.begin_dice_round(actor)
         self.assertEqual(actor.round_triggers["k"], 0)
         self.assertEqual(parent["k"], 3)
+
+
+class CommandTests(unittest.TestCase):
+    def test_operand_types_and_extension(self):
+        vocabulary = CommandSet()
+
+        @vocabulary.define("PAIR")
+        def pair(left, right):
+            return [left, right]
+
+        for number in (-2**97, -1, 0, 1, 27, 2**101):
+            self.assertEqual(vocabulary.expand(f"PAIR {number} $target"), [number, "$target"])
+        for text in ("含 空格", "$target", "DRAW", "false"):
+            self.assertEqual(vocabulary.expand(f'PAIR "{text}" true'), [{"literal": text}, True])
+        for line in ("PAIR 7", "PAIR 1 2 3", 'PAIR "a"b', 'PAIR "unterminated'):
+            with self.assertRaises(ValueError):
+                vocabulary.expand(line)
+        self.assertIsNone(vocabulary.expand("UNKNOWN 1"))
+
+    def test_draw_reaches_the_same_executor_from_both_entry_forms(self):
+        for amount in (-1, 0, 1, 3, 2**90):
+            line = f"DRAW {amount}"
+            self.assertEqual(expand_command(line), ["$recipient_player", amount, OpCode.DRAW])
+            for operation in (line, {"op": "program", "code": [line]}):
+                with self.subTest(operation=operation):
+                    class Pile:
+                        def __init__(self, cards):
+                            self.content = list(cards)
+
+                        def move_card_to(self, index, other):
+                            other.content.append(self.content.pop(index))
+
+                    zones = SimpleNamespace(draw=Pile("abc"), hand=Pile([]))
+                    player = SimpleNamespace(cardspace=zones)
+                    actor = SimpleNamespace(is_alive=True, player=player)
+                    entry = Entry.from_spec(actor, {"trigger": "example", "operation": operation})
+                    vm = TracedContext()
+                    run_effect(vm, entry, entry.operation)
+                    self.assertEqual(vm.trace, [(OpCode.DRAW, "BEFORE", (player, amount)),
+                                                (OpCode.DRAW, "AFTER", ())])
+                    self.assertEqual(zones.hand.content, list("abc"[:max(0, amount)]))
+
+
+if __name__ == "__main__":
+    unittest.main()
