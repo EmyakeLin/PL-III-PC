@@ -113,7 +113,7 @@ python main.py
 
 ## 卡包与规则
 
-牌包可以在 `on_turn_start` 等触发节点用 `CHOOSE_CARD` 请求指定已置技能。候选来源 `$board_skills` 涵盖场上各方，`$own_board_skills` 限定效果所属角色。选择结果通过 `$chosen_card` 传给 `then`，候选为空时直接继续。需要玩家主动发动的能力可用 `window: "turn_start"` 限定时机。
+角色作者和内核维护者从[词条与内核开发规范](./docs/词条与内核开发规范.md)开始。卡包可在 `on_turn_start` 等节点用 `BOARD_SLOTS` 和 `SLOT_CARDS` 枚举场上的实体牌，在 entry 中按持有者和状态筛选，再交给 `CHOOSE_CARD`。应答时通过 `$event.chosen_card` 读取所选实体。需要玩家主动发动的能力可用 `window: "turn_start"` 声明时机。
 
 ### 共享效果包
 
@@ -125,9 +125,9 @@ python main.py
 | [基础体系状态效果包](./_packs/effects/system_statuses.json) | 烧伤、裂血、呼吸、失衡，以及由失衡产生的致命失衡 |
 | [基础能力效果包](./_packs/effects/base_abilities.json) | 置卡机会、换卡机会 |
 
-状态效果用 `STATUS`、`SPEND_STATUS`、`STATUS_COUNT` 获得、消耗和读取层数。能力效果用 `ABILITY_EFFECT`、`SPEND_ABILITY_EFFECT`、`ABILITY_COUNT` 管理可用次数。角色包可在 `ability_rules` 中声明一项能力的操作和持续时间。例如，空白的「智脑」抽牌一次，同时花 1 次抽卡资格和 1 层能源，分别结算能力支付和状态消耗。[空白卡包](./_packs/void_boss.json)
+状态效果用 `STATUS`、`SPEND_STATUS`、`STATUS_COUNT` 获得、消耗和读取层数。能力效果用 `ABILITY_EFFECT`、`SPEND_ABILITY_EFFECT` 授予和消耗次数。查询时从 `$self.ability_effects` 按能力名 `LOOKUP`，由作者指定缺省值。角色包可在 `ability_rules` 中声明一项能力的操作和持续时间。例如，空白的「智脑」抽牌一次，同时花 1 次抽卡资格和 1 层能源，分别结算能力支付和状态消耗。[空白卡包](./_packs/void_boss.json)
 
-骰面写 `"引燃"` 即可立即结算目标当前的烧伤。技能、状态等来源可用 `{"op":"ignite"}`；需要翻倍本次烧伤伤害时，用 `{"op":"ignite","multiplier":2}`。每次引燃按当时的层数结算，伤害归触发它的实体。[烧伤与引燃定义](./_packs/effects/system_statuses.json)
+骰面的 `"引燃"` 调用状态公开的关键词。结构化写法用 `{"keyword":"ignite"}`。需要将本次引燃的伤害倍率翻倍时，写 `{"keyword":"ignite","adjustments":{"damage_multiplier":[2,"MUL"]}}`。牌面要求归本骰时，再显式给出 `"credit":"die"`。[赫克卡包](./_packs/plan_b_heck.json)
 
 ### PlanB 精英 · 赫克
 
@@ -149,7 +149,7 @@ python main.py
 
 所有角色以满完整度入场。光点伤害直接扣完整度，归零触发崩塌并造成真实伤害。每崩塌一次，完整度上限减少 4。回复前普通生命已达到当前完整度上限且实际回到血时，角色立即阵亡。卡包分别通过 `DAMAGE`、`LIGHTCORE_DAMAGE` 和 `REAL_DAMAGE` 结算直伤、光点伤害与真实伤害。后两种有各自的事件，监听 `AFTER DAMAGE` 的词条只收到直伤。[正式规则书 · 第六章](./docs/正式规则书.md#chapter-6)
 
-骰面可直接写 `"7光点伤害"`。另一个命中词条若执行 `["$target", 4, "LIGHTCORE_DAMAGE"]`，就对同一目标追加独立的 4 点光点伤害。卡包监听 `AFTER LIGHTCORE_DAMAGE` 时，用 `lightcore_collapsed` 判断本段是否引发崩塌，用 `$lightcore_lost` 读取本段实际扣掉的完整度。
+骰面可直接写 `"7光点伤害"`。另一个命中词条若执行 `["$event.target", 4, "LIGHTCORE_DAMAGE"]`，就对同一目标追加独立的 4 点光点伤害。卡包监听 `AFTER LIGHTCORE_DAMAGE` 时，用 `$event.lightcore_collapsed` 判断本段是否引发崩塌，用 `$event.lightcore_lost` 读取本段实际扣掉的完整度。
 
 「铸钟人」阙鸣用近战打光点，蓄积钟振后可在开牌前掷出强化远程「百步飞椎」，改攻普通生命。「拆船师」沈砾给敌人画上粉线，以穿甲与光点分段追击。两人各有七张技能。运行 `python replay_lightcore.py all --seed 40 --log` 可重放他们挑战安诺琳＋莱克、挑战东部四科三人以及彼此交手的五场比赛。[光点首领战报](./docs/光点首领战报.md)
 
@@ -191,7 +191,7 @@ python main.py
 
 卡包技能使用 `pre_reveal` 声明开牌前主动出牌资格。未写 `interceptable` 时，开牌前序列内的主动进攻默认可迎击，场内独立发起的即时进攻默认不可拦截。显式填写 `true` 或 `false` 时以卡面为准。`range_level` 和 `ignore_range` 为 0～3 的整数。词条还可以在 `RESOLVE_RANGE_DEFICIT` 时通过 `VALUE_CEILING` 等现有指令调整实际生效的远程劣势。
 
-从手牌主动打出或被动迎击会发出 `on_pre_reveal_play`。词条可以通过 `$play_mode` 区分 `active`（主动）、`passive`（迎击）与 `pulled`（结算时被牵制）。牵制不会再触发一次从手牌打出的事件。
+从手牌主动打出或被动迎击会发出 `on_pre_reveal_play`。词条可以通过 `$event.play_mode` 区分 `active`（主动）、`passive`（迎击）与 `pulled`（结算时被牵制）。牵制不会再触发一次从手牌打出的事件。
 
 ### 白崖测绘员 · 岑遥
 
@@ -209,9 +209,9 @@ python main.py
 
 每名存活角色分别投速度骰，自己的迅捷增加速度，束缚减少速度。阵营去掉一名最低速角色，再取剩余角色速度的平均值；单人直接用自己的速度。强壮和虚弱作用于所有非空白骰的最终点数，招架和闪避也生效。检视骰子的基础值或掷出的原始点数时，看到的是加减威力前的数值。
 
-卡包中的 `program` 保存按顺序求值的逆波兰指令。`$self`、`$card` 和 `$die` 引用当前角色、技能和骰子。例如「猛烈斩杀」用 `SPEND_STATUS` 消耗全部充能，再按实际扣除的层数计算技能加成。「借机」用 `NEXT_TURN_COST` 预约下回合通用费。「武器增压迸发」在使用时先按当前充能计算最终点数加成，再消耗全部充能。消耗前不足 8 层时，厄尔克斯在第一颗骰子前获得能源封印。第二颗突刺骰按本技能已实际消耗的充能提升骰子等级。尾骰触发 `REPEAT_DIE` 时，把一次新的用骰排进当前交锋，双方继续按骰位配对。
+卡包中的 `program` 保存按顺序求值的逆波兰指令。`$self`、`$event.card` 和 `$event.die` 引用当前角色、技能和骰子。例如「猛烈斩杀」消耗全部充能，再按本次支付回执中的实际扣除层数计算技能加成。「借机」用 `NEXT_TURN_COST` 预约下回合通用费。「武器增压迸发」在使用时先按当前充能计算最终点数加成，再消耗全部充能。消耗前不足 8 层时，厄尔克斯在第一颗骰子前获得能源封印。第二颗突刺骰按本技能已实际消耗的充能提升骰子等级。尾骰触发 `REPEAT_DIE` 时，把一次新的用骰排进当前交锋，双方继续按骰位配对。
 
-「消耗 X 层以……」用 `SPEND_STATUS_IN_FULL` 支付，再用 `WHEN` 执行后半句。应付量包含过载等词条的修正。付得起就一次扣足，付不起就保留全部资源，跳过后半句。失败的支付不计入技能累计消耗，也不会触发「消耗时」词条。「消耗 X 层并……」用 `SPEND_STATUS` 取得实扣数，余额不足时扣尽余量，后半句照常执行。[正式规则书第 7.2 条](./docs/正式规则书.md#resource-payment)
+「消耗 X 层以……」在目标、状态名、数量入栈后，用 `{"call":"SPEND_STATUS","with":{"require_full":true},"result":"paid_in_full","default":false}` 取得足额支付结果，再用 `WHEN` 决定后续动作。应付量包含前置监听的修正。「消耗 X 层并……」用 `{"call":"SPEND_STATUS","result":"result","default":0}` 取得本笔实扣数，由词条继续执行后半句。[正式规则书 §7.2](./docs/正式规则书.md#resource-payment)
 
 ### 飘流翠风 · 安诺琳
 
