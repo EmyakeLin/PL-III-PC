@@ -183,7 +183,12 @@ def _card_choice_view(card, viewer):
         borrowed = "（取自对手）" if card.printed_owner is not card.character else ""
         view = {"effect_target": target, "label": f"{card.name}{borrowed}（{card.cost} 费）"}
         choice = game.special.card_decision
-        discount = choice.use_discount if choice and choice.player is viewer else None
+        discount = None
+        if choice and choice.player is viewer:
+            preview = choice.specification.get("preview", {})
+            key = preview.get("skill_discount")
+            discount = (choice.event["bindings"].get(key) if key is not None
+                        else choice.specification.get("use_discount"))
         if discount is not None:
             cost = max(0, card.cost - discount)
             extra = card.data.get("resource_cost")
@@ -223,6 +228,11 @@ def _board_visible_to(card, viewer):
 def special_action_label(action):
     if action.label is not None:
         return action.label
+    if action.kind == "decline_card":
+        return "放弃此次选牌"
+    if action.kind == "choose_slot":
+        location = f"{_DUEL_NAMES[action.duel_kind]} {action.duel_index + 1}"
+        return f"{action.card.name} · {location}" if action.card else location
     if action.kind == "choose_card":
         card = action.target_card
         chooser = card.player.game.special.decision_owner

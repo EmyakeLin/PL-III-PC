@@ -13,7 +13,8 @@ def run_program(ctx, entry, tokens):
     if actor is not None and not actor.is_alive:
         return
     player = getattr(actor, "player", None)
-    variables = {}
+    invocation = ctx.executions[-1] if ctx.executions else None
+    variables = invocation.variables if invocation is not None and invocation.entry is entry else {}
 
     def read(field):
         root, *path = field.split(".")

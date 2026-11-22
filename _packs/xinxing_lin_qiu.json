@@ -488,10 +488,12 @@
                         {
                           "literal": {
                             "optional": true,
-                            "use_discount": 2,
+                            "require_playable_hand": true,
+                            "bindings": {"discount": 2},
+                            "preview": {"skill_discount": "discount"},
                             "then": {
                               "op": "program",
-                              "code": ["$chosen_card", "$choice_discount", "SKILL_USE", {"literal": {"at": "after_die"}}, "INSERT_SKILL"]
+                              "code": ["$chosen_card", "$bindings.discount", "SKILL_USE", {"literal": {"at": "after_die"}}, "INSERT_SKILL"]
                             }
                           }
                         },

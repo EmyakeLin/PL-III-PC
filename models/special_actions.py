@@ -1,6 +1,6 @@
 """Player decisions at the boundary between two resolved game actions."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from entry.entry import Entry, TriggerType, character_of
 from entry.effects import run_effect
@@ -19,7 +19,7 @@ class SpecialAction:
     duel_index: int | None = None
     response_number: int | None = None
     ability_id: str | None = None
-    label: str | None = None
+    label: str | None = field(default=None, compare=False)
     duel_kind: str | None = None
 
 
@@ -51,7 +51,8 @@ class CardDecision:
     operation: object
     invocation: object
     event: dict
-    use_discount: int | None
+    require_playable_hand: bool
+    specification: dict
 
 
 @dataclass
@@ -99,8 +100,13 @@ class SpecialActions:
         if not cards:
             return False
         origins = {card: (card.character, card in card.player.cardspace.hand.content) for card in cards}
+        event = ctx.event.copy()
+        if "use_discount" in spec:
+            event["choice_discount"] = spec["use_discount"]  # Older continuations read this event field.
+        event["bindings"] = {**event.get("bindings", {}), **spec.get("bindings", {})}
         self._card_choices.append(CardDecision(chooser.player, cards, origins, bool(spec.get("optional")),
-                                               spec["then"], invocation, ctx.event.copy(), spec.get("use_discount")))
+                                               spec["then"], invocation, event,
+                                               spec.get("require_playable_hand", True), spec))
         return True
 
     def _valid_candidates(self, decision):
@@ -111,7 +117,8 @@ class SpecialActions:
             if card.character is not actor or not actor.is_alive or card.destroyed:
                 continue
             if in_hand:
-                if card not in card.player.cardspace.hand.content or actor.skill_restricted(card):
+                if (card not in card.player.cardspace.hand.content
+                        or decision.require_playable_hand and actor.skill_restricted(card)):
                     continue
             elif card not in board:
                 continue
@@ -139,7 +146,7 @@ class SpecialActions:
         if action.kind == "decline_card":
             return True
         ctx = self.game.context
-        fields = dict(decision.event, chosen_card=action.target_card, choice_discount=decision.use_discount)
+        fields = dict(decision.event, chosen_card=action.target_card)
         ctx.executions.append(decision.invocation)
         try:
             with ctx.binding(**fields):
@@ -201,16 +208,12 @@ class SpecialActions:
         if use and use.card not in self.own_hand_skills(choice.actor):
             return {}
         options = {}
-        for kind, group, slots in (("regular", "常规交锋", self.game.duelspace.space),
-                                   ("pre_reveal", "开牌前交锋", self.game.pre_reveal.space.space),
-                                   ("instant", "即时交锋", self.duels)):
+        for kind, slots in (("regular", self.game.duelspace.space), ("pre_reveal", self.game.pre_reveal.space.space),
+                            ("instant", self.duels)):
             for index, slot in enumerate(slots):
                 if slot in choice.candidates and self.game.pipeline.can_join(slot):
-                    label = f"{group} {index + 1}"
-                    if use:
-                        label = f"{use.card.name} · {label}"
                     options[SpecialAction("choose_slot", card=use.card if use else None,
-                                          duel_index=index, duel_kind=kind, label=label)] = slot
+                                          duel_index=index, duel_kind=kind)] = slot
         return options
 
     def _resolve_slot_choice(self, action):
@@ -343,7 +346,7 @@ class SpecialActions:
                 return []
             choices = [SpecialAction("choose_card", target_card=card) for card in self._valid_candidates(decision)]
             if decision.optional:
-                choices.append(SpecialAction("decline_card", label="放弃此次选牌"))
+                choices.append(SpecialAction("decline_card"))
             return choices
         if self.placement_owner is not None:
             choice = self._slot_choices[0]

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from models.opcode import OpCode
@@ -105,3 +105,4 @@ class Entry:
 class EntryExecution:
     entry: Entry
     cancelled: bool = False
+    variables: dict = field(default_factory=dict)

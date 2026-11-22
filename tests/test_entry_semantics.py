@@ -274,6 +274,37 @@ class CommandTests(unittest.TestCase):
             self.assertEqual(observed, [(target, player)])
             self.assertEqual(vm.stack, [])
 
+    def test_deferred_card_answers_keep_their_own_locals_and_do_not_imply_play(self):
+        from models.special_actions import SpecialAction, SpecialActions
+        vm = TracedContext()
+        player = Player(1, "甲")
+        game = vm.game = SimpleNamespace(context=vm, is_over=False, players=[player], board_slots=lambda: [])
+        game.special = SpecialActions(game)
+        owner = SimpleNamespace(is_alive=True, player=player, skill_restricted=lambda card: True)
+        card = Card.__new__(Card)
+        card.player, card.character, card.destroyed = player, owner, False
+        player.cardspace.hand.content.append(card)
+        spec = {"optional": False, "require_playable_hand": False, "bindings": {"price": -3},
+                "then": {"op": "program", "code": ["$chosen_card", "POP", {"local": "n"}, "POP",
+                                                   "$bindings.price", "POP"]}}
+        entry = Entry.from_spec(owner, {"trigger": "tick", "operation": {"op": "program", "code": [
+            "$event.serial", "n", "STORE", "$event.candidates", {"literal": spec}, "CHOOSE_CARD"]}})
+        for n in (-7, 2**80):
+            with vm.binding(serial=n, candidates=[card, card]):
+                vm._invoke(entry)
+        for n in (-7, 2**80):
+            self.assertEqual(game.special.options(player), [SpecialAction("choose_card", target_card=card)])
+            vm.trace.clear()
+            game.special.apply(player, SpecialAction("choose_card", target_card=card))
+            self.assertEqual([stack[-1] for op, timing, stack in vm.trace if op == OpCode.POP and timing == "BEFORE"],
+                             [card, n, -3])
+        self.assertIsNone(game.special.card_decision)
+        playable = Entry.from_spec(owner, {"trigger": "tick", "operation": {"op": "program", "code": [
+            "$event.candidates", {"literal": {**spec, "require_playable_hand": True}}, "CHOOSE_CARD"]}})
+        with vm.binding(serial=0, candidates=[card]):
+            vm._invoke(playable)
+        self.assertIsNone(game.special.card_decision)
+
     def test_author_lines_compile_in_printed_order_for_both_permitted_factions(self):
         import json
         from pathlib import Path
