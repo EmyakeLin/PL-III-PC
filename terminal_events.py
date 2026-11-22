@@ -62,6 +62,8 @@ MESSAGES = {
 
 
 def format_fact(kind, fields):
+    if kind != "hit" and kind not in MESSAGES:
+        return ""
     values = dict(fields)
     if kind == "hit":
         if values["mode"] == "full":

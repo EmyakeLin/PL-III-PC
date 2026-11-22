@@ -259,6 +259,27 @@ class PlacementExecutorTests(unittest.TestCase):
 
 
 class BattleFactTests(unittest.TestCase):
+    def test_damage_records_only_absorption_and_erosion_from_this_hit(self):
+        for grade, expected in {
+            "normal": ({"reinforced_shield": 3, "shield": 2}, {}, 4),
+            "pierce": ({"reinforced_shield": 3}, {"shield": 2}, 6),
+            "concept": ({"concept_shield": 4}, {"shield": 2, "reinforced_shield": 3}, 5),
+        }.items():
+            actor = Character.__new__(Character)
+            actor._effect_context = vm = Context()
+            actor.player, actor.id, actor.name = SimpleNamespace(side=2), "p", "乙"
+            actor.is_alive, actor.hp, actor._base_max_hp, actor._status_max_hp_delta = True, 30, 30, 0
+            actor.shield, actor.reinforced_shield, actor.concept_shield = 2, 3, 4
+            actor.check_death = lambda: None
+            # A nested listener creates a shield after the hit has already worn the old one down.
+            actor._status_event = lambda _: actor.add_shield("normal", 50)
+            with vm.collect_facts() as facts:
+                lost = actor.apply_resolved_damage(9, grade)
+            self.assertEqual([kind for kind, _ in facts], ["shield_balance", "damage_settled"])
+            damage = facts[-1][1]
+            self.assertEqual((damage["absorbed"], damage["eroded"], lost), expected)
+            self.assertEqual(damage["hp"], 30 - lost)
+
     def test_each_hit_mode_records_one_hit_before_its_effects(self):
         for mode in ("full", "damage_only", "effects_only"):
             for index in (1, 2, 25):
@@ -295,15 +316,18 @@ class BattleFactTests(unittest.TestCase):
             for amount in (-13, -2, 0, 1, 2**80):
                 vm = TracedContext()
                 actor = SimpleNamespace(combat_name="甲", shield=3, reinforced_shield=3, concept_shield=3)
+                actor.record = vm.record
                 actor.add_shield = lambda key, delta: Character.add_shield(actor, key, delta)
                 with vm.collect_facts() as facts:
                     vm.eval_block([actor, kind, amount, OpCode.SHIELD])
                 total = max(0, 3 + amount)
                 self.assertEqual(getattr(actor, field), total)
-                self.assertEqual(list(facts), [("shield_changed", {"target": "甲", "shield": kind, "total": total})])
+                changes = [("shield_balance", {"field": field, "before": 3, "after": total})] if total != 3 else []
+                self.assertEqual(list(facts), changes + [
+                    ("shield_changed", {"target": "甲", "shield": kind, "total": total})])
                 self.assertEqual(vm.trace, [(OpCode.SHIELD, "BEFORE", (actor, kind, amount)),
                                             (OpCode.SHIELD, "AFTER", ())])
-                self.assertIn(str(total), format_fact(*facts[0]))
+                self.assertIn(str(total), format_fact(*facts[-1]))
 
 
 class TargetExecutorTests(unittest.TestCase):

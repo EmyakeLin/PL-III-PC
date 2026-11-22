@@ -308,10 +308,14 @@ def handle_queue_status(ctx):
 def handle_draw(ctx):
     count, player = ctx.pop(), ctx.pop()
     draw = player.cardspace.draw
+    moved = 0
     for _ in range(min(max(0, count), len(draw.content))):
         if not draw.content:
             break
         draw.move_card_to(0, player.cardspace.hand)
+        moved += 1
+    if moved:
+        ctx.record("cards_drawn", player=player, count=moved)
 
 
 def handle_reset_cost(ctx):
@@ -566,6 +570,7 @@ def handle_damage(ctx):
     if damage is None or not target.is_alive or (ctx.executions and ctx.executions[-1].cancelled):
         ctx.current_op = None
         return None
+    ctx.event["damage_multiplier"] = multiplier
     hp_lost = target.apply_resolved_damage(damage, grade)
     ctx.event.update(amount=damage, damage_amount=damage, hp_lost=hp_lost,
                      damage_dealt=True, damage_received=damage > 0)

@@ -65,12 +65,17 @@ class Player:
         rule = self.game.gamerule
         common = max(0, rule.MAX_BASIC_COST + self.turn_common_cost_bonus)
         self.game.context.eval_block([self, common, rule.CHAR_INDEPENDENT_COST, OpCode.RESET_COST])
+        self.game.context.record("turn_budget", side=self.side, common=self.available_cost,
+                                 personal=tuple((c.id, c.available_cost) for c in self.characters if c.is_alive))
 
     def calculate_speed(self):
-        speeds = [char.roll_speed() for char in self.characters if char.is_alive]
-        if len(speeds) > 1:
-            speeds.remove(min(speeds))
-        self.speed = sum(speeds) / len(speeds) if speeds else 0
+        rolls = [(char, char.roll_speed()) for char in self.characters if char.is_alive]
+        dropped = min(rolls, key=lambda pair: pair[1]) if len(rolls) > 1 else None
+        if dropped is not None:
+            rolls.remove(dropped)
+        self.speed = sum(value for _, value in rolls) / len(rolls) if rolls else 0
+        self.game.context.record("team_speed", side=self.side, speed=self.speed,
+                                 dropped=dropped[0].id if dropped else None)
         return self.speed
 
     def pay_skill_cost(self, card):

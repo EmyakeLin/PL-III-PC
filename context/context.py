@@ -36,15 +36,20 @@ class Context:
         self._lasting_entries = {}
         self._fact_collections = []
 
+    def observe_facts(self):
+        """Create a reader-owned queue for the lifetime of this context."""
+        facts = deque()
+        self._fact_collections.append(facts)
+        return facts
+
     @contextmanager
     def collect_facts(self):
         """Capture completed domain actions in order without calling an observer."""
-        facts = deque()
-        self._fact_collections.append(facts)
+        facts = self.observe_facts()
         try:
             yield facts
         finally:
-            self._fact_collections.pop()
+            self._fact_collections[:] = [other for other in self._fact_collections if other is not facts]
 
     def record(self, kind, **fields):
         for collection in self._fact_collections:
@@ -195,12 +200,16 @@ class Context:
         personal = event.get("personal_spent", 0)
         common = event.get("common_spent", 0)
         paid = event.get("result") is True
-        return {
+        receipt = {
             "paid": paid, "cost": personal + common, "personal_paid": personal, "common_paid": common,
             "printed_cost": printed_cost, "required_cost": event.get("amount", 0 if prepaid else price),
             "discount": discount, "prepaid": event.get("prepaid", prepaid), "resource_paid": event.get("resource_paid"),
             "failure_reason": None if paid else event.get("failure_reason") or "支付被取消",
         }
+
+        self.record("skill_payment", side=card.player.side, character_id=card.character.id if card.character else None,
+                    card_id=card.id, card_name=card.name, **receipt)
+        return receipt
 
     def pay_action_costs(self, actor, ability_costs, status_costs):
         """Resolve all price modifiers before charging an action with several costs."""
@@ -395,7 +404,10 @@ class Context:
         registered = []
         for spec in specs or ():
             if isinstance(spec, dict) and "entries" in spec and "trigger" not in spec:
-                registered.extend(self.register_entries(owner, spec["entries"]))
+                group = self.register_entries(owner, spec["entries"])
+                for member in group:
+                    member.group_name = spec.get("name")
+                registered.extend(group)
             elif isinstance(spec, dict):
                 entry = Entry.from_spec(owner, spec)
                 self.entries.append(entry)
@@ -623,6 +635,11 @@ class Context:
             if entry.trigger != OpCode.ENTRY and not invocation.cancelled:
                 with self.binding(execution=invocation, entry_trigger=entry.trigger):
                     self.dispatch_opcode(OpCode.ENTRY, "AFTER")
+            if entry.group_name and not invocation.cancelled:
+                actor = character_of(entry.owner)
+                if actor is not None:
+                    self.record("entry_resolved", side=actor.player.side, character_id=actor.id,
+                                character_name=actor.name, group=entry.group_name)
             return True
         finally:
             self.executions.pop()

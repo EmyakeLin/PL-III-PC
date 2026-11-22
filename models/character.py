@@ -141,6 +141,10 @@ class Character:
             authority = self.game.context.event.get("authority", 0)
             self.game.next_turn_statuses.append((source, self, name, amount, authority))
 
+    def record(self, kind, **fields):
+        self._effect_context.record(kind, side=self.player.side, character_id=self.id,
+                                    character_name=self.name, **fields)
+
     def roll_speed(self):
         low, high = self.data.get("speed_die", (1, 4))
         die = SpeedDie(self, high)
@@ -154,6 +158,7 @@ class Character:
             rolled = ctx.eval_block([low, high, 0, die, OpCode.ROLL])
         raw = min(high, max(low, die.value)) if rolled is not None else 0
         self.speed = raw + self.status_modifier("speed")
+        self.record("initiative_die", raw=raw, speed=self.speed, modifiers=dict(self.statuses))
         return self.speed
 
     def status_modifier(self, value):
@@ -193,8 +198,11 @@ class Character:
 
     def add_shield(self, kind, amount):
         field = SHIELD_FIELDS[kind]
-        value = max(0, getattr(self, field) + int(amount))
+        previous = getattr(self, field)
+        value = max(0, previous + int(amount))
         setattr(self, field, value)
+        if value != previous:
+            self.record("shield_balance", field=field, before=previous, after=value)
         return value
 
     @property
@@ -361,6 +369,8 @@ class Character:
 
     def notify_status_change(self, name, previous, current):
         if previous != current:
+            self.record("status_balance", status=name, before=previous, after=current,
+                        active=name in self.active_statuses)
             duel = self.game.resolving_duel if self.game is not None else None
             if duel is not None and current < previous:
                 key = self.player.side, name
@@ -413,6 +423,9 @@ class Character:
                 entry = Entry.from_spec(self, {"trigger": event, "operation": outcome, "origin": "status"})
                 with self._effect_context.binding(source=self, target=self, damage_part=False):
                     self._effect_context._invoke(entry)
+            self._effect_context.record("status_check", character=self, check=event, status=name,
+                                        before=stacks, after=self.statuses.get(name, 0), passed=passed,
+                                        target=self._effect_context.event.get("target"))
             succeeded = succeeded or passed
         return succeeded
 
@@ -442,6 +455,8 @@ class Character:
             self._die()
             if self.game and self.game.is_over:
                 self.game.context.close_combat_effects()
+        if recovered:
+            self.record("health_recovered", amount=recovered, hp=self.hp, maximum=self.max_hp)
         return recovered
 
     def lose_hp(self, amount):
@@ -450,6 +465,8 @@ class Character:
         lost = min(self.hp, amount)
         self.hp -= lost
         self.check_death()
+        if lost:
+            self.record("health_lost", amount=lost, hp=self.hp, maximum=self.max_hp)
         return lost
 
     def take_damage(self, amount, penetration="normal", attack_type="none", *,
@@ -469,6 +486,8 @@ class Character:
         if not self.is_alive or incoming <= 0:
             return 0
         remaining = incoming
+        absorbed, eroded = {}, {}
+        multiplier = self._effect_context.event.get("damage_multiplier", 1)
         # A shield below the incident grade wears down even when it cannot absorb damage.
         if grade == "concept":
             absorb = ("concept_shield",)
@@ -483,12 +502,18 @@ class Character:
             blocked = min(getattr(self, field), remaining)
             setattr(self, field, getattr(self, field) - blocked)
             remaining -= blocked
+            absorbed[field] = blocked
         for field in erode:
-            setattr(self, field, max(0, getattr(self, field) - incoming))
+            worn = min(getattr(self, field), incoming)
+            setattr(self, field, getattr(self, field) - worn)
+            eroded[field] = worn
         lost = min(self.hp, remaining)
         self.hp -= lost
         self._status_event("on_direct_damage_applied")
         self.check_death()
+        self.record("damage_settled", grade=grade, incoming=incoming, multiplier=multiplier,
+                    absorbed=absorbed, eroded=eroded, hp_lost=lost, hp=self.hp, maximum=self.max_hp,
+                    cause=self._effect_context.event.get("damage_cause"))
         return lost
 
     def check_death(self):
@@ -542,3 +567,4 @@ class Character:
         for hand, before, after in hand_changes:
             hand._on_size_changed(before, after)
         self.game.check_game_over()
+        self.record("character_died")

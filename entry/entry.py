@@ -51,6 +51,7 @@ class Entry:
                  period=None, origin=None, turn_limit=None, damage_cause=None, status_name=None,
                  choice_prompt=None):
         self.owner = owner
+        self.group_name = None
         self.trigger_type = trigger_type
         self.trigger = trigger
         from entry.compiler import prepare_effect

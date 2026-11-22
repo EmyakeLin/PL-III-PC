@@ -120,6 +120,7 @@ class Game:
         if self.turn_number != number:
             self.turn_number = number
             self.turn_ending = False
+            self.context.record("turn_opened", number=number)
             self.context.turn_entry_uses.clear()
             self.turn_history.clear()
             self.context.dispatch_pipeline("on_turn_limits_reset", source=None, target=None, side=None)
@@ -180,7 +181,7 @@ class Game:
                                     members=tuple((c.name, c.speed) for c in player.characters if c.is_alive))
             if left.speed != right.speed:
                 self.first_player = left if left.speed > right.speed else right
-                self.context.record("initiative", player=self.first_player.name)
+                self.context.record("initiative", player=self.first_player.name, side=self.first_player.side)
                 return
             self.context.record("speed_tied")
 
@@ -278,12 +279,16 @@ class Game:
         if not self.duelspace.space:
             self.context.record("empty_board")
             return
-        for slot in self.duelspace.space:
-            for cards in slot.content.values():
+        revealed = []
+        for number, slot in enumerate(self.duelspace.space, 1):
+            sides = {p.side: [] for p in self.players}
+            for side, cards in slot.content.items():
                 for card in cards:
                     if card.state == CardState.PLACED_FACE_DOWN:
                         card.state = CardState.PLACED_FACE_UP
-        self.context.record("cards_revealed")
+                        sides[side].append(card.id)
+            revealed.append({"number": number, "sides": sides})
+        self.context.record("cards_revealed", duels=revealed)
         for slot in self.duelspace.space:
             for player in sorted(self.players, key=lambda p: p is not self.first_player):
                 for card in tuple(slot.get_content(player.side)):
@@ -348,9 +353,11 @@ class Game:
                     for card in cards]
         remaining = set(on_board)
         used = set(self.used_cards)
+        recycled = {p.side: {"side": p.side, "used_count": 0, "board_count": 0} for p in self.players}
         for card in [*self.used_cards, *on_board]:
             if card in remaining and card.character.is_alive:
                 remaining.remove(card)
+                recycled[card.player.side]["used_count" if card in used else "board_count"] += 1
                 if card in used:
                     # Turn-end entries run after recycling; keep this use's caster
                     # and local state even if the physical card is returned to its owner.
@@ -358,6 +365,7 @@ class Game:
                 card.return_to_printed_owner()
                 card.player.cardspace.draw.add_card(card)
         for player in self.players:
+            recycled[player.side]["discard_count"] = len(player.cardspace.delayed_discard.content)
             player.cardspace.delayed_discard.push_to_draw()
         self.used_cards.clear()
         self.duelspace.space.clear()
@@ -367,7 +375,7 @@ class Game:
         self.ended_player.clear()
         self.cards_revealed = False
         self.turn_count += 1
-        self.context.record("turn_ended", turn=self.turn_count)
+        self.context.record("turn_ended", turn=self.turn_count, recycled=list(recycled.values()))
         self.check_game_over()
 
     def init_dice(self, data):
