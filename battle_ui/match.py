@@ -23,7 +23,7 @@ class StaleActionError(ValueError):
 
 def _normalize_roster(roster, pool):
     if roster is None:
-        return (["plan_b_annolin"], ["waa_lake"])
+        roster = ("plan_b_annolin", "plan_b_heck")
     if not isinstance(roster, (tuple, list)) or len(roster) != 2:
         raise ValueError("请为双方选择不同的出战角色。")
     if all(isinstance(item, str) for item in roster):
