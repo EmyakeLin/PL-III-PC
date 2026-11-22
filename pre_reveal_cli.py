@@ -35,7 +35,8 @@ def _actions(phase):
             yield f"{player.name} · 回应开牌前交锋 {number}", player, "respond", number
 
 
-def _attack(game, player, card):
+def _attack(bridge, player, card):
+    game = bridge.game
     enemy = game.pre_reveal.opponent(player)
     targets = game.pre_reveal.attack_targets(card)
     labels = [c.combat_summary() if c is not None
@@ -44,7 +45,7 @@ def _attack(game, player, card):
     index = _choose(labels, "选择目标，回车返回公开桌面 ")
     if index is not None:
         character, duel_index = targets[index]
-        game.pre_reveal.declare_attack(card, character=character, duel_index=duel_index)
+        bridge.execute(game.pre_reveal.declare_attack, card, character=character, duel_index=duel_index)
 
 
 def run_declarations(bridge):
@@ -78,10 +79,10 @@ def run_declarations(bridge):
             index = _choose(labels, "选择手牌或操作，回车暂缓并返回公开桌面 ")
             if index is not None:
                 if action == "attack":
-                    _attack(game, player, cards[index])
+                    _attack(bridge, player, cards[index])
                 elif index == len(cards):
                     phase.pass_intercept(duel_number=number, player=player)
                 else:
-                    phase.intercept(cards[index], duel_number=number)
+                    bridge.execute(phase.intercept, cards[index], duel_number=number)
         finally:
             bridge.close_private_view()

@@ -18,6 +18,7 @@ class Player:
         self.faction_representatives = {}
         self.speed = 0
         self.default_target_character = None
+        self.target_order = None
         self.cardspace = CardSpace(self)
 
     @property
@@ -46,7 +47,6 @@ class Player:
 
     def set_default_target(self, target):
         self.default_target_character = target
-        print(f"{self.name} 的默认目标已设为 {target.name}。")
 
     def get_default_target(self, enemy_player):
         alive = [character for character in enemy_player.characters if character.is_alive]
@@ -55,25 +55,12 @@ class Player:
         return max(alive, key=lambda char: char.hp, default=None)
 
     def choose_one_sided_target(self, enemy_player):
-        alive = [character for character in enemy_player.characters if character.is_alive]
-        if len(alive) <= 1:
-            return alive[0] if alive else None
+        eligible = [member for member in enemy_player.characters if member.is_alive]
         default = self.get_default_target(enemy_player)
-        print(f"{self.name} 选择单方面攻击的目标：")
-        for number, character in enumerate(alive, 1):
-            print(f"  [{number}] {character.combat_summary()}")
-        while True:
-            answer = input(f"输入编号，回车选 {default.name}，set 编号可更改默认目标 ").strip()
-            if not answer:
-                return default
-            persistent = answer.lower().startswith("set ")
-            number = answer[4:].strip() if persistent else answer
-            if number.isdecimal() and 1 <= int(number) <= len(alive):
-                chosen = alive[int(number) - 1]
-                if persistent:
-                    self.set_default_target(chosen)
-                return chosen
-            print("请输入存活目标的编号。")
+        if len(eligible) < 2 or self.target_order is None:
+            return default
+        order, self.target_order = self.target_order, None
+        return order.resolve(eligible, default)
 
     def reset_on_turn_start(self):
         rule = self.game.gamerule

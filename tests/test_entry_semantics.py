@@ -14,6 +14,9 @@ from models.character import Character
 from models.opcode import OpCode
 from models.roster import RosterDraft
 from player.draw_choice import DrawChoice
+from player.player import Player
+from player.target_order import TargetOrder
+from terminal_bridge import TerminalBridge
 from terminal_events import format_fact
 
 
@@ -224,6 +227,48 @@ class BattleFactTests(unittest.TestCase):
                 self.assertEqual(vm.trace, [(OpCode.SHIELD, "BEFORE", (actor, kind, amount)),
                                             (OpCode.SHIELD, "AFTER", ())])
                 self.assertIn(str(total), format_fact(*facts[0]))
+
+
+class TargetExecutorTests(unittest.TestCase):
+    def test_each_unbound_selection_resumes_at_its_own_instruction(self):
+        player = Player(1, "甲")
+        enemies = [SimpleNamespace(is_alive=True, hp=hp) for hp in (2, 10, 3)]
+        enemy = SimpleNamespace(characters=enemies)
+        calls = []
+        choices = iter((enemies[2], enemies[0]))
+        bridge = TerminalBridge(SimpleNamespace(players=[player], context=Context()))
+        def respond(seat, choice):
+            self.assertIs(seat, player)
+            self.assertEqual(choice.candidates, tuple(enemies))
+            self.assertIs(choice.default, enemies[1])
+            calls.append("choose")
+            return next(choices)
+        bridge.choose_target = respond
+        def resolve():
+            calls.append("before")
+            first = player.choose_one_sided_target(enemy)
+            calls.append("between")
+            second = player.choose_one_sided_target(enemy)
+            calls.append("after")
+            return first, second
+        with bridge.session():
+            self.assertEqual(bridge.execute(resolve), (enemies[2], enemies[0]))
+        self.assertEqual(calls, ["before", "choose", "between", "choose", "after"])
+        self.assertIsNone(player.target_order)
+        self.assertIs(player.choose_one_sided_target(enemy), enemies[1])
+
+    def test_zero_and_single_targets_preserve_the_next_reservation(self):
+        player = Player(7, "甲")
+        order = player.target_order = TargetOrder()
+        enemy = SimpleNamespace(characters=[])
+        self.assertIsNone(player.choose_one_sided_target(enemy))
+        target = SimpleNamespace(is_alive=True, hp=5)
+        enemy.characters.append(target)
+        self.assertIs(player.choose_one_sided_target(enemy), target)
+        self.assertIs(player.target_order, order)
+        self.assertFalse(order.offered.done())
+        with self.assertRaises(ValueError):
+            order.submit(target)
 
 
 if __name__ == "__main__":

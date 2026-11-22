@@ -52,7 +52,7 @@ def offer_actions(bridge):
                     index = next(i for i, action in enumerate(actions) if action.kind == "decline_card")
                 if index is not None:
                     old_space = game.pipeline.interrupt_space
-                    game.special.apply(player, actions[index])
+                    bridge.execute(game.special.apply, player, actions[index])
                     # The game host pumps the interrupted duel before resuming the parent.
                     if game.pipeline.interrupt_space is not old_space or game.is_over:
                         return

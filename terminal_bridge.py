@@ -2,6 +2,10 @@
 
 import sys
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+
+from player.target_order import TargetOrder
 
 from terminal_events import format_fact
 
@@ -18,16 +22,70 @@ class TerminalBridge:
         self.special_prompt = special_prompt
         self._private_player = None
         self._facts = None
+        self._executor = None
 
     @contextmanager
     def session(self):
-        with self.game.context.collect_facts() as facts:
-            self._facts = facts
+        with ThreadPoolExecutor(max_workers=1) as executor, self.game.context.collect_facts() as facts:
+            self._executor, self._facts = executor, facts
             try:
                 yield
             finally:
                 self.flush()
-                self._facts = None
+                self._executor = self._facts = None
+
+    def execute(self, command, *args, **kwargs):
+        """Drive a synchronous kernel command, answering target reservations on the terminal thread."""
+        if self._executor is None:
+            return command(*args, **kwargs)
+        notifications = Queue()
+        orders = {}
+        previous = {player: player.target_order for player in self.game.players}
+
+        def reserve(player):
+            order = TargetOrder()
+            orders[player] = order
+            player.target_order = order
+            order.offered.add_done_callback(lambda _: notifications.put((player, order)))
+
+        for player in self.game.players:
+            reserve(player)
+        try:
+            task = self._executor.submit(command, *args, **kwargs)
+            task.add_done_callback(lambda _: notifications.put(None))
+            while (request := notifications.get()) is not None:
+                player, order = request
+                try:
+                    target = self.choose_target(player, order.offered.result())
+                    reserve(player)
+                    order.submit(target)
+                except BaseException:
+                    order.cancel()
+                    raise
+            return task.result()
+        finally:
+            for player, order in orders.items():
+                order.cancel()
+                player.target_order = previous[player]
+
+    def choose_target(self, player, choice):
+        self.flush()
+        print(f"{player.name} 选择单方面攻击的目标：")
+        for number, character in enumerate(choice.candidates, 1):
+            print(f"  [{number}] {character.combat_summary()}")
+        while True:
+            answer = input(f"输入编号，回车选 {choice.default.name}，set 编号可更改默认目标 ").strip()
+            if not answer:
+                return choice.default
+            persistent = answer.lower().startswith("set ")
+            number = answer[4:].strip() if persistent else answer
+            if number.isdecimal() and 1 <= int(number) <= len(choice.candidates):
+                target = choice.candidates[int(number) - 1]
+                if persistent:
+                    player.set_default_target(target)
+                    print(f"{player.name} 的默认目标已设为 {target.name}。")
+                return target
+            print("请输入存活目标的编号。")
 
     def flush(self):
         while self._facts:
@@ -112,7 +170,7 @@ class TerminalBridge:
                     if len(set(indices)) == discard_count and all(0 <= i < len(candidates) for i in indices):
                         break
                 print(f"请选择 {discard_count} 个不同的有效编号。")
-            self.game.complete_draw(choice, [candidates[index] for index in indices])
+            self.execute(self.game.complete_draw, choice, [candidates[index] for index in indices])
 
     def begin_private_view(self, player):
         """同屏轮换时清除上一位玩家的手牌，再邀请下一位玩家接手。"""
@@ -145,7 +203,7 @@ class TerminalBridge:
 
     def advance(self):
         game = self.game
-        action = game.next_step()
+        action = self.execute(game.next_step)
         self.flush()
         if action == "logic_draw_cards":
             self.settle_draws()
@@ -173,7 +231,7 @@ class TerminalBridge:
         hand = player.cardspace.hand.content
         if not game.legal_placements():
             print(f"{player.name} 没有可置入的牌，结束本轮置卡。")
-            return game.submit_placement(player, after="end")
+            return self.execute(game.submit_placement, player, after="end")
         slot_number = game.duelspace.locate_nearest_empty_duel(player.side) + 1
         print(f"\n{player.name} 置卡 · 交锋 {slot_number}　通用费 {player.available_cost}")
         opposing = next(p for p in game.players if p is not player)
@@ -197,11 +255,11 @@ class TerminalBridge:
             extra = "，pass 暂交置卡权" if game.placed_this_window else ""
             answer = input(f"输入手牌编号，回车结束本轮置卡{extra} ").strip().lower()
             if answer == "pass" and game.placed_this_window:
-                return game.submit_placement(player, after="pass")
+                return self.execute(game.submit_placement, player, after="pass")
             if answer in ("", "end"):
                 if not input("再按回车确认结束本轮置卡，输入其他内容取消 ").strip():
                     print(f"{player.name} 结束本轮置卡。")
-                    return game.submit_placement(player, after="end")
+                    return self.execute(game.submit_placement, player, after="end")
                 continue
             if not answer.isdecimal() or not 1 <= int(answer) <= len(hand):
                 print("请输入有效的手牌编号。")
@@ -217,7 +275,7 @@ class TerminalBridge:
             if confirm not in ("y", "yes", "pass", "end"):
                 continue
             after = confirm if confirm in ("pass", "end") else "continue"
-            if not game.submit_placement(player, card, after=after):
+            if not self.execute(game.submit_placement, player, card, after=after):
                 print("此次置卡未生效。")
                 return
             print(f"{player.name} 已在第 {slot_number} 交锋扣置一张牌。")
