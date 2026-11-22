@@ -67,8 +67,6 @@ FIELD_ALIASES = {
     "previous_loss": ["$player", "lose", -1, "DUEL_OFFSET", "CLASH_COUNT", 0, "GT"],
     "full_hp": ["$self.hp", "$self.max_hp", "GE"],
     "self_damage": ["$self", "$event.target", "IS"],
-    "repeat_count": ["$event.card.instantiated_dice", {"literal": []}, "COALESCE",
-                     ["$item.repeat_requested", False, "COALESCE"], "FILTER", "SIZE"],
 }
 
 # These optional fields existed before dotted event references. Their absence is a valid observation.

@@ -229,14 +229,6 @@
               "description": "消耗4能源以使本技能骰子等级提升2。"
             },
             {
-              "trigger": "on_clash_win",
-              "operation": {
-                "op": "program",
-                "code": ["$card", "wins", "$card", "wins", "SKILL_STATE", 1, "ADD", "SET_SKILL_STATE"]
-              },
-              "description": "记录本技能实际取得的拼点胜利。"
-            },
-            {
               "trigger": "AFTER ACTIVATE_STATUS",
               "subject": "source",
               "when": {"status":"烧伤","activation_kind":"ignite","result":true},
@@ -304,7 +296,8 @@
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$card", "wins", "SKILL_STATE", 2, "GE",
+                      "$event.card.instantiated_dice", ["$event.item.clash_result", "win", "EQ"], "FILTER",
+                      "SIZE", 2, "GE",
                       ["$die", 2, "DIE_LEVEL_ADD", "$die", "lunge_finish", true, "SET_DIE_STATE"], "WHEN"
                     ]
                   },
@@ -622,12 +615,23 @@
                   "description": "本骰每造成1点直伤消耗1能源，包括本骰引燃造成的伤害。"
                 },
                 {
+                  "trigger": "on_dice_use",
+                  "operation": {"op":"program","code":[
+                    "$event.die.is_repeat", [
+                      "$event.card", "首骰已重复", "$event.card.use_state", "首骰已重复", 0, "LOOKUP",
+                      1, "ADD", "SET_SKILL_STATE"
+                    ], "WHEN"
+                  ]},
+                  "description": "本骰实际作为重复骰使用时，记录本次技能首骰已重复的次数。"
+                },
+                {
                   "trigger": "after_dice_use",
                   "operation": {
                     "op": "program",
                     "code": [
-                      "$self", "能源", "STATUS_COUNT", 0, "GT", "$repeat_count", "$card", "repeat_limit",
-                      "SKILL_STATE", "LT", "AND", ["$die", "REPEAT_DIE"], "WHEN"
+                      "$self", "能源", "STATUS_COUNT", 0, "GT",
+                      "$event.card.use_state", "首骰已重复", 0, "LOOKUP", "$event.card.use_state", "repeat_limit", 0, "LOOKUP",
+                      "LT", "AND", ["$event.die", "REPEAT_DIE"], "WHEN"
                     ]
                   },
                   "description": "攻击后若仍持有能源则重复使用，受使用技能时锁定的次数限制。"
