@@ -4,6 +4,25 @@ from dataclasses import dataclass, field
 from models.card import Card
 
 
+def _copy_use_state(state):
+    """Copy captured containers and keep references to the physical combatants and components."""
+    pending, seen, identities = [state], set(), {}
+    while pending:
+        value = pending.pop()
+        identity = id(value)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        if isinstance(value, dict):
+            pending.extend(value.keys())
+            pending.extend(value.values())
+        elif isinstance(value, (list, tuple, set, frozenset)):
+            pending.extend(value)
+        else:
+            identities[identity] = value
+    return deepcopy(state, identities)
+
+
 @dataclass(frozen=True)
 class SkillDieTemplate:
     card: Card
@@ -16,7 +35,7 @@ class SkillDieTemplate:
         snapshot = copy(card)
         snapshot.dice = list(card.dice)
         snapshot.dice[position - 1] = deepcopy(card.dice[position - 1])
-        snapshot.use_state = card.use_state.copy()
+        snapshot.use_state = _copy_use_state(card.use_state)
         snapshot._dice_order = [(position - 1, False)]
         snapshot.current_dice_index = 0
         snapshot.instantiated_dice = None
@@ -26,7 +45,7 @@ class SkillDieTemplate:
     def create_die(self, game, holder):
         card = copy(self.card)
         card.character, card.player = holder, holder.player
-        card.use_state = self.card.use_state.copy()
+        card.use_state = _copy_use_state(self.card.use_state)
         card._dice_order = self.card._dice_order.copy()
         return card.get_current_die(game, register=False)
 

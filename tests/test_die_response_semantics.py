@@ -102,6 +102,19 @@ class DieResponseTests(unittest.TestCase):
         self.assertEqual(self.holder.available_die_responses("other_window", 20), [other])
         self.assertIsNone(self.pipeline._pending_response_die(self.attack))
 
+    def test_snapshot_keeps_the_original_use_balances_and_combatant_identity_after_a_transfer(self):
+        physical = self.card(self.attacker, [dict(type="block", level=1)])
+        physical.use_state.update(spent_statuses={"能源": 4}, marked=self.holder)
+        template = SkillDieTemplate.capture(physical, 1)
+        physical.set_controller(self.holder)
+        physical.use_state["spent_statuses"]["能源"] = 8
+        first = template.create_die(self.game, self.attacker)
+        self.assertIs(first.card.character, self.attacker)
+        self.assertIs(first.card.use_state["marked"], self.holder)
+        self.assertEqual(first.card.use_state["spent_statuses"]["能源"], 4)
+        first.card.use_state["spent_statuses"]["能源"] += 2
+        self.assertEqual(template.create_die(self.game, self.attacker).card.use_state["spent_statuses"]["能源"], 4)
+
     def test_blocked_unpaid_and_successful_responses_apply_their_own_charge(self):
         card = self.card(self.holder, [dict(type="block", level=1, requires_skill_state="enabled"),
                                       dict(type="block", level=2, resource_cost=dict(status="弹药", amount=1)),
@@ -126,6 +139,18 @@ class DieResponseTests(unittest.TestCase):
         die = self.pipeline._accept_die_response(self.attack, self.holder, BEFORE_ONE_SIDED_ATTACK)
         self.assertTrue(die.resource_paid)
         self.assertEqual(self.holder.reserved_dice, [])
+
+    def test_a_printed_price_can_be_discounted_when_the_die_is_actually_used(self):
+        card = self.card(self.holder, [dict(type="block", level=2, resource_cost=dict(status="弹药", amount=2))])
+        self.holder.statuses["弹药"] = 1
+        self.game.context.register_entries(self.holder, [{"trigger": "BEFORE SPEND_STATUS", "subject": "target",
+            "operation": {"op": "program", "code": [1, "SUB"]}}])
+        self.grant(card, count=1)
+        self.assertIsNotNone(self.pipeline._pending_response_die(self.attack))
+        self.assertEqual(self.holder.statuses["弹药"], 1)
+        used = self.pipeline._accept_die_response(self.attack, self.holder, BEFORE_ONE_SIDED_ATTACK)
+        self.assertTrue(used.resource_paid)
+        self.assertEqual(self.holder.statuses.get("弹药", 0), 0)
 
     def test_zero_stacks_or_missing_position_grants_nothing(self):
         card = self.card(self.holder, [dict(type="block", level=1)])
