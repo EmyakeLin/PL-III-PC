@@ -64,7 +64,9 @@ class Entry:
         self.authority = AUTHORITY.get(authority, authority)
         if self.authority not in (0, 1, 2):
             raise ValueError(f"未知的话语权 {authority!r}")
+        from entry.predicates import compile_when
         self.when = when or {}
+        self.conditions = compile_when(self.when, trigger, timing)
         self.period = period
         self.origin = origin or kind_of(owner)
         self.damage_cause = damage_cause

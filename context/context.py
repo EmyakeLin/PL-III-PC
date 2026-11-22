@@ -491,38 +491,8 @@ class Context:
             if self.turn_entry_uses.get(key, 0) >= entry.turn_limit["count"]:
                 return False
         event = self.event
-        for key, value in entry.when.items():
-            if key == "die_type":
-                if getattr(event.get("die"), "type", None) != value:
-                    return False
-            elif key in ("owner_status_at_least", "target_status_at_least"):
-                actor = character_of(entry.owner) if key.startswith("owner") else event.get("target")
-                statuses = getattr(actor, "statuses", {})
-                if any(statuses.get(name, 0) < minimum for name, minimum in value.items()):
-                    return False
-            elif key == "owner_status_below_status":
-                statuses = character_of(entry.owner).statuses
-                if any(statuses.get(name, 0) >= statuses.get(other, 0) for name, other in value.items()):
-                    return False
-            elif key in ("owner_hp_at_most", "target_hp_at_most"):
-                actor = character_of(entry.owner) if key.startswith("owner") else event.get("target")
-                if actor is None or not hasattr(actor, "hp") or actor.hp > value:
-                    return False
-            elif key in ("amount_at_least", "result_at_least", "damage_amount_at_least", "hp_lost_at_least"):
-                actual = event.get(key.removesuffix("_at_least"))
-                pending_amount = key == "amount_at_least" or (key == "damage_amount_at_least"
-                                                             and entry.trigger == OpCode.RESOLVE_DAMAGE)
-                if pending_amount and entry.trigger_type == TriggerType.OPCODE and entry.timing == "BEFORE":
-                    operands = OPERANDS.get(entry.trigger, ())
-                    if "amount" in operands:
-                        # Earlier listeners can replace a fixed price with "all" or vice versa.
-                        if ordering:
-                            continue
-                        actual = self.peek(len(operands) - 1 - operands.index("amount"))
-                if not isinstance(actual, (int, float)) or actual < value:
-                    return False
-            elif event.get(key) != value:
-                return False
+        if not all(clause.matches(self, entry, ordering) for clause in entry.conditions):
+            return False
         if entry.subject == "any":
             return True
         character = character_of(entry.owner)

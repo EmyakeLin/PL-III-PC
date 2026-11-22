@@ -505,6 +505,43 @@ class TurnHistoryTests(unittest.TestCase):
 
 
 class ConditionExecutorTests(unittest.TestCase):
+    def test_pending_operand_is_read_after_earlier_listeners_and_queries_emit_no_ops(self):
+        for op, compare in COMPARISONS.items():
+            for initial, replacement in ((0, 5), (5, 0), (2, 2), (2**80, -7)):
+                vm = TracedContext()
+                player = Player(4, "甲")
+                seen = []
+                def replace_amount(ctx):
+                    ctx.pop()
+                    ctx.push(replacement)
+                clauses = [{"left": "$pending.amount", "op": op, "right": 2}]
+                vm.register_entries(None, [
+                    {"trigger": "BEFORE NEXT_TURN_COST", "operation": replace_amount},
+                    {"trigger": "BEFORE NEXT_TURN_COST", "when": clauses,
+                     "operation": lambda ctx: seen.append(ctx.peek(0))},
+                ])
+                vm.eval_block([player, initial, OpCode.NEXT_TURN_COST])
+                self.assertEqual(seen, [replacement] if compare(replacement, 2) else [])
+                self.assertEqual(player.next_turn_common_cost, replacement)
+                self.assertEqual(vm.stack, [])
+                self.assertNotIn(OpCode.LT, [op for op, _, _ in vm.trace])
+
+    def test_status_comparison_accepts_independent_names_values_and_missing_entities(self):
+        from entry.predicates import compile_when
+        vm = Context()
+        status = "自定义·层数/甲"
+        owner = SimpleNamespace(is_alive=True, statuses={status: 5})
+        for value in (-7, 0, 5, 2**91):
+            vm.event = {"target": SimpleNamespace(statuses={"比较": value})}
+            condition = [{"left": {"field": "$self.statuses", "key": status, "default": 0}, "op": "lt",
+                          "right": {"field": "$event.target.statuses", "key": "比较", "default": 0}}]
+            entry = Entry.from_spec(owner, {"trigger": "tick", "operation": [], "when": condition})
+            self.assertIs(entry.conditions[0].matches(vm, entry, False), 5 < value)
+            del vm.event["target"]
+            self.assertFalse(entry.conditions[0].matches(vm, entry, False))
+        with self.assertRaisesRegex(ValueError, "条件字段"):
+            compile_when([{"left": "$pending.amount", "op": "eq", "right": 0}], OpCode.DRAW, "AFTER")
+
     def test_pack_parser_accepts_the_same_dice_gates_the_executor_accepts(self):
         import json
         from pathlib import Path

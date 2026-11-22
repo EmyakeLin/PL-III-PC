@@ -1,0 +1,103 @@
+"""Read-only comparisons evaluated before ordering listeners and again before invocation."""
+
+from dataclasses import dataclass
+
+from entry.entry import character_of
+from entry.references import read_path
+from models.conditions import COMPARISONS
+from models.opcode import OpCode
+
+
+@dataclass(frozen=True)
+class Reference:
+    path: tuple
+    key: object = None
+    default: object = None
+
+    def read(self, ctx, entry):
+        root, *fields = self.path
+        owner = character_of(entry.owner) if root == "self" else ctx.event
+        value = read_path(owner, fields, missing=None)
+        if self.key is not None:
+            return value.get(self.key, self.default) if isinstance(value, dict) else self.default
+        return self.default if value is None else value
+
+
+@dataclass(frozen=True)
+class Operand:
+    offset: int
+
+
+@dataclass(frozen=True)
+class Comparison:
+    left: object
+    op: str
+    right: object
+    numeric: bool = False
+
+    def matches(self, ctx, entry, ordering):
+        if ordering and (isinstance(self.left, Operand) or isinstance(self.right, Operand)):
+            return True
+        def read(value):
+            if isinstance(value, Reference):
+                return value.read(ctx, entry)
+            return ctx.peek(value.offset) if isinstance(value, Operand) else value
+        left, right = read(self.left), read(self.right)
+        if self.numeric and not isinstance(left, (int, float)):
+            return False
+        try:
+            return COMPARISONS[self.op](left, right)
+        except TypeError:
+            return False
+
+
+def compile_when(when, trigger, timing):
+    from models.opcodes import OPERANDS
+
+    operands = OPERANDS.get(trigger, ()) if timing == "BEFORE" else ()
+
+    def reference(value):
+        options = value if isinstance(value, dict) else {}
+        if "literal" in options:
+            return options["literal"]
+        field = options.get("field", value)
+        if not isinstance(field, str) or not field.startswith("$"):
+            return value
+        root, *parts = field[1:].split(".")
+        if root == "pending" and len(parts) == 1 and parts[0] in operands:
+            return Operand(len(operands) - operands.index(parts[0]) - 1)
+        if root not in ("self", "event") or any(not key.isidentifier() or key.startswith("_") for key in parts):
+            raise ValueError(f"无效的条件字段 {field!r}")
+        return Reference((root, *parts), options.get("key"), options.get("default"))
+
+    if isinstance(when, list):
+        result = []
+        for clause in when:
+            if not isinstance(clause, dict) or not {"left", "op", "right"} <= clause.keys() or clause["op"] not in COMPARISONS:
+                raise ValueError(f"无效的词条条件 {clause!r}")
+            result.append(Comparison(reference(clause["left"]), clause["op"], reference(clause["right"])))
+        return tuple(result)
+
+    result = []
+    for name, value in when.items():
+        if name == "die_type":
+            result.append(Comparison(Reference(("event", "die", "type")), "eq", value))
+        elif name in ("owner_status_at_least", "target_status_at_least", "owner_status_below_status"):
+            path = ("event", "target", "statuses") if name.startswith("target") else ("self", "statuses")
+            for status, limit in value.items():
+                current = Reference(path, status, 0)
+                if name == "owner_status_below_status":
+                    result.append(Comparison(current, "lt", Reference(path, limit, 0)))
+                else:
+                    result.append(Comparison(current, "ge", limit))
+        elif name in ("owner_hp_at_most", "target_hp_at_most"):
+            path = ("self", "hp") if name.startswith("owner") else ("event", "target", "hp")
+            result.append(Comparison(Reference(path), "le", value))
+        elif name in ("amount_at_least", "result_at_least", "hp_lost_at_least", "damage_amount_at_least"):
+            field = name.removesuffix("_at_least")
+            pending = field == "amount" or field == "damage_amount" and trigger == OpCode.RESOLVE_DAMAGE
+            left = reference("$pending.amount") if pending and "amount" in operands else Reference(("event", field))
+            result.append(Comparison(left, "ge", value, numeric=True))
+        else:
+            result.append(Comparison(Reference(("event",), name), "eq", value))
+    return tuple(result)

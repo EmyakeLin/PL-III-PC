@@ -122,7 +122,7 @@
                "operation": ["STATUS 能源 1 $self", "STATUS 烧伤 1 $target"]}
             ]},
             {"type": "blunt", "level": 2, "entries": [
-              {"trigger": "on_dice_hit", "when": {"target_status_at_least": {"烧伤": 8}},
+              {"trigger": "on_dice_hit", "when": [{"left": {"field": "$event.target.statuses", "key": "烧伤", "default": 0}, "op": "ge", "right": 8}],
                "description": "若目标烧伤至少8层，获得2能源并抽1张牌。",
                "operation": ["STATUS 能源 2 $self", "DRAW 1"]}
             ]}
