@@ -440,7 +440,8 @@ class Card:
     def describe(self):
         from models.dice import describe_die
         actions = " → ".join(describe_die(die) for die in self.dice)
-        effects = "；".join(describe_entry(entry) for entry in self.entries)
+        effects = "；".join(describe_entry(entry) for entry in self.entries
+                            if not (isinstance(entry, dict) and entry.get("hidden")))
         in_hand = self.player and self in self.player.cardspace.hand.content
         restriction = "当前无法使用" if in_hand and self.character.skill_restricted(self) else ""
         return " · ".join(part for part in [str(self), restriction, describe_skill_traits(self.data), actions, effects] if part)

@@ -6,7 +6,7 @@
       {
         "trigger": "BEFORE RESOLVE_CLASH_SCORE",
         "operation": {"op":"program","code":["$event.value_ref","$self","涡流","STATUS_COUNT",10,"MIN","VALUE_FLOOR"]},
-        "description": "【拼点判定时】自身拼点点数至少为当前涡流层数，保底最多计入10点。"
+        "description": "自身拼点点数至少为当前涡流层数，保底最多计入10点。"
       },
       {
         "trigger": "on_turn_end",
@@ -42,7 +42,7 @@
             "$event.die.printed_level.value", "VALUE_CEILING"
           ]
         },
-        "description": "【骰级判定时】本回合自身按印刷骰级使用骰子。"
+        "description": "本回合自身按印刷骰级使用骰子。"
       }
     ]
   },
@@ -60,7 +60,7 @@
           "entries": [{
             "trigger": "on_turn_start",
             "operation": ["DRAW 1", "HEAL 2"],
-            "description": "【回合开始】初始交锋上限为3。回合开始时，额外抽1张手牌并回复2生命值。"
+            "description": "初始交锋上限为3。【回合开始】额外抽1张手牌并回复2生命值。"
           }]
         },
         {
@@ -95,12 +95,12 @@
                   "$event.value_ref", "$event.die.printed_level.value", "VALUE_CEILING"
                 ]
               },
-              "description": "【骰级判定时】自身带有涡流时，无视骰子等级增减效果。"
+              "description": "自身带有涡流时，无视骰子等级增减效果。"
             },
             {
               "trigger": "on_turn_start",
               "operation": {"op":"program","code":["$game.turn_number",1,"EQ",["$self","涡流",4,"STATUS"],"WHEN"]},
-              "description": "【回合开始】首个回合开始时获得4层涡流。"
+              "description": "首个回合开始时获得4层涡流。"
             }
           ]
         },
@@ -119,14 +119,14 @@
               "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
-              "description": "【拼点平局】自身闪避骰拼点打平时同样触发翠流漂泊。"
+              "description": "自身闪避骰拼点打平时同样触发翠流漂泊。"
             },
             {
               "trigger": "on_clash_skip",
               "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
-              "description": "【跳过拼点】自身闪避骰跳过拼点时同样触发翠流漂泊。"
+              "description": "自身闪避骰跳过拼点时同样触发翠流漂泊。"
             }
           ]
         }
@@ -173,7 +173,7 @@
                     "FILTER", "FIRST", "CHARACTER_OF", "ROUTE_DIE_ATTACK"
                   ]
                 },
-                "description": "【配对前】对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"
+                "description": "对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"
               },
               "1物理",
               {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$event.target","骰子等级降低",1,"STATUS"]},
@@ -216,7 +216,7 @@
                   "WHEN"
                 ]
               },
-              "description": "【命中前】使用时目标带有涡流，则本技能骰子伤害+1。"
+              "description": "使用时目标带有涡流，则本技能骰子伤害+1。"
             },
             {
               "trigger": "after_skill_use",
@@ -267,7 +267,7 @@
                 "op": "program",
                 "code": ["$owner.use_state","gain_on_damage",false,"LOOKUP",["$self","涡流",1,"STATUS"],"WHEN"]
               },
-              "description": "【受伤后】本技能发动后，每次在本交锋受到伤害时获得1层涡流。"
+              "description": "本技能发动后，每次在本交锋受到伤害时获得1层涡流。"
             }
           ],
           "dice": [
@@ -285,7 +285,7 @@
                   "op": "program",
                   "code": ["$event.target","$event.hit_modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"]
                 },
-                "description": "【命中前】自身涡流≥3时，伤害+1。"
+                "description": "自身涡流≥3时，伤害+1。"
               }
             ]},
             {"type": "blunt", "level": 3, "entries": ["1物理",
@@ -319,7 +319,7 @@
                 "WHEN"
               ]
             },
-            "description": "【用骰前】结算并清除首骰给予的最终点数加成。"
+            "description": "结算并清除首骰给予的最终点数加成。"
           }],
           "dice": [
             {"type": "slash", "level": 4, "entries": ["1物理",

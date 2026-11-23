@@ -95,7 +95,7 @@
                 "op": "program",
                 "code": [1, "SUB"]
               },
-              "description": "【状态施加前】隧道开启期间，每次隧道获得量−1。"
+              "description": "隧道开启期间，每次隧道获得量−1。"
             }
           ]
         },
@@ -109,7 +109,7 @@
                 "op": "program",
                 "code": [1, "ADD"]
               },
-              "description": "【骰级判定时】隧道开启期间，骰级+1，持续提供2强壮。"
+              "description": "隧道开启期间，骰级+1，持续提供2强壮。"
             },
             {
               "trigger": "before_dice_hit",
@@ -132,7 +132,7 @@
                   "WHEN"
                 ]
               },
-              "description": "【命中前】开启时，命中有伤害部分的骰消耗1隧道，以使本次命中的伤害部分+1。"
+              "description": "开启时，命中有伤害部分的骰消耗1隧道，以使本次命中的伤害部分+1。"
             }
           ]
         },
@@ -142,7 +142,7 @@
             {
               "trigger": "on_dice_clash",
               "operation": "STATUS 羽流·林秋 1 $self",
-              "description": "【拼点时】每实际参与一次拼点，获得1羽流·林秋（至多12）。"
+              "description": "每实际参与一次拼点，获得1羽流·林秋（至多12）。"
             },
             {
               "trigger": "before_dice_hit",
@@ -163,7 +163,7 @@
                   "WHEN"
                 ]
               },
-              "description": "【命中前】拼赢且即将命中时，d12不高于羽流层数则额外命中一次，每次用骰限一次。"
+              "description": "拼赢且即将命中时，d12不高于羽流层数则额外命中一次，每次用骰限一次。"
             },
             {
               "trigger": "before_turn_end",
@@ -183,7 +183,7 @@
               "trigger": "on_dice_clash",
               "when": [{"left":{"field":"$event.target.statuses","key":"星结","default":0},"op":"ge","right":8}],
               "operation": {"op":"program","code":["$event.die",1,"DIE_BASE_ADD"]},
-              "description": "【拼点时】与至少8星结的目标拼点时，基础值+1。"
+              "description": "与至少8星结的目标拼点时，基础值+1。"
             },
             {
               "trigger": "before_clash_result",
@@ -195,7 +195,7 @@
                   "AND", ["$event.card","resident_die","$event.die","SET_SKILL_STATE"], "WHEN"
                 ]
               },
-              "description": "【拼点结算前】目标至少8星结，且进攻骰本次变动点数超过当次上限的一半，成为驻留骰。"
+              "description": "目标至少8星结，且进攻骰本次变动点数超过当次上限的一半，成为驻留骰。"
             },
             {
               "trigger": "on_clash_lose",
@@ -215,7 +215,7 @@
                 "op": "program",
                 "code": ["$event.target","$event.hit_modifiers","damage_add",-1,"concept","ADD_DAMAGE_MODIFIER"]
               },
-              "description": "【命中前】驻留败方的伤害部分−1。"
+              "description": "驻留败方的伤害部分−1。"
             }
           ]
         },
@@ -232,7 +232,7 @@
                   "FOR_EACH_TARGET", "$self", "隧道", 3, "STATUS"
                 ]
               },
-              "description": "【星结锁定】对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。",
+              "description": "对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。",
               "trigger_type": "event",
               "subject": "any"
             }
@@ -413,7 +413,7 @@
                       "IF_ELSE"
                     ]
                   },
-                  "description": "【用骰时】已激活的末骰额外使用一次；重复使用时最终点数+4。"
+                  "description": "已激活的末骰额外使用一次；重复使用时最终点数+4。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -486,7 +486,7 @@
                   "WHEN"
                 ]
               },
-              "description": "【伤害结算前】各骰第一次命中造成的伤害+1。",
+              "description": "各骰第一次命中造成的伤害+1。",
               "when": [
                 {"left":"$event.hit_index","op":"eq","right":1},
                 {"left":"$event.damage_die","op":"eq","right":"$event.die"},
@@ -582,7 +582,7 @@
                   "WHEN"
                 ]
               },
-              "description": "【拼点结算前】开启时即将拼输，跳过整轮并减少3隧道，本技能至多一次。"
+              "description": "开启时即将拼输，跳过整轮并减少3隧道，本技能至多一次。"
             }
           ],
           "dice": [
@@ -735,7 +735,7 @@
                       "$event.card", "sever_die", "$event.die", "SET_SKILL_STATE"
                     ]
                   },
-                  "description": "【用骰时】隧道开启时，用骰时消耗至多2隧道，并激活本骰拼点、命中效果。"
+                  "description": "隧道开启时，用骰时消耗至多2隧道，并激活本骰拼点、命中效果。"
                 },
                 {
                   "trigger": "on_dice_clash",
@@ -747,7 +747,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "【拼点时】激活时，拼点中目标每1星结使其最终点数−1。"
+                  "description": "激活时，拼点中目标每1星结使其最终点数−1。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -791,7 +791,7 @@
               "when": [{"left":{"field":"$self.statuses","key":"隧道开启","default":0},"op":"ge","right":1}],
               "subject": "target",
               "operation": {"op":"program","code":["$event.target","$owner","EQ",[{"op":"cancel"}],"WHEN"]},
-              "description": "【防摧毁】开启期间本技能具有常规话语权的防摧毁。"
+              "description": "开启期间本技能具有常规话语权的防摧毁。"
             }
           ],
           "dice": [

@@ -137,11 +137,18 @@ class TerminalBridge:
             print(f"所属阵营　{data['faction']}")
         for key, label in (("faction_passives", "阵营被动"), ("passive_skills", "角色被动")):
             for passive in data.get(key, []):
+                if isinstance(passive, dict) and passive.get("hidden"):
+                    continue
                 name = passive.get("name", "") if isinstance(passive, dict) else ""
+                if isinstance(passive, dict) and passive.get("description"):
+                    for line in passive["description"].splitlines():
+                        if line.strip():
+                            print("  " + " · ".join(part for part in (label, name, line.strip()) if part))
+                    continue
                 entries = passive.get("entries", [passive]) if isinstance(passive, dict) else [passive]
-                if not entries and passive.get("description"):
-                    entries = [passive["description"]]
                 for entry in entries:
+                    if isinstance(entry, dict) and entry.get("hidden"):
+                        continue
                     print("  " + " · ".join(part for part in (label, name, describe_entry(entry)) if part))
         for printed in data["skills"]:
             TerminalBridge.show_skill(printed)
@@ -151,7 +158,8 @@ class TerminalBridge:
     @staticmethod
     def show_skill(skill):
         dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
-        entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
+        entries = "；".join(describe_entry(entry) for entry in skill.get("entries", [])
+                            if not (isinstance(entry, dict) and entry.get("hidden")))
         zone = "战斗外" if skill.get("out_of_combat") else ""
         print("  " + " · ".join(s for s in (skill["name"], f"{skill['cost']} 费",
                                               describe_skill_traits(skill), dice, entries, zone) if s))

@@ -28,7 +28,7 @@
       },
       {
         "trigger": "BEFORE STATUS",
-        "description": "【状态施加前】被施加的麻痹数量增加电击层数，至多+3。",
+        "description": "被施加的麻痹数量增加电击层数，至多+3。",
         "subject": "target",
         "when": [{"left":"$event.status","op":"eq","right":"麻痹"},{"left":"$pending.amount","op":"gt","right":0}],
         "operation": {"op":"program","code":["$self","电击","STATUS_COUNT",3,"MIN","ADD"]}
@@ -37,7 +37,7 @@
     "麻痹": [
       {
         "trigger": "BEFORE RESOLVE_RAW_ROLL",
-        "description": "【掷骰时】本次战斗骰取两枚同范围骰的绝对差，随后减少1麻痹。",
+        "description": "本次战斗骰取两枚同范围骰的绝对差，随后减少1麻痹。",
         "subject": "source",
         "when": [{"left":"$event.die.card","op":"ne","right":null}],
         "operation": {
@@ -90,7 +90,7 @@
           "entries": [
             {
               "trigger": "on_turn_start",
-              "description": "【回合开始】初始3交锋，始终至少2交锋。上一回合自身至少打出3张手牌时，回复1生命，本回合费用上限+1。",
+              "description": "初始3交锋，始终至少2交锋。【回合开始】上一回合自身至少打出3张手牌时，回复1生命，本回合费用上限+1。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -106,7 +106,7 @@
           "entries": [
             {
               "trigger": "before_clash_result",
-              "description": "【拼点结算前】本回合首次即将拼负时摧毁目标骰，视为自身拼负，此后本回合骰子基础值+2。",
+              "description": "本回合首次即将拼负时摧毁目标骰，视为自身拼负，此后本回合骰子基础值+2。",
               "when": [{"left":"$event.prospective_result","op":"eq","right":"lose"}],
               "turn_limit": {"key":"幽兰残雪","count":1},
               "operation": {
@@ -119,7 +119,7 @@
             },
             {
               "trigger": "before_dice_use",
-              "description": "【用骰前】使用本骰时计入已获得的本回合与永久基础值。",
+              "description": "使用本骰时计入已获得的本回合与永久基础值。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -138,7 +138,7 @@
             {
               "trigger": "BEFORE RESOLVE_FINAL_SCORE",
               "subject": "source",
-              "description": "【点数结算时】自身的非空白战斗骰结算最终点数时，加上本回合「转势·涌流灌注」累计的加值。",
+              "description": "自身的非空白战斗骰结算最终点数时，加上本回合「转势·涌流灌注」累计的加值。",
               "when": [
                 {"left":{"field":"$self.turn_state","key":"涌流灌注","default":0},"op":"gt","right":0},
                 {"left":"$event.die.type","op":"ne","right":"blank"}
@@ -168,7 +168,7 @@
           "entries": [
             {
               "trigger": "BEFORE RESOLVE_DAMAGE_STATUS",
-              "description": "【伤害结算前】自身造成的直伤在结算致命失衡前不足2点时不触发，不翻倍也不扣层。触发时该段转为穿甲。",
+              "description": "自身造成的直伤在结算致命失衡前不足2点时不触发，不翻倍也不扣层。触发时该段转为穿甲。",
               "subject": "source",
               "when": [{"left":"$event.status","op":"eq","right":"致命失衡"}],
               "operation": {
@@ -606,7 +606,7 @@
                 },
                 {
                   "trigger": "before_dice_use",
-                  "description": "【用骰前】计入「电叉·极锐刺」永久基础值提升。",
+                  "description": "计入「电叉·极锐刺」永久基础值提升。",
                   "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
                 }
               ],
@@ -667,7 +667,7 @@
           "entries": [
             {
               "trigger": "before_dice_use",
-              "description": "【用骰前】计入「电叉·极锐刺」永久基础值提升。",
+              "description": "计入「电叉·极锐刺」永久基础值提升。",
               "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
             }
           ],
@@ -714,12 +714,12 @@
                 },
                 {
                   "trigger": "before_dice_use",
-                  "description": "【用骰前】计入「电叉·极锐刺」永久基础值提升。",
+                  "description": "计入「电叉·极锐刺」永久基础值提升。",
                   "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
                 },
                 {
                   "trigger": "before_dice_use",
-                  "description": "【用骰前】将待用的伤害加值交给本次技能下一颗实际使用的骰子。",
+                  "description": "将待用的伤害加值交给本次技能下一颗实际使用的骰子。",
                   "when": [{"left":{"field":"$event.card.use_state","key":"下骰增伤","default":0},"op":"gt","right":0}],
                   "operation": {"op":"program","code":[
                     "$event.card","$owner","IS",
@@ -729,7 +729,7 @@
                 },
                 {
                   "trigger": "BEFORE DAMAGE",
-                  "description": "【伤害结算前】将该骰获得的加值计入其伤害部分。",
+                  "description": "将该骰获得的加值计入其伤害部分。",
                   "subject": "source",
                   "when": [
                     {"left":"$event.damage_part","op":"eq","right":true},
@@ -795,7 +795,7 @@
           "entries": [
             {
               "trigger": "before_dice_use",
-              "description": "【用骰前】计入「电叉·极锐刺」永久基础值提升。",
+              "description": "计入「电叉·极锐刺」永久基础值提升。",
               "operation": {"op":"program","code":["$event.die","$self.rule_state","极锐刺基础",0,"LOOKUP","DIE_BASE_ADD"]}
             },
             {
@@ -1260,7 +1260,7 @@
               "entries": [
                 {
                   "trigger": "before_skill_use",
-                  "description": "【使用前】有至少两个不同名字活化且本技能尚未活化时，使本次大招活化并令其他技能常态化；否则活化其余所有常态技能。",
+                  "description": "有至少两个不同名字活化且本技能尚未活化时，使本次大招活化并令其他技能常态化；否则活化其余所有常态技能。",
                   "operation": {
                     "op": "program",
                     "code": [
@@ -1379,7 +1379,7 @@
           "entries": [
             {
               "trigger": "before_skill_use",
-              "description": "【使用前】有至少两个不同名字活化且本技能尚未活化时，使本次大招活化并令其他技能常态化；否则活化其余所有常态技能。",
+              "description": "有至少两个不同名字活化且本技能尚未活化时，使本次大招活化并令其他技能常态化；否则活化其余所有常态技能。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -1481,7 +1481,7 @@
             },
             {
               "trigger": "BEFORE RESOLVE_CLASH_SCORE",
-              "description": "【拼点判定时】按使用时记录的总量修正本技能的拼点点数。",
+              "description": "按使用时记录的总量修正本技能的拼点点数。",
               "operation": {"op":"program","code":["$event.card.use_state","拼点加值",0,"LOOKUP","ADD"]}
             }
           ],

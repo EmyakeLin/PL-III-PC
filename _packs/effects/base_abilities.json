@@ -8,7 +8,7 @@
       "global_entries": [
         {
           "trigger": "BEFORE SELECT_ROLL_VALUE",
-          "description": "【掷骰时】拼点取两次变动点数中的较大值，随后消耗1次优势次数。",
+          "description": "拼点取两次变动点数中的较大值，随后消耗1次优势次数。",
           "when": [{"left":{"field":"$event.source.ability_effects","key":"优势次数","default":0},"op":"gt","right":0}],
           "operation": {"op":"program","code":[
             "$event.die","$event.low","$event.high","$event.bonus",{"call":"SAMPLE_ROLL_VALUE","result":"result"},"second","STORE",
@@ -25,7 +25,7 @@
       "global_entries": [
         {
           "trigger": "BEFORE SELECT_ROLL_VALUE",
-          "description": "【掷骰时】拼点取两次变动点数中的较小值，随后消耗1次劣势次数。",
+          "description": "拼点取两次变动点数中的较小值，随后消耗1次劣势次数。",
           "when": [{"left":{"field":"$event.source.ability_effects","key":"劣势次数","default":0},"op":"gt","right":0}],
           "operation": {"op":"program","code":[
             "$event.die","$event.low","$event.high","$event.bonus",{"call":"SAMPLE_ROLL_VALUE","result":"result"},"second","STORE",

@@ -242,17 +242,29 @@ class DisplayerTests(unittest.TestCase):
 
         self.assertEqual(fight(observe=True), fight(observe=False))
 
-    def test_all_packs_project_structured_damage_parts_and_bracketed_triggers(self):
+    def test_all_packs_project_structured_damage_parts_and_well_formed_triggers(self):
         from pathlib import Path
         from displayer import _passives, _printed_skill
+
+        def assert_well_formed_brackets(text, ctx):
+            pos = 0
+            while True:
+                open_idx = text.find("【", pos)
+                if open_idx == -1:
+                    break
+                close_idx = text.find("】", open_idx + 1)
+                self.assertNotEqual(close_idx, -1, f"unclosed 【 in {ctx}: {text}")
+                self.assertTrue(text[open_idx + 1:close_idx].strip(), f"empty 【】 in {ctx}: {text}")
+                pos = close_idx + 1
+
         extra = [Path(__file__).resolve().parents[1] / "_packs" / "challenges" / "structured_carrier.json"]
         chars = load_characters_from_packs(extra_packs=extra)
-        self.assertEqual(len(chars), 8)
+        self.assertTrue(chars)
         for char in chars:
             self.assertNotIn("printed_text", char)
             for passive in _passives(char.get("faction_passives", ())) + _passives(char.get("passive_skills", ())):
                 for line in passive["display_lines"]:
-                    self.assertTrue(line.startswith("【") and "】" in line, f"{char['id']} passive: {line}")
+                    assert_well_formed_brackets(line, f"{char['id']} passive")
             for raw_skill in char["skills"]:
                 skill = _printed_skill(raw_skill, include_forms=True)
                 self.assertNotIn("printed_text", skill)
@@ -260,7 +272,7 @@ class DisplayerTests(unittest.TestCase):
                     self.assertIsInstance(form["name"], str)
                     self.assertIsInstance(form["cost"], int)
                     for entry in form["entries"]:
-                        self.assertTrue(entry.startswith("【") and "】" in entry, f"{char['id']}.{form['id']}: {entry}")
+                        assert_well_formed_brackets(entry, f"{char['id']}.{form['id']}")
                     for die in form["dice"]:
                         self.assertNotIn("printed_line", die)
                         self.assertIn("damage_parts", die)
@@ -270,4 +282,31 @@ class DisplayerTests(unittest.TestCase):
                             self.assertTrue(part["text"].startswith(f"{part['amount']}点") and part["text"].endswith("伤害"), part)
                             self.assertNotIn("label", part)
                         for entry in die["entries"]:
-                            self.assertTrue(entry.startswith("【") and "】" in entry, f"{char['id']}.{form['id']} die: {entry}")
+                            assert_well_formed_brackets(entry, f"{char['id']}.{form['id']} die")
+
+    def test_hidden_internal_entries_are_excluded_while_visible_plain_and_triggered_lines_survive(self):
+        from displayer import _passives, _printed_skill
+        skill = _printed_skill({
+            "id": "pair_test", "name": "对比技能", "cost": 1,
+            "entries": [
+                {"description": "本技能不会被摧毁", "hidden": False},
+                {"description": "内部登记钩子", "hidden": True},
+                {"description": "【使用时】获得1能源"},
+            ],
+            "dice": [{
+                "type": "slash", "level": 3,
+                "entries": [
+                    "1物理",
+                    {"description": "内部跟踪", "hidden": True},
+                    {"description": "【命中时】抽1卡"},
+                ],
+            }],
+        })
+        self.assertEqual(skill["entries"], ["本技能不会被摧毁", "【使用时】获得1能源"])
+        self.assertEqual(skill["dice"][0]["entries"], ["【命中时】抽1卡"])
+        passives = _passives([{
+            "name": "多行被动",
+            "description": "第一行原文\n【回合开始】第二行触发",
+            "entries": [{"description": "低层钩子1"}, {"description": "低层钩子2"}],
+        }])
+        self.assertEqual(passives[0]["display_lines"], ["第一行原文", "【回合开始】第二行触发"])

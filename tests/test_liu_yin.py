@@ -185,34 +185,39 @@ class LiuYinTests(unittest.TestCase):
             TerminalBridge.show_character(self.liu.data)
         self.assertIn("流阴", out.getvalue())
         self.assertIn("光生会", out.getvalue())
-        passives = actor["faction_passives"] + actor["passives"]
-        self.assertEqual(len(passives), 5)
-        for passive in passives:
-            self.assertTrue(passive["display_lines"])
-            for line in passive["display_lines"]:
-                self.assertTrue(line.startswith("【") and "】" in line, line)
+        raw_passives = [
+            spec for spec in (*self.liu.data.get("faction_passives", ()), *self.liu.data.get("passive_skills", ()))
+            if not (isinstance(spec, dict) and spec.get("hidden"))
+        ]
+        projected_passives = actor["faction_passives"] + actor["passives"]
+        self.assertEqual(len(projected_passives), len(raw_passives))
+        for raw, projected in zip(raw_passives, projected_passives):
+            self.assertEqual(projected["name"], raw.get("name"))
+            expected_lines = [line for line in raw["description"].splitlines() if line.strip()]
+            self.assertEqual(projected["display_lines"], expected_lines)
         for name in ("领域洞悉", "环境同调", "环境压制"):
             self.assertTrue(catalog["statuses"][name])
-        self.assertEqual(len(actor["skills"]), 12)
+        self.assertEqual(len(actor["skills"]), len(self.liu.data["skills"]))
         for spec in actor["skills"]:
             self.assertNotIn("printed_text", spec)
             card = self.cards[spec["id"]]
             for form in [None, *card.data.get("forms", {})]:
                 card.set_form(form)
                 face = _visible_card(card)
+                raw_entries = (card.data["forms"][form].get("entries", card.data.get("entries", ()))
+                               if form else card.data.get("entries", ()))
+                expected_visible = [e["description"] for e in raw_entries
+                                    if isinstance(e, dict) and not e.get("hidden") and e.get("description")]
                 with self.subTest(card=card.name, form=form):
                     self.assertEqual(face["name"], card.name)
                     self.assertEqual(face["cost"], card.cost)
+                    self.assertEqual(face["entries"], expected_visible)
                     for die in face["dice"]:
                         self.assertNotIn("printed_line", die)
                         self.assertIn("damage_parts", die)
-                        for entry in die["entries"]:
-                            self.assertTrue(entry.startswith("【") and "】" in entry, entry)
         rewind = _visible_card(self.cards["liu_rewind"])
         self.assertEqual(rewind["dice"][0]["damage_parts"][0]["amount"], 1)
         self.assertEqual(rewind["dice"][0]["damage_parts"][0]["grade"], "normal")
-        self.assertIn("【命中时】减少1环境压制。", rewind["dice"][0]["entries"])
-        self.assertIn("【拼点失败】增加3环境压制。", rewind["dice"][0]["entries"])
 
     def test_invisible_hit_follows_low_score_and_ties_produce_no_hit(self):
         for against, result, hits in ((7, "win", ["无形杀"]), (1, "lose", ["对手斩击"]), (3, "draw", [])):

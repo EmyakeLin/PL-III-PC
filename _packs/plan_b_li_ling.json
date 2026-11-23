@@ -26,7 +26,7 @@
       {
         "name": "B级条目",
         "entries": [{"trigger": "on_turn_start", "operation": "HEAL 1", "target": "self",
-                     "description": "【回合开始】初始交锋上限为2。回合开始时回复1生命值。"}]
+                     "description": "初始交锋上限为2。【回合开始】回复1生命值。"}]
       },
       {
         "name": "超·炎·刺剑",
@@ -38,7 +38,7 @@
               "$event.value_ref", "$event.printed_min", "$self", "凝聚", "STATUS_COUNT", "ADD",
               "VALUE_FLOOR"
             ]
-          }, "description": "【速度判定前】每持有4能源，速度骰提升1级（至多2级）。每持有1凝聚，速度骰最小值+1。"},
+          }, "description": "每持有4能源，速度骰提升1级（至多2级）。每持有1凝聚，速度骰最小值+1。"},
           {
             "trigger": "BEFORE RESOLVE_DIE_LEVEL",
             "operation": {
@@ -50,7 +50,7 @@
                 "WHEN"
               ]
             },
-            "description": "【骰级判定时】个人速度每领先目标2点，骰子等级+1（至多+3）。"
+            "description": "个人速度每领先目标2点，骰子等级+1（至多+3）。"
           },
           {
             "trigger": "BEFORE STATUS",
@@ -65,7 +65,7 @@
                 "WHEN"
               ]
             },
-            "description": "【状态施加前】个人速度每领先目标2点，本次施加的烧伤+1（至多+3）。"
+            "description": "个人速度每领先目标2点，本次施加的烧伤+1（至多+3）。"
           },
           {"trigger": "on_dice_hit", "when": [{"left":"$event.one_sided","op":"eq","right":true}],
            "operation": {"schedule": {
@@ -87,7 +87,7 @@
              "require_source_alive": false, "require_target_alive": true,
              "then": ["$event.scheduled.target","束缚",1,"STATUS"]
            }},
-           "description": "【引燃后】每次自身触发引燃，下回合对引燃目标施加1束缚。"}
+           "description": "每次自身触发引燃，下回合对引燃目标施加1束缚。"}
         ]
       },
       {
@@ -113,7 +113,7 @@
               "REPEAT_WHILE"
             ]
           },
-          "description": "【引燃后】自身突刺骰引燃后，掷1～20，若不高于目标剩余烧伤，再引燃一次。重复引燃最终伤害减半并向上取整。每次原始引燃至多追加等于凝聚层数的次数。"
+          "description": "自身突刺骰引燃后，掷1～20，若不高于目标剩余烧伤，再引燃一次。重复引燃最终伤害减半并向上取整。每次原始引燃至多追加等于凝聚层数的次数。"
         }]
       },
       {
@@ -132,7 +132,7 @@
               ],
               "WHEN"
             ]
-          }, "description":"【状态变动时】每累计实际消耗8能源，获得1凝聚，余数跨回合保留。"
+          }, "description":"每累计实际消耗8能源，获得1凝聚，余数跨回合保留。"
         }]
       }
     ],
@@ -143,7 +143,7 @@
           {"trigger":"on_skill_use", "operation":"STATUS 能源 4 $self",
            "description":"【使用时】获得4能源。"},
           {"trigger":"before_dice_use", "operation":{"op":"program","code":["$event.die","$self","凝聚","STATUS_COUNT","DIE_FINAL_ADD"]},
-           "description":"【用骰前】每持有1凝聚，本技能最终点数+1。"}
+           "description":"每持有1凝聚，本技能最终点数+1。"}
         ],
         "dice": [
           {"type":"evade","level":2,"entries":[
@@ -185,7 +185,7 @@
               ],
               "WHEN"
             ]
-          }, "description":"【状态变动时】交锋中的烧伤继续减少时，立即更新本技能最终点数。"},
+          }, "description":"交锋中的烧伤继续减少时，立即更新本技能最终点数。"},
           {"trigger":"AFTER ACTIVATE_STATUS","subject":"source","when":[
             {"left":"$event.status","op":"eq","right":"烧伤"},
             {"left":"$event.activation_kind","op":"eq","right":"ignite"},
@@ -195,7 +195,7 @@
              "op": "program",
              "code": ["$owner","引燃次数","$owner.use_state","引燃次数",0,"LOOKUP",1,"ADD","SET_SKILL_STATE"]
            },
-           "description":"【引燃后】记录本技能持续期间自身触发的每次引燃。"},
+           "description":"记录本技能持续期间自身触发的每次引燃。"},
           {"trigger":"after_skill_use","operation":{
             "op": "program",
             "code": [
@@ -257,7 +257,7 @@
           {"trigger":"before_dice_use","operation":{
             "op": "program",
             "code": ["$owner.use_state","增压",false,"LOOKUP",["$event.die",2,"DIE_BASE_ADD"],"WHEN"]
-          },"description":"【用骰前】付足能源后每颗骰子基础值+2。"}
+          },"description":"付足能源后每颗骰子基础值+2。"}
         ],
         "dice":[
           {"type":"pierce","level":3,"entries":["3穿甲",{"trigger":"on_dice_hit",

@@ -68,7 +68,10 @@ test('parseTriggerSegments replaces 【name】 with [ name ] using pure scanning
       ['text', '施加2电击。', null],
     ],
   );
-  // Edge cases: unclosed bracket and empty bracket do not loop or crash
+  // Edge cases: plain text without triggers produces zero trigger spans; unclosed/empty brackets stay text
+  assert.deepEqual(parseTriggerSegments('本技能不会被任何效果摧毁、无效（最高话语权）').map((s) => [s.kind, s.text]), [
+    ['text', '本技能不会被任何效果摧毁、无效（最高话语权）'],
+  ]);
   assert.deepEqual(parseTriggerSegments('无闭合【测试').map((s) => [s.kind, s.text]), [['text', '无闭合【测试']]);
   assert.deepEqual(parseTriggerSegments('空【】标记').map((s) => [s.kind, s.text]), [
     ['text', '空'], ['text', '【】'], ['text', '标记'],

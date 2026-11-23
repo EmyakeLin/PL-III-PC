@@ -28,7 +28,7 @@
           "name": "B级条目",
           "entries": [{
             "trigger": "on_turn_start",
-            "description": "【回合开始】初始交锋上限为2。回合开始时回复1生命。",
+            "description": "初始交锋上限为2。【回合开始】回复1生命。",
             "operation": "HEAL 1", "target": "self"
           }]
         },
@@ -37,13 +37,13 @@
           "entries": [
             {
               "trigger": "on_turn_start",
-              "description": "【回合开始】每回合重新累计火焰之锤的两次触发。",
+              "description": "每回合重新累计火焰之锤的两次触发。",
               "operation": {"op": "program", "code": ["$self", "火焰之锤次数", 0, "SET_CHARACTER_STATE"]}
             },
             {
               "trigger": "before_dice_hit",
               "when": [{"left":"$event.die.type","op":"eq","right":"blunt"}],
-              "description": "【命中前】打击命中前记录目标是否已有烧伤。本回合已触发两次后，目标每8烧伤使这次命中的骰子伤害+1，至多+2。",
+              "description": "打击命中前记录目标是否已有烧伤。本回合已触发两次后，目标每8烧伤使这次命中的骰子伤害+1，至多+2。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -86,7 +86,7 @@
               {"left":"$event.activation_kind","op":"eq","right":"ignite"},
               {"left":"$event.result","op":"eq","right":true}
             ],
-            "description": "【引燃后】其他友方角色的攻击触发引燃时，对同一目标发起一次「重锤！」追击。调用技能副本，减免1费，【使用时】照常结算。每位队友每回合至多触发一次。",
+            "description": "其他友方角色的攻击触发引燃时，对同一目标发起一次「重锤！」追击。调用技能副本，减免1费，【使用时】照常结算。每位队友每回合至多触发一次。",
             "operation": {
               "op": "program",
               "code": [
@@ -110,7 +110,7 @@
           "name": "能源聚集",
           "entries": [{
             "trigger": "on_status_changed", "subject": "target", "when": [{"left":"$event.status","op":"eq","right":"能源"}],
-            "description": "【状态变动时】每累计实际消耗8能源，获得1凝聚。余数跨回合保留。",
+            "description": "每累计实际消耗8能源，获得1凝聚。余数跨回合保留。",
             "operation": {
               "op": "program",
               "code": [
@@ -222,7 +222,7 @@
                "$event.card", "使用时凝聚", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"
              ]}},
             {"trigger": "before_dice_use",
-             "description": "【用骰前】若【使用时】凝聚至少1层，本骰基础值+2。",
+             "description": "若使用时凝聚至少1层，本骰基础值+2。",
              "operation": {
                "op": "program",
                "code": ["$event.card.use_state","使用时凝聚",0,"LOOKUP",1,"GE",["$event.die",2,"DIE_BASE_ADD"],"WHEN"]
@@ -258,7 +258,7 @@
                   {"left":"$event.activation_kind","op":"eq","right":"ignite"},
                   {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
                 ],
-                "description": "【状态变动后】本骰引燃每实际移除1烧伤，自身获得1能源。",
+                "description": "本骰引燃每实际移除1烧伤，自身获得1能源。",
                 "operation": {
                   "op": "program",
                   "code": [
@@ -279,7 +279,7 @@
                   {"left":"$event.activation_kind","op":"eq","right":"ignite"},
                   {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
                 ],
-                "description": "【状态变动后】本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
+                "description": "本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
                 "operation": {
                   "op": "program",
                   "code": [
@@ -309,7 +309,7 @@
                   {"left":"$event.activation_kind","op":"eq","right":"ignite"},
                   {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
                 ],
-                "description": "【状态变动后】本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
+                "description": "本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
                 "operation": {
                   "op": "program",
                   "code": [

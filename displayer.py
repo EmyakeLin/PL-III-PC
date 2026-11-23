@@ -31,6 +31,8 @@ def _split_die_entries(entries):
     damage_parts = []
     rule_entries = []
     for entry in entries:
+        if isinstance(entry, dict) and entry.get("hidden"):
+            continue
         if isinstance(entry, str):
             part = damage_part(entry)
             if part is not None:
@@ -94,7 +96,8 @@ def _printed_skill(data, *, include_forms=False):
         "range_traits": describe_range_traits(data),
         "starts_out_of_combat": bool(data.get("out_of_combat")),
         "dice": [_printed_die(spec) for spec in data.get("dice", ())],
-        "entries": [describe_entry(entry) for entry in data.get("entries", ())],
+        "entries": [describe_entry(entry) for entry in data.get("entries", ())
+                    if not (isinstance(entry, dict) and entry.get("hidden"))],
     }
 
 
@@ -106,13 +109,19 @@ def _passives(specs):
                 continue
             name = spec.get("name")
             description = spec.get("description")
-            entries = [describe_entry(entry) for entry in spec["entries"]]
+            entries = [describe_entry(entry) for entry in spec["entries"]
+                       if not (isinstance(entry, dict) and entry.get("hidden"))]
         else:
             name = description = None
             entries = [describe_entry(spec)]
+        display_lines = (
+            [line for line in description.splitlines() if line.strip()]
+            if description and description.strip()
+            else entries
+        )
         result.append({
             "name": name, "description": description, "entries": entries,
-            "display_lines": [description] if description and description.strip() else entries,
+            "display_lines": display_lines,
         })
     return result
 

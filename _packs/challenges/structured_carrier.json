@@ -23,7 +23,7 @@
     "伤害提升": [
       {
         "trigger": "BEFORE DAMAGE",
-        "description": "【伤害结算前】自身骰子每个直伤部分增加当前层数的伤害。",
+        "description": "自身骰子每个直伤部分增加当前层数的伤害。",
         "subject": "source",
         "when": [
           {"left":"$event.damage_part","op":"eq","right":true},
@@ -52,7 +52,7 @@
           "entries": [
             {
               "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-              "description": "【骰级判定时】敌方威压总数高于6时，骰子等级+1。",
+              "description": "敌方威压总数高于6时，骰子等级+1。",
               "subject": "source",
               "when": [{"left":"$event.die.card","op":"ne","right":null}],
               "operation": {
@@ -66,21 +66,21 @@
             },
             {
               "trigger": "on_status_changed",
-              "description": "【状态变动时】敌方威压合计12时常驻2强壮，其后每6额外常驻1，最多额外2。",
+              "description": "敌方威压合计12时常驻2强壮，其后每6额外常驻1，最多额外2。",
               "subject": "any",
               "when": [{"left":"$event.status","op":"eq","right":"威压"}],
               "operation": {"op":"program","code":["carrier_momentum",{"literal":{}},"PUBLISH"]}
             },
             {
               "trigger": "AFTER RESTORE_STATUS_STACKS",
-              "description": "【状态回退后】威压被回退时，按回退后的总数重算常驻强壮。",
+              "description": "威压被回退时，按回退后的总数重算常驻强壮。",
               "subject": "any",
               "when": [{"left":"$event.status","op":"eq","right":"威压"}],
               "operation": {"op":"program","code":["carrier_momentum",{"literal":{}},"PUBLISH"]}
             },
             {
               "trigger": "AFTER CHECK_DEATH",
-              "description": "【阵亡后】敌人阵亡时重算存活敌人的威压。",
+              "description": "敌人阵亡时重算存活敌人的威压。",
               "subject": "any",
               "when": [{"left":"$event.result","op":"eq","right":true}],
               "operation": {"op":"program","code":["carrier_momentum",{"literal":{}},"PUBLISH"]}
@@ -88,7 +88,7 @@
             {
               "trigger": "carrier_momentum",
               "trigger_type": "event",
-              "description": "【威压计数】统计存活敌方威压，按12、18、24三档更新常驻强壮。",
+              "description": "统计存活敌方威压，按12、18、24三档更新常驻强壮。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -106,7 +106,7 @@
           "entries": [
             {
               "trigger": "BEFORE APPLY_DAMAGE",
-              "description": "【受击时】冻结基础血条。受到高于1的伤害命中时获得2堆芯熔毁，熔毁自伤例外。",
+              "description": "冻结基础血条。受到高于1的伤害命中时获得2堆芯熔毁，熔毁自伤例外。",
               "subject": "target",
               "authority": "最高话语权",
               "when": [
@@ -125,7 +125,7 @@
             },
             {
               "trigger": "BEFORE HEAL",
-              "description": "【回复前】冻结期间基础血条不变。",
+              "description": "冻结期间基础血条不变。",
               "subject": "target",
               "authority": "最高话语权",
               "when": [
@@ -136,7 +136,7 @@
             },
             {
               "trigger": "BEFORE LOSE_HP",
-              "description": "【失去生命前】冻结期间基础血条不变。",
+              "description": "冻结期间基础血条不变。",
               "subject": "target",
               "authority": "最高话语权",
               "when": [
@@ -184,7 +184,7 @@
           "entries": [
             {
               "trigger": "on_status_changed",
-              "description": "【状态变动时】容器达到2时发动。",
+              "description": "容器达到2时发动。",
               "subject": "target",
               "when": [
                 {"left":"$event.status","op":"eq","right":"载体容器"},
@@ -195,7 +195,7 @@
             },
             {
               "trigger": "on_turn_prepared",
-              "description": "【回合开始】若上次发射结束后仍有至少2容器，新回合再次发射。",
+              "description": "若上次发射结束后仍有至少2容器，新回合再次发射。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"载体容器","default":0},"op":"ge","right":2},
                 {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}
@@ -204,7 +204,7 @@
             },
             {
               "trigger": "carrier_launch",
-              "description": "【容器发射】解除冻结并获得4堆芯熔毁，本回合伤害部分改为最终伤害量×目标生命上限的10%，造成超穿甲伤害。",
+              "description": "解除冻结并获得4堆芯熔毁，本回合伤害部分改为最终伤害量×目标生命上限的10%，造成超穿甲伤害。",
               "trigger_type": "event",
               "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}],
               "operation": {
@@ -214,7 +214,7 @@
             },
             {
               "trigger": "BEFORE DAMAGE",
-              "description": "【伤害结算前】本次伤害部分按超穿甲等级进入减伤结算。",
+              "description": "本次伤害部分按超穿甲等级进入减伤结算。",
               "subject": "source",
               "when": [
                 {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true},
@@ -225,7 +225,7 @@
             },
             {
               "trigger": "BEFORE APPLY_DAMAGE",
-              "description": "【伤害生效前】最终伤害每1点转换为目标生命上限的10%，保留小数。",
+              "description": "最终伤害每1点转换为目标生命上限的10%，保留小数。",
               "subject": "source",
               "when": [
                 {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true},
@@ -254,14 +254,14 @@
           "entries": [
             {
               "trigger": "AFTER STATUS",
-              "description": "【状态变动后】堆芯熔毁溢出时检查休止。",
+              "description": "堆芯熔毁溢出时检查休止。",
               "subject": "target",
               "when": [{"left":"$event.status","op":"eq","right":"堆芯熔毁"},{"left":"$event.status_overflow","op":"gt","right":0}],
               "operation": {"op":"program","code":["carrier_check_rest",{"literal":{}},"PUBLISH"]}
             },
             {
               "trigger": "carrier_check_rest",
-              "description": "【纳米休止】未发射且累计至少8个无效熔毁时，清除无效熔毁，解除冻结至下回合结束。",
+              "description": "未发射且累计至少8个无效熔毁时，清除无效熔毁，解除冻结至下回合结束。",
               "trigger_type": "event",
               "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}],
               "operation": {
@@ -278,7 +278,7 @@
             },
             {
               "trigger": "on_turn_limits_reset",
-              "description": "【回合开始】休止在第二个后续回合开始时失效。",
+              "description": "休止在第二个后续回合开始时失效。",
               "when": [{"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"gt","right":0}],
               "operation": {
                 "op": "program",
@@ -290,7 +290,7 @@
             },
             {
               "trigger": "BEFORE REAL_DAMAGE",
-              "description": "【受真实伤害前】冻结时挡下本段真实伤害，进入休止并另受3点真实伤害。休止或发射期间只结算原伤。",
+              "description": "冻结时挡下本段真实伤害，进入休止并另受3点真实伤害。休止或发射期间只结算原伤。",
               "subject": "target",
               "authority": "最高话语权",
               "when": [
@@ -313,7 +313,7 @@
           "entries": [
             {
               "trigger": "carrier_cool",
-              "description": "【冷却】容器发射后减少6层无效堆芯熔毁。",
+              "description": "容器发射后减少6层无效堆芯熔毁。",
               "trigger_type": "event",
               "operation": {
                 "op": "program",
@@ -327,7 +327,7 @@
           "entries": [
             {
               "trigger": "before_unopposed_ranged_skill",
-              "description": "【单方面远程迎击】被单方面远程攻击时，以普通堆顶牌迎击，远程等级+1，每回合最多两次。",
+              "description": "被单方面远程攻击时，以普通堆顶牌迎击，远程等级+1，每回合最多两次。",
               "subject": "target",
               "operation": {
                 "op": "program",
@@ -354,19 +354,19 @@
           "entries": [
             {
               "trigger": "BEFORE DRAW",
-              "description": "【抽牌前】机操回合跳过通常抽牌。",
+              "description": "机操回合跳过通常抽牌。",
               "when": [{"left":"$event.turn_draw","op":"eq","right":true}],
               "operation": {"op":"cancel"}
             },
             {
               "trigger": "BEFORE PAY_COST",
-              "description": "【费用结算时】机操跳过技能费用支付。",
+              "description": "机操跳过技能费用支付。",
               "subject": "source",
               "operation": {"op":"program","code":["POP",0]}
             },
             {
               "trigger": "after_turn_start",
-              "description": "【回合开始】置卡前掷1～4决定模板。若至少4，等对方置完后重判。",
+              "description": "置卡前掷1～4决定模板。若至少4，等对方置完后重判。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -378,7 +378,7 @@
             },
             {
               "trigger": "before_reveal",
-              "description": "【开牌前】初判至少4时重判一次，仍至少4则依次置三张决战牌。",
+              "description": "初判至少4时重判一次，仍至少4则依次置三张决战牌。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -403,7 +403,7 @@
             },
             {
               "trigger": "carrier_deploy",
-              "description": "【部署模板】模板1：依次置五张普通牌。",
+              "description": "模板1：依次置五张普通牌。",
               "trigger_type": "event",
               "when": [{"left":{"field":"$self.turn_state","key":"模板数","default":0},"op":"eq","right":1}],
               "operation": {
@@ -420,7 +420,7 @@
             },
             {
               "trigger": "carrier_deploy",
-              "description": "【部署模板】模板2：依次置决战、普通、普通、普通。",
+              "description": "模板2：依次置决战、普通、普通、普通。",
               "trigger_type": "event",
               "when": [{"left":{"field":"$self.turn_state","key":"模板数","default":0},"op":"eq","right":2}],
               "operation": {
@@ -437,7 +437,7 @@
             },
             {
               "trigger": "carrier_deploy",
-              "description": "【部署模板】模板3：依次置决战、普通、决战。",
+              "description": "模板3：依次置决战、普通、决战。",
               "trigger_type": "event",
               "when": [{"left":{"field":"$self.turn_state","key":"模板数","default":0},"op":"eq","right":3}],
               "operation": {
@@ -454,7 +454,7 @@
             },
             {
               "trigger": "on_before_reveal_phase_start",
-              "description": "【开牌前】模板3用两张普通牌攻击最低生命目标；重骰仍至少4时用三张普通牌攻击最高生命目标。",
+              "description": "模板3用两张普通牌攻击最低生命目标；重骰仍至少4时用三张普通牌攻击最高生命目标。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -812,7 +812,7 @@
                 },
                 {
                   "trigger": "after_dice_hit",
-                  "description": "【命中后】群伤，向其余存活敌人各结算一次命中。",
+                  "description": "群伤，向其余存活敌人各结算一次命中。",
                   "when": [{"left":"$event.hit_origin","op":"ne","right":"压迫斩击"}],
                   "operation": {
                     "op": "program",
@@ -859,7 +859,7 @@
                 },
                 {
                   "trigger": "after_dice_hit",
-                  "description": "【命中后】群伤，向其余存活敌人各结算一次命中。",
+                  "description": "群伤，向其余存活敌人各结算一次命中。",
                   "when": [{"left":"$event.hit_origin","op":"ne","right":"压迫突刺"}],
                   "operation": {
                     "op": "program",
@@ -1160,7 +1160,7 @@
                 "0物理",
                 {
                   "trigger": "before_dice_use",
-                  "description": "【用骰前】上骰拼赢，本骰最终点数+2。",
+                  "description": "上骰拼赢，本骰最终点数+2。",
                   "operation": {"op":"program","code":[
                     "$event.card.instantiated_dice","$event.card.current_dice_index",1,"SUB",null,"LOOKUP",
                     {"field":"clash_result"},"win","EQ",[
@@ -1170,7 +1170,7 @@
                 },
                 {
                   "trigger": "BEFORE DAMAGE",
-                  "description": "【伤害结算前】上骰拼赢，本骰伤害部分+2。",
+                  "description": "上骰拼赢，本骰伤害部分+2。",
                   "subject": "source",
                   "when": [
                     {"left":"$event.damage_part","op":"eq","right":true},
@@ -1533,7 +1533,7 @@
             },
             {
               "trigger": "BEFORE DESTROY",
-              "description": "【防摧毁】此牌免疫摧毁词条。",
+              "description": "此牌免疫摧毁词条。",
               "scope": "global",
               "subject": "any",
               "authority": "最高话语权",
