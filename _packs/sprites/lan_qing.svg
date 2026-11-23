@@ -44,9 +44,9 @@
     <path d="m69 51 7-4-3 5-4 2Z" fill="#E9BD7C"/>
   </g>
   <g id="bone_weapon" data-pivot="98,102">
-    <g transform="translate(118 82) rotate(37)" stroke-linejoin="round">
+    <g transform="translate(118 82) rotate(37)" stroke-linejoin="miter">
       <path d="M0 0v34" stroke="#397886" stroke-width="3.4" stroke-linecap="round"/>
-      <path d="M-2 2 C-5-4-12-8-12-16 Q-12-24-4-32 C-7-23-9-18-7-13 Q-5-9 0-6 Q5-9 7-13 C10-19 7-25 4-34 Q13-25 12-16 C12-8 5-4 2 2Z" fill="#FFFDF7" stroke="#397886" stroke-width="1.9"/>
+      <polygon points="-2,2 -14,-16 -4,-32 -9,-16 0,-6 9,-16 4,-34 14,-16 2,2" fill="#FFFDF7" stroke="#397886" stroke-width="1.9" stroke-miterlimit="2"/>
       <path d="m1-18-3 5h4l-3 5" fill="none" stroke="#599DA5" stroke-width="1.6"/>
       <circle cy="1" r="3.2" fill="url(#lan_copper)"/>
     </g>
