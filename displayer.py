@@ -542,6 +542,40 @@ class Displayer:
             "out_of_combat": [_visible_card(c) for c in zones.out_of_combat.content] if own else None,
         }
 
+    @staticmethod
+    def _format_status_field(spec, value):
+        fmt = spec.get("format", "plain")
+        empty = spec.get("empty")
+        if fmt == "status_map":
+            if not isinstance(value, dict):
+                return empty
+            excluded = set(spec.get("exclude", ()))
+            parts = [f"{k} {v}" for k, v in value.items() if k not in excluded and v]
+            return "、".join(parts) if parts else (empty if empty is not None else "无")
+        if value is None:
+            return empty
+        return str(value)
+
+    @classmethod
+    def _status_details(cls, c):
+        details = {}
+        for name in c.statuses:
+            if name in c.team_statuses:
+                continue
+            fields = c.status_rules.get(name, {}).get("display_fields")
+            if not fields:
+                continue
+            lines = []
+            for spec in fields:
+                val = read_value(compile_value(spec["value"]), c, {})
+                formatted = cls._format_status_field(spec, val)
+                if formatted is not None:
+                    label = spec.get("label")
+                    lines.append(f"{label}：{formatted}" if label else formatted)
+            if lines:
+                details[name] = lines
+        return details
+
     def _character(self, c, own):
         passive_values = {
             spec["name"]: value for spec in c.passive_skill_data
@@ -554,6 +588,7 @@ class Displayer:
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": {k: n for k, n in c.statuses.items() if k not in c.team_statuses},
+            "status_details": self._status_details(c),
             "passive_values": passive_values,
             "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
             "ability_effects": dict(c.ability_effects),

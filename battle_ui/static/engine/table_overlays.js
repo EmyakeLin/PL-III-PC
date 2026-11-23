@@ -685,13 +685,15 @@ export function buildHeroSidePanel({
       for (const [sName, sVal] of statuses) {
         const burst = sName === '裂血' && character.bleed_burst;
         const ruleList = catalogStatuses?.[sName];
-        const ruleText = (ruleList && ruleList.length ? ruleList.join('\n') : OFFICIAL_STATUS_RULES[sName]) || '';
+        const baseText = (ruleList && ruleList.length ? ruleList.join('\n') : OFFICIAL_STATUS_RULES[sName]) || '';
+        const detailLines = Array.isArray(character.status_details?.[sName]) ? character.status_details[sName] : [];
+        const entries = [baseText, ...detailLines].filter(Boolean);
         const plate = buildUnifiedEntryPlate({
           variant: 'status',
           statusName: sName,
           statusValue: sVal,
           statusBurst: burst,
-          entries: ruleText ? [ruleText] : [],
+          entries,
           width: innerW,
           fontSize: 12.2,
           lineHeight: 18.8,

@@ -288,27 +288,109 @@ class LiuYinTests(unittest.TestCase):
                     self.assertEqual([e["after"] - e["before"] for e in changes], expected)
 
     def test_rewind_merges_actual_stacks_and_restores_life_without_heal(self):
+        for initial_drop in (0, -13):  # 分别测试满压制 18 与低压制 5 起手
+            with self.subTest(initial_drop=initial_drop):
+                self.setUp()
+                self.deploy()
+                if initial_drop:
+                    self.liu.add_status("环境压制", initial_drop)
+                before_pressure = self.liu.statuses["环境压制"]
+                self.liu.hp = 12
+                self.liu.add_status("强壮", 2)
+                self.liu.add_status("虚弱", 2)
+                self.emit_use(self.cards["liu_rewind"])
+                self.liu.hp = 8
+                self.liu.add_status("强壮", 1)
+                self.liu.add_status("虚弱", -1)
+                self.liu.add_status("束缚", 2)
+                # 减到原本压制层数或更低但尚未归零时，不应触发回退
+                current = self.liu.statuses["环境压制"]
+                self.liu.add_status("环境压制", -(current - max(1, before_pressure - 1)))
+                self.assertEqual(self.liu.hp, 8)
+                self.assertTrue(self.liu.rule_state.get("逆流溯源待生效"))
+                # 环境压制减少至 0 时触发回退
+                with self.ctx.collect_facts() as facts:
+                    self.liu.add_status("环境压制", -self.liu.statuses["环境压制"])
+                self.assertEqual(self.liu.hp, 12)
+                self.assertEqual(self.liu.statuses["强壮"], 3)
+                self.assertEqual(self.liu.statuses["虚弱"], 1)
+                self.assertNotIn("束缚", self.liu.statuses)
+                self.assertNotIn("环境压制", self.liu.statuses)
+                self.assertEqual(self.liu.statuses["领域洞悉"], 12)
+                self.assertFalse(self.liu.rule_state.get("逆流溯源待生效"))
+                self.assertFalse(any(k in ("healed", "lightcore_damage") for k, _ in facts))
+                self.assertFalse(any(effect.terms.event == "on_status_changed" for effect in self.ctx.scheduled_effects))
+
+    def test_rewind_recast_before_trigger_overwrites_saved_snapshot_and_keeps_single_schedule(self):
         self.deploy()
-        self.liu.add_status("环境压制", -13)
-        self.liu.hp = 12
-        self.liu.add_status("强壮", 2)
-        self.liu.add_status("虚弱", 2)
+        self.liu.hp = 15
+        self.liu.add_status("强壮", 3)
+        self.liu.add_status("虚弱", 1)
         self.emit_use(self.cards["liu_rewind"])
-        self.liu.hp = 8
-        self.liu.add_status("强壮", 1)
-        self.liu.add_status("虚弱", -1)
-        self.liu.add_status("束缚", 2)
-        self.liu.add_status("环境压制", -7)
-        self.assertEqual(self.liu.hp, 8)
-        self.liu.add_status("环境压制", 2)
+        # 生效前状态变化，再次打出逆流溯源，应直接覆盖旧存档且只保留 1 个监听
+        self.liu.hp = 10
+        self.liu.add_status("强壮", -2)
+        self.liu.add_status("虚弱", 1)
+        self.emit_use(self.cards["liu_rewind"])
+        scheduled = [e for e in self.ctx.scheduled_effects if e.terms.event == "on_status_changed"]
+        self.assertEqual(len(scheduled), 1)
+        self.assertEqual(self.liu.rule_state["逆流溯源生命"], 10)
+        # 再次受损与叠负面后，清空环境压制，按第二次存档回退
+        self.liu.hp = 6
+        self.liu.add_status("虚弱", 2)
         with self.ctx.collect_facts() as facts:
-            self.liu.add_status("环境压制", -1)
-        self.assertEqual(self.liu.hp, 12)
-        self.assertEqual(self.liu.statuses["强壮"], 3)
-        self.assertEqual(self.liu.statuses["虚弱"], 1)
-        self.assertNotIn("束缚", self.liu.statuses)
-        self.assertFalse(any(k in ("healed", "lightcore_damage") for k,_ in facts))
-        self.assertFalse(any(effect.terms.event == "on_status_changed" for effect in self.ctx.scheduled_effects))
+            self.liu.add_status("环境压制", -self.liu.statuses["环境压制"])
+        self.assertEqual(self.liu.hp, 10)
+        self.assertEqual(self.liu.statuses["强壮"], 1)
+        self.assertEqual(self.liu.statuses["虚弱"], 2)
+        self.assertFalse(any(k in ("healed", "lightcore_damage") for k, _ in facts))
+        self.assertFalse(any(e.terms.event == "on_status_changed" for e in self.ctx.scheduled_effects))
+
+    def test_rewind_does_not_trigger_after_death(self):
+        self.deploy()
+        self.liu.hp = 12
+        self.emit_use(self.cards["liu_rewind"])
+        self.liu.hp = 0
+        self.liu.check_death()
+        self.assertFalse(self.liu.is_alive)
+        self.liu.add_status("环境压制", -self.liu.statuses["环境压制"])
+        self.assertEqual(self.liu.hp, 0)
+        self.assertFalse(self.liu.is_alive)
+
+    def test_rewind_marker_displays_saved_snapshot_excludes_pressure_and_self_and_clears_on_trigger(self):
+        self.deploy()
+        self.assertNotIn("溯源标记", self.liu.statuses)
+        self.assertNotIn("溯源标记", self.game.status_entries)
+
+        def projected_liu():
+            snap = Displayer(self.game).snapshot()
+            return next(c for p in snap["players"] for c in p["characters"] if c["id"] == self.liu.id)
+
+        self.assertNotIn("溯源标记", projected_liu()["status_details"])
+        # 第一次打出：有其他状态时展示生命与其他状态，过滤环境压制与溯源标记自身
+        self.liu.hp = 15
+        self.liu.add_status("强壮", 2)
+        self.liu.add_status("虚弱", 1)
+        self.emit_use(self.cards["liu_rewind"])
+        self.assertEqual(self.liu.statuses.get("溯源标记"), 1)
+        details = projected_liu()["status_details"]["溯源标记"]
+        self.assertEqual(details[0], "已记录生命：15")
+        self.assertIn("强壮 2", details[1])
+        self.assertIn("虚弱 1", details[1])
+        self.assertNotIn("环境压制", details[1])
+        self.assertNotIn("溯源标记", details[1])
+        # 生效前清空其他状态后重打：标记仍为 1，详情刷新且过滤自身与环境压制后显示“无”
+        self.liu.hp = 10
+        self.liu.clear_status("强壮")
+        self.liu.clear_status("虚弱")
+        self.emit_use(self.cards["liu_rewind"])
+        self.assertEqual(self.liu.statuses.get("溯源标记"), 1)
+        self.assertEqual(projected_liu()["status_details"]["溯源标记"], ["已记录生命：10", "已记录状态：无"])
+        # 环境压制归零触发回退后，溯源标记清除且不再出现在 status_details
+        self.liu.add_status("环境压制", -self.liu.statuses["环境压制"])
+        self.assertNotIn("溯源标记", self.liu.statuses)
+        self.assertNotIn("溯源标记", projected_liu()["statuses"])
+        self.assertNotIn("溯源标记", projected_liu()["status_details"])
 
     def test_adaptation_uses_actual_safe_payment_then_heals_separately(self):
         self.deploy()
@@ -328,12 +410,15 @@ class LiuYinTests(unittest.TestCase):
         card = Card(self.left, next(s for s in pack["skills"] if s["id"] == "lan_turn"), self.liu)
         self.emit_use(card)
         self.emit_use(self.cards["liu_rewind"])
-        rewind = next(e for e in self.ctx.scheduled_effects if "stacks" in e.capture)
-        self.assertEqual(rewind.capture["stacks"]["电叉·极锐刺·活化"], 1)
-        self.assertNotIn("涌流灌注", rewind.capture["stacks"])
+        rewind = next(e for e in self.ctx.scheduled_effects if e.terms.event == "on_status_changed")
+        self.assertEqual(self.liu.rule_state["逆流溯源状态"]["电叉·极锐刺·活化"], 1)
+        self.assertNotIn("涌流灌注", self.liu.rule_state["逆流溯源状态"])
         self.emit_use(card)
         self.ctx.eval_block([self.liu, "电叉·极锐刺·活化", 1, OpCode.SPEND_STATUS])
         self.liu.add_status("环境压制", -6)
+        self.assertIn(rewind, self.ctx.scheduled_effects)
+        self.assertNotIn("电叉·极锐刺·活化", self.liu.statuses)
+        self.liu.add_status("环境压制", -self.liu.statuses["环境压制"])
         self.assertNotIn(rewind, self.ctx.scheduled_effects)
         self.assertEqual(self.liu.statuses["电叉·极锐刺·活化"], 1)
         self.assertEqual(self.liu.turn_state["涌流灌注"], 4)
@@ -344,9 +429,53 @@ class LiuYinTests(unittest.TestCase):
         self.liu.add_status("领域洞悉", 29)
         self.liu.add_status("环境压制", -18)
         self.assertEqual((self.liu.statuses["领域洞悉"], self.liu.statuses["能源"]), (30, 30))
-        self.liu.add_status("环境压制", 4)
+        # 环境压制为 0 时，处于天性解放状态，减少环境压制改为获得能源
+        self.assertTrue(self.liu.rule_state.get("天性解放"))
         self.liu.add_status("环境压制", -2)
-        self.assertEqual((self.liu.statuses["环境压制"], self.liu.statuses["能源"]), (4, 32))
+        self.assertEqual((self.liu.statuses.get("环境压制", 0), self.liu.statuses["能源"]), (0, 32))
+        # 环境压制再次 > 0 时，解除天性解放状态：减压制正常扣压制而不获能源，拼点开始/失败也不打光点
+        self.liu.add_status("环境压制", 4)
+        self.assertFalse(self.liu.rule_state.get("天性解放"))
+        self.liu.add_status("环境压制", -2)
+        self.assertEqual((self.liu.statuses["环境压制"], self.liu.statuses["能源"]), (2, 32))
+        before_lc = self.enemy.lightcore_hp
+        self.ctx.dispatch_pipeline("before_dice_clash", side=self.left.side, source=self.liu, target=self.enemy)
+        self.ctx.dispatch_pipeline("on_clash_lose", side=self.left.side, source=self.liu, target=self.enemy)
+        self.assertEqual(self.enemy.lightcore_hp, before_lc)
+        # 压制重新归零后，重新进入天性解放，但不重复发放行至阴处的 12 层领域洞悉
+        self.liu.add_status("领域洞悉", -10)
+        self.liu.add_status("环境压制", -2)
+        self.assertEqual(self.liu.statuses.get("环境压制", 0), 0)
+        self.assertTrue(self.liu.rule_state.get("天性解放"))
+        self.assertEqual(self.liu.statuses["领域洞悉"], 20)
+        self.liu.add_status("环境压制", -3)
+        self.assertEqual(self.liu.statuses["能源"], 35)
+        self.ctx.dispatch_pipeline("before_dice_clash", side=self.left.side, source=self.liu, target=self.enemy)
+        self.ctx.dispatch_pipeline("on_clash_lose", side=self.left.side, source=self.liu, target=self.enemy)
+        self.assertEqual(self.enemy.lightcore_hp, before_lc - 2)
+
+    def test_rewind_works_again_after_release_once_pressure_returns_to_zero(self):
+        self.deploy()
+        # 先清空环境压制进入天性解放
+        self.liu.add_status("环境压制", -18)
+        self.assertTrue(self.liu.rule_state.get("天性解放"))
+        # 解放后打出逆流溯源：加 6 压制并挂溯源标记，天性解放状态随之解除
+        self.liu.hp = 14
+        self.emit_use(self.cards["liu_rewind"])
+        self.assertEqual(self.liu.statuses["环境压制"], 6)
+        self.assertEqual(self.liu.statuses["溯源标记"], 1)
+        self.assertFalse(self.liu.rule_state.get("天性解放"))
+        self.liu.hp = 9
+        # 压制 > 0 时可以正常扣减环境压制直至归零，触发回退、清除溯源标记并重新进入天性解放
+        self.liu.add_status("环境压制", -6)
+        self.assertEqual(self.liu.hp, 14)
+        self.assertNotIn("环境压制", self.liu.statuses)
+        self.assertNotIn("溯源标记", self.liu.statuses)
+        self.assertTrue(self.liu.rule_state.get("天性解放"))
+        self.assertEqual(self.liu.statuses["领域洞悉"], 12)
+        # 归零后天性解放重新生效，后续减压制转为能源
+        self.liu.add_status("环境压制", -2)
+        self.assertEqual(self.liu.statuses.get("能源", 0), 2)
 
     def test_extreme_range_triggers_retaliation_but_protected_skill_stays_live(self):
         self.deploy()
@@ -488,22 +617,14 @@ class LiuYinTests(unittest.TestCase):
         self.liu.add_status("环境压制", -10)
         self.emit_use(self.cards["liu_rewind"])
         self.liu.add_status("领域洞悉", -2)
+        # 仅减少 6 层尚未归零时不触发回退
         self.liu.add_status("环境压制", -6)
-        self.assertEqual(self.liu.statuses["领域洞悉"], 15)
+        self.assertEqual(self.liu.statuses["领域洞悉"], 13)
         self.assertNotIn("能源", self.liu.statuses)
-
-    def test_overlapping_rewinds_keep_their_own_thresholds(self):
-        self.deploy()
-        self.liu.hp = 12
-        self.liu.add_status("环境压制", -14)
-        self.emit_use(self.cards["liu_rewind"])
-        self.liu.hp = 10
-        self.emit_use(self.cards["liu_rewind"])
-        self.liu.hp = 8
-        self.liu.add_status("环境压制", -6)
-        self.assertEqual(self.liu.hp, 10)
-        self.liu.add_status("环境压制", -6)
-        self.assertEqual(self.liu.hp, 12)
+        # 归零时先回退领域洞悉 13->15（不触发战甲获能），再由行至阴处获得 12 洞悉（触发战甲获 12 能源）
+        self.liu.add_status("环境压制", -self.liu.statuses["环境压制"])
+        self.assertEqual(self.liu.statuses["领域洞悉"], 27)
+        self.assertEqual(self.liu.statuses["能源"], 12)
 
     def test_dismember_upgrades_only_later_dice_and_requires_all_three_hits(self):
         for remote, miss, expected in ((0,False,[5,4,4,4]),(1,False,[5,3,3,2]),(0,True,[5,3,3])):

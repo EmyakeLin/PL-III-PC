@@ -26,7 +26,17 @@
     "领域洞悉": {"cap":30,"description":"最大30；每持有15层领域洞悉，骰子等级提升1（最多2）"},
     "环境压制": {"cap":18,"description":"最大18；生命值不高于X时，受到的伤害-50%（强化护甲）"},
     "环境同调": {"cap":3,"description":"最大3；每一层提升1费用上限；若层数为3，则额外提升1费用上限","sustain_from":2,"sustain":{"强壮":1,"迅捷":1}},
-    "战甲": {"cap":1,"description":"若处于战甲状态，则获得领域洞悉的同时获得等量的能源"}
+    "战甲": {"cap":1,"description":"若处于战甲状态，则获得领域洞悉的同时获得等量的能源"},
+    "溯源标记": {
+      "cap": 1,
+      "polarity": "neutral",
+      "color": "#38bdf8",
+      "description": "逆流溯源标记：当环境压制减少至0时，立即回退至已记录的生命值与状态（保留较高正面与生命、较低负面）。",
+      "display_fields": [
+        {"label": "已记录生命", "value": {"field": "$self.rule_state", "key": "逆流溯源生命"}},
+        {"label": "已记录状态", "value": {"field": "$self.rule_state", "key": "逆流溯源状态"}, "format": "status_map", "exclude": ["环境压制", "溯源标记"]}
+      ]
+    }
   },
   "status_entries": {
     "领域洞悉": [
@@ -121,9 +131,9 @@
                 {"left":"$event.status","op":"eq","right":"环境压制"},
                 {"left":"$event.previous_stacks","op":"gt","right":0},
                 {"left":"$event.current_stacks","op":"eq","right":0},
-                {"left":{"field":"$self.rule_state","key":"天性解放","default":false},"op":"eq","right":false}
+                {"left":{"field":"$self.rule_state","key":"已获归零洞悉","default":false},"op":"eq","right":false}
               ],
-              "operation": {"op":"program","code":["$self","天性解放",true,"SET_CHARACTER_STATE","$self","领域洞悉",12,"STATUS"]}
+              "operation": {"op":"program","code":["$self","已获归零洞悉",true,"SET_CHARACTER_STATE","$self","领域洞悉",12,"STATUS"]}
             }
           ]
         },
@@ -362,12 +372,32 @@
           "description": "当环境压制减少至0后，减少环境压制的效果改为获得能源，拼点开始时对对方造成1光点伤害，【拼点失败】额外追加1光点伤害",
           "entries": [
             {
+              "trigger": "on_status_changed",
+              "description": "环境压制减少至0时进入天性解放。",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"环境压制"},
+                {"left":"$event.previous_stacks","op":"gt","right":0},
+                {"left":"$event.current_stacks","op":"eq","right":0}
+              ],
+              "operation": {"op":"program","code":["$self","天性解放",true,"SET_CHARACTER_STATE"]}
+            },
+            {
+              "trigger": "on_status_changed",
+              "description": "环境压制不为0时解除天性解放。",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"环境压制"},
+                {"left":"$event.current_stacks","op":"gt","right":0},
+                {"left":{"field":"$self.rule_state","key":"天性解放","default":false},"op":"eq","right":true}
+              ],
+              "operation": {"op":"program","code":["$self","天性解放",false,"SET_CHARACTER_STATE"]}
+            },
+            {
               "trigger": "BEFORE STATUS",
               "description": "解放后，减少环境压制改为获得相应数量的能源。",
               "when": [
                 {"left":"$event.status","op":"eq","right":"环境压制"},
                 {"left":"$pending.amount","op":"lt","right":0},
-                {"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}
+                {"left":{"field":"$self.rule_state","key":"天性解放","default":false},"op":"eq","right":true}
               ],
               "operation": {
                 "op": "program",
@@ -378,13 +408,13 @@
             {
               "trigger": "before_dice_clash",
               "description": "解放后，拼点开始时对对方造成1点光点伤害。",
-              "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
+              "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":false},"op":"eq","right":true}],
               "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
             },
             {
               "trigger": "on_clash_lose",
               "description": "【拼点失败】解放后，拼点失败时追加1点光点伤害。",
-              "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
+              "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":false},"op":"eq","right":true}],
               "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
             }
           ]
@@ -748,95 +778,104 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "【使用时】记录当前自身生命值、其他状态效果，并增加6环境压制；当环境压制再次减少至相同数值时：立即回退至该状态，且保留：1）较高的正面增益和生命值，2）较低的负面增益。\n-若自身在期间内死亡，则无法回退",
+              "description": "【使用时】记录当前自身生命值、其他状态效果，并增加6环境压制（在生效前再次使用时，更新记录的状态）；当环境压制减少至0时：立即回退至该状态，且保留：1）较高的正面增益和生命值，2）较低的负面增益。\n-若自身在期间内死亡，则无法回退",
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self", "环境压制", "STATUS_COUNT", "pressure", "STORE",
-                  {
-                    "schedule": {
-                      "event": "on_status_changed",
-                      "source": "$self",
-                      "target": "$self",
-                      "after_turns": 0,
-                      "through_turns": null,
-                      "uses": 1,
-                      "require_source_alive": true,
-                      "require_target_alive": true,
-                      "capture": {"hp":"$self.hp","stacks":"$self.personal_statuses","pressure":"$local.pressure"},
-                      "when": [
-                        {"left":"$event.target","op":"eq","right":"$event.scheduled.target"},
-                        {"left":"$event.status","op":"eq","right":"环境压制"},
-                        {"left":"$event.actual_delta","op":"lt","right":0},
-                        {"left":"$event.current_stacks","op":"eq","right":"$event.scheduled.capture.pressure"}
-                      ],
-                      "then": [
-                        "$self.hp", "$event.scheduled.capture.hp", "MAX", "desired_hp", "STORE",
-                        "$event.scheduled.capture.stacks", "saved", "STORE", "$self.personal_statuses", "KEYS",
-                        "$local.saved", "KEYS", "PAIR", "FLATTEN", "UNIQUE",
-                        [
-                          "$event.item", "name", "STORE", "$local.saved", "$local.name", 0, "LOOKUP", "then",
-                          "STORE", "$self.personal_statuses", "$local.name", 0, "LOOKUP", "now", "STORE",
-                          "$self.status_rules", "$local.name", null, "LOOKUP",
-                          {"field":"polarity","default":null},
-                          {
-                            "literal": {
-                              "强壮": "positive",
-                              "迅捷": "positive",
-                              "骰子等级提升": "positive",
-                              "凝聚": "positive",
-                              "能源": "positive",
-                              "纯能": "positive",
-                              "充能": "positive",
-                              "领域洞悉": "positive",
-                              "环境同调": "positive",
-                              "战甲": "positive",
-                              "涡流": "positive",
-                              "隧道": "positive",
-                              "羽流": "positive",
-                              "呼吸": "positive",
-                              "弹药": "positive",
-                              "全开": "positive",
-                              "隧道开启": "positive",
-                              "羽流·林秋": "positive",
-                              "电叉·回环舞·活化": "positive",
-                              "电叉·极锐刺·活化": "positive",
-                              "深秋·风卷残叶·活化": "positive",
-                              "残雪·幽蓝流光·活化": "positive",
-                              "虚弱": "negative",
-                              "束缚": "negative",
-                              "骰子等级降低": "negative",
-                              "烧伤": "negative",
-                              "裂血": "negative",
-                              "失衡": "negative",
-                              "致命失衡": "negative",
-                              "麻痹": "negative",
-                              "电击": "negative",
-                              "电流": "negative",
-                              "星结": "negative",
-                              "崩析": "negative",
-                              "崩裂": "negative",
-                              "崩离": "negative",
-                              "环境压制": "negative"
-                            }
-                          },
-                          "$local.name", "neutral", "LOOKUP", "COALESCE", "polarity", "STORE",
-                          "$local.polarity", "positive", "EQ",
-                          ["$local.now","$local.then","MAX"],
-                          [
-                            "$local.polarity", "negative", "EQ",
-                            ["$local.now","$local.then","MIN"],
-                            ["$local.then"],
-                            "IF_ELSE"
-                          ],
-                          "IF_ELSE", "stacks", "STORE", "$local.stacks", "$local.now", "EQ", "NOT",
-                          ["$self","$local.name","$local.stacks","RESTORE_STATUS_STACKS"],
-                          "WHEN"
+                  "$self", "逆流溯源生命", "$self.hp", "SET_CHARACTER_STATE",
+                  "$self", "逆流溯源状态", "$self.personal_statuses", "SET_CHARACTER_STATE",
+                  "$self", "溯源标记", 1, "STATUS",
+                  "$self.rule_state", "逆流溯源待生效", false, "LOOKUP", "NOT",
+                  [
+                    "$self", "逆流溯源待生效", true, "SET_CHARACTER_STATE",
+                    {
+                      "schedule": {
+                        "event": "on_status_changed",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 0,
+                        "through_turns": null,
+                        "uses": 1,
+                        "require_source_alive": true,
+                        "require_target_alive": true,
+                        "capture": {},
+                        "when": [
+                          {"left":"$event.target","op":"eq","right":"$event.scheduled.target"},
+                          {"left":"$event.status","op":"eq","right":"环境压制"},
+                          {"left":"$event.previous_stacks","op":"gt","right":0},
+                          {"left":"$event.current_stacks","op":"eq","right":0}
                         ],
-                        "EACH", "$self", "$local.desired_hp", "SET_HP"
-                      ]
+                        "then": [
+                          "$self", "逆流溯源待生效", false, "SET_CHARACTER_STATE",
+                          "$self.hp", "$self.rule_state", "逆流溯源生命", "$self.hp", "LOOKUP", "MAX", "desired_hp", "STORE",
+                          "$self.rule_state", "逆流溯源状态", {"literal":{}}, "LOOKUP", "saved", "STORE", "$self.personal_statuses", "KEYS",
+                          "$local.saved", "KEYS", "PAIR", "FLATTEN", "UNIQUE",
+                          [
+                            "$event.item", "name", "STORE", "$local.saved", "$local.name", 0, "LOOKUP", "then",
+                            "STORE", "$self.personal_statuses", "$local.name", 0, "LOOKUP", "now", "STORE",
+                            "$self.status_rules", "$local.name", null, "LOOKUP",
+                            {"field":"polarity","default":null},
+                            {
+                              "literal": {
+                                "强壮": "positive",
+                                "迅捷": "positive",
+                                "骰子等级提升": "positive",
+                                "凝聚": "positive",
+                                "能源": "positive",
+                                "纯能": "positive",
+                                "充能": "positive",
+                                "领域洞悉": "positive",
+                                "环境同调": "positive",
+                                "战甲": "positive",
+                                "涡流": "positive",
+                                "隧道": "positive",
+                                "羽流": "positive",
+                                "呼吸": "positive",
+                                "弹药": "positive",
+                                "全开": "positive",
+                                "隧道开启": "positive",
+                                "羽流·林秋": "positive",
+                                "电叉·回环舞·活化": "positive",
+                                "电叉·极锐刺·活化": "positive",
+                                "深秋·风卷残叶·活化": "positive",
+                                "残雪·幽蓝流光·活化": "positive",
+                                "虚弱": "negative",
+                                "束缚": "negative",
+                                "骰子等级降低": "negative",
+                                "烧伤": "negative",
+                                "裂血": "negative",
+                                "失衡": "negative",
+                                "致命失衡": "negative",
+                                "麻痹": "negative",
+                                "电击": "negative",
+                                "电流": "negative",
+                                "星结": "negative",
+                                "崩析": "negative",
+                                "崩裂": "negative",
+                                "崩离": "negative",
+                                "环境压制": "negative"
+                              }
+                            },
+                            "$local.name", "neutral", "LOOKUP", "COALESCE", "polarity", "STORE",
+                            "$local.polarity", "positive", "EQ",
+                            ["$local.now","$local.then","MAX"],
+                            [
+                              "$local.polarity", "negative", "EQ",
+                              ["$local.now","$local.then","MIN"],
+                              ["$local.then"],
+                              "IF_ELSE"
+                            ],
+                            "IF_ELSE", "stacks", "STORE", "$local.stacks", "$local.now", "EQ", "NOT",
+                            ["$self","$local.name","$local.stacks","RESTORE_STATUS_STACKS"],
+                            "WHEN"
+                          ],
+                          "EACH", "$self", "$local.desired_hp", "SET_HP",
+                          "$self", "溯源标记", -1, "STATUS"
+                        ]
+                      }
                     }
-                  },
+                  ],
+                  "WHEN",
                   "$self", "环境压制", 6, "STATUS"
                 ]
               }

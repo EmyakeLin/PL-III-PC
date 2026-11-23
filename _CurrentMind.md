@@ -1,5 +1,25 @@
 # 当前设计与工作记录
 
+## 流阴技能组打磨：逆流溯源触发条件与重打覆盖（2026-11-24）
+
+- **已确认文义**：
+  - 「逆流溯源」的回退触发条件由原先“环境压制再次减少至使用时的相同层数”改为“**环境压制减少至 0（清空）时**”触发，同步更新 `_packs/guangsheng_liu_yin.json` 与 `_packs/printed/流阴.txt` 卡面文案。
+  - **边界**：在生效前再次打出「逆流溯源」时，直接用本次使用时的生命值与个人状态覆盖旧存档，且只保留 1 份待生效回退监听；回退生命仍通过 `SET_HP` 直接回退，不触发回复类被动（如「篡改万物」的全场光点伤害），也不因回退洞悉而触发战甲获能。
+- **执行路径**：
+  - 使用角色 `rule_state` 的 `逆流溯源生命`、`逆流溯源状态` 保存最新快照，`逆流溯源待生效` 标记是否已挂起单次 `on_status_changed` 预约（`previous_stacks > 0` 且 `current_stacks == 0`）；归零触发时先复位待生效标记，再按正面/生命取 `MAX`、负面取 `MIN`、中性取存档值执行 `RESTORE_STATUS_STACKS` 与 `SET_HP`。
+  - 环境压制归零时，`deliver_scheduled` 先于普通监听器执行，先完成逆流溯源回退（环境压制取 `MIN(0, then)=0` 保持归零），随后「行至阴处」正常发放 12 层领域洞悉。
+- **溯源标记与通用状态动态描述**：
+  - 在 `_packs/guangsheng_liu_yin.json` 新增纯标记状态 `溯源标记`（`cap: 1`、`polarity: "neutral"`、无 `status_entries`），「逆流溯源」使用时挂上 1 层，环境压制归零完成回退后通过 `-1 STATUS` 移除。
+  - 在 `displayer.py` 新增通用声明式投影 `_status_details`：按 `status_rules[<状态名>].display_fields` 实时求值并投影为 `character.status_details`（支持 `plain` 与 `status_map` + `exclude` 过滤）。`溯源标记` 声明展示 `已记录生命` 与过滤掉 `环境压制`、`溯源标记` 后的 `已记录状态`。
+  - 前端 `game_director.js`（脚下状态悬停浮窗）与 `table_overlays.js`（角色侧栏「当前状态规则」）统一将 `catalog.statuses[name]` 与 `character.status_details?.[name]` 直读拼接展示。
+- **天性解放 state 由环境压制统一维护**：
+  - 将「行至阴处」的“首次归零获得 12 领域洞悉（仅一次）”拆到独立标记 `已获归零洞悉`，不再与 `天性解放` 混用。
+  - 在 `_packs/guangsheng_liu_yin.json` 中由「天性解放」的 `on_status_changed` 统一维护 `rule_state["天性解放"]`：`环境压制` 减少至 0 时置 `true`，`环境压制 > 0` 时直接解除为 `false`；底下 3 条效果词条（减压制转能源、拼点开始 1 光点、拼点失败 1 光点）只检查 `rule_state["天性解放"] == true`，不再各自重复判断 `环境压制 == 0`。
+  - 环境压制重新变为正数（如解放后再打「逆流溯源」+6）时，`天性解放` 解除，减少环境压制正常扣减直至再次归零，此时「逆流溯源」触发回退并清除「溯源标记」，`天性解放` 重新置 `true` 且不重复发放 12 领域洞悉。
+- **验证结果**：
+  - `tests.test_liu_yin`、`tests.entry_semantics`、`tests.test_displayer` 共 209 项全部通过（断言压制 > 0 时 `rule_state["天性解放"]` 确实为 `False`，再次归零时恢复 `True` 且不重复发放 12 洞悉，并验证解放后重打「逆流溯源」全链路）。
+  - `node --check` 校验 `game_director.js` 与 `table_overlays.js` 均通过；`test_game_stage.mjs` 与 `test_data_driven_display.mjs` 全部通过（`test_director_stage.mjs` 2 项失败来自工作树既有的 `combatTabletop.setLayout` 未提交改动，与本次修改无关）。
+
 ## 数据直读卡面与统一触发器高亮规范（2026-11-24）
 
 ### 规范总则

@@ -1854,12 +1854,15 @@ export class GameDirector {
           title: `${ch.name} · 状态效果`,
           items: statuses.map(([n, v]) => {
             const rl = this.state?.catalog?.statuses?.[n];
+            const baseText = (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '';
+            const detailLines = Array.isArray(ch.status_details?.[n]) ? ch.status_details[n] : [];
+            const text = [baseText, ...detailLines].filter(Boolean).join('\n');
             return {
               name: n,
               value: v,
               burst: n === '裂血' && ch.bleed_burst,
               color: getStatusColor(n, INK.secondary),
-              text: (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '',
+              text,
             };
           }),
           side,
