@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="24" height="24" viewBox="0 0 24 24">
+  <title>星结</title>
+  <defs>
+    <path id="nova-ribbon" d="M0 17.1 10.8 6.3 20.5 16 10.8 25.7 5.75 20.65v-4.1l5.05 5.05 5.6-5.6-5.6-5.6-6.7 6.7Z" />
+    <mask id="under-top" maskUnits="userSpaceOnUse" x="-1" y="-1" width="34" height="34">
+      <rect x="-1" y="-1" width="34" height="34" fill="white" />
+      <path d="m12 9.55 7.3 7.3" fill="none" stroke="black" stroke-width="5.2" />
+    </mask>
+    <mask id="under-bottom" maskUnits="userSpaceOnUse" x="-1" y="-1" width="34" height="34">
+      <rect x="-1" y="-1" width="34" height="34" fill="white" />
+      <path d="m12.7 15.15 7.3 7.3" fill="none" stroke="black" stroke-width="5.2" />
+    </mask>
+  </defs>
+  <g fill="#202128" transform="scale(.75)">
+    <use xlink:href="#nova-ribbon" mask="url(#under-bottom)" />
+    <g mask="url(#under-top)">
+      <use xlink:href="#nova-ribbon" transform="rotate(180 16 16)" />
+    </g>
+  </g>
+</svg>

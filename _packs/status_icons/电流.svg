@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <title>电流</title>
+  <g fill="#193F82">
+    <circle cx="3.4" cy="13.6" r="2.25" />
+    <path d="M3.4 13.6h3.2l3.25-7.8 3.05 12.3 2.3-6.6h4.15" fill="none" stroke="#193F82" stroke-width="2.35" stroke-linejoin="round" stroke-linecap="round" />
+    <path d="m17.6 7.35 5.65 4.15-5.65 4.15Z" />
+  </g>
+</svg>

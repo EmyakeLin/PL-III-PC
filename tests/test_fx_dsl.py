@@ -124,6 +124,15 @@ class FxDslInterfaceTests(unittest.TestCase):
         self.assertEqual(sk["dice"]["2"]["vfx"][0]["primitive"], "pierce_lance")
         self.assertEqual(sk["dice"]["2"]["vfx"][0]["count"], 3)
 
+    def test_battle_snapshot_serves_each_approved_status_icon(self):
+        visuals = BattleSession(seed=37).state()["status_visuals"]
+        for name in ("麻痹", "弹药", "威压", "电击", "电流", "堆芯熔毁", "隧道", "星结"):
+            with self.subTest(status=name):
+                self.assertIn(name, visuals)
+                asset, content_type = _resolve_static(visuals[name]["icon_url"])
+                self.assertEqual(asset.name, f"{name}.svg")
+                self.assertEqual(content_type, "image/svg+xml")
+
     def test_status_icons_discovery_inline_sanitization_and_static_serving(self):
         session = BattleSession(seed=37)
         snap = session.state()
