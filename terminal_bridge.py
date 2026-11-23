@@ -132,9 +132,6 @@ class TerminalBridge:
 
     @staticmethod
     def show_character(data):
-        if "printed_text" in data:
-            print(data["printed_text"])
-            return
         print(TerminalBridge.character_summary(data))
         if data.get("faction"):
             print(f"所属阵营　{data['faction']}")
@@ -153,9 +150,6 @@ class TerminalBridge:
 
     @staticmethod
     def show_skill(skill):
-        if "printed_text" in skill:
-            print(skill["printed_text"])
-            return
         dice = " → ".join(describe_die(die) for die in skill.get("dice", []))
         entries = "；".join(describe_entry(entry) for entry in skill.get("entries", []))
         zone = "战斗外" if skill.get("out_of_combat") else ""

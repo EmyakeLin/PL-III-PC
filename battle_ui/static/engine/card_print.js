@@ -18,7 +18,7 @@ import {
   SHIELD_STYLE,
   STATUS_COLORS,
   TRAIT_STYLE,
-  TIMING_STYLE,
+  TRIGGER_STYLE,
   RANK_COLOR,
   LEVEL_MAX,
   RANK_LABEL,
@@ -32,7 +32,9 @@ import {
   formatDieRange,
   exactSkillTraits,
   exactSkillTraitSpecs,
-  extractDieDamageBadge,
+  classifyTriggerSeries,
+  parseTriggerSegments,
+  resolveDieDamageParts,
   drawDieIcon,
   drawUnifiedDieFrame,
   drawStatusIcon,
@@ -61,7 +63,7 @@ export {
   SHIELD_STYLE,
   STATUS_COLORS,
   TRAIT_STYLE,
-  TIMING_STYLE,
+  TRIGGER_STYLE,
   RANK_COLOR,
   LEVEL_MAX,
   RANK_LABEL,
@@ -75,7 +77,9 @@ export {
   formatDieRange,
   exactSkillTraits,
   exactSkillTraitSpecs,
-  extractDieDamageBadge,
+  classifyTriggerSeries,
+  parseTriggerSegments,
+  resolveDieDamageParts,
   drawDieIcon,
   drawUnifiedDieFrame,
   drawStatusIcon,
@@ -143,17 +147,6 @@ export function buildBoardCardTag(card, {
   const W = Math.max(96, Math.round(width));
   const H = height ? Math.max(Math.round(W * 1.34), Math.round(height)) : Math.round(W * 1.40);
   const isBlanked = rangeDeficit >= 3;
-  if (card.printed_text && !isBlanked) {
-    const printW = Math.max(200, W);
-    const face = buildFullCard(card, { side, accentColor, width: printW, fixedHeight: H * printW / W,
-      dense: true, centered: true, playMode, rangeDeficit, activeDieNumber });
-    const root = new PIXI.Container();
-    face.scale.set(W / printW);
-    root.addChild(face);
-    root._boxWidth = W;
-    root._boxHeight = H;
-    return root;
-  }
   const padX = 6;
   const headerH = 26;
 
@@ -226,7 +219,9 @@ export function buildBoardCardTag(card, {
     const ry = cursorY + i * rowH;
     const dType = isBlanked ? 'blank' : die.type;
     const ds = DIE_STYLE[dType] || DIE_STYLE.blank;
-    const { badge, restEntries } = isBlanked ? { badge: null, restEntries: [] } : extractDieDamageBadge(die.entries);
+    const dmgParts = isBlanked ? [] : resolveDieDamageParts(die);
+    const badge = dmgParts[0] || null;
+    const restEntries = isBlanked ? [] : (die.entries || []).filter(Boolean);
 
     if (activeDieNumber === i + 1) {
       rowG.roundRect(padX - 2, ry + 1, W - padX * 2 + 4, rowH - 2, 3).fill({ color: INK.goldBg, alpha: 0.95 })
@@ -333,7 +328,6 @@ export function buildFullCard(card, {
   const bodyTop = headerH + (tight ? 5 : 7);
   const dice = card.dice || [];
 
-  const printedLines = !isBlanked && card.printed_text ? card.printed_text.split('\n') : null;
   const layoutBody = (targetInnerW) => {
     const box = new PIXI.Container();
     let y = 0;
@@ -349,27 +343,7 @@ export function buildFullCard(card, {
       y += row._height + (idx < dice.length - 1 ? 1 : 0);
     };
 
-    if (printedLines) {
-      let idx = 0;
-      for (const line of printedLines.slice(1)) {
-        if (line === dice[idx]?.printed_line) {
-          addDie(dice[idx], idx);
-          idx++;
-        } else if (line) {
-          const text = buildRichVerbatimText(line, {maxWidth: targetInnerW,
-            fontSize: dense ? 10.6 : compact ? 11 : 11.8, lineHeight: tight ? 15 : 17.5});
-          text.y = y;
-          box.addChild(text);
-          y += text._height;
-        } else {
-          y += 7;
-        }
-      }
-      for (; idx < dice.length; idx++) addDie(dice[idx], idx);
-      return { box, bodyH: y };
-    }
-
-    // 1. Exact Printed Trait Strip (ONLY if present)
+    // 1. Exact Skill Trait Strip directly from structured card fields (ONLY if present)
     const traitNode = isBlanked ? null : buildTraitPills(card, targetInnerW, { compact: tight });
     if (traitNode && traitNode._height > 0) {
       traitNode.position.set(0, y);
@@ -377,7 +351,7 @@ export function buildFullCard(card, {
       y += traitNode._height + (tight ? 4 : 6);
     }
 
-    // 2. 100% Verbatim Skill-Level Entries (ONLY if present)
+    // 2. Skill-Level Entries with data-driven 【触发器】 highlight (ONLY if present)
     if (!isBlanked && card.entries && card.entries.length) {
       const skillPlate = buildUnifiedEntryPlate({
         variant: 'skill',
@@ -393,7 +367,7 @@ export function buildFullCard(card, {
       y += skillPlate._height + (tight ? 4 : 7);
     }
 
-    // 3. Hairline-Separated Unified Die Rows (ZERO nested boxes!)
+    // 3. Hairline-Separated Unified Die Rows (direct from die.type / range / die.damage_parts / die.entries)
     dice.forEach(addDie);
 
     return { box, bodyH: y };
@@ -404,8 +378,8 @@ export function buildFullCard(card, {
     ? Math.round(fixedHeight)
     : Math.max(minHeight || (tight ? 96 : 108), bodyTop + naturalBodyH + (tight ? 7 : 9));
 
-  // Area-preserving editorial re-typeset for fixed-height physical cards (like printed MTG/Yu-Gi-Oh cards):
-  // ZERO scrollbars inside cards, ZERO stretching, ZERO wasted side margins, 100% verbatim visible!
+  // Area-preserving editorial re-typeset for fixed-height physical cards:
+  // ZERO scrollbars inside cards, ZERO stretching, ZERO wasted side margins!
   let renderedBodyH = naturalBodyH;
   if (fixedHeight > 0) {
     const availBodyH = Math.max(40, H - bodyTop - 7);
@@ -415,7 +389,7 @@ export function buildFullCard(card, {
       const reLayout = layoutBody(Math.floor(innerW / fit));
       content = reLayout.box;
       if (reLayout.bodyH * fit > availBodyH) {
-        fit = printedLines ? availBodyH / reLayout.bodyH : Math.max(0.64, availBodyH / reLayout.bodyH);
+        fit = Math.max(0.64, availBodyH / reLayout.bodyH);
       }
       content.scale.set(fit);
       renderedBodyH = reLayout.bodyH * fit;
@@ -458,25 +432,23 @@ export function buildFullCard(card, {
       .fill({ color: pal.accent, alpha: 0.65 });
   }
 
-  // Cost Crystal (top-left) in character's own color (ZERO gold ultimate override!)
+  // Cost Crystal (top-left) directly from card.cost
   const cx = padX + 12;
   const cy = 3 + (headerH - 3) / 2;
-  const showCost = !printedLines || card.cost !== card.printed_cost;
-  if (showCost) drawCostCrystal(bg, cx, cy, tight ? 11.2 : 12.8, isBlanked ? INK.muted : pal.accent);
+  drawCostCrystal(bg, cx, cy, tight ? 11.2 : 12.8, isBlanked ? INK.muted : pal.accent);
   sheet.addChild(bg);
 
-  if (showCost) {
-    const cTxt = new PIXI.Text({
-      text: String(card.cost ?? 0),
-      style: { fontFamily: FONT_NUM, fontSize: tight ? 13 : 14.8, fontWeight: '900', fill: INK.paper },
-    });
-    cTxt.anchor.set(0.5);
-    cTxt.position.set(cx, cy + 0.5);
-    sheet.addChild(cTxt);
-  }
+  const cTxt = new PIXI.Text({
+    text: String(card.cost ?? 0),
+    style: { fontFamily: FONT_NUM, fontSize: tight ? 13 : 14.8, fontWeight: '900', fill: INK.paper },
+  });
+  cTxt.anchor.set(0.5);
+  cTxt.position.set(cx, cy + 0.5);
+  sheet.addChild(cTxt);
 
+  // Skill Name directly from card.name
   const titleTxt = new PIXI.Text({
-    text: printedLines ? printedLines[0] : card.name || '',
+    text: card.name || '',
     style: {
       fontFamily: FONT_UI,
       fontSize: dense ? 13.2 : compact ? 13.8 : 15,
@@ -485,7 +457,7 @@ export function buildFullCard(card, {
     },
   });
   titleTxt.anchor.set(0, 0.5);
-  titleTxt.position.set(padX + (showCost ? 29 : 0), cy);
+  titleTxt.position.set(padX + 29, cy);
   sheet.addChild(titleTxt);
 
   // Subtle right-aligned owner or play-mode / suppression stamp in header
@@ -506,10 +478,7 @@ export function buildFullCard(card, {
     rightCursor -= tw + 6;
   }
 
-  if (printedLines && titleTxt.width > rightCursor - titleTxt.x) {
-    titleTxt.scale.set((rightCursor - titleTxt.x) / titleTxt.width);
-  }
-  if (!printedLines && (showOwner || !dense) && ownerName) {
+  if ((showOwner || !dense) && ownerName) {
     const owTxt = new PIXI.Text({
       text: ownerName,
       style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '800', fill: pal.accent },
@@ -518,9 +487,13 @@ export function buildFullCard(card, {
     if (rightCursor - owTxt.width > padX + 34 + titleTxt.width) {
       owTxt.position.set(rightCursor, cy);
       sheet.addChild(owTxt);
+      rightCursor -= owTxt.width + 6;
     } else {
       owTxt.destroy();
     }
+  }
+  if (titleTxt.width > Math.max(40, rightCursor - titleTxt.x)) {
+    titleTxt.scale.set(Math.max(40, rightCursor - titleTxt.x) / titleTxt.width);
   }
 
   sheet.addChild(content);

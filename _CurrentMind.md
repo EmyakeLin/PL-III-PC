@@ -1,5 +1,30 @@
 # 当前设计与工作记录
 
+## 数据直读卡面与统一触发器高亮规范（2026-11-24）
+
+### 规范总则
+- **能读数据的全部直读数据，前端禁止用正则猜卡面**：
+  - 技能名读 `card.name`，费用读 `card.cost`（及 `card.resource_cost`），技能特性读结构化字段。
+  - 骰子类型读 `die.type`（含 `skip` 专用样式 `DIE_STYLE.skip`），数值范围由 `formatDieRange(die)` 直接读取 `roll_max`/`level`/`base_value`/`multiplier`/`final_bonus` 拼接（`skip` 显示 `SKIP`）。
+  - 伤害部分由后端 `displayer.py` 的 `_split_die_entries` 从引擎固定伤害段直接投影为 `die.damage_parts`（支持 `normal`/`pierce`/`concept`/`lightcore`/`real` 五级，含 `0` 点伤害段）；已投影的固定伤害段不再重复出现在 `die.entries` 中。前端 `resolveDieDamageParts(die)` 与 `buildDamageBadge` 直接读取 `die.damage_parts`，彻底删除 `extractDieDamageBadge`。
+  - 移除旧的 `printed_sheet` / `printed_text` / `printed_line` / `printed_rules` / `printed_profile` / `printed_heading` 覆盖旁路（清理 `loader.py`、`displayer.py`、`models/card.py`、`models/dice.py`、`battle_ui/match.py`、`terminal_bridge.py`、`battle_mcp/static/app.js`、`card_print.js`、`design_system.js`、`table_overlays.js`），全部 8 位角色（含流阴）走同一条数据直读渲染管线。
+- **触发器纯字符串扫描替换与着色（零正则）**：
+  - `_packs` 内全部 8 位角色及 3 个共享效果包（共 11 个 JSON 文件、459 条词条）的 `description` 统一改写为以 `【触发器名称】` 标注触发器的标准格式（不重复书写前置时机词）；字符串关键词（如 `"引燃"`）由 `describe_entry` 投影为 `【命中时】引燃。`；为流阴 3 处动态远程字段补齐 `description`，为赫里斯 `heris_crush` 补齐缺失 `description`。
+  - 前端 `design_system.js` 提供纯字符串扫描器 `parseTriggerSegments(text)`（仅用 `indexOf('【')`/`indexOf('】')`，无任何 `RegExp`）与分类函数 `classifyTriggerSeries(name)`，将成对 `【触发器名称】` 替换为 `[ 触发器名称 ]` 并按统一规则着色（`TRIGGER_STYLE`）：
+    - **“使用”系列**（含“使用”或“用骰”）→ 蓝色（`0x1c6cc4`）
+    - **“命中”系列**（含“命中”或“暴击”）→ 黄绿色（`0x5c8a14`）
+    - **“拼点胜利”系列**（含“拼点胜利”或“拼赢”）→ 橙色（`0xd96b0b`）
+    - **“拼点失败”系列**（含“拼点失败”或“拼输”或“拼负”）→ 红色（`0xc92a2a`）
+    - **默认（其余全部触发器）**→ 黄绿色（`0x5c8a14`）
+  - 覆盖范围：`buildFullCard`、`buildBoardCardTag`、`buildUnifiedDieRow`、`buildUnifiedEntryPlate`、`buildHeroSidePanel`、`buildPassiveDrawer`、`buildRosterOverlay`、`buildCodexOverlay`。
+
+### 验证记录
+- 前置存档提交：`b08c504`（存档：前端演出重构与对战画布去网页化）。
+- `_packs` 校验：8 位角色全部通过 `load_characters_from_packs` 载入，11 个 JSON 文件内 0 条非规范词条；`git diff b08c504 -- _packs/` 确认仅改动 `description`、流阴 3 处远程字段说明与移除 `printed_sheet`，零运算/操作码改动。
+- 语法与零正则检查：`battle_ui/static/engine/*.js` 全部通过 `node --check`；`design_system.js` 与 `card_print.js` 零文本正则匹配；全库无残留 `printed_text`/`printed_line`/`TIMING_STYLE`/`extractDieDamageBadge`。
+- Node 前端专测（`node --import ./tests/frontend/register.mjs --test tests/frontend/test_game_stage.mjs tests/frontend/test_director_stage.mjs tests/frontend/test_data_driven_display.mjs`）：15/15 通过，含成对对照验证（五类触发器系列着色与 muted 灰化；结构化 `damage_parts` 渲染伤害徽章 vs 仅在 `entries` 写 `"2穿甲"` 时绝不正则猜徽章；`card.name`/`card.cost`/`die.type`/数值直读并忽略遗留 `printed_text`/`printed_line`）。
+- Python 专测：308/308 通过（`tests.entry_semantics`、`tests.test_displayer` 含全部 8 角色结构化伤害段与 `【触发器】` 全检、`tests.test_liu_yin`、`tests.test_lan_qing`、`tests.test_heris`、`tests.test_carrier_challenge`、`tests.test_entry_execution_paths`、`tests.test_room_pacing_and_dice_presentation`、`tests.test_canvas_battle_engine.CanvasBattleEngineTests.test_liu_yin_renders_structured_data_and_colored_triggers_on_cards_and_in_catalog`）。
+
 ## 对战画布去网页化（2026-11-23）
 
 作者评价：整个对战界面被一批网页式部件拖垮；攻击特效与 3D 骰子对撞必须保留。作者点名的五类问题部件全部改为游戏内表现，攻击特效、骰子对撞、`TimelineSequencer` 时序与内核桥接均未改动。

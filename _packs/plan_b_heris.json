@@ -9,7 +9,7 @@
           "name": "PlanB 组织",
           "entries": [{
             "trigger": "on_turn_start",
-            "description": "回合开始时，若自己的三张技能集满，本回合额外获得1交锋和1通用费。",
+            "description": "【回合开始】若自己的三张技能集满，本回合额外获得1交锋和1通用费。",
             "operation": {
               "op": "program",
               "code": [
@@ -28,7 +28,7 @@
           "name": "B级条目",
           "entries": [{
             "trigger": "on_turn_start",
-            "description": "初始交锋上限为2。回合开始时回复1生命。",
+            "description": "【回合开始】初始交锋上限为2。回合开始时回复1生命。",
             "operation": "HEAL 1", "target": "self"
           }]
         },
@@ -37,13 +37,13 @@
           "entries": [
             {
               "trigger": "on_turn_start",
-              "description": "每回合重新累计火焰之锤的两次触发。",
+              "description": "【回合开始】每回合重新累计火焰之锤的两次触发。",
               "operation": {"op": "program", "code": ["$self", "火焰之锤次数", 0, "SET_CHARACTER_STATE"]}
             },
             {
               "trigger": "before_dice_hit",
               "when": [{"left":"$event.die.type","op":"eq","right":"blunt"}],
-              "description": "打击命中前记录目标是否已有烧伤。本回合已触发两次后，目标每8烧伤使这次命中的骰子伤害+1，至多+2。",
+              "description": "【命中前】打击命中前记录目标是否已有烧伤。本回合已触发两次后，目标每8烧伤使这次命中的骰子伤害+1，至多+2。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -61,7 +61,7 @@
             },
             {
               "trigger": "on_dice_hit", "when": [{"left":"$event.die.type","op":"eq","right":"blunt"}],
-              "description": "打击命中原本带有烧伤的目标时，施加1烧伤，每回合2次。",
+              "description": "【命中时】打击命中原本带有烧伤的目标时，施加1烧伤，每回合2次。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -86,7 +86,7 @@
               {"left":"$event.activation_kind","op":"eq","right":"ignite"},
               {"left":"$event.result","op":"eq","right":true}
             ],
-            "description": "其他友方角色的攻击触发引燃时，对同一目标发起一次「重锤！」追击。调用技能副本，减免1费，【使用时】照常结算。每位队友每回合至多触发一次。",
+            "description": "【引燃后】其他友方角色的攻击触发引燃时，对同一目标发起一次「重锤！」追击。调用技能副本，减免1费，【使用时】照常结算。每位队友每回合至多触发一次。",
             "operation": {
               "op": "program",
               "code": [
@@ -110,7 +110,7 @@
           "name": "能源聚集",
           "entries": [{
             "trigger": "on_status_changed", "subject": "target", "when": [{"left":"$event.status","op":"eq","right":"能源"}],
-            "description": "每累计实际消耗8能源，获得1凝聚。余数跨回合保留。",
+            "description": "【状态变动时】每累计实际消耗8能源，获得1凝聚。余数跨回合保留。",
             "operation": {
               "op": "program",
               "code": [
@@ -132,7 +132,7 @@
           "id": "heris_heavy_hammer", "name": "重锤！", "cost": 1,
           "entries": [{
             "trigger": "on_skill_use",
-            "description": "使用时消耗2能源。",
+            "description": "【使用时】消耗2能源。",
             "operation": {
               "op": "program",
               "code": ["$self","能源",2,{"call":"SPEND_STATUS","result":"result","default":0},"POP"]
@@ -141,7 +141,7 @@
           "dice": [
             {"type": "blunt", "level": 3, "entries": [
               "1物理",
-              {"trigger": "on_dice_hit", "description": "施加1烧伤，凝聚至少3层时引燃。",
+              {"trigger": "on_dice_hit", "description": "【命中时】施加1烧伤，凝聚至少3层时引燃。",
                "operation": {
                  "op": "program",
                  "code": [
@@ -155,13 +155,13 @@
         {
           "id": "heris_flame_conversion", "name": "烈火化能", "cost": 2,
           "entries": [
-            {"trigger": "on_skill_use", "description": "使用时，若自身能源不高于4层，则获得2能源。",
+            {"trigger": "on_skill_use", "description": "【使用时】若自身能源不高于4层，则获得2能源。",
              "operation": {"op": "program", "code": [
                "$self", "能源", "STATUS_COUNT", 4, "LE", ["$self", "能源", 2, "STATUS"], "WHEN"
              ]}},
             {
               "trigger": "on_skill_use",
-              "description": "使用时，目标每有4烧伤，自身获得1能源，至多4层。",
+              "description": "【使用时】目标每有4烧伤，自身获得1能源，至多4层。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -179,12 +179,12 @@
           ],
           "dice": [
             {"type": "blunt", "level": 1, "entries": [
-              {"trigger": "on_dice_hit", "description": "获得1能源，施加1烧伤。",
+              {"trigger": "on_dice_hit", "description": "【命中时】获得1能源，施加1烧伤。",
                "operation": ["STATUS 能源 1 $self","STATUS 烧伤 1 $event.target"]}
             ]},
             {"type": "blunt", "level": 2, "entries": [
               {"trigger": "on_dice_hit", "when": [{"left": {"field": "$event.target.statuses", "key": "烧伤", "default": 0}, "op": "ge", "right": 8}],
-               "description": "若目标烧伤至少8层，获得2能源并抽1张牌。",
+               "description": "【命中时】若目标烧伤至少8层，获得2能源并抽1张牌。",
                "operation": ["STATUS 能源 2 $self", "DRAW 1"]}
             ]}
           ]
@@ -207,7 +207,7 @@
           },
           "entries": [
             {"trigger": "on_skill_use",
-             "description": "使用时消耗全部能源。每消耗4层，本技能骰级+1。每消耗2层，首骰命中时额外施加1烧伤。",
+             "description": "【使用时】消耗全部能源。每消耗4层，本技能骰级+1。每消耗2层，首骰命中时额外施加1烧伤。",
              "operation": {
                "op": "program",
                "code": [
@@ -217,11 +217,12 @@
                ]
              }},
             {"trigger": "on_skill_use",
-             "description": "使用时，凝聚至少1层则本技能骰子基础值+2，至少2层无视2级远程，至少3层令首骰驻留。首骰拼输仍可命中，跳过伤害部分。",
+             "description": "【使用时】凝聚至少1层则本技能骰子基础值+2，至少2层无视2级远程，至少3层令首骰驻留。首骰拼输仍可命中，跳过伤害部分。",
              "operation": {"op": "program", "code": [
                "$event.card", "使用时凝聚", "$self", "凝聚", "STATUS_COUNT", "SET_SKILL_STATE"
              ]}},
             {"trigger": "before_dice_use",
+             "description": "【用骰前】若【使用时】凝聚至少1层，本骰基础值+2。",
              "operation": {
                "op": "program",
                "code": ["$event.card.use_state","使用时凝聚",0,"LOOKUP",1,"GE",["$event.die",2,"DIE_BASE_ADD"],"WHEN"]
@@ -232,7 +233,7 @@
               "2物理",
               {
                 "trigger": "on_clash_lose",
-                "description": "驻留时拼输仍可命中，跳过伤害部分。",
+                "description": "【拼点失败】驻留时拼输仍可命中，跳过伤害部分。",
                 "operation": {
                   "op": "program",
                   "code": [
@@ -241,7 +242,7 @@
                   ]
                 }
               },
-              {"trigger": "on_dice_hit", "description": "施加2烧伤及使用时取得的额外烧伤，然后引燃。",
+              {"trigger": "on_dice_hit", "description": "【命中时】施加2烧伤及使用时取得的额外烧伤，然后引燃。",
                "operation": {
                  "op": "program",
                  "code": [
@@ -257,7 +258,7 @@
                   {"left":"$event.activation_kind","op":"eq","right":"ignite"},
                   {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
                 ],
-                "description": "本骰引燃每实际移除1烧伤，自身获得1能源。",
+                "description": "【状态变动后】本骰引燃每实际移除1烧伤，自身获得1能源。",
                 "operation": {
                   "op": "program",
                   "code": [
@@ -269,7 +270,7 @@
             ]},
             {"type": "blunt", "level": 4, "entries": [
               "1物理",
-              {"trigger": "on_dice_hit", "description": "触发引燃。", "operation": {"keyword":"ignite"}},
+              {"trigger": "on_dice_hit", "description": "【命中时】触发引燃。", "operation": {"keyword":"ignite"}},
               {
                 "trigger": "AFTER STATUS",
                 "subject": "source",
@@ -278,7 +279,7 @@
                   {"left":"$event.activation_kind","op":"eq","right":"ignite"},
                   {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
                 ],
-                "description": "本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
+                "description": "【状态变动后】本骰引燃每实际移除2烧伤，全体友方各获得1能源。",
                 "operation": {
                   "op": "program",
                   "code": [
@@ -299,7 +300,7 @@
               }
             ]},
             {"type": "blunt", "level": 1, "multiplier": 2, "entries": [
-              {"trigger": "on_dice_hit", "description": "触发引燃。", "operation": {"keyword":"ignite"}},
+              {"trigger": "on_dice_hit", "description": "【命中时】触发引燃。", "operation": {"keyword":"ignite"}},
               {
                 "trigger": "AFTER STATUS",
                 "subject": "source",
@@ -308,7 +309,7 @@
                   {"left":"$event.activation_kind","op":"eq","right":"ignite"},
                   {"left":"$event.issuer","op":"eq","right":"$event.activation_entry"}
                 ],
-                "description": "本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
+                "description": "【状态变动后】本骰引燃每实际移除3烧伤，下回合施加1虚弱和1束缚。",
                 "operation": {
                   "op": "program",
                   "code": [

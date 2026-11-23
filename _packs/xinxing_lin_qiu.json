@@ -10,6 +10,7 @@
       "global_entries": [
         {
           "trigger": "on_turn_closing",
+          "description": "【回合结束】累计溢出达到6点的存活角色触发星结锁定，结算后清零溢出并至多保留6层星结。",
           "turn_limit": {"key":"星结锁定名单","count":1},
           "operation": {
             "op": "program",
@@ -64,7 +65,7 @@
                   "FILTER", "SIZE", 7, "GE", [1,"ADD"], "WHEN", "STATUS"
                 ]
               },
-              "description": "回合开始时获得1隧道，自己的七张牌集满时本次获得量+1。"
+              "description": "【回合开始】获得1隧道，自己的七张牌集满时本次获得量+1。"
             }
           ]
         },
@@ -80,7 +81,7 @@
                   ["$self", "隧道开启", 1, "STATUS"], "WHEN"
                 ]
               },
-              "description": "回合开始时，隧道至少8层即开启，持续至隧道解除。"
+              "description": "【回合开始】隧道至少8层即开启，持续至隧道解除。"
             },
             {
               "trigger": "BEFORE STATUS",
@@ -94,7 +95,7 @@
                 "op": "program",
                 "code": [1, "SUB"]
               },
-              "description": "隧道开启期间，每次隧道获得量−1。"
+              "description": "【状态施加前】隧道开启期间，每次隧道获得量−1。"
             }
           ]
         },
@@ -108,7 +109,7 @@
                 "op": "program",
                 "code": [1, "ADD"]
               },
-              "description": "隧道开启期间，骰级+1，持续提供2强壮。"
+              "description": "【骰级判定时】隧道开启期间，骰级+1，持续提供2强壮。"
             },
             {
               "trigger": "before_dice_hit",
@@ -131,7 +132,7 @@
                   "WHEN"
                 ]
               },
-              "description": "开启时，命中有伤害部分的骰消耗1隧道，以使本次命中的伤害部分+1。"
+              "description": "【命中前】开启时，命中有伤害部分的骰消耗1隧道，以使本次命中的伤害部分+1。"
             }
           ]
         },
@@ -141,7 +142,7 @@
             {
               "trigger": "on_dice_clash",
               "operation": "STATUS 羽流·林秋 1 $self",
-              "description": "每实际参与一次拼点，获得1羽流·林秋（至多12）。"
+              "description": "【拼点时】每实际参与一次拼点，获得1羽流·林秋（至多12）。"
             },
             {
               "trigger": "before_dice_hit",
@@ -162,7 +163,7 @@
                   "WHEN"
                 ]
               },
-              "description": "拼赢且即将命中时，d12不高于羽流层数则额外命中一次，每次用骰限一次。"
+              "description": "【命中前】拼赢且即将命中时，d12不高于羽流层数则额外命中一次，每次用骰限一次。"
             },
             {
               "trigger": "before_turn_end",
@@ -171,7 +172,7 @@
                 "op": "program",
                 "code": ["$self","羽流·林秋","all",{"call":"SPEND_STATUS","result":"result","default":0},"POP"]
               },
-              "description": "本回合判定至少成功三次，回合结束时清空羽流。"
+              "description": "【回合结束】本回合判定至少成功三次，回合结束时清空羽流。"
             }
           ]
         },
@@ -182,7 +183,7 @@
               "trigger": "on_dice_clash",
               "when": [{"left":{"field":"$event.target.statuses","key":"星结","default":0},"op":"ge","right":8}],
               "operation": {"op":"program","code":["$event.die",1,"DIE_BASE_ADD"]},
-              "description": "与至少8星结的目标拼点时，基础值+1。"
+              "description": "【拼点时】与至少8星结的目标拼点时，基础值+1。"
             },
             {
               "trigger": "before_clash_result",
@@ -194,7 +195,7 @@
                   "AND", ["$event.card","resident_die","$event.die","SET_SKILL_STATE"], "WHEN"
                 ]
               },
-              "description": "目标至少8星结，且进攻骰本次变动点数超过当次上限的一半，成为驻留骰。"
+              "description": "【拼点结算前】目标至少8星结，且进攻骰本次变动点数超过当次上限的一半，成为驻留骰。"
             },
             {
               "trigger": "on_clash_lose",
@@ -205,7 +206,7 @@
                   ["$event.die","damage_only","星结标定剑柄","QUEUE_HIT"], "WHEN"
                 ]
               },
-              "description": "驻留骰拼输仍命中，只结算伤害部分，伤害−1。"
+              "description": "【拼点失败】驻留骰拼输仍命中，只结算伤害部分，伤害−1。"
             },
             {
               "trigger": "before_dice_hit",
@@ -214,7 +215,7 @@
                 "op": "program",
                 "code": ["$event.target","$event.hit_modifiers","damage_add",-1,"concept","ADD_DAMAGE_MODIFIER"]
               },
-              "description": "驻留败方的伤害部分−1。"
+              "description": "【命中前】驻留败方的伤害部分−1。"
             }
           ]
         },
@@ -231,7 +232,7 @@
                   "FOR_EACH_TARGET", "$self", "隧道", 3, "STATUS"
                 ]
               },
-              "description": "星结锁定时，对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。",
+              "description": "【星结锁定】对名单中各目标施加2星结，全体存活友方各回复1，自身获得3隧道。",
               "trigger_type": "event",
               "subject": "any"
             }
@@ -256,7 +257,7 @@
                   ]
                 }
               ],
-              "description": "获得1隧道，抽1卡，施加1星结。"
+              "description": "【使用时】获得1隧道，抽1卡，施加1星结。"
             }
           ],
           "dice": [
@@ -268,7 +269,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": ["STATUS 隧道 1 $self","STATUS 星结 1 $event.target"],
-                  "description": "获得1隧道，施加1星结。"
+                  "description": "【命中时】获得1隧道，施加1星结。"
                 }
               ]
             },
@@ -279,7 +280,7 @@
                 {
                   "trigger": "on_clash_win",
                   "operation": ["DRAW 1","STATUS 隧道 1 $self","REPEAT_DIE $event.die"],
-                  "description": "抽1卡，获得1隧道，重复使用本骰。"
+                  "description": "【拼点胜利】抽1卡，获得1隧道，重复使用本骰。"
                 }
               ]
             }
@@ -293,7 +294,7 @@
             {
               "trigger": "on_skill_use",
               "operation": "STATUS 隧道 2 $self",
-              "description": "获得2隧道。"
+              "description": "【使用时】获得2隧道。"
             }
           ],
           "dice": [
@@ -305,7 +306,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 隧道 2 $self",
-                  "description": "获得2隧道。"
+                  "description": "【命中时】获得2隧道。"
                 }
               ]
             },
@@ -316,7 +317,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": ["HEAL 1","STATUS 星结 1 $event.target"],
-                  "description": "回复1生命，施加1星结。"
+                  "description": "【命中时】回复1生命，施加1星结。"
                 }
               ]
             }
@@ -341,7 +342,7 @@
                   "WHEN"
                 ]
               },
-              "description": "目标每有6星结，本技能骰级+1，至多+2。"
+              "description": "【使用时】目标每有6星结，本技能骰级+1，至多+2。"
             },
             {
               "trigger": "on_skill_use",
@@ -359,7 +360,7 @@
                   ["$event.card","ranged_repeat",1,"SET_SKILL_STATE"], "WHEN"
                 ]
               },
-              "description": "开启时消耗2隧道，以使末骰成为普通远程骰并额外使用一次。"
+              "description": "【使用时】开启时消耗2隧道，以使末骰成为普通远程骰并额外使用一次。"
             }
           ],
           "dice": [
@@ -382,7 +383,7 @@
                         "then": ["$event.die", -4, "DIE_FINAL_ADD"]
                       }}]
                   },
-                  "description": "施加2星结，使目标下一实际用骰最终点数−4。"
+                  "description": "【命中时】施加2星结，使目标下一实际用骰最终点数−4。"
                 }
               ]
             },
@@ -412,7 +413,7 @@
                       "IF_ELSE"
                     ]
                   },
-                  "description": "已激活的末骰额外使用一次；重复使用时最终点数+4。"
+                  "description": "【用骰时】已激活的末骰额外使用一次；重复使用时最终点数+4。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -429,7 +430,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "令目标弃1卡，施加1星结；重复骰命中时，每4星结追加1超穿甲，至多3。"
+                  "description": "【命中时】令目标弃1卡，施加1星结；重复骰命中时，每4星结追加1超穿甲，至多3。"
                 }
               ]
             }
@@ -454,7 +455,7 @@
                   "WHEN"
                 ]
               },
-              "description": "目标每有6星结，本技能骰级+1，至多+2。"
+              "description": "【使用时】目标每有6星结，本技能骰级+1，至多+2。"
             },
             {
               "trigger": "on_skill_use",
@@ -472,7 +473,7 @@
                   ["$event.card","first_hit_bonus",1,"SET_SKILL_STATE"], "WHEN"
                 ]
               },
-              "description": "开启时消耗3隧道，以使各骰首次命中时伤害+1。"
+              "description": "【使用时】开启时消耗3隧道，以使各骰首次命中时伤害+1。"
             },
             {
               "trigger": "BEFORE DAMAGE",
@@ -485,7 +486,7 @@
                   "WHEN"
                 ]
               },
-              "description": "各骰第一次命中造成的伤害+1。",
+              "description": "【伤害结算前】各骰第一次命中造成的伤害+1。",
               "when": [
                 {"left":"$event.hit_index","op":"eq","right":1},
                 {"left":"$event.damage_die","op":"eq","right":"$event.die"},
@@ -502,7 +503,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": ["STATUS 星结 2 $event.target","STATUS 隧道 1 $self"],
-                  "description": "施加2星结，获得1隧道。"
+                  "description": "【命中时】施加2星结，获得1隧道。"
                 }
               ]
             },
@@ -519,7 +520,7 @@
                     "require_source_alive": false, "require_target_alive": true,
                     "then": ["$event.scheduled.target","虚弱",1,"STATUS"]
                   }},
-                  "description": "下回合施加1虚弱。"
+                  "description": "【命中时】下回合施加1虚弱。"
                 }
               ]
             },
@@ -537,7 +538,7 @@
                       "GT", ["$event.target",{"local":"extra"},"concept","slash","DAMAGE"], "WHEN"
                     ]
                   },
-                  "description": "目标阵营下回合回补费用−1；每6星结追加1超穿甲，至多2。"
+                  "description": "【命中时】目标阵营下回合回补费用−1；每6星结追加1超穿甲，至多2。"
                 }
               ]
             }
@@ -562,7 +563,7 @@
                   "WHEN"
                 ]
               },
-              "description": "目标至少6星结时，技能骰级+1。"
+              "description": "【使用时】目标至少6星结时，技能骰级+1。"
             },
             {
               "trigger": "before_clash_result",
@@ -581,7 +582,7 @@
                   "WHEN"
                 ]
               },
-              "description": "开启时即将拼输，跳过整轮并减少3隧道，本技能至多一次。"
+              "description": "【拼点结算前】开启时即将拼输，跳过整轮并减少3隧道，本技能至多一次。"
             }
           ],
           "dice": [
@@ -604,7 +605,7 @@
                         "then": ["$event.die", 2, "DIE_FINAL_ADD"]
                       }}]
                   },
-                  "description": "下骰最终点数+2。"
+                  "description": "【命中时】下骰最终点数+2。"
                 }
               ]
             },
@@ -626,7 +627,7 @@
                         "then": ["$event.die", 4, "DIE_FINAL_ADD"]
                       }}]
                   },
-                  "description": "回复2生命，抽1卡，下骰最终点数+4。"
+                  "description": "【拼点胜利】回复2生命，抽1卡，下骰最终点数+4。"
                 }
               ]
             },
@@ -638,7 +639,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": {"op":"program","code":["$event.target","NEXT_PLANNED_DIE","DESTROY"]},
-                  "description": "立即摧毁目标下一颗待用骰，然后按剩余骰序配对。"
+                  "description": "【命中时】立即摧毁目标下一颗待用骰，然后按剩余骰序配对。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -673,13 +674,13 @@
                       "WHEN"
                     ]
                   },
-                  "description": "首次命中可立即选一张自身手牌，以通常费用减2插入本骰之后。"
+                  "description": "【命中时】首次命中可立即选一张自身手牌，以通常费用减2插入本骰之后。"
                 },
                 {
                   "trigger": "on_dice_hit",
                   "when": [{"left":{"field":"$event.target.statuses","key":"星结","default":0},"op":"ge","right":10}],
                   "operation": {"op":"program","code":["$event.target",1,"concept","pierce","DAMAGE"]},
-                  "description": "目标至少10星结，追加1超穿甲伤害。"
+                  "description": "【命中时】目标至少10星结，追加1超穿甲伤害。"
                 }
               ]
             }
@@ -714,7 +715,7 @@
                     "require_source_alive": false, "require_target_alive": true,
                     "then": ["$event.scheduled.target","限制",2,"STATUS"]
                   }},
-                  "description": "隧道开启时，下回合施加2限制。"
+                  "description": "【命中时】隧道开启时，下回合施加2限制。"
                 }
               ]
             },
@@ -734,7 +735,7 @@
                       "$event.card", "sever_die", "$event.die", "SET_SKILL_STATE"
                     ]
                   },
-                  "description": "隧道开启时，用骰时消耗至多2隧道，并激活本骰拼点、命中效果。"
+                  "description": "【用骰时】隧道开启时，用骰时消耗至多2隧道，并激活本骰拼点、命中效果。"
                 },
                 {
                   "trigger": "on_dice_clash",
@@ -746,7 +747,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "激活时，拼点中目标每1星结使其最终点数−1。"
+                  "description": "【拼点时】激活时，拼点中目标每1星结使其最终点数−1。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -764,7 +765,7 @@
                       "WHEN", "$event.target", "星结", -2, "STATUS"
                     ]
                   },
-                  "description": "激活时，目标每5星结，下回合减少1交锋，本技能至多触发两次。本骰每次命中都使目标减少2星结。"
+                  "description": "【命中时】激活时，目标每5星结，下回合减少1交锋，本技能至多触发两次。本骰每次命中都使目标减少2星结。"
                 }
               ]
             }
@@ -790,7 +791,7 @@
               "when": [{"left":{"field":"$self.statuses","key":"隧道开启","default":0},"op":"ge","right":1}],
               "subject": "target",
               "operation": {"op":"program","code":["$event.target","$owner","EQ",[{"op":"cancel"}],"WHEN"]},
-              "description": "开启期间本技能具有常规话语权的防摧毁。"
+              "description": "【防摧毁】开启期间本技能具有常规话语权的防摧毁。"
             }
           ],
           "dice": [
@@ -803,7 +804,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": {"op":"program","code":["$event.target","星结",-3,"STATUS"]},
-                  "description": "使目标减少3星结。"
+                  "description": "【命中时】使目标减少3星结。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -829,7 +830,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "本次技能至多一次，以较高话语权指定并摧毁目标本回合仍在场的一张技能。"
+                  "description": "【命中时】本次技能至多一次，以较高话语权指定并摧毁目标本回合仍在场的一张技能。"
                 }
               ]
             }

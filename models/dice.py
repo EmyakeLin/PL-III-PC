@@ -291,8 +291,6 @@ class Dice:
 
 
 def describe_die(data):
-    if "printed_line" in data:
-        return data["printed_line"]
     die = Dice(data)
     name = TYPE_NAMES[die.type]
     if die.type == "skip":

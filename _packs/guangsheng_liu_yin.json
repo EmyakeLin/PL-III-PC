@@ -6,7 +6,7 @@
       "entries": [
         {
           "trigger": "on_turn_start",
-          "description": "回合开始时，己方手牌不少于5张获得1领域洞悉，不少于9张再获得1层。",
+          "description": "【回合开始】己方手牌不少于5张获得1领域洞悉，不少于9张再获得1层。",
           "operation": {
             "op": "program",
             "code": [
@@ -31,14 +31,14 @@
     "领域洞悉": [
       {
         "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-        "description": "每15层使骰级提升1，最多2级。",
+        "description": "【骰级判定时】每15层使骰级提升1，最多2级。",
         "operation": {"op":"program","code":["$self","领域洞悉","STATUS_COUNT",15,"FLOOR_DIV",2,"MIN","ADD"]}
       }
     ],
     "环境同调": [
       {
         "trigger": "BEFORE RESET_COST",
-        "description": "双方回合回补费用时，每层同调增加1通用费上限，3层时另加1。",
+        "description": "【费用回补时】双方回合回补费用时，每层同调增加1通用费上限，3层时另加1。",
         "when": [
           {"left":"$event.player","op":"eq","right":"$self.player"},
           {"left":"$event.refill","op":"eq","right":true}
@@ -56,7 +56,7 @@
     "环境压制": [
       {
         "trigger": "BEFORE DAMAGE",
-        "description": "生命不高于环境压制层数时，受到的普通和穿甲伤害减半。",
+        "description": "【伤害结算前】生命不高于环境压制层数时，受到的普通和穿甲伤害减半。",
         "when": [{"left":"$self.hp","op":"le","right":{"field":"$self.statuses","key":"环境压制","default":0}}],
         "operation": {"op":"program","code":["$self","$event.modifiers","damage_multiply",0.5,"pierce","ADD_DAMAGE_MODIFIER"]},
         "subject": "target"
@@ -66,7 +66,6 @@
   "characters": [
     {
       "id": "liu_yin",
-      "printed_sheet": "流阴.txt",
       "name": "流阴",
       "title": "执政",
       "rank": "EMPOWERED_BOSS",
@@ -77,24 +76,24 @@
           "entries": [
             {
               "trigger": "on_battle_start",
-              "description": "战斗开始时获得18环境压制。",
+              "description": "【战斗开始】获得18环境压制。",
               "operation": {"op":"program","code":["$self","环境压制",18,"STATUS"]}
             },
             {
               "trigger": "on_turn_limits_reset",
-              "description": "新回合刷新首张技能标记。",
+              "description": "【回合开始】刷新首张技能标记。",
               "operation": {"op":"program","code":["$self","已用首张",false,"SET_CHARACTER_STATE"]}
             },
             {
               "trigger": "BEFORE PAY_COST",
-              "description": "每回合使用的第一张技能费用−1。",
+              "description": "【费用结算时】每回合使用的第一张技能费用−1。",
               "when": [{"left":{"field":"$self.rule_state","key":"已用首张","default":false},"op":"eq","right":false}],
               "operation": {"op":"program","code":[1,"SUB",0,"MAX"]},
               "subject": "source"
             },
             {
               "trigger": "AFTER PAY_COST",
-              "description": "成功付款时登记本回合首张技能。",
+              "description": "【费用结算后】成功付款时登记本回合首张技能。",
               "when": [
                 {"left":"$event.result","op":"eq","right":true},
                 {"left":{"field":"$self.rule_state","key":"已用首张","default":false},"op":"eq","right":false}
@@ -107,7 +106,7 @@
             },
             {
               "trigger": "after_skill_use",
-              "description": "首张技能使用后减少1环境压制。",
+              "description": "【使用后】首张技能使用后减少1环境压制。",
               "operation": {
                 "op": "program",
                 "code": ["$event.card.use_state","回合首张",false,"LOOKUP",["$self","环境压制",-1,"STATUS"],"WHEN"]
@@ -115,7 +114,7 @@
             },
             {
               "trigger": "on_status_changed",
-              "description": "环境压制首次减少至0时，获得12领域洞悉。",
+              "description": "【状态变动时】环境压制首次减少至0时，获得12领域洞悉。",
               "when": [
                 {"left":"$event.status","op":"eq","right":"环境压制"},
                 {"left":"$event.previous_stacks","op":"gt","right":0},
@@ -131,7 +130,7 @@
           "entries": [
             {
               "trigger": "on_status_changed",
-              "description": "在战甲状态获得领域洞悉时，按实得数量获得能源。",
+              "description": "【状态变动时】在战甲状态获得领域洞悉时，按实得数量获得能源。",
               "when": [
                 {"left":"$event.status","op":"eq","right":"领域洞悉"},
                 {"left":"$event.actual_delta","op":"gt","right":0},
@@ -141,7 +140,7 @@
             },
             {
               "trigger": "on_status_changed",
-              "description": "领域洞悉每首次达到10的倍数，下回合开牌前免费使用一次领域覆写，任选一名存活敌方。",
+              "description": "【状态变动时】领域洞悉每首次达到10的倍数，下回合开牌前免费使用一次领域覆写，任选一名存活敌方。",
               "when": [
                 {"left":"$event.status","op":"eq","right":"领域洞悉"},
                 {"left":"$event.actual_delta","op":"gt","right":0}
@@ -238,7 +237,7 @@
             },
             {
               "trigger": "BEFORE DAMAGE",
-              "description": "近战斩击的非百分比物理伤害转为三倍加一光点。",
+              "description": "【伤害结算前】近战斩击的非百分比物理伤害转为三倍加一光点。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":1},
                 {"left":"$event.penetration","op":"eq","right":"normal"},
@@ -258,7 +257,7 @@
             },
             {
               "trigger": "BEFORE DAMAGE",
-              "description": "远程突刺的非百分比物理伤害转为三倍加一光点。",
+              "description": "【伤害结算前】远程突刺的非百分比物理伤害转为三倍加一光点。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":2},
                 {"left":"$event.penetration","op":"eq","right":"normal"},
@@ -278,7 +277,7 @@
             },
             {
               "trigger": "AFTER DAMAGE",
-              "description": "三层同调时，每次实际造成物理伤害后追加等量光点。",
+              "description": "【造成伤害后】三层同调时，每次实际造成物理伤害后追加等量光点。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
                 {"left":"$event.penetration","op":"eq","right":"normal"},
@@ -289,7 +288,7 @@
             },
             {
               "trigger": "AFTER LIGHTCORE_DAMAGE",
-              "description": "三层同调时，自身造成崩塌即回复3生命。",
+              "description": "【光点伤害后】三层同调时，自身造成崩塌即回复3生命。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
                 {"left":"$event.lightcore_collapsed","op":"eq","right":true}
@@ -305,14 +304,14 @@
           "entries": [
             {
               "trigger": "on_skill_disabled",
-              "description": "自身技能被摧毁或无效化时，立即摧毁对阵技能（最高话语权）。",
+              "description": "【技能失效时】自身技能被摧毁或无效化时，立即摧毁对阵技能（最高话语权）。",
               "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]},
               "authority": "最高话语权",
               "subject": "source"
             },
             {
               "trigger": "on_skill_disabled",
-              "description": "自身技能被摧毁或无效化时，减少4环境压制，并使对方获得1劣势次数。",
+              "description": "【技能失效时】自身技能被摧毁或无效化时，减少4环境压制，并使对方获得1劣势次数。",
               "subject": "source",
               "operation": {
                 "op": "program",
@@ -325,7 +324,7 @@
             },
             {
               "trigger": "AFTER HEAL",
-              "description": "自身实际回复生命后，按实回量对全场所有存活角色各造成光点伤害。",
+              "description": "【回复生命后】自身实际回复生命后，按实回量对全场所有存活角色各造成光点伤害。",
               "when": [{"left":"$event.result","op":"gt","right":0}],
               "operation": {
                 "op": "program",
@@ -344,7 +343,7 @@
             },
             {
               "trigger": "AFTER DAMAGE",
-              "description": "自身造成百分比伤害后，对目标追加等量光点伤害。",
+              "description": "【造成伤害后】自身造成百分比伤害后，对目标追加等量光点伤害。",
               "when": [
                 {"left":"$event.percentage_damage","op":"eq","right":true},
                 {"left":"$event.damage_dealt","op":"eq","right":true}
@@ -359,7 +358,7 @@
           "entries": [
             {
               "trigger": "BEFORE STATUS",
-              "description": "解放后，减少环境压制改为获得相应数量的能源。",
+              "description": "【状态施加前】解放后，减少环境压制改为获得相应数量的能源。",
               "when": [
                 {"left":"$event.status","op":"eq","right":"环境压制"},
                 {"left":"$pending.amount","op":"lt","right":0},
@@ -373,13 +372,13 @@
             },
             {
               "trigger": "before_dice_clash",
-              "description": "解放后，拼点开始时对对方造成1光点伤害。",
+              "description": "【拼点前】解放后，拼点开始时对对方造成1光点伤害。",
               "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
               "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
             },
             {
               "trigger": "on_clash_lose",
-              "description": "解放后，拼点失败时追加1光点伤害。",
+              "description": "【拼点失败】解放后，拼点失败时追加1光点伤害。",
               "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
               "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
             }
@@ -391,7 +390,7 @@
           "entries": [
             {
               "trigger": "on_skill_disabled",
-              "description": "形态灭杀在3同调时被摧毁或无效化，收回手牌并立即结束本场交锋。",
+              "description": "【技能失效时】形态灭杀在3同调时被摧毁或无效化，收回手牌并立即结束本场交锋。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
                 {"left":"$event.card.id","op":"eq","right":"liu_annihilate"}
@@ -417,7 +416,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "减少1环境压制，获得1领域洞悉。",
+              "description": "【使用时】减少1环境压制，获得1领域洞悉。",
               "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS","$self","领域洞悉",1,"STATUS"]}
             }
           ],
@@ -429,7 +428,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "减少1环境压制。",
+                  "description": "【命中时】减少1环境压制。",
                   "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
                 }
               ]
@@ -442,7 +441,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "description": "抽1卡；环境同调至少2层时摧毁对方技能。",
+                  "description": "【命中时】抽1卡；环境同调至少2层时摧毁对方技能。",
                   "operation": {
                     "op": "program",
                     "code": ["DRAW 1","$self","环境同调","STATUS_COUNT",2,"GE",["$event.opponent_card","DESTROY"],"WHEN"]
@@ -460,7 +459,7 @@
           "entries": [
             {
               "trigger": "AFTER LIGHTCORE_DAMAGE",
-              "description": "本技能的骰子造成光点伤害时，若未与远程技能交锋，提升后续骰子1级。",
+              "description": "【光点伤害后】本技能的骰子造成光点伤害时，若未与远程技能交锋，提升后续骰子1级。",
               "when": [
                 {"left":{"field":"$event.opponent_card.effective_range","default":0},"op":"eq","right":0},
                 {"left":"$event.amount","op":"gt","right":0}
@@ -477,12 +476,12 @@
             },
             {
               "trigger": "on_dice_use",
-              "description": "按本技能先前造成光点伤害的段数提升本骰等级。",
+              "description": "【用骰时】按本技能先前造成光点伤害的段数提升本骰等级。",
               "operation": {"op":"program","code":["$event.die","$event.card.use_state","余骰升级",0,"LOOKUP","DIE_LEVEL_ADD"]}
             },
             {
               "trigger": "on_dice_hit",
-              "description": "记录本次技能各骰位的命中。",
+              "description": "【命中时】记录本次技能各骰位的命中。",
               "operation": {"op":"program","code":["$event.card","$event.die.position",true,"SET_SKILL_STATE"]}
             }
           ],
@@ -495,7 +494,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "减少1环境压制。",
+                  "description": "【命中时】减少1环境压制。",
                   "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
                 }
               ]
@@ -508,7 +507,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "抽1卡，同调至少3时追加1光点。",
+                  "description": "【命中时】抽1卡，同调至少3时追加1光点。",
                   "operation": {
                     "op": "program",
                     "code": ["DRAW 1","$self","环境同调","STATUS_COUNT",3,"GE",["$event.target",1,"LIGHTCORE_DAMAGE"],"WHEN"]
@@ -524,7 +523,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "减少1环境压制；前三骰全部命中则解锁第四骰。",
+                  "description": "【命中时】减少1环境压制；前三骰全部命中则解锁第四骰。",
                   "operation": {
                     "op": "program",
                     "code": [
@@ -545,7 +544,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "摧毁目标下一张即将使用的技能。",
+                  "description": "【命中时】摧毁目标下一张即将使用的技能。",
                   "operation": {
                     "op": "program",
                     "code": [
@@ -581,7 +580,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "使用时能源至少12，本技能的骰子每次命中可支付6能源以重复使用。",
+              "description": "【使用时】能源至少12，本技能的骰子每次命中可支付6能源以重复使用。",
               "operation": {
                 "op": "program",
                 "code": ["$self","能源","STATUS_COUNT",12,"GE",["$event.card","可重复",true,"SET_SKILL_STATE"],"WHEN"]
@@ -596,7 +595,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_use",
-                  "description": "每层同调降低本骰1级，最多降低2级。",
+                  "description": "【用骰时】每层同调降低本骰1级，最多降低2级。",
                   "operation": {
                     "op": "program",
                     "code": ["$event.die","$self","环境同调","STATUS_COUNT",2,"MIN",-1,"MUL","DIE_LEVEL_ADD"]
@@ -604,7 +603,7 @@
                 },
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "2光点，环境同调达到3时增加1。",
+                  "description": "【命中时】2光点，环境同调达到3时增加1。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -614,7 +613,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "description": "支付6能源以重复使用本骰。",
+                  "description": "【命中时】支付6能源以重复使用本骰。",
                   "operation": {
                     "op": "program",
                     "code": [
@@ -643,12 +642,12 @@
           "name": "洞穿希望",
           "cost": 2,
           "anytime_replace": true,
-          "range_level_amount": {"value":{"field":"$self.statuses","key":"环境同调","default":0}},
+          "range_level_amount": {"value":{"field":"$self.statuses","key":"环境同调","default":0},"description":"获得等同于环境同调层数的远程等级"},
           "opponent_range_reduction": 1,
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "若能源至少3，本技能最终点数+12。",
+              "description": "【使用时】若能源至少3，本技能最终点数+12。",
               "operation": {
                 "op": "program",
                 "code": ["$self","能源","STATUS_COUNT",3,"GE",["$event.card",12,"SKILL_FINAL_ADD"],"WHEN"]
@@ -663,7 +662,7 @@
               "entries": [
                 {
                   "trigger": "on_dice_hit",
-                  "description": "回复1生命，然后摧毁本技能。",
+                  "description": "【命中时】回复1生命，然后摧毁本技能。",
                   "operation": {"op":"program","code":["$self",1,"HEAL","$event.card","DESTROY"]}
                 }
               ]
@@ -678,7 +677,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "消耗6能源以使技能最终点数+2，所有骰子无视3级远程。",
+              "description": "【使用时】消耗6能源以使技能最终点数+2，所有骰子无视3级远程。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -698,7 +697,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "获得1领域洞悉。",
+                  "description": "【命中时】获得1领域洞悉。",
                   "operation": {"op":"program","code":["$self","领域洞悉",1,"STATUS"]}
                 }
               ],
@@ -711,7 +710,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "获得1领域洞悉。",
+                  "description": "【命中时】获得1领域洞悉。",
                   "operation": {"op":"program","code":["$self","领域洞悉",1,"STATUS"]}
                 }
               ],
@@ -725,7 +724,7 @@
                 "2物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "减少1环境压制。",
+                  "description": "【命中时】减少1环境压制。",
                   "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
                 }
               ],
@@ -740,7 +739,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "记录当前生命、个人状态和环境压制，再增加6环境压制。压制再次降到记录值时直接回退，保留较高生命和正面层数、较低负面层数。",
+              "description": "【使用时】记录当前生命、个人状态和环境压制，再增加6环境压制。压制再次降到记录值时直接回退，保留较高生命和正面层数、较低负面层数。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -835,7 +834,7 @@
             },
             {
               "trigger": "after_skill_use",
-              "description": "减少2环境压制；持有能源时额外减少1。",
+              "description": "【使用后】减少2环境压制；持有能源时额外减少1。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -854,12 +853,12 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "减少1环境压制。",
+                  "description": "【命中时】减少1环境压制。",
                   "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
                 },
                 {
                   "trigger": "on_clash_lose",
-                  "description": "增加3环境压制。",
+                  "description": "【拼点失败】增加3环境压制。",
                   "operation": {"op":"program","code":["$self","环境压制",3,"STATUS"]}
                 }
               ]
@@ -886,12 +885,12 @@
                   "entries": [
                     {
                       "trigger": "BEFORE RESOLVE_FINAL_SCORE",
-                      "description": "本骰最终点数加上当前领域洞悉。",
+                      "description": "【点数结算时】本骰最终点数加上当前领域洞悉。",
                       "operation": {"op":"program","code":["$self","领域洞悉","STATUS_COUNT","ADD"]}
                     },
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "造成目标当前生命上限三分之一（向上取整）的超穿甲伤害。",
+                      "description": "【命中时】造成目标当前生命上限三分之一（向上取整）的超穿甲伤害。",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -911,7 +910,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "同调3层时进入战甲，其余情况减少3环境压制并获得3领域洞悉。",
+              "description": "【使用时】同调3层时进入战甲，其余情况减少3环境压制并获得3领域洞悉。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -932,7 +931,7 @@
                 "3物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "施加等同于环境同调−1的环境压制。",
+                  "description": "【命中时】施加等同于环境同调−1的环境压制。",
                   "operation": {
                     "op": "program",
                     "code": ["$event.target","环境压制","$self","环境同调","STATUS_COUNT",1,"SUB",0,"MAX","STATUS"]
@@ -949,7 +948,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "重复使用一次。",
+                  "description": "【命中时】重复使用一次。",
                   "when": [{"left":"$event.is_repeat","op":"eq","right":false}],
                   "operation": {"op":"program","code":["$event.die","REPEAT_DIE"]}
                 }
@@ -962,7 +961,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "获得2领域洞悉。",
+                  "description": "【命中时】获得2领域洞悉。",
                   "operation": {"op":"program","code":["$self","领域洞悉",2,"STATUS"]}
                 }
               ]
@@ -976,7 +975,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "洞悉不高于15时，以等量生命补足至15，保留至少1生命；高于15时失去2生命并增加2洞悉。",
+              "description": "【使用时】洞悉不高于15时，以等量生命补足至15，保留至少1生命；高于15时失去2生命并增加2洞悉。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -994,7 +993,7 @@
             },
             {
               "trigger": "after_skill_use",
-              "description": "回复1生命。",
+              "description": "【使用后】回复1生命。",
               "operation": {"op":"program","code":["$self",1,"HEAL"]}
             }
           ],
@@ -1005,7 +1004,7 @@
               "entries": [
                 {
                   "trigger": "on_clash_win",
-                  "description": "回复1生命并减少1环境压制。",
+                  "description": "【拼点胜利】回复1生命并减少1环境压制。",
                   "operation": {"op":"program","code":["$self",1,"HEAL","$self","环境压制",-1,"STATUS"]}
                 }
               ]
@@ -1016,7 +1015,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "3光点群伤。若生命高于6则失去3生命，减少6环境压制，本次群伤增加6。",
+                  "description": "【命中时】3光点群伤。若生命高于6则失去3生命，减少6环境压制，本次群伤增加6。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1042,11 +1041,11 @@
           "id": "liu_prison",
           "name": "画地为牢",
           "cost": 2,
-          "ignore_range_amount": {"value":{"field":"$self.statuses","key":"环境同调","default":0}},
+          "ignore_range_amount": {"value":{"field":"$self.statuses","key":"环境同调","default":0},"description":"无视等同于环境同调层数的远程等级"},
           "entries": [
             {
               "trigger": "after_skill_use",
-              "description": "下回合实际开始的第一场交锋中，若目标骰的变动点数不高于8，该骰变为空白骰。",
+              "description": "【使用后】下回合实际开始的第一场交锋中，若目标骰的变动点数不高于8，该骰变为空白骰。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -1100,7 +1099,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "摧毁对方技能。",
+                  "description": "【命中时】摧毁对方技能。",
                   "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]}
                 }
               ]
@@ -1114,7 +1113,7 @@
           "entries": [
             {
               "trigger": "on_skill_use",
-              "description": "目标完整度不高于当前上限一半时，获得1骰子等级提升。",
+              "description": "【使用时】目标完整度不高于当前上限一半时，获得1骰子等级提升。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -1140,7 +1139,7 @@
               "entries": [
                 {
                   "trigger": "on_clash_win",
-                  "description": "回复1生命。",
+                  "description": "【拼点胜利】回复1生命。",
                   "operation": {"op":"program","code":["$self",1,"HEAL"]}
                 }
               ]
@@ -1153,7 +1152,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "获得1领域洞悉。",
+                  "description": "【命中时】获得1领域洞悉。",
                   "operation": {"op":"program","code":["$self","领域洞悉",1,"STATUS"]}
                 }
               ]
@@ -1165,6 +1164,7 @@
           "name": "形态灭杀",
           "cost": 3,
           "ignore_range_amount": {
+            "description": "环境同调达到3层时无视3级远程",
             "value": {
               "if": {"op":"ge","left":{"field":"$self.statuses","key":"环境同调","default":0},"right":3},
               "then": 3,
@@ -1174,7 +1174,7 @@
           "entries": [
             {
               "trigger": "after_skill_use",
-              "description": "消耗6能源。",
+              "description": "【使用后】消耗6能源。",
               "operation": {"op":"program","code":["$self","能源",6,"SPEND_STATUS"]}
             }
           ],
@@ -1186,7 +1186,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "造成能源值−1的光点伤害。本段引发崩塌时完整度上限额外−4；此时生命不高于一半（向上取整），追加3次即死伤害。",
+                  "description": "【命中时】造成能源值−1的光点伤害。本段引发崩塌时完整度上限额外−4；此时生命不高于一半（向上取整），追加3次即死伤害。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1206,7 +1206,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "description": "成功命中时消耗全部能源。",
+                  "description": "【命中时】消耗全部能源。",
                   "operation": {"op":"program","code":["$self","能源","all","SPEND_STATUS"]}
                 }
               ],
@@ -1222,7 +1222,7 @@
           "entries": [
             {
               "trigger": "BEFORE DESTROY",
-              "description": "本技能不会被摧毁（最高话语权）。",
+              "description": "【防摧毁】本技能不会被摧毁（最高话语权）。",
               "when": [],
               "operation": {"op":"program","code":["$event.target","$owner","IS",[{"op":"cancel"}],"WHEN"]},
               "authority": "最高话语权",
@@ -1230,7 +1230,7 @@
             },
             {
               "trigger": "BEFORE NEGATE_SKILL",
-              "description": "本技能不会被无效化（最高话语权）。",
+              "description": "【防无效化】本技能不会被无效化（最高话语权）。",
               "when": [],
               "operation": {"op":"program","code":["$event.target","$owner","IS",[{"op":"cancel"}],"WHEN"]},
               "authority": "最高话语权",
@@ -1238,7 +1238,7 @@
             },
             {
               "trigger": "BEFORE RESOLVE_RANGE_DEFICIT",
-              "description": "本技能不会被远程无效化（最高话语权）。",
+              "description": "【防远程压制】本技能不会被远程无效化（最高话语权）。",
               "when": [],
               "operation": {"op":"program","code":["$event.card","$owner","IS",["$event.value_ref",2,"VALUE_CEILING"],"WHEN"]},
               "authority": "最高话语权",
@@ -1246,7 +1246,7 @@
             },
             {
               "trigger": "after_skill_use",
-              "description": "环境同调低于3时，获得1同调并减少2领域洞悉和2环境压制。",
+              "description": "【使用后】环境同调低于3时，获得1同调并减少2领域洞悉和2环境压制。",
               "operation": {
                 "op": "program",
                 "code": [
@@ -1264,7 +1264,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "群1光点。",
+                  "description": "【命中时】群1光点。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1281,7 +1281,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "description": "自身回复1生命。",
+                  "description": "【命中时】自身回复1生命。",
                   "operation": {"op":"program","code":["$self",1,"HEAL"]}
                 }
               ]

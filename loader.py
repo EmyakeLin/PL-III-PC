@@ -1,5 +1,4 @@
 import json
-import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -82,44 +81,9 @@ def _validate_action(action):
     compile_when(action.get("when", []), None, None)
 
 
-def _load_printed_sheet(path, pack, char):
-    filename = char["printed_sheet"]
-    if not isinstance(filename, str) or Path(filename).name != filename or not filename.endswith(".txt"):
-        raise ValueError("printed_sheet 须指向 printed 目录中的文本文件")
-    source = (path.parent / "printed" / filename).read_text(encoding="utf-8-sig").rstrip("\n")
-    headings = list(re.finditer(r"^(?:-(.+)-(?:[^\S\n]+\d+费)?|状态：|技能组)$", source, re.MULTILINE))
-    if not headings:
-        raise ValueError(f"{filename} 缺少卡面章节")
-    parts = {}
-    for i, heading in enumerate(headings):
-        end = headings[i + 1].start() if i + 1 < len(headings) else len(source)
-        parts[heading.group(1) or heading.group()] = source[heading.start():end].rstrip("\n")
-    char["printed_text"] = source
-    char["printed_profile"] = source[:headings[0].start()].rstrip("\n")
-    for passive in [*pack.get("faction_passives", ()), *char.get("passive_skills", ())]:
-        if not passive.get("hidden"):
-            title, _, passive["description"] = parts[passive["name"]].partition("\n")
-            passive["printed_heading"] = title
-    for line in parts["状态："].splitlines()[1:]:
-        name = line.partition("X：")[0]
-        pack["status_rules"][name]["printed_text"] = line
-    for skill in char["skills"]:
-        forms = [skill, *skill.get("forms", {}).values()]
-        text = parts["/".join(form["name"] for form in forms)]
-        skill["printed_text"] = text
-        dice = [die for form in forms for die in form["dice"]]
-        lines = (line for line in text.splitlines() if line == "SKIP" or re.match(r"^\S+\s+\d+～", line))
-        for die, line in zip(dice, lines, strict=True):
-            die["printed_line"] = line
-        skill["printed_rules"] = text.partition("\n")[2].partition(dice[0]["printed_line"])[0].rstrip("\n")
-
-
 def _read_pack(path, definitions):
     try:
         pack = json.loads(path.read_text(encoding="utf-8-sig"))
-        for char in pack.get("characters", ()):
-            if "printed_sheet" in char:
-                _load_printed_sheet(path, pack, char)
         _add_effects(definitions, pack)
         return pack
     except (ValueError, KeyError, TypeError) as exc:

@@ -129,8 +129,6 @@ def _discover_character_sprites(pool, sprites_dir=None):
 
 def _roster_preview(spec, color=None, sprite_url=None):
     return {
-        **({"printed_profile": spec["printed_profile"], "printed_text": spec["printed_text"]}
-           if "printed_text" in spec else {}),
         "id": spec["id"],
         "name": spec["name"],
         "title": spec.get("title"),

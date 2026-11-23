@@ -438,8 +438,6 @@ class Card:
         return f"{prefix}{self.name}{suffix}"
 
     def describe(self):
-        if "printed_text" in self.data:
-            return self.data["printed_text"]
         from models.dice import describe_die
         actions = " → ".join(describe_die(die) for die in self.dice)
         effects = "；".join(describe_entry(entry) for entry in self.entries)
@@ -463,4 +461,5 @@ def describe_entry(entry):
         amount, opcode = independent
         label = "光点" if opcode is OpCode.LIGHTCORE_DAMAGE else "真实"
         return f"{amount} 点{label}伤害"
-    return str(entry)
+    text = str(entry).strip()
+    return f"【命中时】{text}。" if text and not text.startswith("【") else text

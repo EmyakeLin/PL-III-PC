@@ -36,13 +36,13 @@
         {
           "trigger": "after_skill_use",
           "when": [{"left": {"field": "$event.source.player.team_statuses", "key": "限制", "default": 0}, "op": "gt", "right": 0}],
-          "description": "任一队员每使用完一张技能，该队减少1层限制。",
+          "description": "【使用后】任一队员每使用完一张技能，该队减少1层限制。",
           "operation": {"op": "program", "code": ["$event.source", "限制", 1, "SPEND_STATUS"]}
         },
         {
           "trigger": "on_turn_prepared",
           "when": [{"left": "$event.turn_number", "op": "gt", "right": 1}],
-          "description": "上回合全队未打出手牌，在本回合预约效果生效后一次清空剩余限制。",
+          "description": "【回合开始】上回合全队未打出手牌，在本回合预约效果生效后一次清空剩余限制。",
           "operation": {"op": "program", "code": [
             "$game.players",
             ["$event.item.team_statuses", "限制", 0, "LOOKUP", 0, "GT"], "FILTER",
@@ -58,12 +58,12 @@
   "status_entries": {
     "骰子等级提升": [{
       "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-      "description": "每层使持有者本回合的骰子等级提升1级。",
+      "description": "【骰级判定时】每层使持有者本回合的骰子等级提升1级。",
       "operation": {"op": "program", "code": ["$self", "骰子等级提升", "STATUS_COUNT", "ADD"]}
     }],
     "骰子等级降低": [{
       "trigger": "BEFORE RESOLVE_DIE_LEVEL",
-      "description": "每层使持有者本回合的骰子等级降低1级。",
+      "description": "【骰级判定时】每层使持有者本回合的骰子等级降低1级。",
       "operation": {"op": "program", "code": ["$self", "骰子等级降低", "STATUS_COUNT", "SUB"]}
     }],
     "凝聚": [
@@ -74,7 +74,7 @@
           "right": {"field": "$self.statuses", "key": "凝聚", "default": 0}
         }],
         "turn_limit": {"key": "凝聚", "count": 1},
-        "description": "层数变动后检查能源，低于凝聚时获得1能源。",
+        "description": "【状态变动时】层数变动后检查能源，低于凝聚时获得1能源。",
         "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS"]}
       },
       {
@@ -84,7 +84,7 @@
           "right": {"field": "$self.statuses", "key": "凝聚", "default": 0}
         }],
         "turn_limit": {"key": "凝聚", "count": 1},
-        "description": "新回合开始时刷新次数并立即检查一次。",
+        "description": "【回合开始】刷新次数并立即检查一次。",
         "operation": {"op": "program", "code": ["$self", "能源", 1, "STATUS"]}
       }
     ]

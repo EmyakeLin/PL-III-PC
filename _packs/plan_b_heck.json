@@ -24,7 +24,7 @@
             {
               "trigger": "on_turn_start",
               "operation": ["DRAW 1", "HEAL 2"],
-              "description": "初始交锋上限为3；回合开始时额外抽1张手牌并回复2生命值。"
+              "description": "【回合开始】初始交锋上限为3；回合开始时额外抽1张手牌并回复2生命值。"
             }
           ]
         },
@@ -45,7 +45,7 @@
                   "WHEN"
                 ]
               },
-              "description": "额外抽牌后，若自己的五张常规技能集满，获得1交锋并提升1通用费。"
+              "description": "【回合开始】额外抽牌后，若自己的五张常规技能集满，获得1交锋并提升1通用费。"
             }
           ]
         },
@@ -86,7 +86,7 @@
                   "WHEN"
                 ]
               },
-              "description": "回合开始时能源至少12则本回合全开：决战技可用，在全开时使用决战形态；通用费+2、交锋+1、持续提供2强壮。首次全开时两张决战技直接入手。"
+              "description": "【回合开始】能源至少12则本回合全开：决战技可用，在全开时使用决战形态；通用费+2、交锋+1、持续提供2强壮。首次全开时两张决战技直接入手。"
             }
           ]
         },
@@ -99,7 +99,7 @@
                 "op": "program",
                 "code": ["$self", "剑刃近战命中", 0, "SET_CHARACTER_STATE"]
               },
-              "description": "回合开始时重置灼燃剑刃的三次近战命中。"
+              "description": "【回合开始】重置灼燃剑刃的三次近战命中。"
             },
             {
               "trigger": "on_dice_hit",
@@ -122,7 +122,7 @@
                   "WHEN"
                 ]
               },
-              "description": "前三次近战进攻骰命中各施加1烧伤。从第三次之后的下一次进攻骰命中起触发引燃，伤害归该骰。"
+              "description": "【命中时】前三次近战进攻骰命中各施加1烧伤。从第三次之后的下一次进攻骰命中起触发引燃，伤害归该骰。"
             }
           ]
         },
@@ -135,7 +135,7 @@
                 "op": "program",
                 "code": ["$self", "信标耗能", 0, "SET_CHARACTER_STATE"]
               },
-              "description": "回合开始时重置全队共用的信标耗能额度。"
+              "description": "【回合开始】重置全队共用的信标耗能额度。"
             },
             {
               "trigger": "BEFORE RESOLVE_CLASH_SCORE",
@@ -152,7 +152,7 @@
                   "WHEN"
                 ]
               },
-              "description": "友方进攻骰拼点时，目标每4烧伤让拼点点数+1（至多+2）。远程按双倍计算；赫克自身的上限再翻倍。"
+              "description": "【拼点判定时】友方进攻骰拼点时，目标每4烧伤让拼点点数+1（至多+2）。远程按双倍计算；赫克自身的上限再翻倍。"
             },
             {
               "trigger": "on_dice_hit",
@@ -170,7 +170,7 @@
                   "WHEN"
                 ]
               },
-              "description": "受本信标影响的友方骰子拼赢并命中时由赫克消耗1能源，每回合至多消耗6。"
+              "description": "【命中时】受本信标影响的友方骰子拼赢并命中时由赫克消耗1能源，每回合至多消耗6。"
             }
           ]
         },
@@ -194,7 +194,7 @@
                   "WHEN"
                 ]
               },
-              "description": "每累计实际消耗8能源，获得1凝聚。失去能源也计入累计，余数跨回合保留。"
+              "description": "【状态变动时】每累计实际消耗8能源，获得1凝聚。失去能源也计入累计，余数跨回合保留。"
             }
           ]
         }
@@ -215,7 +215,7 @@
                   "before_one_sided_attack", "$game.turn_number", "use", 1, "GRANT_DIE_RESPONSE"
                 ]
               },
-              "description": "每持有1凝聚，本回合即将被单方面攻击时可用本技能的第一枚骰子迎击一次。"
+              "description": "【使用时】每持有1凝聚，本回合即将被单方面攻击时可用本技能的第一枚骰子迎击一次。"
             }
           ],
           "dice": [
@@ -230,12 +230,12 @@
                     "op": "program",
                     "code": ["$event.die","$self","能源","STATUS_COUNT",4,"FLOOR_DIV",2,"MIN","DIE_FINAL_ADD"]
                   },
-                  "description": "自身每持有4能源，本骰最终点数+1，至多+2。"
+                  "description": "【用骰前】自身每持有4能源，本骰最终点数+1，至多+2。"
                 },
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 烧伤 1 $event.target",
-                  "description": "施加1烧伤。"
+                  "description": "【命中时】施加1烧伤。"
                 }
               ]
             }
@@ -261,7 +261,7 @@
                   ["$event.card",2,"SKILL_LEVEL_ADD"], "WHEN"
                 ]
               },
-              "description": "消耗4能源以使本技能骰子等级提升2。"
+              "description": "【使用时】消耗4能源以使本技能骰子等级提升2。"
             },
             {
               "trigger": "AFTER ACTIVATE_STATUS",
@@ -282,7 +282,7 @@
                   "WHEN"
                 ]
               },
-              "description": "本技能期间触发引燃时，额外引燃一次并获得2能源；每次使用技能至多一次，额外引燃归技能。"
+              "description": "【引燃后】本技能期间触发引燃时，额外引燃一次并获得2能源；每次使用技能至多一次，额外引燃归技能。"
             }
           ],
           "dice": [
@@ -293,7 +293,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 烧伤 2 $event.target",
-                  "description": "施加2烧伤。"
+                  "description": "【命中时】施加2烧伤。"
                 }
               ]
             },
@@ -316,7 +316,7 @@
                       ["$event.target","烧伤",3,"STATUS"], "WHEN"
                     ]
                   },
-                  "description": "施加1烧伤，消耗2能源以施加3烧伤。"
+                  "description": "【命中时】施加1烧伤，消耗2能源以施加3烧伤。"
                 }
               ]
             },
@@ -328,7 +328,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 烧伤 1 $event.target",
-                  "description": "施加1烧伤。"
+                  "description": "【命中时】施加1烧伤。"
                 }
               ]
             },
@@ -348,7 +348,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "本技能之前至少两次拼点胜利时，本骰等级提升2、伤害+1，命中时引燃并摧毁对阵技能。"
+                  "description": "【用骰前】本技能之前至少两次拼点胜利时，本骰等级提升2、伤害+1，命中时引燃并摧毁对阵技能。"
                 },
                 {
                   "trigger": "BEFORE DAMAGE",
@@ -366,7 +366,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "满足前两胜的末骰伤害部分+1。"
+                  "description": "【伤害结算前】满足前两胜的末骰伤害部分+1。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -377,7 +377,7 @@
                       [{"keyword":"ignite"},"$event.opponent_card","DESTROY"], "WHEN"
                     ]
                   },
-                  "description": "达成前两胜时，命中触发引燃并摧毁对方技能。"
+                  "description": "【命中时】达成前两胜时，命中触发引燃并摧毁对方技能。"
                 }
               ]
             }
@@ -404,7 +404,7 @@
                     {
                       "trigger": "on_dice_hit",
                       "operation": "STATUS 烧伤 1 $event.target",
-                      "description": "施加1烧伤。"
+                      "description": "【命中时】施加1烧伤。"
                     }
                   ]
                 },
@@ -417,7 +417,7 @@
                     {
                       "trigger": "on_dice_hit",
                       "operation": "STATUS 烧伤 1 $event.target",
-                      "description": "施加1烧伤。"
+                      "description": "【命中时】施加1烧伤。"
                     }
                   ]
                 }
@@ -428,7 +428,7 @@
             {
               "trigger": "on_skill_use",
               "operation": "STATUS 弹药 2 $self",
-              "description": "获得2弹药。"
+              "description": "【使用时】获得2弹药。"
             },
             {
               "trigger": "on_skill_use",
@@ -436,7 +436,7 @@
                 "op": "program",
                 "code": ["$self", "能源", "STATUS_COUNT", 12, "LE", ["$self", "能源", 4, "STATUS"], "WHEN"]
               },
-              "description": "能源不高于12时，获得4能源。全开时必须改用「开火」。"
+              "description": "【使用时】能源不高于12时，获得4能源。全开时必须改用「开火」。"
             }
           ],
           "dice": [
@@ -447,7 +447,7 @@
                 {
                   "trigger": "on_clash_win",
                   "operation": "STATUS 能源 1 $self",
-                  "description": "拼点胜利时获得1能源。"
+                  "description": "【拼点胜利】获得1能源。"
                 }
               ]
             },
@@ -458,7 +458,7 @@
                 {
                   "trigger": "on_clash_win",
                   "operation": "STATUS 能源 1 $self",
-                  "description": "拼点胜利时获得1能源。"
+                  "description": "【拼点胜利】获得1能源。"
                 }
               ]
             }
@@ -478,7 +478,7 @@
                   ["$self", "凝聚", "STATUS_COUNT", 2, "MUL", 8, "MIN"], [1], "IF_ELSE", "STATUS"
                 ]
               },
-              "description": "每持有1凝聚获得2能源，至多8；无凝聚则获得1能源。"
+              "description": "【使用时】每持有1凝聚获得2能源，至多8；无凝聚则获得1能源。"
             }
           ],
           "dice": [
@@ -489,7 +489,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 能源 3 $self",
-                  "description": "获得3能源。"
+                  "description": "【命中时】获得3能源。"
                 }
               ]
             },
@@ -508,7 +508,7 @@
                     "op": "program",
                     "code": ["$self", "凝聚", "STATUS_COUNT", "ADD"]
                   },
-                  "description": "本骰等级提升等同于凝聚层数，并无视等量远程等级。"
+                  "description": "【骰级判定时】本骰等级提升等同于凝聚层数，并无视等量远程等级。"
                 },
                 {
                   "trigger": "BEFORE DAMAGE",
@@ -538,7 +538,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "命中时消耗等同于凝聚层数的能源。付足时，本段伤害增加实耗量的一半向下取整，全开时增量翻倍。"
+                  "description": "【伤害结算前】命中时消耗等同于凝聚层数的能源。付足时，本段伤害增加实耗量的一半向下取整，全开时增量翻倍。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -550,7 +550,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "施加与本次增伤等量的烧伤。"
+                  "description": "【命中时】施加与本次增伤等量的烧伤。"
                 }
               ]
             }
@@ -575,7 +575,7 @@
                   "WHEN"
                 ]
               },
-              "description": "消耗能源超过16的部分，每实耗2点则本技能基础值+1。"
+              "description": "【使用时】消耗能源超过16的部分，每实耗2点则本技能基础值+1。"
             },
             {
               "trigger": "before_dice_use",
@@ -583,7 +583,7 @@
                 "op": "program",
                 "code": ["$event.die","$event.card.use_state","base_bonus",0,"LOOKUP","DIE_BASE_ADD"]
               },
-              "description": "以本次技能已获得的加成提升当前骰的基础值。"
+              "description": "【用骰前】以本次技能已获得的加成提升当前骰的基础值。"
             }
           ],
           "dice": [
@@ -610,7 +610,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "拼赢时消耗2能源以使本技能后续骰子基础值+2。"
+                  "description": "【拼点胜利】消耗2能源以使本技能后续骰子基础值+2。"
                 }
               ]
             },
@@ -635,7 +635,7 @@
                       "WHEN", "$event.opponent_card", "DESTROY"
                     ]
                   },
-                  "description": "抽1卡，每4最终点数施加1烧伤，摧毁对方技能。"
+                  "description": "【命中时】抽1卡，每4最终点数施加1烧伤，摧毁对方技能。"
                 }
               ]
             }
@@ -654,7 +654,7 @@
                 "op": "program",
                 "code": ["$event.card","repeat_limit","$self","凝聚","STATUS_COUNT","SET_SKILL_STATE"]
               },
-              "description": "决战技。本技能首骰的重复上限等于使用时的凝聚层数。"
+              "description": "【使用时】决战技。本技能首骰的重复上限等于使用时的凝聚层数。"
             }
           ],
           "dice": [
@@ -667,7 +667,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": {"keyword":"ignite","adjustments":{"damage_multiplier":[2,"MUL"]}},
-                  "description": "由本骰触发一次引燃，该次烧伤伤害翻倍。"
+                  "description": "【命中时】由本骰触发一次引燃，该次烧伤伤害翻倍。"
                 },
                 {
                   "trigger": "AFTER DAMAGE",
@@ -684,7 +684,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "本骰每造成1点直伤消耗1能源，包括本骰引燃造成的伤害。"
+                  "description": "【造成伤害后】本骰每造成1点直伤消耗1能源，包括本骰引燃造成的伤害。"
                 },
                 {
                   "trigger": "on_dice_use",
@@ -694,7 +694,7 @@
                       1, "ADD", "SET_SKILL_STATE"
                     ], "WHEN"
                   ]},
-                  "description": "本骰实际作为重复骰使用时，记录本次技能首骰已重复的次数。"
+                  "description": "【用骰时】本骰实际作为重复骰使用时，记录本次技能首骰已重复的次数。"
                 },
                 {
                   "trigger": "after_dice_use",
@@ -706,7 +706,7 @@
                       "LT", "AND", ["$event.die", "REPEAT_DIE"], "WHEN"
                     ]
                   },
-                  "description": "攻击后若仍持有能源则重复使用，受使用技能时锁定的次数限制。"
+                  "description": "【用骰后】攻击后若仍持有能源则重复使用，受使用技能时锁定的次数限制。"
                 }
               ]
             }
@@ -736,7 +736,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 烧伤 1 $event.target",
-                  "description": "施加1烧伤。"
+                  "description": "【命中时】施加1烧伤。"
                 }
               ]
             },
@@ -749,7 +749,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "operation": "STATUS 烧伤 1 $event.target",
-                  "description": "施加1烧伤。"
+                  "description": "【命中时】施加1烧伤。"
                 }
               ]
             },
@@ -762,7 +762,7 @@
                 {
                   "trigger": "before_dice_use",
                   "operation": {"op":"program","code":["$event.die","$self","凝聚","STATUS_COUNT","DIE_FINAL_ADD"]},
-                  "description": "每层凝聚使本骰最终点数+1。"
+                  "description": "【用骰前】每层凝聚使本骰最终点数+1。"
                 },
                 {
                   "trigger": "BEFORE DAMAGE",
@@ -780,7 +780,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "本骰伤害部分增加等同于当前凝聚的数值。"
+                  "description": "【伤害结算前】本骰伤害部分增加等同于当前凝聚的数值。"
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -792,7 +792,7 @@
                       "all", {"call":"SPEND_STATUS","result":"result","default":0}, "POP"
                     ]
                   },
-                  "description": "施加等于凝聚层数的烧伤，随后消耗全部能源。"
+                  "description": "【命中时】施加等于凝聚层数的烧伤，随后消耗全部能源。"
                 }
               ]
             }

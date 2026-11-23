@@ -241,3 +241,31 @@ class DisplayerTests(unittest.TestCase):
             return events, game.winner.side, [p.characters[0].hp for p in game.players], game.rng.getstate()
 
         self.assertEqual(fight(observe=True), fight(observe=False))
+
+    def test_all_packs_project_structured_damage_parts_and_bracketed_triggers(self):
+        from pathlib import Path
+        from displayer import _passives, _printed_skill
+        extra = [Path(__file__).resolve().parents[1] / "_packs" / "challenges" / "structured_carrier.json"]
+        chars = load_characters_from_packs(extra_packs=extra)
+        self.assertEqual(len(chars), 8)
+        for char in chars:
+            self.assertNotIn("printed_text", char)
+            for passive in _passives(char.get("faction_passives", ())) + _passives(char.get("passive_skills", ())):
+                for line in passive["display_lines"]:
+                    self.assertTrue(line.startswith("【") and "】" in line, f"{char['id']} passive: {line}")
+            for raw_skill in char["skills"]:
+                skill = _printed_skill(raw_skill, include_forms=True)
+                self.assertNotIn("printed_text", skill)
+                for form in [skill, *skill["forms"]]:
+                    self.assertIsInstance(form["name"], str)
+                    self.assertIsInstance(form["cost"], int)
+                    for entry in form["entries"]:
+                        self.assertTrue(entry.startswith("【") and "】" in entry, f"{char['id']}.{form['id']}: {entry}")
+                    for die in form["dice"]:
+                        self.assertNotIn("printed_line", die)
+                        self.assertIn("damage_parts", die)
+                        for part in die["damage_parts"]:
+                            self.assertIn(part["grade"], ("normal", "pierce", "concept", "lightcore", "real"))
+                            self.assertIsInstance(part["amount"], int)
+                        for entry in die["entries"]:
+                            self.assertTrue(entry.startswith("【") and "】" in entry, f"{char['id']}.{form['id']} die: {entry}")

@@ -6,7 +6,7 @@
       {
         "trigger": "BEFORE RESOLVE_CLASH_SCORE",
         "operation": {"op":"program","code":["$event.value_ref","$self","涡流","STATUS_COUNT",10,"MIN","VALUE_FLOOR"]},
-        "description": "自身拼点点数至少为当前涡流层数，保底最多计入10点。"
+        "description": "【拼点判定时】自身拼点点数至少为当前涡流层数，保底最多计入10点。"
       },
       {
         "trigger": "on_turn_end",
@@ -29,7 +29,7 @@
             }
           ]
         },
-        "description": "回合结束时消耗2层涡流，并在下回合获得1层骰子等级降低。"
+        "description": "【回合结束】消耗2层涡流，并在下回合获得1层骰子等级降低。"
       }
     ],
     "骰级免疫": [
@@ -42,7 +42,7 @@
             "$event.die.printed_level.value", "VALUE_CEILING"
           ]
         },
-        "description": "本回合自身按印刷骰级使用骰子。"
+        "description": "【骰级判定时】本回合自身按印刷骰级使用骰子。"
       }
     ]
   },
@@ -60,7 +60,7 @@
           "entries": [{
             "trigger": "on_turn_start",
             "operation": ["DRAW 1", "HEAL 2"],
-            "description": "初始交锋上限为3。回合开始时，额外抽1张手牌并回复2生命值。"
+            "description": "【回合开始】初始交锋上限为3。回合开始时，额外抽1张手牌并回复2生命值。"
           }]
         },
         {
@@ -79,7 +79,7 @@
                 "WHEN"
               ]
             },
-            "description": "回合开始时，在A级条目的额外抽牌后，若自己的5张技能均在手中，本回合自身交锋数+1，己方获得1通用费。"
+            "description": "【回合开始】在A级条目的额外抽牌后，若自己的5张技能均在手中，本回合自身交锋数+1，己方获得1通用费。"
           }]
         },
         {
@@ -95,12 +95,12 @@
                   "$event.value_ref", "$event.die.printed_level.value", "VALUE_CEILING"
                 ]
               },
-              "description": "自身带有涡流时，无视骰子等级增减效果。"
+              "description": "【骰级判定时】自身带有涡流时，无视骰子等级增减效果。"
             },
             {
               "trigger": "on_turn_start",
               "operation": {"op":"program","code":["$game.turn_number",1,"EQ",["$self","涡流",4,"STATUS"],"WHEN"]},
-              "description": "首个回合开始时获得4层涡流。"
+              "description": "【回合开始】首个回合开始时获得4层涡流。"
             }
           ]
         },
@@ -112,21 +112,21 @@
               "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
-              "description": "自身闪避骰拼点失败、打平或跳过拼点时，回复1生命值并获得1层涡流，每回合合计至多2次。"
+              "description": "【拼点失败】自身闪避骰拼点失败、打平或跳过拼点时，回复1生命值并获得1层涡流，每回合合计至多2次。"
             },
             {
               "trigger": "on_clash_draw",
               "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
-              "description": "自身闪避骰拼点打平时同样触发翠流漂泊。"
+              "description": "【拼点平局】自身闪避骰拼点打平时同样触发翠流漂泊。"
             },
             {
               "trigger": "on_clash_skip",
               "when": [{"left":"$event.die.type","op":"eq","right":"evade"}],
               "turn_limit": {"key": "drifting_evade", "count": 2},
               "operation": ["HEAL 1", "STATUS 涡流 1 $self"],
-              "description": "自身闪避骰跳过拼点时同样触发翠流漂泊。"
+              "description": "【跳过拼点】自身闪避骰跳过拼点时同样触发翠流漂泊。"
             }
           ]
         }
@@ -145,18 +145,18 @@
                 ["$event.card","hand","MOVE_CARD"], "WHEN"
               ]
             },
-            "description": "若首骰命中，本技能使用结束后回到手中。"
+            "description": "【使用后】若首骰命中，本技能使用结束后回到手中。"
           }],
           "dice": [
             {"type": "slash", "level": 2, "entries": ["1物理",
-              {"trigger": "AFTER RESOLVE_HIT", "when": [{"left":"$event.result","op":"eq","right":true}], "operation": {"op":"program","code":["$event.card","first_die_hit",1,"SET_SKILL_STATE"]}, "description": "命中时使本技能在使用结束后回手。"}
+              {"trigger": "AFTER RESOLVE_HIT", "when": [{"left":"$event.result","op":"eq","right":true}], "operation": {"op":"program","code":["$event.card","first_die_hit",1,"SET_SKILL_STATE"]}, "description": "【命中时】使本技能在使用结束后回手。"}
             ]},
             {"type": "slash", "level": 3, "entries": [
               {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$self","涡流",1,"STATUS"]},
-               "description": "命中时获得1层涡流。"}
+               "description": "【命中时】获得1层涡流。"}
             ]},
             {"type": "evade", "level": 2, "entries": [
-              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "【拼点胜利】回复1生命值。"}
             ]},
             {"type": "slash", "level": 2, "entries": [
               {
@@ -173,11 +173,11 @@
                     "FILTER", "FIRST", "CHARACTER_OF", "ROUTE_DIE_ATTACK"
                   ]
                 },
-                "description": "对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"
+                "description": "【配对前】对下一交锋目标进行单方面攻击。下一交锋没有目标时跳过此骰。"
               },
               "1物理",
               {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$event.target","骰子等级降低",1,"STATUS"]},
-               "description": "命中时施加1层骰子等级降低。"}
+               "description": "【命中时】施加1层骰子等级降低。"}
             ]}
           ]
         },
@@ -204,7 +204,7 @@
                   "WHEN"
                 ]
               },
-              "description": "使用时，若目标带有涡流，本技能骰子伤害+1，并在技能使用后消耗该目标1层涡流。"
+              "description": "【使用时】若目标带有涡流，本技能骰子伤害+1，并在技能使用后消耗该目标1层涡流。"
             },
             {
               "trigger": "before_dice_hit",
@@ -216,7 +216,7 @@
                   "WHEN"
                 ]
               },
-              "description": "使用时目标带有涡流，则本技能骰子伤害+1。"
+              "description": "【命中前】使用时目标带有涡流，则本技能骰子伤害+1。"
             },
             {
               "trigger": "after_skill_use",
@@ -229,22 +229,22 @@
                   "WHEN"
                 ]
               },
-              "description": "使用后结算已标记目标的涡流消耗。"
+              "description": "【使用后】结算已标记目标的涡流消耗。"
             }
           ],
           "dice": [
             {"type": "slash", "level": 4, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": "LOSE_HP $self 1",
-               "description": "命中时自身失去1生命值。"}
+               "description": "【命中时】自身失去1生命值。"}
             ]},
             {"type": "block", "level": 3, "entries": [
               {"trigger": "on_clash_win", "operation": {"op": "program", "code": [
                 "$self", "涡流", 1, "STATUS", "$self", "normal", 1, "SHIELD"
-              ]}, "description": "拼点胜利时获得1层涡流与1点护盾。"}
+              ]}, "description": "【拼点胜利】获得1层涡流与1点护盾。"}
             ]},
             {"type": "pierce", "level": 4, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$self","涡流",1,"STATUS"]},
-               "description": "命中时获得1层涡流。"}
+               "description": "【命中时】获得1层涡流。"}
             ]}
           ]
         },
@@ -256,7 +256,7 @@
             {
               "trigger": "on_skill_use",
               "operation": {"op":"program","code":["$event.card","gain_on_damage",1,"SET_SKILL_STATE"]},
-              "description": "使用时，本交锋内自身受到伤害时获得1层涡流。"
+              "description": "【使用时】本交锋内自身受到伤害时获得1层涡流。"
             },
             {
               "trigger": "AFTER DAMAGE",
@@ -267,15 +267,15 @@
                 "op": "program",
                 "code": ["$owner.use_state","gain_on_damage",false,"LOOKUP",["$self","涡流",1,"STATUS"],"WHEN"]
               },
-              "description": "本技能发动后，每次在本交锋受到伤害时获得1层涡流。"
+              "description": "【受伤后】本技能发动后，每次在本交锋受到伤害时获得1层涡流。"
             }
           ],
           "dice": [
             {"type": "evade", "level": 1, "entries": [
-              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "【拼点胜利】回复1生命值。"}
             ]},
             {"type": "evade", "level": 1, "entries": [
-              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "【拼点胜利】回复1生命值。"}
             ]},
             {"type": "slash", "level": 3, "entries": ["0物理",
               {
@@ -285,12 +285,12 @@
                   "op": "program",
                   "code": ["$event.target","$event.hit_modifiers","damage_add",1,"normal","ADD_DAMAGE_MODIFIER"]
                 },
-                "description": "自身涡流≥3时，伤害+1。"
+                "description": "【命中前】自身涡流≥3时，伤害+1。"
               }
             ]},
             {"type": "blunt", "level": 3, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": {"op":"program","code":["$event.target","涡流",1,"STATUS"]},
-               "description": "命中时对目标施加1层涡流。"}
+               "description": "【命中时】对目标施加1层涡流。"}
             ]}
           ]
         },
@@ -304,7 +304,7 @@
               "op": "program",
               "code": ["$self","涡流",2,{"call":"SPEND_STATUS","result":"result","default":0},"POP"]
             },
-            "description": "使用时消耗2层涡流。"
+            "description": "【使用时】消耗2层涡流。"
           }, {
             "trigger": "before_dice_use",
             "operation": {
@@ -319,14 +319,14 @@
                 "WHEN"
               ]
             },
-            "description": "下骰使用时结算并清除首骰给予的最终点数加成。"
+            "description": "【用骰前】结算并清除首骰给予的最终点数加成。"
           }],
           "dice": [
             {"type": "slash", "level": 4, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": {
                 "op": "program",
                 "code": ["$self",4,"LOSE_HP","$event.card","next_die_bonus",15,"SET_SKILL_STATE"]
-              }, "description": "命中时自身失去4生命值，以使下骰最终点数+15。"}
+              }, "description": "【命中时】自身失去4生命值，以使下骰最终点数+15。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
               {
@@ -345,7 +345,7 @@
                     "FOR_EACH_TARGET"
                   ]
                 },
-                "description": "群伤4物理。自身每持有3层涡流，对主要目标的伤害+1（至多+2）。",
+                "description": "【命中时】群伤4物理。自身每持有3层涡流，对主要目标的伤害+1（至多+2）。",
                 "when": [{"left":"$event.result","op":"eq","right":true}]
               }
             ]}
@@ -383,17 +383,17 @@
                   "WHEN"
                 ]
               },
-              "description": "使用时消耗全部涡流，并在本回合与下回合获得等于实际消耗量的强壮。"
+              "description": "【使用时】消耗全部涡流，并在本回合与下回合获得等于实际消耗量的强壮。"
             },
             {
               "trigger": "on_skill_use",
               "operation": {"op":"program","code":["$self","骰级免疫",1,"STATUS"]},
-              "description": "使用时，本回合自身无视骰子等级增减效果。"
+              "description": "【使用时】本回合自身无视骰子等级增减效果。"
             }
           ],
           "dice": [
             {"type": "evade", "level": 3, "entries": [
-              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "拼点胜利时回复1生命值。"}
+              {"trigger": "on_clash_win", "operation": "HEAL 1", "description": "【拼点胜利】回复1生命值。"}
             ]},
             {"type": "pierce", "level": 4, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": {"schedule": {
@@ -402,7 +402,7 @@
                  "require_source_alive": false, "require_target_alive": true,
                  "then": ["$event.scheduled.target","涡流",1,"STATUS"]
                }},
-               "description": "命中时在下回合获得1层涡流。"}
+               "description": "【命中时】在下回合获得1层涡流。"}
             ]},
             {"type": "blunt", "level": 4, "entries": ["1物理",
               {"trigger": "on_dice_hit", "operation": {"schedule": {
@@ -411,7 +411,7 @@
                  "require_source_alive": false, "require_target_alive": true,
                  "then": ["$event.scheduled.target","涡流",1,"STATUS"]
                }},
-               "description": "命中时在下回合获得1层涡流。"}
+               "description": "【命中时】在下回合获得1层涡流。"}
             ]},
             {"type": "slash", "level": 6, "entries": [
               {
@@ -432,7 +432,7 @@
                     "FOR_EACH_TARGET"
                   ]
                 },
-                "description": "群伤2物理，并在下回合对全体敌方施加1层骰子等级降低。",
+                "description": "【命中时】群伤2物理，并在下回合对全体敌方施加1层骰子等级降低。",
                 "when": [{"left":"$event.result","op":"eq","right":true}]
               }
             ]}

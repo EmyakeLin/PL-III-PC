@@ -33,20 +33,20 @@
   "status_entries": {
     "烧伤": [{
       "trigger": "on_character_turn_end", "damage_cause": "烧伤",
-      "description": "回合末持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。",
+      "description": "【回合结束】持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。",
       "when": [{"left": {"field": "$self.statuses", "key": "烧伤", "default": 0}, "op": "ge", "right": 4}],
       "operation": {"op": "program", "code": ["$self", "烧伤", "ACTIVATE_STATUS"]}
     }],
     "裂血": [
       {
         "trigger": "on_character_duel_start", "damage_cause": "裂血",
-        "description": "上限 9 层。持有至少 3 层时，每场交锋开始结算时承受 1 点穿甲伤害，即使自己未在该场出牌。",
+        "description": "【交锋开始】上限 9 层。持有至少 3 层时，每场交锋开始结算时承受 1 点穿甲伤害，即使自己未在该场出牌。",
         "when": [{"left": {"field": "$self.statuses", "key": "裂血", "default": 0}, "op": "ge", "right": 3}],
         "operation": {"op": "program", "code": ["$self", 1, "pierce", "none", "DAMAGE"]}
       },
       {
         "trigger": "after_damage_part", "damage_cause": "裂血爆发",
-        "description": "达到 6 层时进入爆发，持续至裂血归零或解除。爆发期间，每被一个伤害部分命中且仍存活，额外承受 1 点穿甲伤害，再减少 2 层裂血。0 点伤害或被护盾完全挡下的伤害部分也会触发。",
+        "description": "【伤害部分后】达到 6 层时进入爆发，持续至裂血归零或解除。爆发期间，每被一个伤害部分命中且仍存活，额外承受 1 点穿甲伤害，再减少 2 层裂血。0 点伤害或被护盾完全挡下的伤害部分也会触发。",
         "operation": {"op": "program", "code": [
           "$self", "裂血", "STATUS_ACTIVE",
           ["$self", 1, "pierce", "none", "DAMAGE", "$self", "裂血", -2, "STATUS"], "WHEN"
@@ -55,7 +55,7 @@
     ],
     "致命失衡": [{
       "trigger": "on_direct_damage_applied",
-      "description": "持有至少 1 层时，所受直伤翻倍，多层共用这一倍率。受到至少 1 点直伤后减少 1 层，每轮用骰至多因此减少 1 层。即使护盾挡下全部伤害，也会消耗层数。",
+      "description": "【受直伤后】持有至少 1 层时，所受直伤翻倍，多层共用这一倍率。受到至少 1 点直伤后减少 1 层，每轮用骰至多因此减少 1 层。即使护盾挡下全部伤害，也会消耗层数。",
       "operation": {"op": "program", "code": [
         "$event.suppressed_damage_statuses", "致命失衡", "CONTAINS", "NOT",
         "$self", "致命失衡损耗", "ROUND_TRIGGER_COUNT", 1, "LT", "AND",

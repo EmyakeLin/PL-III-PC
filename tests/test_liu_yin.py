@@ -176,40 +176,43 @@ class LiuYinTests(unittest.TestCase):
         self.assertTrue(all("拼点逆转" not in die["range_traits"]
                             for die in _visible_card(self.cards["liu_blade"])["dice"]))
 
-    def test_author_sheet_matches_catalog_terminal_and_both_armor_faces(self):
+    def test_catalog_terminal_and_both_armor_faces_read_structured_data(self):
         self.deploy()
-        path = Path(__file__).resolve().parents[1] / "_packs" / "printed" / "流阴.txt"
-        source = path.read_text(encoding="utf-8").removesuffix("\n")
-        self.assertEqual(sha256(source.encode()).hexdigest(),
-                         "9bad708054f2e0e884ab80ed4762c861fa17376fd4737658231d5ba7fcb96409")
         catalog = Displayer(self.game).catalog()
         actor = next(c for c in catalog["players"][0]["characters"] if c["id"] == self.liu.id)
-        self.assertEqual(actor["printed_text"], source)
+        self.assertNotIn("printed_text", actor)
         with redirect_stdout(io.StringIO()) as out:
             TerminalBridge.show_character(self.liu.data)
-        self.assertEqual(out.getvalue(), source + "\n")
+        self.assertIn("流阴", out.getvalue())
+        self.assertIn("光生会", out.getvalue())
         passives = actor["faction_passives"] + actor["passives"]
         self.assertEqual(len(passives), 5)
         for passive in passives:
-            self.assertIn(passive["printed_heading"] + "\n" + "\n".join(passive["display_lines"]) + "\n\n", source)
+            self.assertTrue(passive["display_lines"])
+            for line in passive["display_lines"]:
+                self.assertTrue(line.startswith("【") and "】" in line, line)
         for name in ("领域洞悉", "环境同调", "环境压制"):
-            line, = catalog["statuses"][name]
-            self.assertTrue(line.startswith(name + "X："))
-            self.assertIn("\n" + line + "\n", source)
+            self.assertTrue(catalog["statuses"][name])
         self.assertEqual(len(actor["skills"]), 12)
         for spec in actor["skills"]:
+            self.assertNotIn("printed_text", spec)
             card = self.cards[spec["id"]]
             for form in [None, *card.data.get("forms", {})]:
                 card.set_form(form)
                 face = _visible_card(card)
                 with self.subTest(card=card.name, form=form):
-                    self.assertEqual(spec["printed_text"], face["printed_text"])
-                    self.assertIn("\n" + face["printed_text"] + "\n", source + "\n")
-                    self.assertEqual(card.describe(), face["printed_text"])
+                    self.assertEqual(face["name"], card.name)
+                    self.assertEqual(face["cost"], card.cost)
                     for die in face["dice"]:
-                        self.assertIn(die["printed_line"], face["printed_text"].splitlines())
-        rewind = self.cards["liu_rewind"].describe().splitlines()
-        self.assertEqual(rewind[-1], "打击 1～8：1；减少1环境压制；拼点失败：增加3环境压制")
+                        self.assertNotIn("printed_line", die)
+                        self.assertIn("damage_parts", die)
+                        for entry in die["entries"]:
+                            self.assertTrue(entry.startswith("【") and "】" in entry, entry)
+        rewind = _visible_card(self.cards["liu_rewind"])
+        self.assertEqual(rewind["dice"][0]["damage_parts"][0]["amount"], 1)
+        self.assertEqual(rewind["dice"][0]["damage_parts"][0]["grade"], "normal")
+        self.assertIn("【命中时】减少1环境压制。", rewind["dice"][0]["entries"])
+        self.assertIn("【拼点失败】增加3环境压制。", rewind["dice"][0]["entries"])
 
     def test_invisible_hit_follows_low_score_and_ties_produce_no_hit(self):
         for against, result, hits in ((7, "win", ["无形杀"]), (1, "lose", ["对手斩击"]), (3, "draw", [])):

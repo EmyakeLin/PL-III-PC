@@ -111,12 +111,15 @@ export const DIE_STYLE = {
   block:  { label: '招架', kind: 'defense', frame: 'square', color: DEFENSE_DIE_COLOR, bg: DEFENSE_DIE_BG, hex: '#2478cc' },
   evade:  { label: '闪避', kind: 'defense', frame: 'square', color: DEFENSE_DIE_COLOR, bg: DEFENSE_DIE_BG, hex: '#2478cc' },
   blank:  { label: '空白', kind: 'blank',   frame: 'square', color: 0x8a7f71,          bg: 0xf6f2ea,       hex: '#8a7f71' },
+  skip:   { label: '跳过', kind: 'skip',    frame: 'square', color: 0x8a7f71,          bg: 0xf6f2ea,       hex: '#8a7f71' },
 };
 
 export const DAMAGE_GRADE_STYLE = {
-  normal:  { label: '普通伤害', short: '普通', color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
-  pierce:  { label: '穿甲伤害', short: '穿甲', color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
-  concept: { label: '超穿甲伤害', short: '超穿甲', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
+  normal:    { label: '普通伤害', short: '普通',   color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
+  pierce:    { label: '穿甲伤害', short: '穿甲',   color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
+  concept:   { label: '超穿甲伤害', short: '超穿甲', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
+  lightcore: { label: '光点伤害', short: '光点',   color: 0x1b7fa8, bg: 0xeaf6fb, border: 0x82c4df },
+  real:      { label: '真实伤害', short: '真实',   color: 0x8f2447, bg: 0xfaebf0, border: 0xd48aa2 },
 };
 
 export const SHIELD_STYLE = {
@@ -300,12 +303,68 @@ export const TRAIT_STYLE = {
   out_of_combat:   { color: 0x736453, bg: 0xf5f0e8, border: 0xc9beae },
 };
 
-export const TIMING_STYLE = {
-  skill: { color: 0x167353, wash: 0xe6f5ee, rule: 0x5fb392 },
-  clash: { color: 0xad6b10, wash: 0xfdf2dc, rule: 0xd9a64e },
-  hit:   { color: 0xbd3728, wash: 0xfdece9, rule: 0xde877c },
-  turn:  { color: 0x855518, wash: 0xf8efe0, rule: 0xc49c66 },
+// Canonical trigger series color palette:
+//  - default & 命中系列: 黄绿色
+//  - 使用系列 (使用 / 用骰): 蓝色
+//  - 拼点胜利系列: 橙色
+//  - 拼点失败系列: 红色
+export const TRIGGER_STYLE = {
+  default:    { color: 0x5c8a14, wash: 0xf1f7e2, rule: 0x9ac24a },
+  use:        { color: 0x1c6cc4, wash: 0xe8f2fc, rule: 0x6ea6e0 },
+  hit:        { color: 0x5c8a14, wash: 0xf1f7e2, rule: 0x9ac24a },
+  clash_win:  { color: 0xd96b0b, wash: 0xfef2e4, rule: 0xe89b48 },
+  clash_lose: { color: 0xc92a2a, wash: 0xfdecec, rule: 0xe37b7b },
 };
+
+export function classifyTriggerSeries(name) {
+  const clean = String(name || '').trim();
+  if (clean.includes('拼点胜利') || clean.includes('拼赢')) return 'clash_win';
+  if (clean.includes('拼点失败') || clean.includes('拼输') || clean.includes('拼负')) return 'clash_lose';
+  if (clean.includes('使用') || clean.includes('用骰')) return 'use';
+  if (clean.includes('命中') || clean.includes('暴击')) return 'hit';
+  return 'default';
+}
+
+/**
+ * Pure string scanner (ZERO RegExp): extracts paired `【触发器名称】` from description text
+ * and maps each to `[ 触发器名称 ]` with its canonical series color.
+ */
+export function parseTriggerSegments(text) {
+  const source = String(text ?? '');
+  const segments = [];
+  let pos = 0;
+  const len = source.length;
+  while (pos < len) {
+    const open = source.indexOf('【', pos);
+    if (open < 0) {
+      segments.push({ kind: 'text', text: source.slice(pos) });
+      break;
+    }
+    const close = source.indexOf('】', open + 1);
+    if (close < 0) {
+      segments.push({ kind: 'text', text: source.slice(pos) });
+      break;
+    }
+    if (open > pos) {
+      segments.push({ kind: 'text', text: source.slice(pos, open) });
+    }
+    const name = source.slice(open + 1, close).trim();
+    if (!name) {
+      segments.push({ kind: 'text', text: source.slice(open, close + 1) });
+    } else {
+      const series = classifyTriggerSeries(name);
+      segments.push({
+        kind: 'trigger',
+        name,
+        text: `[ ${name} ]`,
+        series,
+        style: TRIGGER_STYLE[series] || TRIGGER_STYLE.default,
+      });
+    }
+    pos = close + 1;
+  }
+  return segments;
+}
 
 export const RANK_COLOR = {
   NORMAL: 0x7a6d5e,
@@ -330,7 +389,7 @@ export const OFFICIAL_STATUS_RULES = {
   虚弱: '每层使持有者的非空白骰最终点数 −1。进攻骰、招架和闪避均适用。生效回合结束时清除。',
   迅捷: '每层使持有角色的速度 +1。先修正各角色速度，再计算阵营速度。生效回合结束时清除。',
   束缚: '每层使持有角色的速度 −1。先修正各角色速度，再计算阵营速度。生效回合结束时清除。',
-  烧伤: '回合末持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。',
+  烧伤: '【回合结束】持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。',
   裂血: '上限 9 层。持有至少 3 层时，每场实际开始结算的交锋开始时承受 1 点穿甲伤害。达到 6 层后进入爆发，直到归零或被解除；爆发期间每被一个伤害部分命中且仍存活，额外承受 1 点穿甲伤害并减少 2 层。',
   呼吸: '上限 6 层。持有者的进攻骰命中时掷 1 枚六面骰，结果不高于层数则触发「暴击时」词条。',
   失衡: '上限 20 层。被「失衡爆发」词条命中时掷 1 枚二十面骰；结果不高于现有层数则获得 1 层致命失衡并减少 5 层失衡，否则增加 2 层失衡。',
@@ -388,6 +447,7 @@ export function wrapCjkText(str, maxHalfWidthChars = 36) {
 }
 
 export function formatDieRange(die) {
+  if (!die || die.type === 'skip') return 'SKIP';
   const maxFace = die.roll_max || LEVEL_MAX[die.level || die.printed_level] || 6;
   let range = `1~${maxFace}`;
   if (die.base_value) {
@@ -442,9 +502,23 @@ export function exactSkillTraitSpecs(card) {
   return specs;
 }
 
-export function extractDieDamageBadge(entries) {
-  const restEntries = (entries || []).filter(Boolean).map((raw) => String(raw).trim());
-  return { badge: null, restEntries };
+/**
+ * Direct structured reader for `die.damage_parts` (ZERO regex parsing!).
+ */
+export function resolveDieDamageParts(die) {
+  const raw = Array.isArray(die?.damage_parts) ? die.damage_parts : [];
+  return raw.map((part) => {
+    const grade = part.grade || 'normal';
+    const style = DAMAGE_GRADE_STYLE[grade] || DAMAGE_GRADE_STYLE.normal;
+    const amount = part.amount ?? 0;
+    return {
+      amount,
+      grade,
+      shortText: part.label || `${amount}${style.short}`,
+      exactText: part.exact || `${amount}点${style.label}`,
+      style,
+    };
+  });
 }
 
 // ── Clean Architectural Vector Iconography ──
@@ -786,7 +860,7 @@ export function drawCostCrystal(g, cx, cy, r, fillCol, rimCol = INK.paper) {
   ]).fill({ color: INK.paper, alpha: 0.24 });
 }
 
-// ── Pure Verbatim Text Renderer (ZERO regex guessing, ZERO synthetic highlight boxes!) ──
+// ── Data-Driven Trigger-Highlighted Text Renderer (ZERO RegExp!) ──
 
 export function buildRichVerbatimText(text, {
   maxWidth = 240,
@@ -803,8 +877,12 @@ export function buildRichVerbatimText(text, {
     return root;
   }
 
+  const wrapW = Math.max(40, maxWidth);
   const fill = muted ? INK.muted : baseColor;
   const paragraphs = String(text).split('\n');
+  const markG = new PIXI.Graphics();
+  root.addChild(markG);
+
   let cursorY = 0;
   let maxLineW = 0;
 
@@ -814,27 +892,109 @@ export function buildRichVerbatimText(text, {
       cursorY += Math.round(lineHeight * 0.5);
       continue;
     }
-    const block = new PIXI.Text({
-      text: para,
-      style: {
-        fontFamily: FONT_UI,
-        fontSize,
-        fontWeight: '500',
-        fill,
-        lineHeight,
-        wordWrap: true,
-        breakWords: true,
-        wordWrapWidth: Math.max(40, maxWidth),
-      },
-    });
-    block.position.set(0, cursorY);
-    root.addChild(block);
-    maxLineW = Math.max(maxLineW, Math.min(maxWidth, block.width));
-    cursorY += Math.max(lineHeight, Math.ceil(block.height));
+
+    const segments = parseTriggerSegments(para);
+    const hasTrigger = segments.some((s) => s.kind === 'trigger');
+
+    if (!hasTrigger) {
+      const block = new PIXI.Text({
+        text: para,
+        style: {
+          fontFamily: FONT_UI,
+          fontSize,
+          fontWeight: '500',
+          fill,
+          lineHeight,
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: wrapW,
+        },
+      });
+      block.position.set(0, cursorY);
+      root.addChild(block);
+      maxLineW = Math.max(maxLineW, Math.min(wrapW, block.width));
+      cursorY += Math.max(lineHeight, Math.ceil(block.height));
+      if (pIdx < paragraphs.length - 1) cursorY += paragraphGap;
+      continue;
+    }
+
+    let cursorX = 0;
+    const textOffsetY = Math.max(0, (lineHeight - fontSize * 1.2) * 0.45);
+    const flushLine = () => {
+      maxLineW = Math.max(maxLineW, cursorX);
+      cursorX = 0;
+      cursorY += lineHeight;
+    };
+
+    for (const seg of segments) {
+      if (seg.kind === 'trigger') {
+        const tagFill = muted ? INK.muted : seg.style.color;
+        const t = new PIXI.Text({
+          text: seg.text,
+          style: {
+            fontFamily: FONT_UI,
+            fontSize,
+            fontWeight: '800',
+            fill: tagFill,
+          },
+        });
+        const padX = 3;
+        const boxW = Math.ceil(t.width) + padX * 2;
+        if (cursorX > 0 && cursorX + boxW > wrapW) {
+          flushLine();
+        }
+        const boxH = Math.min(lineHeight - 1, Math.ceil(fontSize * 1.32));
+        const boxY = cursorY + Math.max(0, (lineHeight - boxH) * 0.5);
+        markG.roundRect(cursorX, boxY, boxW, boxH, 3)
+          .fill({ color: muted ? INK.paperSoft : seg.style.wash, alpha: 0.94 });
+        markG.moveTo(cursorX + 1.5, boxY + boxH - 0.5)
+          .lineTo(cursorX + boxW - 1.5, boxY + boxH - 0.5)
+          .stroke({ width: 1.3, color: muted ? INK.line : seg.style.rule, alpha: 0.9 });
+        t.position.set(cursorX + padX, cursorY + textOffsetY);
+        root.addChild(t);
+        cursorX += boxW + 2.5;
+        continue;
+      }
+
+      // Plain text segment: character-accurate wrapping around inline trigger tags
+      let buf = '';
+      for (const ch of seg.text) {
+        const nextBuf = buf + ch;
+        const nextW = measureTextWidth(nextBuf, fontSize, false, FONT_UI);
+        if (cursorX + nextW > wrapW && (buf.length > 0 || cursorX > 0)) {
+          if (buf.length > 0) {
+            const chunk = new PIXI.Text({
+              text: buf,
+              style: { fontFamily: FONT_UI, fontSize, fontWeight: '500', fill },
+            });
+            chunk.position.set(cursorX, cursorY + textOffsetY);
+            root.addChild(chunk);
+            cursorX += chunk.width;
+            buf = '';
+          }
+          flushLine();
+        }
+        buf += ch;
+      }
+      if (buf.length > 0) {
+        const chunk = new PIXI.Text({
+          text: buf,
+          style: { fontFamily: FONT_UI, fontSize, fontWeight: '500', fill },
+        });
+        chunk.position.set(cursorX, cursorY + textOffsetY);
+        root.addChild(chunk);
+        cursorX += chunk.width;
+      }
+    }
+
+    if (cursorX > 0) {
+      maxLineW = Math.max(maxLineW, cursorX);
+      cursorY += lineHeight;
+    }
     if (pIdx < paragraphs.length - 1) cursorY += paragraphGap;
   }
 
-  root._width = Math.min(maxWidth, Math.ceil(maxLineW));
+  root._width = Math.min(wrapW, Math.ceil(maxLineW));
   root._height = Math.max(lineHeight, Math.ceil(cursorY));
   return root;
 }
@@ -922,6 +1082,12 @@ export function buildDamageBadge(badge, { compact = false, muted = false } = {})
       g.poly([icx, icy - 3.6, icx + 3.4, icy, icx, icy + 3.6, icx - 3.4, icy]).fill({ color: ic });
     } else if (badge.grade === 'pierce') {
       g.poly([icx - 3, icy - 2.6, icx + 3.6, icy, icx - 3, icy + 2.6]).fill({ color: ic });
+    } else if (badge.grade === 'lightcore') {
+      drawLightStar(g, icx, icy, 3.8, ic, 0.95);
+    } else if (badge.grade === 'real') {
+      g.moveTo(icx - 2.8, icy - 2.8).lineTo(icx + 2.8, icy + 2.8)
+        .moveTo(icx + 2.8, icy - 2.8).lineTo(icx - 2.8, icy + 2.8)
+        .stroke({ width: 1.5, color: ic, cap: 'round' });
     } else {
       g.circle(icx, icy, 2.6).fill({ color: ic });
     }
@@ -955,31 +1121,40 @@ export function buildUnifiedDieRow(die, {
   const root = new PIXI.Container();
   const dType = isBlanked ? 'blank' : die.type;
   const ds = DIE_STYLE[dType] || DIE_STYLE.blank;
-  const { badge, restEntries } = isBlanked ? { badge: null, restEntries: [] } : extractDieDamageBadge(die.entries);
+  const damageParts = isBlanked ? [] : resolveDieDamageParts(die);
+  const restEntries = isBlanked ? [] : (die.entries || []).filter(Boolean).map((raw) => String(raw).trim());
   const tight = dense || compact;
   const slim = dense && width < 194;
   const fontSize = slim ? 10.2 : dense ? 10.6 : compact ? 11 : 11.8;
   const lineH = slim ? 14.2 : dense ? 14.8 : compact ? 16 : 17.5;
-  if (die.printed_line && !isBlanked) {
-    const line = buildRichVerbatimText(die.printed_line, {
-      maxWidth: width - 10, fontSize, lineHeight: lineH, muted: spent || destroyed,
-    });
-    root._height = line._height + 6;
-    const mark = new PIXI.Graphics();
-    if (active) mark.roundRect(0, 0, width, root._height, 3).fill({color: INK.goldBg});
-    mark.rect(0, 2, 2, root._height - 4).fill({color: spent || destroyed ? INK.muted : ds.color});
-    line.position.set(7, 3);
-    root.addChild(mark, line);
-    return root;
-  }
-  const leftColW = slim ? 64 : dense ? 74 : compact ? 80 : 90;
+  const leftColW = slim ? 66 : dense ? 76 : compact ? 82 : 92;
   const rightX = leftColW + 5;
   const rightW = Math.max(76, width - rightX - 3);
 
-  const dmgNode = badge ? buildDamageBadge(badge, { compact: false, muted: spent }) : null;
+  let dmgNode = null;
+  if (damageParts.length) {
+    dmgNode = new PIXI.Container();
+    let dx = 0;
+    let dy = 0;
+    let maxRowH = 0;
+    for (const part of damageParts) {
+      const b = buildDamageBadge(part, { compact: slim, muted: spent });
+      if (dx > 0 && dx + b._width > rightW) {
+        dx = 0;
+        dy += maxRowH + 3;
+        maxRowH = 0;
+      }
+      b.position.set(dx, dy);
+      dmgNode.addChild(b);
+      dx += b._width + 4;
+      maxRowH = Math.max(maxRowH, b._height);
+    }
+    dmgNode._height = dy + maxRowH;
+  }
+
   const dieRules = isBlanked ? [] : [...(die.range_traits || [])];
   if (!isBlanked && die.resource_cost) {
-    dieRules.push(`用骰须付 ${die.resource_cost.amount} ${die.resource_cost.status}`);
+    dieRules.push(`【用骰前】消耗${die.resource_cost.amount}${die.resource_cost.status}。`);
   }
   if (destroyed) dieRules.unshift('已摧毁');
   dieRules.push(...restEntries);
@@ -1019,6 +1194,7 @@ export function buildUnifiedDieRow(die, {
   const leftMidY = rightContentH > baseMinH ? Math.min(rowH / 2, baseMinH / 2 + 2) : rowH / 2;
   drawUnifiedDieFrame(g, dType, slim ? 14 : 16, leftMidY, slim ? 5.6 : tight ? 6.2 : 7.2, { muted: spent, active });
 
+  const rngX = slim ? 24 : 28;
   const rngTxt = new PIXI.Text({
     text: formatDieRange(die),
     style: {
@@ -1028,8 +1204,12 @@ export function buildUnifiedDieRow(die, {
       fill: spent ? INK.muted : ds.color,
     },
   });
+  const maxRngW = Math.max(24, leftColW - rngX + 1);
+  if (rngTxt.width > maxRngW) {
+    rngTxt.scale.set(maxRngW / rngTxt.width);
+  }
   rngTxt.anchor.set(0, 0.5);
-  rngTxt.position.set(slim ? 24 : 28, leftMidY);
+  rngTxt.position.set(rngX, leftMidY);
   root.addChild(g, rngTxt);
 
   let ry = Math.max(4, (rowH - rightContentH) / 2);
