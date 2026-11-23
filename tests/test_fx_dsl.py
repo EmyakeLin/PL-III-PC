@@ -133,6 +133,25 @@ class FxDslInterfaceTests(unittest.TestCase):
                 self.assertEqual(asset.name, f"{name}.svg")
                 self.assertEqual(content_type, "image/svg+xml")
 
+    def test_lan_qing_sprite_and_four_activation_faces_have_their_own_assets(self):
+        from xml.etree import ElementTree
+
+        state = BattleSession(seed=37).state()
+        sprite, mime = _resolve_static(state["character_sprites"]["lan_qing"])
+        self.assertEqual((sprite.name, mime), ("lan_qing.svg", "image/svg+xml"))
+        root = ElementTree.parse(sprite).getroot()
+        self.assertEqual((root.get("viewBox"), root.get("data-foot")), ("0 0 160 160", "80,136"))
+        self.assertEqual([g.get("id") for g in root.findall("{*}g")], [
+            "bone_back_hair", "bone_cape_back", "bone_arm_back", "bone_torso", "bone_head", "bone_weapon"])
+        actor = next(c for c in load_characters_from_packs() if c["id"] == "lan_qing")
+        charges = {skill["form_when"]["status"] for skill in actor["skills"] if "form_when" in skill}
+        self.assertEqual(len(charges), 4)
+        for name in charges:
+            with self.subTest(status=name):
+                icon, mime = _resolve_static(state["status_visuals"][name]["icon_url"])
+                self.assertEqual((icon.stem, mime), (name, "image/svg+xml"))
+                self.assertEqual(ElementTree.parse(icon).getroot().get("viewBox"), "0 0 24 24")
+
     def test_status_icons_discovery_inline_sanitization_and_static_serving(self):
         session = BattleSession(seed=37)
         snap = session.state()
