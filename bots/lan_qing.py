@@ -110,7 +110,7 @@ class _Turn:
         shock = {key: e["statuses"].get("电击", 0) for key, e in self.enemies.items()}
         stagger = sum(e["statuses"].get("失衡", 0) + 4 * e["statuses"].get("致命失衡", 0)
                       for e in self.enemies.values())
-        strength = status.get("涌流灌注", 0)
+        strength = self.actor["passive_values"].get("涌流灌注", 0)
         played = 0
         value = 0.0
         for own, opposing, contested in self._sequence(extra, response):

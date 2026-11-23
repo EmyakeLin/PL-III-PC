@@ -3,10 +3,13 @@ import random
 import unittest
 from unittest.mock import patch
 
+from battle_mcp.decision_view import actor_view
+from displayer import Displayer
 from game import Game
 from loader import load_characters_from_packs
 from models.card import Card
 from models.character import Character
+from models.opcode import OpCode
 from player.player import Player
 
 
@@ -85,6 +88,58 @@ class LanQingTests(unittest.TestCase):
         self.assertCountEqual(rolled, dice)
         self.assertEqual([(d.final_score, d.clash_result, d.landed_hits) for d in dice],
                          [(24, None, 1), (4, None, 1)])
+
+    def test_infusion_adds_to_final_score_per_use_and_only_activation_is_a_status(self):
+        first = self.place(self.cards["lan_turn"])
+        second = self.place(Card(self.left, first.printed_data, self.actor), 1)
+        writes = []
+        self.game.context.register_entries(self.actor, [dict(trigger="BEFORE STATUS", subject="target",
+            operation=lambda ctx: writes.append(ctx.event["status"]))])
+        self.fight()
+        self.assertEqual([c.instantiated_dice[0].final_score for c in (first, second)], [10, 12])
+        self.assertEqual(writes, ["电叉·极锐刺·活化"] * 2)
+        self.assertNotIn("涌流灌注", self.actor.status_rules)
+        self.assertEqual(self.actor.turn_state["涌流灌注"], 4)
+        public = Displayer(self.game)
+        view = public.snapshot()["players"][0]["characters"][0]
+        self.assertEqual(view["statuses"], {"电叉·极锐刺·活化": 1})
+        self.assertEqual(view["passive_values"]["涌流灌注"], 4)
+        self.assertEqual(actor_view(view)["passive_values"]["涌流灌注"], 4)
+        for actor, kind, expected in ((self.actor, "slash", 11), (self.actor, "blank", 7),
+                                      (self.enemy, "slash", 7)):
+            die = self.training(actor, 0).get_current_die(self.game)
+            die.type = kind
+            for _ in range(2):
+                self.assertEqual(die.resolve_value(OpCode.RESOLVE_FINAL_SCORE, 7), expected)
+        self.game.finish_turn()
+        self.game.start_turn()
+        view = public.snapshot()["players"][0]["characters"][0]
+        self.assertNotIn("涌流灌注", view["passive_values"])
+        self.assertEqual(view["statuses"]["电叉·极锐刺·活化"], 1)
+        die = self.training(self.actor, 0).get_current_die(self.game)
+        self.assertEqual(die.resolve_value(OpCode.RESOLVE_FINAL_SCORE, 7), 7)
+
+    def test_unpaid_infusion_grants_neither_a_bonus_nor_an_activation(self):
+        self.left.max_cost = 0
+        self.place(self.cards["lan_turn"])
+        self.fight()
+        self.assertNotIn("涌流灌注", self.actor.turn_state)
+        self.assertNotIn("电叉·极锐刺·活化", self.actor.statuses)
+
+    def test_infusion_follows_the_borrower_after_the_card_changes_hands(self):
+        borrowed = self.cards["lan_turn"]
+        borrowed.set_controller(self.enemy)
+        self.place(borrowed)
+        follow_up = self.place(self.training(self.enemy, 0), 1)
+        self.game.context.register_entries(self.enemy, [dict(trigger="after_skill_use",
+            when=[{"left":"$event.card.id", "op":"eq", "right":"lan_turn"}],
+            operation=lambda ctx: borrowed.set_controller(self.actor))])
+        self.fight()
+        self.assertEqual(borrowed.instantiated_dice[0].final_score, 10)
+        self.assertEqual(follow_up.instantiated_dice[0].final_score, 6)
+        self.assertEqual(self.enemy.turn_state["涌流灌注"], 2)
+        self.assertNotIn("涌流灌注", self.actor.turn_state)
+        self.assertNotIn("涌流灌注", self.enemy.statuses)
 
     def test_paralysis_samples_only_combat_rolls_before_clamping_or_final_bonuses(self):
         die = self.training(self.actor, 5).get_current_die(self.game)

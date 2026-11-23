@@ -1,12 +1,11 @@
 {
   "faction": "经值事务所",
-  "turn_end_statuses": ["涌流灌注","电击","麻痹","电流"],
+  "turn_end_statuses": ["电击","麻痹","电流"],
   "status_rules": {
     "电叉·回环舞·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
     "电叉·极锐刺·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
     "深秋·风卷残叶·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
     "残雪·幽蓝流光·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
-    "涌流灌注": {"per_stack":{"final_score":1}},
     "电击": {"description":"每次实际被命中时获得等同层数的电流及一半层数（向下取整）的失衡。受到的麻痹至多额外增加3层，回合末解除。"},
     "麻痹": {"description":"战斗骰的变动点数改取两枚同范围骰点差的绝对值，按正常下限处理，随后减少1层。回合末清空。"},
     "电流": {"description":"回合末每4层（向上取整）造成1点穿甲，至多3点。超出上限的每点由持有者选择弃置一张手牌，然后解除。"}
@@ -128,6 +127,22 @@
                   [2, "ADD"], "WHEN", "DIE_BASE_ADD"
                 ]
               }
+            }
+          ]
+        },
+        {
+          "name": "涌流灌注",
+          "display_value": {"field":"$self.turn_state","key":"涌流灌注"},
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+              "subject": "source",
+              "description": "自身的非空白战斗骰结算最终点数时，加上本回合「转势·涌流灌注」累计的加值。",
+              "when": [
+                {"left":{"field":"$self.turn_state","key":"涌流灌注","default":0},"op":"gt","right":0},
+                {"left":"$event.die.type","op":"ne","right":"blank"}
+              ],
+              "operation": {"op":"program","code":["$self.turn_state","涌流灌注",0,"LOOKUP","ADD"]}
             }
           ]
         },
@@ -496,7 +511,29 @@
             {
               "trigger": "on_skill_use",
               "description": "本回合自身所有骰子最终点数+2。",
-              "operation": {"op":"program","code":["$self","涌流灌注",2,"STATUS"]}
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.turn_state", "涌流灌注", 0, "LOOKUP", "previous", "STORE",
+                  "$self", "涌流灌注", "$local.previous", 2, "ADD", "SET_TURN_STATE",
+                  "$self.id", "lan_qing", "EQ", "NOT", "$local.previous", 0, "EQ", "AND",
+                  [
+                    {
+                      "schedule": {
+                        "event": "before_dice_use",
+                        "source": "$self", "target": "$self",
+                        "after_turns": 0, "through_turns": 0, "uses": null,
+                        "require_source_alive": true, "require_target_alive": true,
+                        "when": [
+                          {"left":"$event.source","op":"eq","right":"$event.scheduled.target"},
+                          {"left":"$event.die.type","op":"ne","right":"blank"}
+                        ],
+                        "then": ["$event.die","$event.scheduled.target.turn_state","涌流灌注",0,"LOOKUP","DIE_FINAL_ADD"]
+                      }
+                    }
+                  ], "WHEN"
+                ]
+              }
             }
           ],
           "dice": [

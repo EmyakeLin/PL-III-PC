@@ -13,6 +13,8 @@ def actor_view(actor):
         values = {name: n for name, n in actor.get(key, {}).items() if n}
         if values:
             data[key] = values
+    if actor.get("passive_values"):
+        data["passive_values"] = actor["passive_values"]
     if actor.get("reserved_dice"):
         data["reserved_dice"] = actor["reserved_dice"]
     if actor["bleed_burst"]:

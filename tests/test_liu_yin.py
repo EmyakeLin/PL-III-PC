@@ -215,6 +215,23 @@ class LiuYinTests(unittest.TestCase):
                                    card=card, target=self.enemy)
         self.assertEqual((self.liu.hp, self.enemy.lightcore_hp), (2, 27))
 
+    def test_rewind_restores_spike_activation_but_leaves_infusion_at_its_current_value(self):
+        self.deploy()
+        self.liu.add_status("环境压制", -13)
+        pack = next(c for c in load_characters_from_packs() if c["id"] == "lan_qing")
+        card = Card(self.left, next(s for s in pack["skills"] if s["id"] == "lan_turn"), self.liu)
+        self.emit_use(card)
+        self.emit_use(self.cards["liu_rewind"])
+        rewind = next(e for e in self.ctx.scheduled_effects if "stacks" in e.capture)
+        self.assertEqual(rewind.capture["stacks"]["电叉·极锐刺·活化"], 1)
+        self.assertNotIn("涌流灌注", rewind.capture["stacks"])
+        self.emit_use(card)
+        self.ctx.eval_block([self.liu, "电叉·极锐刺·活化", 1, OpCode.SPEND_STATUS])
+        self.liu.add_status("环境压制", -6)
+        self.assertNotIn(rewind, self.ctx.scheduled_effects)
+        self.assertEqual(self.liu.statuses["电叉·极锐刺·活化"], 1)
+        self.assertEqual(self.liu.turn_state["涌流灌注"], 4)
+
     def test_zero_release_subsequent_reduction_and_armor_actual_gain(self):
         self.deploy()
         self.liu.add_status("战甲", 1)

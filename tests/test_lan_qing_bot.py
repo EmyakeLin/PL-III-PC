@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from battle_mcp.room import Room
-from bots.lan_qing import DANCE, FAMILIES, LEAF, LIGHT, SPIKE, _use_face, choose_move, play_seat
+from bots.lan_qing import DANCE, FAMILIES, LEAF, LIGHT, SPIKE, _Turn, _use_face, choose_move, play_seat
 
 
 class LanQingDecisions(unittest.TestCase):
@@ -57,6 +57,13 @@ class LanQingDecisions(unittest.TestCase):
         active = {LEAF}
         self.assertFalse(_use_face("lan_light", active))
         self.assertEqual(active, FAMILIES)
+
+    def test_score_reads_the_public_infusion_bonus(self):
+        turn = _Turn(self.frame)
+        play = [self.cards["lan_end"]]
+        base = turn.score(play)
+        self.actor["passive_values"]["涌流灌注"] = 2
+        self.assertAlmostEqual(turn.score(play) - base, 0.7)
 
     def test_skips_lethal_self_payment_even_when_a_third_hand_play_would_heal_next_turn(self):
         self.frame["duels"] = [self.slot(1, "lan_end"), self.slot(2, "lan_dance_2")]
