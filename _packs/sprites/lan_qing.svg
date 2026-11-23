@@ -1,71 +1,54 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
   <title>澜清 · 幽兰残雪</title>
-  <desc>蓝发垂至腰际，右手持双齿电叉，身后悬着枫落的三枚铜红色方柱。</desc>
+  <desc>象牙白圆首，侧分蓝发向后垂落。前方的电叉有两枚白刃，枫落的三枚铜色方柱悬在身后。</desc>
   <defs>
-    <linearGradient id="lan_hair" x2=".85" y2="1">
-      <stop stop-color="#91BBC7"/><stop offset=".48" stop-color="#507F98"/><stop offset="1" stop-color="#31576F"/>
+    <linearGradient id="lan_body" x1="0" y1="0" x2=".8" y2="1">
+      <stop stop-color="#5398A7"/><stop offset="1" stop-color="#286779"/>
     </linearGradient>
-    <linearGradient id="lan_coat" x2="1" y2=".8">
-      <stop stop-color="#42687A"/><stop offset=".55" stop-color="#263F50"/><stop offset="1" stop-color="#476675"/>
+    <linearGradient id="lan_hair" x1="1" y1="0" x2=".15" y2="1">
+      <stop stop-color="#4D8097"/><stop offset="1" stop-color="#8DB6C3"/>
     </linearGradient>
-    <clipPath id="lan_body_clip"><path d="M72 73 Q80 70 90 76 L99 83 93 99 Q94 111 105 129 L95 135 57 135 52 131 Q63 111 66 94 L60 84Z"/></clipPath>
-    <clipPath id="lan_face_clip"><path d="M68 56 Q68 42 84 42 Q98 42 98 56 L101 62 97 63 Q95 73 85 75 Q70 72 68 56Z"/></clipPath>
+    <linearGradient id="lan_copper" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ECC586"/><stop offset="1" stop-color="#BD8050"/>
+    </linearGradient>
+    <clipPath id="lan_tc"><path d="M80 70 101 94 98 136H62l-3-42Z"/></clipPath>
+    <clipPath id="lan_hc"><circle cx="80" cy="56" r="13.5"/></clipPath>
   </defs>
   <g id="bone_back_hair" data-pivot="80,86">
-    <path d="M68 49 Q72 37 86 38 Q97 38 101 53 Q97 69 101 82 Q105 96 98 105 Q99 93 92 89 L83 80Z" fill="#40657C"/>
+    <circle cx="80" cy="86" r="42" fill="#E4F1F1" fill-opacity=".76" stroke="#488897" stroke-width="1.3" stroke-opacity=".32"/>
   </g>
   <g id="bone_cape_back" data-pivot="70,82">
-    <path d="M80 39 C59 33 57 52 57 70 C57 88 51 99 38 106 Q46 108 52 103 Q45 114 25 115 C45 127 66 114 71 104 Q70 115 60 122 Q82 119 83 91 L87 56Z" fill="url(#lan_hair)"/>
-    <path d="M65 55 C60 71 66 93 47 109 C59 103 67 91 67 78 Q69 64 73 55Z" fill="#A9CBD0"/>
-    <path d="M70 64 C70 84 71 103 56 113 Q73 106 76 82Z" fill="#345C77"/>
+    <path d="M71 48Q64 52 64 68C63 89 52 104 31 116Q57 114 69 96Q68 104 62 110C80 99 79 77 77 59Z" fill="url(#lan_hair)" opacity=".93"/>
+    <path d="M67 66Q66 92 49 105" fill="none" stroke="#D6EBEC" stroke-width="1.6" stroke-linecap="round" opacity=".76"/>
   </g>
-  <g id="bone_arm_back" data-pivot="65,91">
-    <g transform="rotate(-27 41 69)" stroke-linejoin="round">
-      <path d="M32 74V46l6-3 6 3v28l-6 3Z" fill="#AB6047" stroke="#FFF4DD" stroke-width="1.5"/>
-      <path d="m32 46 6-3 6 3-6 3Z" fill="#F0C18D"/><path d="m38 49 6-3v28l-6 3Z" fill="#814735"/>
-      <path d="M32 91V80l6-3 6 3v11l-6 3Z" fill="#BB7956" stroke="#FFF4DD" stroke-width="1.3"/>
-      <path d="m38 83 6-3v11l-6 3Z" fill="#814735"/>
-      <path d="M45 66V35l5-3 5 3v31l-5 3Z" fill="#C78157" stroke="#FFF4DD" stroke-width="1.5"/>
-      <path d="m45 35 5-3 5 3-5 3Z" fill="#F5D5AA"/><path d="m50 38 5-3v31l-5 3Z" fill="#9A5941"/>
+  <g id="bone_arm_back" data-pivot="65,87">
+    <g transform="rotate(-27 49 78)">
+      <path d="m39 70 4-2 4 2v13l-4 2-4-2Z M50 56l4-2 4 2v19l-4 2-4-2Z M50 81l4-2 4 2v7l-4 2-4-2Z" fill="url(#lan_copper)"/>
+      <path d="m43 72 4-2v13l-4 2Z M54 58l4-2v19l-4 2Z M54 83l4-2v7l-4 2Z" fill="#AB7453"/>
     </g>
   </g>
   <g id="bone_torso" data-pivot="80,136">
-    <path d="M72 73 Q80 70 90 76 L99 83 93 99 Q94 111 105 129 L95 135 57 135 52 131 Q63 111 66 94 L60 84Z" fill="url(#lan_coat)"/>
-    <g clip-path="url(#lan_body_clip)">
-      <path d="m64 72 18 8 8-5-5 26-7 10-6-24Z" fill="#E7E8DA"/>
-      <path d="m77 78 5 3-3 9-4-6Z" fill="#B96E51"/>
-      <path d="m57 80 13-9 7 27-13-13-6 3Zm35-9 10 11-10 3-13 16Z" fill="#82A4AD"/>
-      <path d="m60 105 35-9 2 5-37 9Z" fill="#B98158"/>
-      <path d="m77 107-4 29H59Z" fill="#638792"/><path d="m87 106 12 23-9 4Z" fill="#537482"/>
+    <path d="M80 70 101 94 98 136H62l-3-42Z" fill="url(#lan_body)"/>
+    <g clip-path="url(#lan_tc)">
+      <path d="m80 77 11 21-11 18-11-18Z" fill="#E8F3F0"/>
+      <path d="m82 91 2 7-6 7-2-7Z" fill="url(#lan_copper)"/>
+      <path d="M60 126h40" fill="none" stroke="#DDB078" stroke-width="2"/>
     </g>
-    <path d="M72 73 Q80 70 90 76 L99 83 93 99 Q94 111 105 129 L95 135 57 135 52 131 Q63 111 66 94 L60 84Z" fill="none" stroke="#FFFDF7" stroke-width="1.8" stroke-linejoin="round"/>
-    <path d="m65 80 8 4-10 11-9-3Z" fill="#456678" stroke="#F4EBD9" stroke-width="1.4"/>
-    <path d="m89 80 8 4 1 9 10 1-2 7-14-3-5-11Z" fill="#3D5866" stroke="#FFF4DF" stroke-width="1.5"/>
+    <path d="M80 70 101 94 98 136H62l-3-42Z" fill="none" stroke="#FFFDF7" stroke-width="2.2" stroke-linejoin="round"/>
   </g>
   <g id="bone_head" data-pivot="80,68">
-    <path d="M68 56 Q68 42 84 42 Q98 42 98 56 L101 62 97 63 Q95 73 85 75 Q70 72 68 56Z" fill="#FAE6CD" stroke="#685445" stroke-width="1.4"/>
-    <g clip-path="url(#lan_face_clip)">
-      <path d="M68 56q14 3 20-11l10 7 1-13-31-2Z" fill="#E2C4A6"/>
-      <path d="m88 59 8-2-3 3Z" fill="#364856"/>
+    <circle cx="80" cy="56" r="13.5" fill="#FFFDF7" stroke="#3B322A" stroke-width="1.8"/>
+    <g clip-path="url(#lan_hc)">
+      <path d="M65 62Q78 59 85 47Q89 50 96 50L94 40H65Z" fill="#58879E"/>
     </g>
-    <path d="M64 63 C57 55 62 39 75 35 C88 30 98 37 101 49 Q95 48 90 42 C87 50 79 55 72 57 C75 63 74 72 66 78 Q68 69 64 63Z" fill="url(#lan_hair)" stroke="#426276" stroke-width="1.2"/>
-    <path d="M65 49 Q72 32 88 37 Q77 39 70 49Z" fill="#B4D3D5"/>
-    <path d="m63 56 12-7-4 6-8 4Z" fill="#E6AC6F"/>
-    <path d="m64 58-4 6 1-8 6-5Z" fill="#B66648"/>
-    <path d="m82 64 2 3-2 4-2-4Z" fill="#D99F5C"/>
+    <path d="m69 51 7-4-3 5-4 2Z" fill="#E9BD7C"/>
   </g>
-  <g id="bone_weapon" data-pivot="103,97">
-    <g transform="rotate(18 108 87)" stroke-linejoin="round">
-      <path d="M106 72h5v57l-3 5-2-6Z" fill="#436477" stroke="#FFFAE9" stroke-width="1.3"/>
-      <path d="M106 85h5v13h-5Z" fill="#304B5C"/><path d="M106 100h5v3h-5Z" fill="#C68F56"/>
-      <path d="M97 32l5 9 1 18 5 5 6-6 1-17 6-13-1 33-8 12h-8l-8-12Z" fill="#FAF7E7" stroke="#385F70" stroke-width="2"/>
-      <path d="m97.5 36 1 23 6 10 2-1-6-11Z" fill="#84ADB4"/>
-      <path d="m119 34-2 24-6 9 2 1 5-8Z" fill="#80A5B0"/>
-      <path d="m104 68 5-5 5 5-3 6h-5Z" fill="#C6884F"/>
-      <circle cx="109" cy="67" r="2.1" fill="#FFF5CC"/>
-      <path d="m109 61-3-5 6-4-4-5" fill="none" stroke="#549CA5" stroke-width="2.4" stroke-linejoin="miter"/>
-      <path d="M104 75h9l-1 4h-7Z" fill="#E2AD76" stroke="#536976" stroke-width="1"/>
+  <g id="bone_weapon" data-pivot="98,102">
+    <g transform="translate(118 82) rotate(37)" stroke-linejoin="round">
+      <path d="M0 0v34" stroke="#397886" stroke-width="3.4" stroke-linecap="round"/>
+      <path d="m-7-29 4 6v15L0-5l4-4v-15l4-7v24L2 2h-4l-5-8Z" fill="#FFFDF7" stroke="#397886" stroke-width="1.9"/>
+      <path d="m1-18-3 5h4l-3 5" fill="none" stroke="#599DA5" stroke-width="1.6"/>
+      <circle cy="1" r="3.2" fill="url(#lan_copper)"/>
     </g>
-    <path d="m100 93 5-2 4 3-2 6-5 1-3-3Z" fill="#FAE3C4" stroke="#695648" stroke-width="1.2"/>
   </g>
 </svg>
