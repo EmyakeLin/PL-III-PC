@@ -45,9 +45,11 @@ async function boot() {
   });
 
   const audio = new TabletopAudio();
-  const isRoom = location.pathname.startsWith('/canvas/');
+  const table = location.pathname.match(/^(.*)\/(canvas|table)\/(?:index\.html)?$/);
+  const baseUrl = table?.[1] || '';
+  const isRoom = table?.[2] === 'canvas';
   const token = new URLSearchParams(location.hash.slice(1)).get('token');
-  const transport = isRoom ? new RoomSeatTransport(token) : new LocalBattleTransport();
+  const transport = isRoom ? new RoomSeatTransport(token, baseUrl) : new LocalBattleTransport(baseUrl, token);
   const openBattleRecord = isRoom ? bindBattleRecord(transport) : null;
   const director = new GameDirector(app, physics, threeWorld, audio, transport, openBattleRecord);
 
@@ -63,7 +65,8 @@ async function boot() {
 
   if (isRoom) {
     transport.follow(state => director.applyState(state, { isInitial: !director.state }), error => {
-      const message = error?.status === 403 ? '邀请已失效，请用本局的私人邀请。'
+      const message = error?.status === 404 ? '房间已关闭，请返回大厅。'
+        : error?.status === 403 ? '邀请已失效，请用本局的私人邀请。'
         : error ? '房间连接中断，正在重连。' : '已重新连接房间。';
       director.showToast(message, error ? 0xcf4932 : 0x1a825e, 5);
     });

@@ -69,7 +69,14 @@ class Room:
         if challenge:
             bot = True
             if roster is None:
-                roster = [["plan_b_annolin"], [challenge.character_id]]
+                human = "plan_b_annolin"
+                if human in challenge.opponents:
+                    from loader import load_characters_from_packs
+                    human = next((c["id"] for c in load_characters_from_packs()
+                                  if c["id"] not in challenge.opponents), None)
+                    if human is None:
+                        raise ValueError("挑战需要至少一名可选的玩家角色。")
+                roster = [[human], list(challenge.opponents)]
         self.bot_side = 2 if bot else None
         self._seed = seed
         self._lobby_picks = bot_roster(roster) if bot and roster is not None else None
@@ -95,7 +102,7 @@ class Room:
         roster = [picks[side] for side in SEATS]
         if self.challenge:
             human, opponent = ([team] if isinstance(team, str) else team for team in roster)
-            if opponent != [self.challenge.character_id] or self.challenge.character_id in human:
+            if tuple(opponent) != self.challenge.opponents or any(c in self.challenge.opponents for c in human):
                 raise ValueError("挑战对手固定，请从其余角色中选择自己的阵容。")
         open_rosters = self.bot_side is not None and all(isinstance(team, list) for team in roster)
         return ArenaEngine(roster, seed=self._seed, bot_side=self.bot_side, open_rosters=open_rosters,

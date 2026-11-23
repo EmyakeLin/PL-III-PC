@@ -519,7 +519,44 @@ class CarrierTests(unittest.TestCase):
         self.assertEqual(room.canvas_state(1)["match_number"], 2)
 
 
-class ChallengeWireTests(WireClient, unittest.TestCase):
+class PlaysChallenge:
+    def play(self, preset, squad, *, prefix='', credentials=None):
+        player = {'side': 1} if credentials is None else credentials
+        def post(path, **body):
+            code, state = self.request(prefix + "/api/" + path, body, **player)
+            self.assertEqual(code, 200, state)
+            return state
+
+        lobby = post("canvas/state")
+        self.assertEqual(lobby["challenge"], preset.name)
+        post("canvas/ready", revision=lobby["revision"], request_id="start", roster=[squad, list(preset.opponents)])
+        for n in range(500):
+            view = post("canvas/state")
+            frame = view["frame"]
+            self.assertIsNone(frame["players"][1]["hand"])
+            args = dict(revision=view["revision"], request_id=str(n))
+            if frame["is_over"]:
+                break
+            if draw := frame.get("draw_select"):
+                post("canvas/draw_bottom", card_ids=choose_draw_bottom(draw), **args)
+            elif moves := [m for m in view["options"] if m["kind"] in ORDINARY]:
+                post("act", option_id=choose_move(frame, moves)["id"], **args)
+            else:
+                self.assertTrue(view["can_advance"])
+                post("canvas/next", **args)
+        else:
+            self.fail("挑战未进入终局")
+        public = self.request(prefix + "/api/canvas/state", {})[1]
+        self.assertTrue(public["frame"]["is_over"])
+        self.assertEqual(public["frame"]["winner_side"], frame["winner_side"])
+        self.assertTrue(all(p["hand"] is None for p in public["frame"]["players"]))
+        post("canvas/rematch", revision=view["revision"], request_id="rematch")
+        again = post("canvas/state")
+        self.assertEqual(again["match_number"], 2)
+        self.assertEqual(again["challenge"], preset.name)
+
+
+class ChallengeWireTests(PlaysChallenge, WireClient, unittest.TestCase):
     def test_invitation_plays_and_restarts_both_challenges(self):
         for challenge, preset in CHALLENGES.items():
             with self.subTest(challenge=challenge):
@@ -541,37 +578,3 @@ class ChallengeWireTests(WireClient, unittest.TestCase):
                     finally:
                         self.server.shutdown()
                         thread.join(2)
-
-    def play(self, preset, squad):
-        def post(path, **body):
-            code, state = self.request("/api/" + path, body, side=1)
-            self.assertEqual(code, 200, state)
-            return state
-
-        lobby = post("canvas/state")
-        self.assertEqual(lobby["challenge"], preset.name)
-        post("canvas/ready", revision=lobby["revision"], request_id="start", roster=[squad, [preset.character_id]])
-        for n in range(500):
-            view = post("canvas/state")
-            frame = view["frame"]
-            self.assertIsNone(frame["players"][1]["hand"])
-            args = dict(revision=view["revision"], request_id=str(n))
-            if frame["is_over"]:
-                break
-            if draw := frame.get("draw_select"):
-                post("canvas/draw_bottom", card_ids=choose_draw_bottom(draw), **args)
-            elif moves := [m for m in view["options"] if m["kind"] in ORDINARY]:
-                post("act", option_id=choose_move(frame, moves)["id"], **args)
-            else:
-                self.assertTrue(view["can_advance"])
-                post("canvas/next", **args)
-        else:
-            self.fail("挑战未进入终局")
-        public = self.request("/api/canvas/state", {})[1]
-        self.assertTrue(public["frame"]["is_over"])
-        self.assertEqual(public["frame"]["winner_side"], frame["winner_side"])
-        self.assertTrue(all(p["hand"] is None for p in public["frame"]["players"]))
-        post("canvas/rematch", revision=view["revision"], request_id="rematch")
-        again = post("canvas/state")
-        self.assertEqual(again["match_number"], 2)
-        self.assertEqual(again["challenge"], preset.name)

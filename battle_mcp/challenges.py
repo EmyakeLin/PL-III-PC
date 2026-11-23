@@ -14,6 +14,11 @@ class Challenge:
     character_id: str
     choose_move: Callable
     packs: tuple[Path, ...] = ()
+    teammates: tuple[str, ...] = ()
+
+    @property
+    def opponents(self):
+        return (self.character_id, *self.teammates)
 
 
 def carrier_move(frame, moves):

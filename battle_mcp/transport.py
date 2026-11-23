@@ -1,7 +1,6 @@
 """One private invitation per seat, shared by the browser and Streamable HTTP MCP."""
 
 import json
-import secrets
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,7 +10,7 @@ from battle_ui.assets import resolve_static
 
 from .decision_view import decision_view
 from .declarations import EVENTS, KINDS
-from .manual import ManualDesk
+from .hosting import HostedRoom, Lobby, RequestError, mode_catalog
 from .network import allowed_origins, http_origin, https_origin, ipv4_address
 
 
@@ -20,6 +19,8 @@ STATIC_DIR = Path(__file__).with_name("static")
 ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
           "/style.css": ("style.css", "text/css"), "/desk": ("desk.html", "text/html"),
           "/desk.js": ("desk.js", "text/javascript"), "/desk.css": ("desk.css", "text/css")}
+LOBBY_ASSETS = {"/lobby/": ("lobby.html", "text/html"), "/lobby/lobby.js": ("lobby.js", "text/javascript"),
+                "/lobby/base.css": ("style.css", "text/css"), "/lobby/lobby.css": ("lobby.css", "text/css")}
 REVISION = {"type": "integer", "minimum": 0, "description": "当前己方 observe 返回的 revision。"}
 REQUEST_ID = {"type": "string", "minLength": 1, "maxLength": 128,
               "description": "每次新操作使用唯一 ID，重试发送相同 ID 和参数。"}
@@ -92,13 +93,6 @@ CANVAS_DRAW = object_schema({"card_ids": {"type": "array", "items": TEXT},
 NO_ARGUMENTS = object_schema({})
 
 
-class RequestError(ValueError):
-    def __init__(self, status, message, rpc_code=-32600):
-        super().__init__(message)
-        self.status = status
-        self.rpc_code = rpc_code
-
-
 def check_arguments(schema, arguments):
     if not isinstance(arguments, dict) or set(arguments) - schema["properties"].keys():
         raise RequestError(400, "工具参数包含未知字段。", -32602)
@@ -117,68 +111,49 @@ def check_arguments(schema, arguments):
 
 
 class ArenaServer(ThreadingHTTPServer):
-    """One engine and two independent seat credentials per listening socket."""
+    """One listener can serve a lobby and any number of independently addressed rooms."""
 
-    def __init__(self, room, port=8766, *, address="127.0.0.1", public_url=None):
+    def __init__(self, room=None, port=8766, *, address="127.0.0.1", public_url=None, seed=None):
         address = ipv4_address(address)
         external = https_origin(public_url) if public_url is not None else None
-        bot_side = getattr(room, "bot_side", None)
-        if bot_side is not None and (address != "127.0.0.1" or external):
+        self.local_only = address == "127.0.0.1" and external is None
+        if getattr(room, "bot_side", None) is not None and not self.local_only:
             raise ValueError("离线人机房间只监听本机。")
-        self.room = room
-        self.tokens = {seat: secrets.token_urlsafe(32) for seat in (1, 2) if seat != bot_side}
-        self.desk = ManualDesk(room)
-        self.desk_token = secrets.token_urlsafe(32)
+        self.default_room = HostedRoom(room) if room is not None else None
+        self.lobby = Lobby(seed) if room is None or self.local_only else None
         super().__init__((address, port), ArenaHandler)
         self.invite_url = external or http_origin(address, self.server_port)
         self.allowed_origins = allowed_origins(address, self.server_port, external)
 
+    @property
+    def room(self):
+        return self.default_room.room if self.default_room else None
+
+    @property
+    def tokens(self):
+        return self.default_room.tokens if self.default_room else {}
+
+    @property
+    def desk_token(self):
+        return self.default_room.desk_token if self.default_room else None
+
     def server_close(self):
-        self.room.close()
+        if self.lobby is not None:
+            self.lobby.close()
+        if self.default_room is not None:
+            self.default_room.close()
         super().server_close()
 
-    def authorized_seats(self, authorization, *, desk=False):
-        if authorization is None:
-            return ()
-        scheme, _, token = authorization.partition(" ")
-        if scheme.lower() == "bearer" and token and token.isascii():
-            if desk and secrets.compare_digest(self.desk_token, token):
-                return tuple(self.tokens)
-            for seat, secret in self.tokens.items():
-                if secrets.compare_digest(secret, token):
-                    return (seat,)
-        raise RequestError(403, "席位凭据无效。")
 
-    def side_for(self, authorization):
-        seats = self.authorized_seats(authorization)
-        return seats[0] if seats else None
-
-    def desk_command(self, name, seats, body):
-        if name == "status" and body == {}:
-            return self.desk.status(seats)
-        if name not in ("export", "submit", "status"):
-            raise RequestError(404, "搬运台操作不存在。")
-        if not isinstance(body, dict) or name == "status" or type(body.get("side")) is not int:
-            raise RequestError(400, "搬运台参数无效。")
-        side = body["side"]
-        if side not in seats:
-            raise RequestError(403, "本邀请不能操作该席位。")
-        if name == "submit" and set(body) == {"side", "reply"} and isinstance(body["reply"], str):
-            return self.desk.import_reply(side, body["reply"])
-        if (name == "export" and body.keys() <= {"side", "kind", "cursor"}
-                and body.get("kind") in ("intro", "turn")):
-            return self.desk.export(side, briefing=body["kind"] == "intro", cursor=body.get("cursor"))
-        raise RequestError(400, "请指定有效的导出类型或待解析的回复。")
-
-    def invoke(self, name, side, arguments):
-        if not isinstance(name, str) or name not in BY_NAME:
-            raise RequestError(404, "未知工具。", -32602)
-        if side is None and name not in READ_ONLY:
-            raise RequestError(403, "观众只能查看公开对局。")
-        check_arguments(BY_NAME[name]["inputSchema"], arguments)
-        if name == "rules":
-            return self.room.rules(**arguments)
-        return getattr(self.room, name)(side, **arguments)
+def invoke(room, name, side, arguments):
+    if not isinstance(name, str) or name not in BY_NAME:
+        raise RequestError(404, "未知工具。", -32602)
+    if side is None and name not in READ_ONLY:
+        raise RequestError(403, "观众只能查看公开对局。")
+    check_arguments(BY_NAME[name]["inputSchema"], arguments)
+    if name == "rules":
+        return room.rules(**arguments)
+    return getattr(room, name)(side, **arguments)
 
 
 def rpc_error(request_id, code, message):
@@ -269,20 +244,45 @@ class ArenaHandler(BaseHTTPRequestHandler):
         except (RequestError, OSError):
             pass
 
+    def _route(self, path):
+        if not path.startswith("/rooms/"):
+            return self.server.default_room, path
+        if self.server.lobby is None:
+            raise RequestError(404, "没有对战大厅。")
+        room_id, _, route = path.removeprefix("/rooms/").partition("/")
+        return self.server.lobby.get(room_id), "/" + route
+
     def do_GET(self):
         try:
             self._check_origin()
             path = urlsplit(self.path).path
-            if path == "/mcp":
+            lobby = self.server.lobby
+            if lobby is not None:
+                if path == "/api/modes":
+                    return self._send(200, mode_catalog())
+                if path == "/" and self.server.default_room is None:
+                    path = "/lobby/"
+                if path in LOBBY_ASSETS:
+                    filename, mime = LOBBY_ASSETS[path]
+                    return self._send(200, (STATIC_DIR / filename).read_bytes(), mime)
+            hosted, path = self._route(path)
+            if hosted is not None and hosted.hotseat and path == "/api/state":
+                if hosted.side_for(self.headers.get("Authorization")) is None:
+                    raise RequestError(403, "请使用本桌私人邀请。")
+                return self._send(200, hosted.room.state())
+            if path == "/mcp" and hosted is not None and not hosted.hotseat:
                 # This server uses JSON results and does not offer an SSE stream.
                 self._send(405)
-            elif path in ASSETS:
+            elif hosted is not None and hosted is self.server.default_room and path in ASSETS:
                 filename, mime = ASSETS[path]
                 self._send(200, (STATIC_DIR / filename).read_bytes(), mime)
             else:
-                asset_path = path.removeprefix("/canvas") if path.startswith("/canvas/") else path
-                shared_asset = path.startswith(("/canvas/", "/sprites/", "/fx_scripts/", "/status_icons/"))
-                asset = resolve_static(asset_path) if shared_asset else None
+                table = "/table" if hosted and hosted.hotseat else "/canvas"
+                asset = None
+                if hosted and path.startswith(table + "/"):
+                    asset = resolve_static(path.removeprefix(table))
+                elif path.startswith(("/sprites/", "/fx_scripts/", "/status_icons/")):
+                    asset = resolve_static(path)
                 if asset is None:
                     self._send(404, {"error": "页面不存在。"})
                 else:
@@ -291,7 +291,18 @@ class ArenaHandler(BaseHTTPRequestHandler):
         except RequestError as exc:
             self._send(exc.status, {"error": str(exc)})
 
-    def _rpc(self, message, side):
+    def do_DELETE(self):
+        try:
+            self._check_origin()
+            path = urlsplit(self.path).path
+            if self.server.lobby is None or not path.startswith("/api/rooms/"):
+                raise RequestError(404, "接口不存在。")
+            self.server.lobby.remove(path.removeprefix("/api/rooms/"), self.headers.get("Authorization"))
+            self._send(204)
+        except RequestError as exc:
+            self._send(exc.status, {"error": str(exc)})
+
+    def _rpc(self, room, message, side):
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
             raise RequestError(400, "需要单条 JSON-RPC 2.0 消息。")
         request_id = message.get("id")
@@ -323,7 +334,7 @@ class ArenaHandler(BaseHTTPRequestHandler):
         elif method == "tools/call":
             try:
                 name = params.get("name")
-                data = self.server.invoke(name, side, params.get("arguments", {}))
+                data = invoke(room, name, side, params.get("arguments", {}))
                 if name != "rules" and "frame" in data:
                     data = decision_view(data)
                 result = text_result(data)
@@ -341,71 +352,84 @@ class ArenaHandler(BaseHTTPRequestHandler):
         try:
             self._check_origin()
             authorization = self.headers.get("Authorization")
+            if self.server.lobby is not None and path == "/api/rooms":
+                return self._send(201, self.server.lobby.create(self._json_body()))
+            hosted, path = self._route(path)
+            if hosted is None:
+                raise RequestError(404, "请从大厅选择房间。")
+            room = hosted.room
+            if hosted.hotseat:
+                if path != "/api/action":
+                    raise RequestError(404, "热座操作不存在。")
+                if hosted.side_for(authorization) is None:
+                    raise RequestError(403, "请使用本桌私人邀请。")
+                status, frame = room.command(self._json_body(limit=8192))
+                return self._send(status, frame)
             if path.startswith("/api/desk/"):
-                seats = self.server.authorized_seats(authorization, desk=True)
+                seats = hosted.authorized_seats(authorization, desk=True)
                 if not seats:
                     raise RequestError(403, "请使用私人席位或双席搬运台邀请。")
-                value = self.server.desk_command(path.removeprefix("/api/desk/"), seats, self._json_body())
+                value = hosted.desk_command(path.removeprefix("/api/desk/"), seats, self._json_body())
                 return self._send(200, value)
-            side = self.server.side_for(authorization)
+            side = hosted.side_for(authorization)
             if path == "/api/canvas/assets":
                 check_arguments(NO_ARGUMENTS, self._json_body())
-                return self._send(200, self.server.room.canvas_assets())
+                return self._send(200, room.canvas_assets())
             if path == "/api/canvas/state":
                 args = self._json_body()
                 check_arguments(CANVAS_STATE, args)
-                return self._send(200, self.server.room.canvas_state(side, **args))
+                return self._send(200, room.canvas_state(side, **args))
             if path in ("/api/canvas/ready", "/api/canvas/rematch", "/api/canvas/draw_bottom", "/api/canvas/target", "/api/canvas/next"):
                 if side is None:
                     raise RequestError(403, "请使用自己的席位邀请。")
                 # A local human-vs-bot roster or draw selection can grow with the lineup.
-                limit = None if getattr(self.server.room, "bot_side", None) is not None else 65536
+                limit = None if self.server.local_only and room.bot_side is not None else 65536
                 args = self._json_body(limit=limit)
                 if path == "/api/canvas/next":
                     check_arguments(BY_NAME["ready"]["inputSchema"], args)
-                    return self._send(200, self.server.room.next_beat(side, **args))
+                    return self._send(200, room.next_beat(side, **args))
                 if path == "/api/canvas/draw_bottom":
                     check_arguments(CANVAS_DRAW, args)
-                    return self._send(200, self.server.room.draw_bottom(side, **args))
+                    return self._send(200, room.draw_bottom(side, **args))
                 if path == "/api/canvas/target":
                     check_arguments(object_schema({"character_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
                                                   ("character_id", "revision", "request_id")), args)
-                    return self._send(200, self.server.room.set_default_target(side, **args))
+                    return self._send(200, room.set_default_target(side, **args))
                 if path == "/api/canvas/rematch":
                     check_arguments(CANVAS_REMATCH, args)
-                    return self._send(200, self.server.room.rematch(side, **args))
+                    return self._send(200, room.rematch(side, **args))
                 check_arguments(CANVAS_READY, args)
-                return self._send(200, self.server.room.ready(side, **args, human=True, canvas=True))
+                return self._send(200, room.ready(side, **args, human=True, canvas=True))
             if path == "/api/follow":
                 args = self._json_body()
                 check_arguments(BY_NAME["wait"]["inputSchema"], args)
-                return self._send(200, self.server.room.wait(side, **args, visible_updates=True))
+                return self._send(200, room.wait(side, **args, visible_updates=True))
             if path in ("/api/player_ready", "/api/pause", "/api/resume"):
                 if side is None:
                     raise RequestError(403, "请使用自己的席位邀请。")
                 args = self._json_body()
                 check_arguments(BY_NAME["ready"]["inputSchema"], args)
                 if path == "/api/player_ready":
-                    view = self.server.room.ready(side, **args, human=True)
+                    view = room.ready(side, **args, human=True)
                 elif path == "/api/pause":
-                    view = self.server.room.pause(side, **args)
+                    view = room.pause(side, **args)
                 else:
-                    view = self.server.room.resume(side, **args)
+                    view = room.resume(side, **args)
                 return self._send(200, view)
             if path == "/api/select_character":
                 if side is None:
                     raise RequestError(403, "请使用自己的席位邀请选择角色。")
                 args = self._json_body()
                 check_arguments(SELECT_CHARACTER, args)
-                return self._send(200, self.server.room.select_character(side, **args))
+                return self._send(200, room.select_character(side, **args))
             if path == "/mcp":
                 version = self.headers.get("MCP-Protocol-Version", "2025-03-26")
                 if version not in VERSIONS:
                     raise RequestError(400, "不支持的 MCP 协议版本。")
-                return self._rpc(self._json_body(), side)
+                return self._rpc(room, self._json_body(), side)
             if not path.startswith("/api/"):
                 raise RequestError(404, "接口不存在。")
-            value = self.server.invoke(path[5:], side, self._json_body())
+            value = invoke(room, path[5:], side, self._json_body())
             self._send(200, value)
         except RequestError as exc:
             data = rpc_error(None, exc.rpc_code, str(exc)) if path == "/mcp" else {"error": str(exc)}

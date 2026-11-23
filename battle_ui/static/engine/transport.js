@@ -5,14 +5,15 @@
  */
 
 export class LocalBattleTransport {
-  constructor(baseUrl = '') {
+  constructor(baseUrl = '', token = null) {
     this.baseUrl = baseUrl;
+    this.headers = token ? { Authorization: `Bearer ${token}` } : {};
     this.revision = 0;
     this.busy = false;
   }
 
   async fetchState() {
-    const res = await fetch(`${this.baseUrl}/api/state`, { cache: 'no-store' });
+    const res = await fetch(`${this.baseUrl}/api/state`, { headers: this.headers, cache: 'no-store' });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || '无法读取当前战局。');
     this.revision = data.revision;
@@ -26,7 +27,7 @@ export class LocalBattleTransport {
       const body = { action, revision: this.revision, ...payload };
       const res = await fetch(`${this.baseUrl}/api/action`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...this.headers, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -141,8 +142,9 @@ function battleRecordText({ bot_side: botSide, challenge, events, finished, fram
 }
 
 export class RoomSeatTransport {
-  constructor(token) {
+  constructor(token, baseUrl = '') {
     this.token = token;
+    this.baseUrl = baseUrl;
     this.isRoom = true;
     this.busy = false;
     this.state = null;
@@ -152,7 +154,7 @@ export class RoomSeatTransport {
   async request(path, body = {}, { publicView = false } = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (this.token && !publicView) headers.Authorization = `Bearer ${this.token}`;
-    const res = await fetch(`/api/${path}`, {
+    const res = await fetch(`${this.baseUrl}/api/${path}`, {
       method: 'POST', headers, body: JSON.stringify(body), cache: 'no-store', signal: AbortSignal.timeout(14000),
     });
     const data = await res.json();
@@ -189,9 +191,12 @@ export class RoomSeatTransport {
         if (disconnected) onError(null);
         disconnected = false;
       } catch (error) {
+        if (error.status === 403 || error.status === 404) {
+          onError(error);
+          return;
+        }
         if (!disconnected) onError(error);
         disconnected = true;
-        if (error.status === 403) return;
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }
