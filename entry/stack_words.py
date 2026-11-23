@@ -49,7 +49,7 @@ def blank_skill_face(vm):
         return
     dice = []
     for printed in face.get("dice", ()):
-        die = {key: printed[key] for key in ("level", "roll_max", "base_value", "multiplier",
+        die = {key: printed[key] for key in ("level", "roll_max", "fixed_level", "base_value", "multiplier",
                                               "calc_formula", "calc_fomula") if key in printed}
         die["type"] = "skip" if printed["type"] == "skip" else "blank"
         dice.append(die)
@@ -67,6 +67,8 @@ def insert_at(vm):
 
 
 WORDS = {
+    "KEYS": lambda vm: vm.push(tuple(vm.pop())),
+    "UNIQUE": lambda vm: vm.push(tuple(dict.fromkeys(vm.pop()))),
     "REPEAT_WHILE": repeat_while,
     "CHARACTER_OF": lambda vm: vm.push(character_of(vm.pop())),
     "STATUS_ACTIVE": status_active,

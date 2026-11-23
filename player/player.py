@@ -67,7 +67,9 @@ class Player:
     def reset_on_turn_start(self):
         rule = self.game.gamerule
         common = max(0, rule.MAX_BASIC_COST + self.turn_common_cost_bonus)
-        self.game.context.eval_block([self, common, rule.CHAR_INDEPENDENT_COST, OpCode.RESET_COST])
+        ctx = self.game.context
+        ctx.stack.extend((self, common, rule.CHAR_INDEPENDENT_COST))
+        ctx.execute_op(OpCode.RESET_COST, refill=True)
         self.game.context.record("turn_budget", side=self.side, common=self.available_cost,
                                  personal=tuple((c.id, c.available_cost) for c in self.characters if c.is_alive))
 

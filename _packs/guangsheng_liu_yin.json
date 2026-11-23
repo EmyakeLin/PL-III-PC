@@ -1,0 +1,1294 @@
+{
+  "faction": "光生会",
+  "faction_passives": [
+    {
+      "name": "光生会：心河",
+      "entries": [
+        {
+          "trigger": "on_turn_start",
+          "description": "回合开始时，己方手牌不少于5张获得1领域洞悉，不少于9张再获得1层。",
+          "operation": {
+            "op": "program",
+            "code": [
+              "$player.cardspace.hand.content", "SIZE", "hand", "STORE", "$local.hand", 5, "GE",
+              ["$self","领域洞悉",1,"STATUS"],
+              "WHEN", "$local.hand", 9, "GE",
+              ["$self","领域洞悉",1,"STATUS"],
+              "WHEN"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "status_rules": {
+    "领域洞悉": {"cap":30,"description":"每15层使骰子等级提升1。"},
+    "环境压制": {"cap":18,"description":"生命不高于层数时，获得50%强化护甲减伤。"},
+    "环境同调": {"cap":3,"description":"每层提高1费用上限，3层时再提高1。","sustain_from":2,"sustain":{"强壮":1,"迅捷":1}},
+    "战甲": {"cap":1,"description":"领域洞悉的实际增量同时转化为等量能源。"}
+  },
+  "status_entries": {
+    "领域洞悉": [
+      {
+        "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+        "description": "每15层使骰级提升1，最多2级。",
+        "operation": {"op":"program","code":["$self","领域洞悉","STATUS_COUNT",15,"FLOOR_DIV",2,"MIN","ADD"]}
+      }
+    ],
+    "环境同调": [
+      {
+        "trigger": "BEFORE RESET_COST",
+        "description": "双方回合回补费用时，每层同调增加1通用费上限，3层时另加1。",
+        "when": [
+          {"left":"$event.player","op":"eq","right":"$self.player"},
+          {"left":"$event.refill","op":"eq","right":true}
+        ],
+        "operation": {
+          "op": "program",
+          "code": [
+            "SWAP", "$self", "环境同调", "STATUS_COUNT", "ADD", "$self", "环境同调", "STATUS_COUNT", 3, "EQ",
+            [1,"ADD"],
+            "WHEN", "SWAP"
+          ]
+        }
+      }
+    ],
+    "环境压制": [
+      {
+        "trigger": "BEFORE DAMAGE",
+        "description": "生命不高于环境压制层数时，受到的普通和穿甲伤害减半。",
+        "when": [{"left":"$self.hp","op":"le","right":{"field":"$self.statuses","key":"环境压制","default":0}}],
+        "operation": {"op":"program","code":["$self","$event.modifiers","damage_multiply",0.5,"pierce","ADD_DAMAGE_MODIFIER"]},
+        "subject": "target"
+      }
+    ]
+  },
+  "characters": [
+    {
+      "id": "liu_yin",
+      "name": "流阴",
+      "title": "执政",
+      "rank": "EMPOWERED_BOSS",
+      "max_hp": 18,
+      "passive_skills": [
+        {
+          "name": "行至阴处",
+          "entries": [
+            {
+              "trigger": "on_battle_start",
+              "description": "战斗开始时获得18环境压制。",
+              "operation": {"op":"program","code":["$self","环境压制",18,"STATUS"]}
+            },
+            {
+              "trigger": "on_turn_limits_reset",
+              "description": "新回合刷新首张技能标记。",
+              "operation": {"op":"program","code":["$self","已用首张",false,"SET_CHARACTER_STATE"]}
+            },
+            {
+              "trigger": "BEFORE PAY_COST",
+              "description": "每回合使用的第一张技能费用−1。",
+              "when": [{"left":{"field":"$self.rule_state","key":"已用首张","default":false},"op":"eq","right":false}],
+              "operation": {"op":"program","code":[1,"SUB",0,"MAX"]},
+              "subject": "source"
+            },
+            {
+              "trigger": "AFTER PAY_COST",
+              "description": "成功付款时登记本回合首张技能。",
+              "when": [
+                {"left":"$event.result","op":"eq","right":true},
+                {"left":{"field":"$self.rule_state","key":"已用首张","default":false},"op":"eq","right":false}
+              ],
+              "operation": {
+                "op": "program",
+                "code": ["$self","已用首张",true,"SET_CHARACTER_STATE","$event.card","回合首张",true,"SET_SKILL_STATE"]
+              },
+              "subject": "source"
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "首张技能使用后减少1环境压制。",
+              "operation": {
+                "op": "program",
+                "code": ["$event.card.use_state","回合首张",false,"LOOKUP",["$self","环境压制",-1,"STATUS"],"WHEN"]
+              }
+            },
+            {
+              "trigger": "on_status_changed",
+              "description": "环境压制首次减少至0时，获得12领域洞悉。",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"环境压制"},
+                {"left":"$event.previous_stacks","op":"gt","right":0},
+                {"left":"$event.current_stacks","op":"eq","right":0},
+                {"left":{"field":"$self.rule_state","key":"天性解放","default":false},"op":"eq","right":false}
+              ],
+              "operation": {"op":"program","code":["$self","天性解放",true,"SET_CHARACTER_STATE","$self","领域洞悉",12,"STATUS"]}
+            }
+          ]
+        },
+        {
+          "name": "影剑·光枪·残影机甲",
+          "entries": [
+            {
+              "trigger": "on_status_changed",
+              "description": "在战甲状态获得领域洞悉时，按实得数量获得能源。",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"领域洞悉"},
+                {"left":"$event.actual_delta","op":"gt","right":0},
+                {"left":{"field":"$self.statuses","key":"战甲","default":0},"op":"ge","right":1}
+              ],
+              "operation": {"op":"program","code":["$self","能源","$event.actual_delta","STATUS"]}
+            },
+            {
+              "trigger": "on_status_changed",
+              "description": "领域洞悉每首次达到10的倍数，下回合开牌前免费使用一次领域覆写，任选一名存活敌方。",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"领域洞悉"},
+                {"left":"$event.actual_delta","op":"gt","right":0}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.current_stacks", 10, "GE", "$self.rule_state", "洞悉档位", 0, "LOOKUP", 10, "LT", "AND",
+                  [
+                    "$self", "洞悉档位", 10, "SET_CHARACTER_STATE",
+                    {
+                      "schedule": {
+                        "event": "on_before_reveal_phase_start",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 1,
+                        "through_turns": 1,
+                        "uses": 1,
+                        "require_source_alive": true,
+                        "require_target_alive": true,
+                        "when": [],
+                        "capture": {},
+                        "then": [
+                          "$self", "$self.skills",
+                          ["$event.item.id","liu_overwrite","EQ"],
+                          "FILTER", "FIRST",
+                          {"field":"printed_data"},
+                          "SKILL_COPY",
+                          {"literal":{"prepaid":true}},
+                          "SKILL_USE", "$player", "SELECT_ENEMY_CHARACTER", "STAGE_PRE_ATTACK"
+                        ]
+                      }
+                    }
+                  ],
+                  "WHEN", "$event.current_stacks", 20, "GE", "$self.rule_state", "洞悉档位", 0, "LOOKUP", 20, "LT",
+                  "AND",
+                  [
+                    "$self", "洞悉档位", 20, "SET_CHARACTER_STATE",
+                    {
+                      "schedule": {
+                        "event": "on_before_reveal_phase_start",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 1,
+                        "through_turns": 1,
+                        "uses": 1,
+                        "require_source_alive": true,
+                        "require_target_alive": true,
+                        "when": [],
+                        "capture": {},
+                        "then": [
+                          "$self", "$self.skills",
+                          ["$event.item.id","liu_overwrite","EQ"],
+                          "FILTER", "FIRST",
+                          {"field":"printed_data"},
+                          "SKILL_COPY",
+                          {"literal":{"prepaid":true}},
+                          "SKILL_USE", "$player", "SELECT_ENEMY_CHARACTER", "STAGE_PRE_ATTACK"
+                        ]
+                      }
+                    }
+                  ],
+                  "WHEN", "$event.current_stacks", 30, "GE", "$self.rule_state", "洞悉档位", 0, "LOOKUP", 30, "LT",
+                  "AND",
+                  [
+                    "$self", "洞悉档位", 30, "SET_CHARACTER_STATE",
+                    {
+                      "schedule": {
+                        "event": "on_before_reveal_phase_start",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 1,
+                        "through_turns": 1,
+                        "uses": 1,
+                        "require_source_alive": true,
+                        "require_target_alive": true,
+                        "when": [],
+                        "capture": {},
+                        "then": [
+                          "$self", "$self.skills",
+                          ["$event.item.id","liu_overwrite","EQ"],
+                          "FILTER", "FIRST",
+                          {"field":"printed_data"},
+                          "SKILL_COPY",
+                          {"literal":{"prepaid":true}},
+                          "SKILL_USE", "$player", "SELECT_ENEMY_CHARACTER", "STAGE_PRE_ATTACK"
+                        ]
+                      }
+                    }
+                  ],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE DAMAGE",
+              "description": "近战斩击的非百分比物理伤害转为三倍加一光点。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":1},
+                {"left":"$event.penetration","op":"eq","right":"normal"},
+                {"left":"$event.damage_die.type","op":"eq","right":"slash"},
+                {"left":"$event.damage_die.paired_range","op":"eq","right":0},
+                {"left":"$event.percentage_damage","op":"eq","right":false}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "$event.amount", 3, "MUL", 1, "ADD",
+                  {"call":"LIGHTCORE_DAMAGE","with":{"credit":"damage_die"}},
+                  {"op":"cancel"}
+                ]
+              },
+              "subject": "source"
+            },
+            {
+              "trigger": "BEFORE DAMAGE",
+              "description": "远程突刺的非百分比物理伤害转为三倍加一光点。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":2},
+                {"left":"$event.penetration","op":"eq","right":"normal"},
+                {"left":"$event.damage_die.type","op":"eq","right":"pierce"},
+                {"left":"$event.damage_die.paired_range","op":"gt","right":0},
+                {"left":"$event.percentage_damage","op":"eq","right":false}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "$event.amount", 3, "MUL", 1, "ADD",
+                  {"call":"LIGHTCORE_DAMAGE","with":{"credit":"damage_die"}},
+                  {"op":"cancel"}
+                ]
+              },
+              "subject": "source"
+            },
+            {
+              "trigger": "AFTER DAMAGE",
+              "description": "三层同调时，每次实际造成物理伤害后追加等量光点。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
+                {"left":"$event.penetration","op":"eq","right":"normal"},
+                {"left":"$event.damage_dealt","op":"eq","right":true}
+              ],
+              "operation": {"op":"program","code":["$event.target","$event.damage_amount","LIGHTCORE_DAMAGE"]},
+              "subject": "source"
+            },
+            {
+              "trigger": "AFTER LIGHTCORE_DAMAGE",
+              "description": "三层同调时，自身造成崩塌即回复3生命。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
+                {"left":"$event.lightcore_collapsed","op":"eq","right":true}
+              ],
+              "operation": {"op":"program","code":["$self",3,"HEAL"]},
+              "subject": "source",
+              "reentrant": true
+            }
+          ]
+        },
+        {
+          "name": "篡改万物，灭杀万物，创造万物",
+          "entries": [
+            {
+              "trigger": "on_skill_disabled",
+              "description": "自身技能被摧毁或无效化时，立即摧毁对阵技能（最高话语权）。",
+              "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]},
+              "authority": "最高话语权",
+              "subject": "source"
+            },
+            {
+              "trigger": "on_skill_disabled",
+              "description": "自身技能被摧毁或无效化时，减少4环境压制，并使对方获得1劣势次数。",
+              "subject": "source",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "环境压制", -4, "STATUS", "$event.target", null, "IS", "NOT",
+                  ["$event.target","劣势次数",1,"ABILITY_EFFECT"],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "AFTER HEAL",
+              "description": "自身实际回复生命后，按实回量对全场所有存活角色各造成光点伤害。",
+              "when": [{"left":"$event.result","op":"gt","right":0}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.result", "heal", "STORE", "$game.players",
+                  ["$event.item.characters"],
+                  "MAP", "FLATTEN",
+                  ["$event.item.is_alive"],
+                  "FILTER",
+                  ["$event.target","$local.heal","LIGHTCORE_DAMAGE"],
+                  "FOR_EACH_TARGET"
+                ]
+              },
+              "subject": "target",
+              "reentrant": true
+            },
+            {
+              "trigger": "AFTER DAMAGE",
+              "description": "自身造成百分比伤害后，对目标追加等量光点伤害。",
+              "when": [
+                {"left":"$event.percentage_damage","op":"eq","right":true},
+                {"left":"$event.damage_dealt","op":"eq","right":true}
+              ],
+              "operation": {"op":"program","code":["$event.target","$event.damage_amount","LIGHTCORE_DAMAGE"]},
+              "subject": "source"
+            }
+          ]
+        },
+        {
+          "name": "天性解放",
+          "entries": [
+            {
+              "trigger": "BEFORE STATUS",
+              "description": "解放后，减少环境压制改为获得相应数量的能源。",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"环境压制"},
+                {"left":"$pending.amount","op":"lt","right":0},
+                {"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}
+              ],
+              "operation": {
+                "op": "program",
+                "code": ["DUP",-1,"MUL","gain","STORE","$self","能源","$local.gain","STATUS",{"op":"cancel"}]
+              },
+              "subject": "target"
+            },
+            {
+              "trigger": "before_dice_clash",
+              "description": "解放后，拼点开始时对对方造成1光点伤害。",
+              "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
+              "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
+            },
+            {
+              "trigger": "on_clash_lose",
+              "description": "解放后，拼点失败时追加1光点伤害。",
+              "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
+              "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
+            }
+          ]
+        },
+        {
+          "name": "形态灭杀·回收",
+          "entries": [
+            {
+              "trigger": "on_skill_disabled",
+              "description": "形态灭杀在3同调时被摧毁或无效化，收回手牌并立即结束本场交锋。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
+                {"left":"$event.card.id","op":"eq","right":"liu_annihilate"}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "hand",
+                  {"call":"MOVE_CARD","with":{"allow_destroyed":true}},
+                  "$game.resolving_duel", "END_DUEL"
+                ]
+              },
+              "subject": "source"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "liu_blade",
+          "name": "化剑",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "减少1环境压制，获得1领域洞悉。",
+              "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS","$self","领域洞悉",1,"STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "减少1环境压制。",
+                  "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "final_bonus": 1,
+              "ignore_range": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "抽1卡；环境同调至少2层时摧毁对方技能。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["DRAW 1","$self","环境同调","STATUS_COUNT",2,"GE",["$event.opponent_card","DESTROY"],"WHEN"]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_dismember",
+          "name": "影刃分尸",
+          "cost": 2,
+          "ignore_range": 3,
+          "entries": [
+            {
+              "trigger": "AFTER LIGHTCORE_DAMAGE",
+              "description": "本技能的骰子造成光点伤害时，若未与远程技能交锋，提升后续骰子1级。",
+              "when": [
+                {"left":{"field":"$event.opponent_card.effective_range","default":0},"op":"eq","right":0},
+                {"left":"$event.amount","op":"gt","right":0}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.damage_card", "$owner", "IS",
+                  ["$event.card","余骰升级","$event.card.use_state","余骰升级",0,"LOOKUP",1,"ADD","SET_SKILL_STATE"],
+                  "WHEN"
+                ]
+              },
+              "subject": "source"
+            },
+            {
+              "trigger": "on_dice_use",
+              "description": "按本技能先前造成光点伤害的段数提升本骰等级。",
+              "operation": {"op":"program","code":["$event.die","$event.card.use_state","余骰升级",0,"LOOKUP","DIE_LEVEL_ADD"]}
+            },
+            {
+              "trigger": "on_dice_hit",
+              "description": "记录本次技能各骰位的命中。",
+              "operation": {"op":"program","code":["$event.card","$event.die.position",true,"SET_SKILL_STATE"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 5,
+              "final_bonus": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "减少1环境压制。",
+                  "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "final_bonus": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "抽1卡，同调至少3时追加1光点。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["DRAW 1","$self","环境同调","STATUS_COUNT",3,"GE",["$event.target",1,"LIGHTCORE_DAMAGE"],"WHEN"]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "final_bonus": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "减少1环境压制；前三骰全部命中则解锁第四骰。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "环境压制", -1, "STATUS", "$event.card.use_state", 1, false, "LOOKUP",
+                      "$event.card.use_state", 2, false, "LOOKUP", "AND",
+                      ["$event.card","末骰解锁",true,"SET_SKILL_STATE"],
+                      "WHEN"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 2,
+              "requires_skill_state": "末骰解锁",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "摧毁目标下一张即将使用的技能。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "before_skill_use",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 0,
+                          "through_turns": null,
+                          "uses": 1,
+                          "require_source_alive": true,
+                          "require_target_alive": true,
+                          "when": [{"left":"$event.source","op":"eq","right":"$event.scheduled.target"}],
+                          "capture": {},
+                          "then": ["$event.observed.card","DESTROY"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_invisible",
+          "name": "无形杀",
+          "cost": 0,
+          "ignore_range": 3,
+          "anytime_play": ["place"],
+          "anytime_replace": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "使用时能源至少12，本技能的骰子每次命中可支付6能源以重复使用。",
+              "operation": {
+                "op": "program",
+                "code": ["$self","能源","STATUS_COUNT",12,"GE",["$event.card","可重复",true,"SET_SKILL_STATE"],"WHEN"]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "clash_order": "lower",
+              "entries": [
+                {
+                  "trigger": "on_dice_use",
+                  "description": "每层同调降低本骰1级，最多降低2级。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.die","$self","环境同调","STATUS_COUNT",2,"MIN",-1,"MUL","DIE_LEVEL_ADD"]
+                  }
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "2光点，环境同调达到3时增加1。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": ["$event.target",2,"$self","环境同调","STATUS_COUNT",3,"GE",[1,"ADD"],"WHEN","LIGHTCORE_DAMAGE"]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "支付6能源以重复使用本骰。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.card.use_state", "可重复", false, "LOOKUP",
+                      [
+                        "$self", "能源", 6,
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "paid_in_full",
+                          "default": false,
+                          "with": {"require_full":true}
+                        },
+                        ["$event.die","REPEAT_DIE"],
+                        "WHEN"
+                      ],
+                      "WHEN"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_hope",
+          "name": "洞穿希望",
+          "cost": 2,
+          "anytime_replace": true,
+          "range_level_amount": {"value":{"field":"$self.statuses","key":"环境同调","default":0}},
+          "opponent_range_reduction": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "若能源至少3，本技能最终点数+12。",
+              "operation": {
+                "op": "program",
+                "code": ["$self","能源","STATUS_COUNT",3,"GE",["$event.card",12,"SKILL_FINAL_ADD"],"WHEN"]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 6,
+              "multiplier": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "回复1生命，然后摧毁本技能。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL","$event.card","DESTROY"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_execution",
+          "name": "光之斩杀",
+          "cost": 4,
+          "match_opposing_range": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "消耗6能源以使技能最终点数+2，所有骰子无视3级远程。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "能源", 6,
+                  {"call":"SPEND_STATUS","result":"paid_in_full","default":false,"with":{"require_full":true}},
+                  ["$event.card",2,"SKILL_FINAL_ADD","$event.card","无视远程",3,"SET_SKILL_STATE"],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "获得1领域洞悉。",
+                  "operation": {"op":"program","code":["$self","领域洞悉",1,"STATUS"]}
+                }
+              ],
+              "ignore_range_amount": {"value":{"field":"$event.card.use_state","key":"无视远程","default":0}}
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "获得1领域洞悉。",
+                  "operation": {"op":"program","code":["$self","领域洞悉",1,"STATUS"]}
+                }
+              ],
+              "ignore_range_amount": {"value":{"field":"$event.card.use_state","key":"无视远程","default":0}}
+            },
+            {
+              "type": "pierce",
+              "level": 6,
+              "range_level": 1,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "减少1环境压制。",
+                  "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
+                }
+              ],
+              "ignore_range_amount": {"value":{"field":"$event.card.use_state","key":"无视远程","default":0}}
+            }
+          ]
+        },
+        {
+          "id": "liu_rewind",
+          "name": "逆流溯源",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "记录当前生命、个人状态和环境压制，再增加6环境压制。压制再次降到记录值时直接回退，保留较高生命和正面层数、较低负面层数。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "环境压制", "STATUS_COUNT", "pressure", "STORE",
+                  {
+                    "schedule": {
+                      "event": "on_status_changed",
+                      "source": "$self",
+                      "target": "$self",
+                      "after_turns": 0,
+                      "through_turns": null,
+                      "uses": 1,
+                      "require_source_alive": true,
+                      "require_target_alive": true,
+                      "capture": {"hp":"$self.hp","stacks":"$self.personal_statuses","pressure":"$local.pressure"},
+                      "when": [
+                        {"left":"$event.target","op":"eq","right":"$event.scheduled.target"},
+                        {"left":"$event.status","op":"eq","right":"环境压制"},
+                        {"left":"$event.actual_delta","op":"lt","right":0},
+                        {"left":"$event.current_stacks","op":"eq","right":"$event.scheduled.capture.pressure"}
+                      ],
+                      "then": [
+                        "$self.hp", "$event.scheduled.capture.hp", "MAX", "desired_hp", "STORE",
+                        "$event.scheduled.capture.stacks", "saved", "STORE", "$self.personal_statuses", "KEYS",
+                        "$local.saved", "KEYS", "PAIR", "FLATTEN", "UNIQUE",
+                        [
+                          "$event.item", "name", "STORE", "$local.saved", "$local.name", 0, "LOOKUP", "then",
+                          "STORE", "$self.personal_statuses", "$local.name", 0, "LOOKUP", "now", "STORE",
+                          "$self.status_rules", "$local.name", null, "LOOKUP",
+                          {"field":"polarity","default":null},
+                          {
+                            "literal": {
+                              "强壮": "positive",
+                              "迅捷": "positive",
+                              "骰子等级提升": "positive",
+                              "凝聚": "positive",
+                              "能源": "positive",
+                              "纯能": "positive",
+                              "充能": "positive",
+                              "领域洞悉": "positive",
+                              "环境同调": "positive",
+                              "战甲": "positive",
+                              "涡流": "positive",
+                              "隧道": "positive",
+                              "羽流": "positive",
+                              "呼吸": "positive",
+                              "弹药": "positive",
+                              "全开": "positive",
+                              "隧道开启": "positive",
+                              "羽流·林秋": "positive",
+                              "涌流灌注": "positive",
+                              "电叉·回环舞·活化": "positive",
+                              "电叉·极锐刺·活化": "positive",
+                              "深秋·风卷残叶·活化": "positive",
+                              "残雪·幽蓝流光·活化": "positive",
+                              "虚弱": "negative",
+                              "束缚": "negative",
+                              "骰子等级降低": "negative",
+                              "烧伤": "negative",
+                              "裂血": "negative",
+                              "失衡": "negative",
+                              "致命失衡": "negative",
+                              "麻痹": "negative",
+                              "电击": "negative",
+                              "电流": "negative",
+                              "星结": "negative",
+                              "崩析": "negative",
+                              "崩裂": "negative",
+                              "崩离": "negative",
+                              "环境压制": "negative"
+                            }
+                          },
+                          "$local.name", "neutral", "LOOKUP", "COALESCE", "polarity", "STORE",
+                          "$local.polarity", "positive", "EQ",
+                          ["$local.now","$local.then","MAX"],
+                          [
+                            "$local.polarity", "negative", "EQ",
+                            ["$local.now","$local.then","MIN"],
+                            ["$local.then"],
+                            "IF_ELSE"
+                          ],
+                          "IF_ELSE", "stacks", "STORE", "$local.stacks", "$local.now", "EQ", "NOT",
+                          ["$self","$local.name","$local.stacks","RESTORE_STATUS_STACKS"],
+                          "WHEN"
+                        ],
+                        "EACH", "$self", "$local.desired_hp", "SET_HP"
+                      ]
+                    }
+                  },
+                  "$self", "环境压制", 6, "STATUS"
+                ]
+              }
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "减少2环境压制；持有能源时额外减少1。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "环境压制", -2, "STATUS", "$self", "能源", "STATUS_COUNT", 0, "GT",
+                  ["$self","环境压制",-1,"STATUS"],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "减少1环境压制。",
+                  "operation": {"op":"program","code":["$self","环境压制",-1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "增加3环境压制。",
+                  "operation": {"op":"program","code":["$self","环境压制",3,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_armor",
+          "name": "战甲塑造",
+          "cost": 5,
+          "form_when": {"status":"战甲","op":"ge","value":1,"form":"armored","snapshot":"use"},
+          "forms": {
+            "armored": {
+              "name": "肃清引信",
+              "cost": 5,
+              "entries": [],
+              "dice": [
+                {"type":"skip"},
+                {
+                  "type": "blunt",
+                  "level": 1,
+                  "multiplier": 2,
+                  "ignore_range": 3,
+                  "entries": [
+                    {
+                      "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+                      "description": "本骰最终点数加上当前领域洞悉。",
+                      "operation": {"op":"program","code":["$self","领域洞悉","STATUS_COUNT","ADD"]}
+                    },
+                    {
+                      "trigger": "AFTER RESOLVE_HIT",
+                      "description": "造成目标当前生命上限三分之一（向上取整）的超穿甲伤害。",
+                      "when": [{"left":"$event.result","op":"eq","right":true}],
+                      "operation": {
+                        "op": "program",
+                        "damage_part": true,
+                        "code": [
+                          "$event.target", "$event.target.max_hp", 2, "ADD", 3, "FLOOR_DIV", "concept",
+                          "blunt",
+                          {"call":"DAMAGE","with":{"percentage_damage":true}}
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "同调3层时进入战甲，其余情况减少3环境压制并获得3领域洞悉。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "环境同调", "STATUS_COUNT", 3, "GE",
+                  ["$self","战甲",1,"STATUS"],
+                  ["$self","环境压制",-3,"STATUS","$self","领域洞悉",3,"STATUS"],
+                  "IF_ELSE"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "range_level": 1,
+              "entries": [
+                "3物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "施加等同于环境同调−1的环境压制。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target","环境压制","$self","环境同调","STATUS_COUNT",1,"SUB",0,"MAX","STATUS"]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "final_bonus": 6,
+              "passive_activation": true,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "重复使用一次。",
+                  "when": [{"left":"$event.is_repeat","op":"eq","right":false}],
+                  "operation": {"op":"program","code":["$event.die","REPEAT_DIE"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "获得2领域洞悉。",
+                  "operation": {"op":"program","code":["$self","领域洞悉",2,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_adapt",
+          "name": "强行适应",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "洞悉不高于15时，以等量生命补足至15，保留至少1生命；高于15时失去2生命并增加2洞悉。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "领域洞悉", "STATUS_COUNT", 15, "LE",
+                  [
+                    15, "$self", "领域洞悉", "STATUS_COUNT", "SUB", "$self.hp", 1, "SUB", 0, "MAX", "MIN", "cost",
+                    "STORE", "$self", "$local.cost",
+                    {"call":"LOSE_HP","result":"hp_lost","default":0},
+                    "paid", "STORE", "$self", "领域洞悉", "$local.paid", "STATUS"
+                  ],
+                  ["$self",2,"LOSE_HP","$self","领域洞悉",2,"STATUS"],
+                  "IF_ELSE"
+                ]
+              }
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "回复1生命。",
+              "operation": {"op":"program","code":["$self",1,"HEAL"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "回复1生命并减少1环境压制。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL","$self","环境压制",-1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3光点群伤。若生命高于6则失去3生命，减少6环境压制，本次群伤增加6。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$self.hp", 6, "GT",
+                      ["$self",3,"LOSE_HP","$self","环境压制",-6,"STATUS",9],
+                      [3],
+                      "IF_ELSE", "amount", "STORE", "$player", "OPPONENT",
+                      {"field":"characters"},
+                      ["$event.item.is_alive"],
+                      "FILTER", "$event.target", "FIRST_IN_ORDER",
+                      ["$event.target","$local.amount","LIGHTCORE_DAMAGE"],
+                      "FOR_EACH_TARGET"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_prison",
+          "name": "画地为牢",
+          "cost": 2,
+          "ignore_range_amount": {"value":{"field":"$self.statuses","key":"环境同调","default":0}},
+          "entries": [
+            {
+              "trigger": "after_skill_use",
+              "description": "下回合实际开始的第一场交锋中，若目标骰的变动点数不高于8，该骰变为空白骰。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "schedule": {
+                      "event": "on_character_duel_start",
+                      "source": "$self",
+                      "target": "$event.target",
+                      "after_turns": 1,
+                      "through_turns": 1,
+                      "uses": 1,
+                      "require_source_alive": false,
+                      "require_target_alive": true,
+                      "when": [{"left":"$event.source","op":"eq","right":"$event.scheduled.target"}],
+                      "capture": {},
+                      "then": [
+                        {
+                          "schedule": {
+                            "event": "on_variable_value_set",
+                            "source": "$self",
+                            "target": "$event.scheduled.target",
+                            "after_turns": 0,
+                            "through_turns": 0,
+                            "uses": null,
+                            "require_source_alive": false,
+                            "require_target_alive": true,
+                            "when": [
+                              {"left":"$event.source","op":"eq","right":"$event.scheduled.target"},
+                              {"left":"$event.duel","op":"eq","right":"$event.scheduled.capture.duel"},
+                              {"left":"$event.value","op":"le","right":8}
+                            ],
+                            "capture": {"duel":"$game.resolving_duel"},
+                            "then": ["$event.observed.die","BLANK_DIE"]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "authority": "最高话语权"
+            }
+          ],
+          "dice": [
+            {"type":"blunt","level":3,"entries":["1光点"]},
+            {
+              "type": "slash",
+              "level": 3,
+              "final_bonus": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "摧毁对方技能。",
+                  "operation": {"op":"program","code":["$event.opponent_card","DESTROY"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_shadow",
+          "name": "阴影遮盖",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "目标完整度不高于当前上限一半时，获得1骰子等级提升。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", null, "IS",
+                  ["$event.card","SELECT_SKILL_TARGET"],
+                  ["$event.target"],
+                  "IF_ELSE", "target", "STORE", "$local.target", null, "IS", "NOT",
+                  [
+                    "$local.target.lightcore_hp", 2, "MUL", "$local.target.max_lightcore_hp", "LE",
+                    ["$self","骰子等级提升",1,"STATUS"],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 2,
+              "final_bonus": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "回复1生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "range_level": 1,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "获得1领域洞悉。",
+                  "operation": {"op":"program","code":["$self","领域洞悉",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "liu_annihilate",
+          "name": "形态灭杀",
+          "cost": 3,
+          "ignore_range_amount": {
+            "value": {
+              "if": {"op":"ge","left":{"field":"$self.statuses","key":"环境同调","default":0},"right":3},
+              "then": 3,
+              "else": 0
+            }
+          },
+          "entries": [
+            {
+              "trigger": "after_skill_use",
+              "description": "消耗6能源。",
+              "operation": {"op":"program","code":["$self","能源",6,"SPEND_STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 6,
+              "roll_max": 100,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成能源值−1的光点伤害。本段引发崩塌时完整度上限额外−4；此时生命不高于一半（向上取整），追加3次即死伤害。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$event.target", "$self", "能源", "STATUS_COUNT", 1, "SUB", 0, "MAX",
+                      {"call":"LIGHTCORE_DAMAGE","result":"lightcore_collapsed","default":false},
+                      [
+                        "$event.target", -4, "CHANGE_LIGHTCORE_MAX", "$event.target.hp",
+                        "$event.target.max_hp", 1, "ADD", 2, "FLOOR_DIV", "LE",
+                        [3,["$event.target.is_alive"],["$event.target","INSTANT_DEATH"],"REPEAT_WHILE"],
+                        "WHEN"
+                      ],
+                      "WHEN"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "成功命中时消耗全部能源。",
+                  "operation": {"op":"program","code":["$self","能源","all","SPEND_STATUS"]}
+                }
+              ],
+              "fixed_level": true
+            }
+          ]
+        },
+        {
+          "id": "liu_overwrite",
+          "name": "领域覆写",
+          "cost": 3,
+          "out_of_combat": true,
+          "entries": [
+            {
+              "trigger": "BEFORE DESTROY",
+              "description": "本技能不会被摧毁（最高话语权）。",
+              "when": [],
+              "operation": {"op":"program","code":["$event.target","$owner","IS",[{"op":"cancel"}],"WHEN"]},
+              "authority": "最高话语权",
+              "subject": "any"
+            },
+            {
+              "trigger": "BEFORE NEGATE_SKILL",
+              "description": "本技能不会被无效化（最高话语权）。",
+              "when": [],
+              "operation": {"op":"program","code":["$event.target","$owner","IS",[{"op":"cancel"}],"WHEN"]},
+              "authority": "最高话语权",
+              "subject": "any"
+            },
+            {
+              "trigger": "BEFORE RESOLVE_RANGE_DEFICIT",
+              "description": "本技能不会被远程无效化（最高话语权）。",
+              "when": [],
+              "operation": {"op":"program","code":["$event.card","$owner","IS",["$event.value_ref",2,"VALUE_CEILING"],"WHEN"]},
+              "authority": "最高话语权",
+              "subject": "any"
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "环境同调低于3时，获得1同调并减少2领域洞悉和2环境压制。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "环境同调", "STATUS_COUNT", 3, "LT",
+                  ["$self","环境同调",1,"STATUS","$self","领域洞悉",-2,"STATUS","$self","环境压制",-2,"STATUS"],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "群1光点。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$player", "OPPONENT",
+                      {"field":"characters"},
+                      ["$event.item.is_alive"],
+                      "FILTER", "$event.target", "FIRST_IN_ORDER",
+                      ["$event.target",1,"LIGHTCORE_DAMAGE"],
+                      "FOR_EACH_TARGET"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "自身回复1生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "塑造系权能掌控者。半人半光点生命，以自身为信物进行解析，担任光点生命联合会执政。"
+    }
+  ]
+}

@@ -269,6 +269,7 @@ class Context:
             if type(fields["keep_position"]) is not bool:
                 raise ValueError("摧毁骰位的保留标记须为布尔值")
         if opcode == OpCode.DAMAGE:
+            fields.setdefault("percentage_damage", False)
             # Nested status and character effects own their damage independently of
             # the die whose event they observed. A die entry owns its own segments.
             owner = originating_entry.entry.owner if originating_entry else None
@@ -290,6 +291,8 @@ class Context:
                 else kind_of(owner) if owner is not None else "status")
             fields["activation_die"] = owner if fields["activation_origin"] == "die" else None
             fields["activation_die_type"] = getattr(fields["activation_die"], "type", None)
+        if opcode == OpCode.CHECK_DEATH:
+            fields.setdefault("lethal", False)
         if self._range_blocks_op(opcode, fields) or (
                 opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
             del self.stack[mark:]
@@ -359,6 +362,11 @@ class Context:
             else:
                 fields.update(damage_part=False, damage_die=None, damage_card=None, damage_status=None,
                               penetration=None, attack_type=None, modifiers=None)
+                if opcode == OpCode.LIGHTCORE_DAMAGE:
+                    owner = originating_entry.entry.owner if originating_entry else None
+                    credit = (self.event.get("damage_die") if fields.get("credit") == "damage_die"
+                              else owner if kind_of(owner) == "die" else None)
+                    fields.update(damage_die=credit, damage_card=credit.card if credit else None)
                 if opcode == OpCode.LOSE_HP:
                     fields["base_amount"] = None
                     fields.setdefault("source", self.event.get("source") or fields["target"])
@@ -486,7 +494,7 @@ class Context:
     def _matches(self, entry, *, ordering=False):
         if not self._in_scope(entry):
             return False
-        if any(frame.entry is entry for frame in self.executions):
+        if not entry.reentrant and any(frame.entry is entry for frame in self.executions):
             return False
         if entry.turn_limit:
             key = self._turn_limit_key(entry)

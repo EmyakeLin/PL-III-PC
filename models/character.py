@@ -156,6 +156,21 @@ class Character:
     def available_cost(self):
         return self.independent_cost + self.turn_cost_adjustment - self.used_independent_cost
 
+    @property
+    def personal_statuses(self):
+        """Ordinary personal stacks exclude team pools and stacks supplied by another status."""
+        return {name: amount for name in self.statuses.maps[0]
+                if (amount := self._ordinary_status(name)) > 0}
+
+    def restore_personal_stacks(self, name, amount):
+        name = self.canonical_status_name(name)
+        if self.status_rules.get(name, {}).get("pool") == "team" or name in self.ability_rules:
+            return
+        if type(amount) is not int or amount < 0:
+            raise ValueError("回退后的个人状态层数须为非负整数")
+        return self._set_status(name, amount, self._sustained_stacks.get(name, 0),
+                                notify=False, restoring=True)
+
     def record(self, kind, **fields):
         self._effect_context.record(kind, side=self.player.side, character_id=self.id,
                                     character_name=self.name, **fields)
@@ -169,7 +184,7 @@ class Character:
                               value_ref=minimum, printed_min=low, roll_kind="speed")
         high = die.roll_max
         low = min(high, max(1, minimum.apply(low)))
-        with ctx.binding(roll_kind="speed"):
+        with ctx.binding(roll_kind="speed", clash_roll=False):
             rolled = ctx.eval_block([low, high, 0, die, OpCode.ROLL])
         raw = min(high, max(low, die.value)) if rolled is not None else 0
         self.speed = raw + self.status_modifier("speed")
@@ -325,7 +340,7 @@ class Character:
         return self._set_status(name, max(0, self._ordinary_status(name) + amount),
                                 self._sustained_stacks.get(name, 0), notify=notify, defer_effects=defer_effects)
 
-    def _set_status(self, name, ordinary, sustained, *, notify=True, defer_effects=False):
+    def _set_status(self, name, ordinary, sustained, *, notify=True, defer_effects=False, restoring=False):
         previous = self.statuses.get(name, 0)
         balances = self.team_statuses if self.status_rules.get(name, {}).get("pool") == "team" else self.statuses
         if sustained:
@@ -356,10 +371,10 @@ class Character:
         elif not value:
             self.active_statuses.discard(name)
         if not defer_effects:
-            self.finish_status_change(name, previous, value, notify=notify)
+            self.finish_status_change(name, previous, value, notify=notify, restoring=restoring)
         return value
 
-    def finish_status_change(self, name, previous, value, *, notify=True):
+    def finish_status_change(self, name, previous, value, *, notify=True, restoring=False):
         """Resolve dependent statuses and notify listeners after committing the new balance."""
         cap_delta = (value - previous) * self.status_rules.get(name, {}).get("max_hp_per_stack", 0)
         if cap_delta:
@@ -370,13 +385,18 @@ class Character:
             for card in self.conditional_cards:
                 if card.printed_data["form_when"]["status"] == name:
                     card.refresh_status_form()
-        if bool(previous) != bool(value):
+        sustain_from = self.status_rules.get(name, {}).get("sustain_from", 1)
+        if (previous >= sustain_from) != (value >= sustain_from):
             for other, count in self.status_rules.get(name, {}).get("sustain", {}).items():
-                grants = self._sustained_stacks.get(other, 0) + (count if value else -count)
-                self._set_status(other, self._ordinary_status(other), grants)
-            if not value:
-                for other, rule in self.status_rules.items():
-                    if rule.get("requires_status") == name and self.statuses.get(other):
+                grants = self._sustained_stacks.get(other, 0) + (count if value >= sustain_from else -count)
+                self._set_status(other, self._ordinary_status(other), grants,
+                                 notify=not restoring, restoring=restoring)
+        if previous and not value:
+            for other, rule in self.status_rules.items():
+                if rule.get("requires_status") == name and self.statuses.get(other):
+                    if restoring:
+                        self.restore_personal_stacks(other, 0)
+                    else:
                         self.clear_status(other)
         if notify:
             self.notify_status_change(name, previous, value)

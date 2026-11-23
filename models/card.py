@@ -45,6 +45,11 @@ def validate_range_trait(data, key):
 
 
 def validate_skill_traits(data):
+    if type(data.get("match_opposing_range", False)) is not bool:
+        raise ValueError("匹配对方远程等级须为布尔值")
+    reduction = data.get("opponent_range_reduction", 0)
+    if type(reduction) is not int or not 0 <= reduction <= 3:
+        raise ValueError("对方远程等级减量须为0～3的整数")
     if (data.get("form_when") or {}).get("snapshot") not in (None, "use"):
         raise ValueError("形态快照的时点必须是 use")
     for key in ("range_level", "ignore_range"):
@@ -67,6 +72,10 @@ def validate_skill_traits(data):
 
 def describe_range_traits(data):
     traits = []
+    if data.get("match_opposing_range"):
+        traits.append("与远程技能交锋时视为同等级远程")
+    if data.get("opponent_range_reduction"):
+        traits.append(f"对方远程等级−{data['opponent_range_reduction']}")
     for key in ("range_level", "ignore_range"):
         def label(amount):
             return RANGE_NAMES[amount] if key == "range_level" else f"无视 {amount} 级远程"
@@ -332,6 +341,7 @@ class Card:
 
     def set_range_opponent(self, opponent, *, own_range=None, opposing_range=None, ignore_range=None):
         """Retain this pairing for excess dice, until the next skill joins."""
+        was_blank = self.range_opponent is opponent and self.range_deficit >= 3
         self.range_opponent = opponent
         self.range_deficit = 0
         if opponent is None:
@@ -339,12 +349,35 @@ class Card:
         own_range = self.effective_range if own_range is None else own_range
         opposing_range = opponent.effective_range if opposing_range is None else opposing_range
         ignore_range = self.effective_ignore_range if ignore_range is None else ignore_range
+        own_range, opposing_range = self.paired_ranges(opponent, own_range, opposing_range)
         deficit = max(0, opposing_range - own_range - ignore_range)
         if deficit:
             from models.opcode import OpCode
             ctx = self.player.game.context
             with ctx.binding(opponent_card=opponent, target=opponent.character):
                 ctx.eval_block([self, deficit, OpCode.RESOLVE_RANGE_DEFICIT])
+            if self.range_deficit >= 3 and not was_blank:
+                ctx.dispatch_pipeline("on_skill_disabled", source=self.character, card=self,
+                                      target=opponent.character, opponent_card=opponent, reason="range")
+
+    def paired_ranges(self, opponent, own_range=None, opposing_range=None):
+        def levels(card, opposing, supplied):
+            reduction = opposing.data.get("opponent_range_reduction", 0)
+            skill = max(0, card.effective_range - reduction)
+            die = max(0, supplied - reduction) if supplied is not None else 0
+            return skill, die if die > skill else 0
+
+        own, own_die = levels(self, opponent, own_range)
+        other, other_die = levels(opponent, self, opposing_range)
+        match = self.data.get("match_opposing_range", False)
+        matched_by = opponent.data.get("match_opposing_range", False)
+        if match and matched_by:
+            own = other = max(own, other)
+        elif match and other:
+            own = other
+        elif matched_by and own:
+            other = own
+        return max(own, own_die), max(other, other_die)
 
     def _sync_requested_repeat(self):
         if self.instantiated_dice and self.has_next_die():

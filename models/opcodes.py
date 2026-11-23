@@ -610,6 +610,9 @@ def handle_roll(ctx):
     die.value = max(low, min(high, rolled))
     for mode, amount in ctx.roll_adjustments.pop(die, ()):
         ctx.eval_block([die, mode, amount, OpCode.UPDATE_ROLL])
+    if getattr(die, "card", None) is not None:
+        ctx.dispatch_pipeline("on_variable_value_set", source=die.card.character, die=die,
+                              card=die.card, value=die.value, duel=ctx.event.get("duel"))
     return die.value
 
 
@@ -641,7 +644,8 @@ def handle_pair_skill_copy(ctx):
 
 def handle_move_card(ctx):
     zone, card = ctx.pop(), ctx.pop()
-    if card is None or card.destroyed or not card.character.is_alive or ctx.game.special.is_locked(card):
+    if (card is None or card.destroyed and not ctx.event.get("allow_destroyed")
+            or not card.character.is_alive or ctx.game.special.is_locked(card)):
         return False
     zones = card.player.cardspace
     destination = zones.zone(zone)
@@ -726,10 +730,54 @@ def handle_mark_damage_dealt(ctx):
 
 def handle_check_death(ctx):
     target = ctx.pop()
-    if target.is_alive and target.hp == 0:
+    if target.is_alive and (target.hp == 0 or ctx.event.get("lethal")):
+        target.hp = 0
         target._die()
         return True
     return False
+
+
+def handle_instant_death(ctx):
+    target = ctx.pop()
+    if target is None or not target.is_alive:
+        return False
+    ctx.push(target)
+    return bool(ctx.execute_op(OpCode.CHECK_DEATH, lethal=True))
+
+
+def handle_change_lightcore_max(ctx):
+    delta, target = ctx.pop(), ctx.pop()
+    if target is not None and target.is_alive:
+        target.max_lightcore_hp = max(0, target.max_lightcore_hp + delta)
+        target.lightcore_hp = min(target.lightcore_hp, target.max_lightcore_hp)
+        return target.max_lightcore_hp
+
+
+def handle_set_hp(ctx):
+    amount, target = ctx.pop(), ctx.pop()
+    if target is not None and target.is_alive:
+        target.hp = min(target.max_hp, max(0, amount))
+        target.check_death()
+        return target.hp
+
+
+def handle_restore_status_stacks(ctx):
+    amount, name, holder = ctx.pop(), ctx.pop(), ctx.pop()
+    if holder is not None and holder.is_alive:
+        return holder.restore_personal_stacks(name, amount)
+
+
+def handle_end_duel(ctx):
+    duel = ctx.pop()
+    if duel is not None and duel is ctx.game.resolving_duel:
+        duel.end_requested = True
+        return True
+    return False
+
+
+def handle_select_enemy_character(ctx):
+    player = ctx.pop()
+    ctx.push(player.choose_one_sided_target(ctx.game.pre_reveal.opponent(player)))
 
 
 def handle_random_int(ctx):
@@ -951,7 +999,13 @@ def handle_ability_effect(ctx):
         if paid:
             ctx.record("ability_spent", target=target.combat_name, name=name, amount=paid, total=total)
         return paid
-    total = target.apply_ability_delta(name, amount)
+    opposite = target.ability_rules[name].get("opposes")
+    offset = min(max(0, amount), target.ability_effects.get(opposite, 0))
+    if offset:
+        remaining = target.apply_ability_delta(opposite, -offset)
+        ctx.record("ability_changed", target=target.combat_name, name=opposite, total=remaining)
+    total = target.apply_ability_delta(name, amount - offset)
+    ctx.event["offset_amount"] = offset
     ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=total - old)
     ctx.record("ability_changed", target=target.combat_name, name=name, total=total)
     return total
@@ -1018,10 +1072,12 @@ def handle_destroy(ctx):
         # A contradictory protection can intercept DESTROY before it executes.
         target.cancelled = True
     elif isinstance(target, Card):
-        if not target.destroyed:
-            ctx.record("card_destroyed", card=target.name)
+        if target.destroyed:
+            return False
+        ctx.record("card_destroyed", card=target.name)
         target.destroyed = True
         target.state = CardState.NEGATED
+        publish_disabled_skill(ctx, target, "destroy")
     elif hasattr(target, "card") and hasattr(target, "roll"):
         if not target.destroyed:
             ctx.record("die_destroyed", position=getattr(target, "position", None))
@@ -1029,6 +1085,31 @@ def handle_destroy(ctx):
         target.destroyed = True
     else:
         raise ValueError("摧毁只能作用于技能、骰子或一次词条执行")
+    return True
+
+
+def publish_disabled_skill(ctx, card, reason):
+    opponent = card.range_opponent
+    if opponent is None and ctx.event.get("card") is card:
+        opponent = ctx.event.get("opponent_card")
+    issuer = ctx.event.get("issuer")
+    causing_card = issuer.owning_card if issuer is not None else None
+    if opponent is None and causing_card is not None and causing_card.player is not card.player:
+        opponent = causing_card
+    enemy = opponent.character if opponent else None
+    die = ctx.event.get("die")
+    if enemy is None and getattr(die, "card", None) is card:
+        enemy = die.hit_target
+    ctx.dispatch_pipeline("on_skill_disabled", source=card.character, card=card,
+                          opponent_card=opponent, target=enemy, reason=reason)
+
+
+def handle_negate_skill(ctx):
+    card = ctx.pop()
+    if not isinstance(card, Card) or card.destroyed or card.state == CardState.NEGATED:
+        return False
+    card.state = CardState.NEGATED
+    publish_disabled_skill(ctx, card, "negate")
     return True
 
 
@@ -1053,6 +1134,17 @@ def handle_place_empty_regular(ctx):
 
 def handle_stage_pre_attack(ctx):
     target, card = ctx.pop(), ctx.pop()
+    from models.special_actions import SkillCopy, SkillUse
+    if isinstance(card, SkillUse) and isinstance(card.card, SkillCopy):
+        spec = card.card
+        if (not spec.owner.is_alive or target is None or not target.is_alive or ctx.game.is_over
+                or target not in ctx.game.pre_reveal.opponent(spec.owner.player).characters
+                or ctx.game.pre_reveal.phase != "idle"):
+            return False
+        copy = spec.instantiate()
+        SkillUse(copy, card.discount, card.prepaid).set_price()
+        ctx.game.pre_reveal.stage_attack(copy, target, None, None)
+        return True
     if (card is None or card.destroyed or card not in card.home_deck.content or target is None
             or not target.is_alive or target.player is card.player or ctx.game.pre_reveal.phase != "idle"):
         return False
@@ -1170,12 +1262,17 @@ DISPATCH_TABLE = {
     OpCode.REPEAT_DIE: handle_repeat_die, OpCode.NEXT_TURN_DUELS: handle_next_turn_duels,
     OpCode.SET_SKILL_STATE: handle_set_component_state,
     OpCode.DAMAGE: handle_damage, OpCode.LIGHTCORE_DAMAGE: handle_lightcore_damage,
+    OpCode.CHANGE_LIGHTCORE_MAX: handle_change_lightcore_max, OpCode.INSTANT_DEATH: handle_instant_death,
+    OpCode.SET_HP: handle_set_hp, OpCode.END_DUEL: handle_end_duel,
+    OpCode.RESTORE_STATUS_STACKS: handle_restore_status_stacks,
+    OpCode.BLANK_DIE: lambda ctx: ctx.pop().make_blank(), OpCode.SELECT_ENEMY_CHARACTER: handle_select_enemy_character,
     OpCode.REAL_DAMAGE: handle_real_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
     OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
     OpCode.STATUS: handle_status, OpCode.STAGGER: handle_stagger,
     OpCode.SPEND_STATUS: handle_spend_status,
     OpCode.ABILITY_EFFECT: handle_ability_effect, OpCode.SPEND_ABILITY_EFFECT: handle_ability_effect,
     OpCode.DESTROY: handle_destroy, OpCode.DISCARD: handle_discard,
+    OpCode.NEGATE_SKILL: handle_negate_skill,
 }
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
@@ -1248,11 +1345,16 @@ OPERANDS = {
     OpCode.FOR_EACH_TARGET: ("targets", "block"),
     OpCode.DAMAGE: ("target", "amount", "penetration", "attack_type"),
     OpCode.LIGHTCORE_DAMAGE: ("target", "amount"), OpCode.REAL_DAMAGE: ("target", "amount"),
+    OpCode.CHANGE_LIGHTCORE_MAX: ("target", "amount"), OpCode.INSTANT_DEATH: ("target",),
+    OpCode.SET_HP: ("target", "amount"), OpCode.END_DUEL: ("duel",),
+    OpCode.RESTORE_STATUS_STACKS: ("target", "status", "amount"),
+    OpCode.BLANK_DIE: ("die",), OpCode.SELECT_ENEMY_CHARACTER: ("player",),
     OpCode.HEAL: ("target", "amount"), OpCode.STATUS: ("target", "status", "amount"),
     OpCode.SPEND_STATUS: ("target", "status", "amount"),
     OpCode.ABILITY_EFFECT: ("target", "ability", "amount"),
     OpCode.SPEND_ABILITY_EFFECT: ("target", "ability", "amount"),
     OpCode.SHIELD: ("target", "shield_kind", "amount"), OpCode.STAGGER: ("target",),
     OpCode.DESTROY: ("target",),
+    OpCode.NEGATE_SKILL: ("target",),
     OpCode.CLASH: ("clash_pair",), OpCode.RESOLVE_HIT: ("die", "target"),
 }

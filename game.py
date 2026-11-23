@@ -40,6 +40,7 @@ class Game:
         self.turn_ending = False
         self.card_serial = 0
         self._prepared_turn = -1
+        self._battle_started = False
         effects = base_effects()
         self.status_entries = dict(effects.status_entries)
         self.status_rules = dict(effects.status_rules)
@@ -69,6 +70,12 @@ class Game:
                 character.setup_deck()
             player.cardspace.draw.shuffle(self.rng)
             player.cardspace.decisive.shuffle(self.rng)
+        self.start_battle()
+
+    def start_battle(self):
+        if not self._battle_started:
+            self._battle_started = True
+            self.context.dispatch_pipeline("on_battle_start", source=None, target=None, side=None)
 
     def next_step(self):
         if self.pending_draw is not None and not self.is_over:
@@ -121,6 +128,8 @@ class Game:
         self.pre_reveal.start()
 
     def open_turn(self):
+        if self.turn_count == 0:
+            self.start_battle()
         number = self.turn_count + 1
         if self.turn_number != number:
             self.turn_number = number

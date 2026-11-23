@@ -4,17 +4,8 @@
   "ability_rules": {
     "优势次数": {
       "description": "拼点取两次变动点数中的较大值，随后用掉一次。获得时与劣势次数逐次相消。",
+      "opposes": "劣势次数",
       "global_entries": [
-        {
-          "trigger": "BEFORE ABILITY_EFFECT",
-          "when": [{"left":"$event.ability","op":"eq","right":"优势次数"},{"left":"$pending.amount","op":"gt","right":0}],
-          "operation": {"op":"program","code":[
-            "DUP","$event.target.ability_effects","劣势次数",0,"LOOKUP","MIN","offset","STORE",
-            "$local.offset",0,"GT",[
-              "$event.target","劣势次数","$local.offset",{"call":"SPEND_ABILITY_EFFECT","result":"actual_delta","default":0},"ADD"
-            ],"WHEN"
-          ]}
-        },
         {
           "trigger": "BEFORE SELECT_ROLL_VALUE",
           "when": [{"left":{"field":"$event.source.ability_effects","key":"优势次数","default":0},"op":"gt","right":0}],
@@ -29,17 +20,8 @@
     },
     "劣势次数": {
       "description": "拼点取两次变动点数中的较小值，随后用掉一次。获得时与优势次数逐次相消。",
+      "opposes": "优势次数",
       "global_entries": [
-        {
-          "trigger": "BEFORE ABILITY_EFFECT",
-          "when": [{"left":"$event.ability","op":"eq","right":"劣势次数"},{"left":"$pending.amount","op":"gt","right":0}],
-          "operation": {"op":"program","code":[
-            "DUP","$event.target.ability_effects","优势次数",0,"LOOKUP","MIN","offset","STORE",
-            "$local.offset",0,"GT",[
-              "$event.target","优势次数","$local.offset",{"call":"SPEND_ABILITY_EFFECT","result":"actual_delta","default":0},"ADD"
-            ],"WHEN"
-          ]}
-        },
         {
           "trigger": "BEFORE SELECT_ROLL_VALUE",
           "when": [{"left":{"field":"$event.source.ability_effects","key":"劣势次数","default":0},"op":"gt","right":0}],

@@ -64,6 +64,10 @@ class Dice:
         self.data = data
         if type(data.get("passive_activation", False)) is not bool:
             raise ValueError("被动激活须为布尔值")
+        if data.get("clash_order", "higher") not in ("higher", "lower"):
+            raise ValueError("拼点胜利条件须为 higher 或 lower")
+        if type(data.get("fixed_level", False)) is not bool:
+            raise ValueError("固定印刷骰级须为布尔值")
         kind = data["type"]
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
@@ -147,6 +151,16 @@ class Dice:
         return max(self.card.effective_ignore_range if self.card else 0, range_trait(self.data, "ignore_range", self.card))
 
     @property
+    def paired_range(self):
+        opponent = self.card.range_opponent if self.card else None
+        if opponent is None:
+            return self.effective_range
+        opposing_die = self.game.context.active_dice.get(opponent.player.side)
+        opposing_range = (opposing_die.effective_range if getattr(opposing_die, "card", None) is opponent
+                          else opponent.effective_range)
+        return self.card.paired_ranges(opponent, self.effective_range, opposing_range)[0]
+
+    @property
     def has_damage_part(self):
         return any(damage_part(entry) is not None or independent_damage_part(entry) is not None or (
             isinstance(entry, dict) and isinstance(entry.get("operation"), dict)
@@ -171,6 +185,8 @@ class Dice:
 
     @property
     def level(self):
+        if self.data.get("fixed_level"):
+            return self._printed_level
         value = self.modified_level if self._resolved_level is None else self._resolved_level
         return DiceLevel(min(DiceLevel.D20.value, max(DiceLevel.D4.value, value)))
 
@@ -263,6 +279,10 @@ def describe_die(data):
     die.value = die.roll_max
     last = die.get_value()
     traits = describe_range_traits(data)
+    if data.get("clash_order") == "lower":
+        traits.append("拼点逆转")
+    if data.get("fixed_level"):
+        traits.append("固定骰面范围，忽略骰级升降")
     if data.get("passive_activation"):
         traits.append("被动激活")
     if cost := data.get("resource_cost"):

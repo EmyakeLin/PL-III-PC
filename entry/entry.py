@@ -50,7 +50,7 @@ class Entry:
     def __init__(self, owner, trigger_type, trigger, operation, timing="AFTER", *,
                  scope="global", subject="any", target=None, authority=0, when=None,
                  period=None, origin=None, turn_limit=None, damage_cause=None, status_name=None,
-                 choice_prompt=None, adjustments=None, call_adjustments=None):
+                 choice_prompt=None, adjustments=None, call_adjustments=None, reentrant=False):
         self.owner = owner
         self.group_name = None
         self.trigger_type = trigger_type
@@ -79,6 +79,9 @@ class Entry:
         self.turn_active = False
         self.detached = False
         self.turn_limit = turn_limit
+        if type(reentrant) is not bool:
+            raise ValueError("允许嵌套触发的标记须为布尔值")
+        self.reentrant = reentrant
         self.choice_prompt = choice_prompt
 
     @classmethod
@@ -102,7 +105,8 @@ class Entry:
                    authority=spec.get("authority", 0), when=spec.get("when"),
                    period=spec.get("period"), origin=spec.get("origin", kind), turn_limit=spec.get("turn_limit"),
                    damage_cause=spec.get("damage_cause"), status_name=spec.get("status_name"),
-                   choice_prompt=spec.get("choice_prompt", spec.get("description")), adjustments=spec.get("adjustments"))
+                   choice_prompt=spec.get("choice_prompt", spec.get("description")), adjustments=spec.get("adjustments"),
+                   reentrant=spec.get("reentrant", False))
 
 
 @dataclass(eq=False)

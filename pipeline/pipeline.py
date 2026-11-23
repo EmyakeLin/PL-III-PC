@@ -13,6 +13,10 @@ from .pipeline_errors import PipelineFinished
 BEFORE_ONE_SIDED_ATTACK = "before_one_sided_attack"
 
 
+class DuelEnded(Exception):
+    """An effect ended the currently executing slot between combat nodes."""
+
+
 class SidePipeline:
     """Only a dispatched packet or an explicit release can resume a waiting side."""
 
@@ -523,7 +527,20 @@ class Pipeline:
                 if not pre_reveal:
                     self.game.context.record("duel_started", series="regular", number=space.current_duel_index + 1)
                 self._frame.started = False
-                yield from self._play_slot(slot, pipes)
+                try:
+                    yield from self._play_slot(slot, pipes)
+                except DuelEnded:
+                    slot.end_requested = False
+                    for pipe in pipes:
+                        self.game.context.close_cancelled_use(pipe.side, pipe.card, pipe.die)
+                        pipe.queue.clear()
+                        pipe.push_pack(steps.DUEL_END)
+                    self._frame.pair = None
+                    self._frame.results = {}
+                    yield from self._run_to(pipes, steps.NEXT_DUEL)
+                    for cards in slot.content.values():
+                        for card in cards:
+                            card.set_range_opponent(None)
                 self.game.context.expire_lasting_entries(slot)
             self.release_temporary_skills(slot)
             self._closed_slots.add(slot)
@@ -665,9 +682,13 @@ class Pipeline:
             pipe.card.set_range_opponent(None)
             pipe.range_pairing = None
         if len(current) == 2:
-            far, near = sorted(current, key=lambda p: p.card.effective_range, reverse=True)
+            far, near = current
+            far_range, near_range = far.card.paired_ranges(near.card)
+            if near_range > far_range:
+                far, near = near, far
+                far_range, near_range = near_range, far_range
             far.opposing_card, near.opposing_card = near.card, far.card
-            if far.card.effective_range > near.card.effective_range + near.card.effective_ignore_range:
+            if far_range > near_range + near.card.effective_ignore_range:
                 # A card must actually pay before it can blank the opposing
                 # pre-use and fee entries. Its price hooks can still alter or cancel payment.
                 if far in entrants:
@@ -1101,6 +1122,8 @@ class Pipeline:
         while remaining:
             actions = {}
             for pipe in list(remaining):
+                if self._get_current_duel().end_requested:
+                    raise DuelEnded()
                 stop = stops[pipe.side] if isinstance(stops, dict) else stops
                 node = pipe.step()
                 actions[pipe.side] = self._execute(node, pipe)

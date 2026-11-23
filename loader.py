@@ -42,6 +42,8 @@ def _add_effects(definitions, pack):
         if any(target == name or type(amount) is not int or amount <= 0
                for target, amount in rule.get("sustain", {}).items()):
             raise ValueError(f"{name} 的持续加成须指定其他状态及正整数层数")
+        if type(rule.get("sustain_from", 1)) is not int or rule.get("sustain_from", 1) < 1:
+            raise ValueError(f"{name} 的持续加成门槛须为正整数")
         if type(rule.get("max_hp_per_stack", 0)) is not int or type(rule.get("permanent", False)) is not bool:
             raise ValueError(f"{name} 的每层生命上限修正须为整数，永久标记须为布尔值")
         activation = rule.get("activation")
@@ -63,6 +65,9 @@ def _add_effects(definitions, pack):
     for name, rule in pack.get("ability_rules", {}).items():
         if name in definitions.ability_rules:
             raise ValueError(f"重复的能力效果 {name}")
+        if "opposes" in rule and (not isinstance(rule["opposes"], str)
+                                  or not rule["opposes"] or rule["opposes"] == name):
+            raise ValueError(f"{name} 须指定另一种抵消的能力效果")
         if "action" in rule:
             _validate_action(rule["action"])
         definitions.ability_rules[name] = rule

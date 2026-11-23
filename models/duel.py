@@ -34,6 +34,7 @@ class DuelSlot:
         self.game = game
         self.content = {}
         self.settled = False
+        self.end_requested = False
         self.current_card_index = {}
         self.used_skill_faces = {}
         # A continuation plays the original dice. The physical card stays in its own slot.
@@ -173,5 +174,7 @@ class ClashPair:
         va, vb = die_a.clash_score, die_b.clash_score
         if va == vb:
             return {a: "draw", b: "draw"}
-        winner, loser = (a, b) if va > vb else (b, a)
+        lower_wins = any(die.type != "blank" and die.data.get("clash_order") == "lower"
+                         for die in (die_a, die_b))
+        winner, loser = (a, b) if (va < vb if lower_wins else va > vb) else (b, a)
         return {winner: "win", loser: "lose"}
