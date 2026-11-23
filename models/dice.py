@@ -241,14 +241,15 @@ class Dice:
                 value += self.card.character.status_modifier("final_score")
         return value
 
-    def roll(self):
+    def roll(self, *, clash=False):
         self.final_score = self.clash_score = None
         self.resolve_level()
         if self.game is None:
             import random
             self.value = random.randint(1, self.roll_max)
         else:
-            self.game.context.eval_block([1, self.roll_max, 0, self, OpCode.ROLL])
+            with self.game.context.binding(clash_roll=clash):
+                self.game.context.eval_block([1, self.roll_max, 0, self, OpCode.ROLL])
         return self.get_value()
 
 

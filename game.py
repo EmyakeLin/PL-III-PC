@@ -49,6 +49,7 @@ class Game:
         self.winner = None
         self.context = Context(game=self)
         self.context.register_status_programs(self.status_rules)
+        self.context.register_status_programs(self.ability_rules)
         self.duelspace = DuelSpace(self)
         self.pre_reveal = PreRevealPhase(self)
         self.pipeline = Pipeline(self, step_list)

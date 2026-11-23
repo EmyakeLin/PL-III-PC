@@ -1196,7 +1196,7 @@ class Pipeline:
                                          reason=pipe.payment["failure_reason"])
         elif name == "logic_dice_clash":
             with self.game.context.binding(**event):
-                pipe.die.roll()
+                pipe.die.roll(clash=True)
         elif name == "logic_dice_hit" and event["target"] and event["target"].is_alive:
             if self.game.context.resolve_hit(**event):
                 pipe.die.landed_hits += 1

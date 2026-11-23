@@ -154,7 +154,7 @@ class ClashPair:
 
     def clash_roll(self):
         for die in self.dice_dict.values():
-            die.roll()
+            die.roll(clash=len(self.dice_dict) == 2)
         return self.clash_check()
 
     def clash_check(self):

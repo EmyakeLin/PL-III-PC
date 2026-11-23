@@ -596,16 +596,31 @@ def handle_damage_modifier(ctx):
 
 def handle_roll(ctx):
     die, bonus, high, low = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
-    rng = getattr(ctx.game, "rng", random)
-    ctx.stack.extend((die, rng.randint(low, high)))
-    rolled = ctx.execute_op(OpCode.RESOLVE_ROLL_VALUE, low=low, high=high)
+    ctx.stack.extend((die, low, high, bonus))
+    rolled = ctx.execute_op(OpCode.SAMPLE_ROLL_VALUE)
     if rolled is None:
         ctx.current_op = None
         return
-    die.value = max(low, min(high, rolled + bonus))
+    if ctx.event.get("clash_roll"):
+        ctx.stack.extend((die, rolled))
+        rolled = ctx.execute_op(OpCode.SELECT_ROLL_VALUE, low=low, high=high, bonus=bonus)
+        if rolled is None:
+            ctx.current_op = None
+            return
+    die.value = max(low, min(high, rolled))
     for mode, amount in ctx.roll_adjustments.pop(die, ()):
         ctx.eval_block([die, mode, amount, OpCode.UPDATE_ROLL])
     return die.value
+
+
+def handle_sample_roll_value(ctx):
+    bonus, high, low, die = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    ctx.stack.extend((die, getattr(ctx.game, "rng", random).randint(low, high)))
+    value = ctx.execute_op(OpCode.RESOLVE_ROLL_VALUE, low=low, high=high)
+    if value is None:
+        ctx.current_op = None
+        return
+    return max(low, min(high, value + bonus))
 
 
 def handle_roll_value(ctx):
@@ -1125,6 +1140,7 @@ DISPATCH_TABLE = {
     OpCode.SET_SKILL_FORM: handle_set_skill_form, OpCode.SPLIT_CLASH: handle_split_clash,
     OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
     OpCode.DEFER_REMAINING_DICE: handle_defer_remaining_dice, OpCode.RESOLVE_ROLL_VALUE: handle_roll_value,
+    OpCode.SAMPLE_ROLL_VALUE: handle_sample_roll_value, OpCode.SELECT_ROLL_VALUE: handle_roll_value,
     OpCode.PAIR_SKILL_COPY: handle_pair_skill_copy, OpCode.RESOLVE_DAMAGE_STATUS: handle_damage_status,
     OpCode.TAKE_HAND_CARD: handle_take_hand_card, OpCode.CHOOSE_SLOT: handle_choose_slot,
     OpCode.CHECK_DEATH: handle_check_death, OpCode.RANDOM_INT: handle_random_int,
@@ -1199,6 +1215,7 @@ OPERANDS = {
     OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
     OpCode.DEFER_REMAINING_DICE: ("card", "slot"), OpCode.RESOLVE_ROLL_VALUE: ("die", "value"),
+    OpCode.SAMPLE_ROLL_VALUE: ("die", "low", "high", "bonus"), OpCode.SELECT_ROLL_VALUE: ("die", "value"),
     OpCode.PAIR_SKILL_COPY: ("card", "sample"),
     OpCode.RESOLVE_DAMAGE_STATUS: ("target", "status", "penetration", "factor"),
     OpCode.TAKE_HAND_CARD: ("target", "receiver"), OpCode.CHOOSE_SLOT: ("subject", "candidates", "continuation"),

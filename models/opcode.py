@@ -14,6 +14,8 @@ class OpCode(Enum):
     MUL = auto()
     CLAMP = auto()
     ROLL = auto()
+    SAMPLE_ROLL_VALUE = auto()
+    SELECT_ROLL_VALUE = auto()
     RESOLVE_ROLL_VALUE = auto()
     
     # 战斗与拼点核心

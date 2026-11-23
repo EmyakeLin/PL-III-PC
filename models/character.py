@@ -94,6 +94,7 @@ class Character:
             self.game.status_rules.update(data.get("status_rules", {}))
             self.game.context.register_status_programs(data.get("status_rules", {}))
             self.game.ability_rules.update(data.get("ability_rules", {}))
+            self.game.context.register_status_programs(data.get("ability_rules", {}))
             self.game.turn_end_statuses.update(data.get("turn_end_statuses", ()))
             self.game.context.register_entries(self, self.passive_skill_data)
             player.register_faction_passives(self)
