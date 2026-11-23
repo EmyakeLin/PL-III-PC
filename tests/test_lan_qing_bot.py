@@ -66,6 +66,19 @@ class LanQingDecisions(unittest.TestCase):
         self.actor["passive_values"]["涌流灌注"] = 2
         self.assertAlmostEqual(turn.score(play) - base, 0.7)
 
+    def test_leaf_infusion_bonus_depends_on_its_printed_face(self):
+        self.own["cost"]["available"] = 4
+        turn = _Turn(self.frame)
+        for key, active, expected in (("lan_leaf_3", False, 0.7), ("lan_leaf_3", True, 0.0),
+                                      ("lan_leaf_4", True, 0.7)):
+            with self.subTest(key=key, active=active):
+                self.actor["statuses"] = {LEAF: 1} if active else {}
+                self.actor["passive_values"]["涌流灌注"] = 0
+                play = [self.cards[key]]
+                base = turn.score(play)
+                self.actor["passive_values"]["涌流灌注"] = 2
+                self.assertAlmostEqual(turn.score(play) - base, expected)
+
     def test_skips_lethal_self_payment_even_when_a_third_hand_play_would_heal_next_turn(self):
         self.own["cost"]["available"] = 7
         self.frame["duels"] = [self.slot(1, "lan_end"), self.slot(2, "lan_dance_2")]

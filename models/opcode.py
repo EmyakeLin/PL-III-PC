@@ -15,6 +15,7 @@ class OpCode(Enum):
     CLAMP = auto()
     ROLL = auto()
     SAMPLE_ROLL_VALUE = auto()
+    RESOLVE_RAW_ROLL = auto()
     SELECT_ROLL_VALUE = auto()
     RESOLVE_ROLL_VALUE = auto()
     

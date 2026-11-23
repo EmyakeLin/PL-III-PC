@@ -253,16 +253,30 @@ class LanQingTests(unittest.TestCase):
                 self.fight()
                 self.assertEqual(self.actor.statuses.get("残雪·幽蓝流光·活化", 0), int(enemy_range == 0))
 
-    def test_active_leaf_locks_only_the_die_level(self):
-        for status, stacks in (("骰子等级提升", 2), ("骰子等级降低", 5)):
+    def test_active_leaf_locks_die_level_base_final_and_clash_in_both_directions(self):
+        for status, stacks in (("骰子等级提升", 2), ("骰子等级降低", 5), (None, 0)):
             with self.subTest(status=status):
                 self.start_game()
                 self.actor.rule_state.update({"风卷残叶骰级": 3, "永久基础值": 1})
-                self.actor.add_status(status, stacks)
+                if status:
+                    self.actor.add_status(status, stacks)
                 self.actor.add_status("强壮", 2)
+                self.actor.turn_state["涌流灌注"] = 2
                 self.actor.add_status("深秋·风卷残叶·活化", 1)
-                self.place(self.cards["lan_leaf_3"])
+                leaf = self.place(self.cards["lan_leaf_3"])
+                opposing = self.training(self.enemy, -50)
+                opposing.data["range_level"] = 3
+                self.place(opposing)
                 normal = self.place(self.cards["lan_leaf_4"], 1)
+                delta = -8 if status == "骰子等级降低" else 8
+                bound, limit = (1, "VALUE_CEILING") if delta < 0 else (99, "VALUE_FLOOR")
+                self.game.context.register_entries(self.actor, [
+                    dict(trigger="before_dice_use", subject="source", operation={"op":"program","code":[
+                        "$event.die",delta,"DIE_BASE_ADD","$event.die",delta,"DIE_FINAL_ADD",
+                        "$event.card",delta,"SKILL_FINAL_ADD"]}),
+                    *[dict(trigger="BEFORE " + stage, subject="source", operation={"op":"program","code":[
+                        delta,"ADD","$event.value_ref",bound,limit]})
+                      for stage in ("RESOLVE_FINAL_SCORE", "RESOLVE_CLASH_SCORE")]])
                 rolls = []
 
                 def record(ctx):
@@ -272,10 +286,68 @@ class LanQingTests(unittest.TestCase):
 
                 self.game.context.register_entries(self.actor, [dict(
                     trigger="AFTER RESOLVE_FINAL_SCORE", subject="source", operation=record)])
+                clash_scores = []
+                self.game.context.register_entries(leaf, [dict(trigger="AFTER RESOLVE_CLASH_SCORE",
+                    operation=lambda ctx: clash_scores.append(ctx.event["result"]))])
                 self.fight()
-                self.assertEqual(rolls[0], ("lan_leaf_3", 2, 6, 6, 10, 1, 72))
-                # The normal leaf still receives both the permanent and the turn modifiers.
-                self.assertEqual(normal.instantiated_dice[1].roll_max, 20 if stacks == 2 else 4)
+                self.assertEqual(rolls[0], ("lan_leaf_3", 2, 6, 6, 10, 0, 60))
+                self.assertEqual(clash_scores, [60])
+                self.assertEqual(normal.instantiated_dice[1].roll_max, 4 if delta < 0 else 20)
+                self.assertEqual(normal.instantiated_dice[1].base_value, 1 + delta)
+
+    def test_active_leaf_keeps_paralysis_and_roll_choice_but_ignores_roll_adjustments(self):
+        ctx = self.game.context
+        ctx.register_entries(self.actor, [dict(trigger="BEFORE RESOLVE_ROLL_VALUE", subject="source",
+            operation={"op":"program", "code":[2, "ADD"]})])
+        for ability, expected in (("优势次数", 5), ("劣势次数", 1)):
+            with self.subTest(ability=ability):
+                self.actor.add_status("深秋·风卷残叶·活化", 1)
+                die = self.cards["lan_leaf_3"].get_current_die(self.game)
+                self.actor.add_status("麻痹", 2)
+                self.actor.add_ability_effect(ability, 1)
+                # Samples are |6-1|=5 and |4-4|=0 (clamped to 1).
+                ctx.eval_block([die, "set", 2, OpCode.QUEUE_ROLL_UPDATE])
+                with ctx.binding(source=self.actor, clash_roll=True), patch.object(
+                        self.game.rng, "randint", side_effect=[6, 1, 4, 4]) as rng:
+                    result = ctx.eval_block([1, 6, 3, die, OpCode.ROLL])
+                self.assertEqual((result, die.value, die.get_value()), (expected, expected, expected * 10))
+                self.assertEqual(rng.call_count, 4)
+                for call in rng.call_args_list:
+                    self.assertEqual(call.args, (1, 6))
+                ctx.eval_block([die, "add", 3, OpCode.UPDATE_ROLL])
+                self.assertEqual(die.value, expected)
+                self.assertNotIn("麻痹", self.actor.statuses)
+                self.assertNotIn(ability, self.actor.ability_effects)
+
+        ordinary = self.training(self.actor, 0).get_current_die(self.game)
+        self.actor.add_status("麻痹", 1)
+        with patch.object(self.game.rng, "randint", side_effect=[4, 3]):
+            self.assertEqual(ordinary.roll(), 3)  # |4-3| then +2
+        self.assertNotIn("麻痹", self.actor.statuses)
+
+    def test_locked_die_keeps_its_printed_base_multiplier_and_final_bonus(self):
+        card = self.training(self.actor, 2)
+        card.dice[0].update(fixed_scores=True, multiplier=3, final_bonus=-1)
+        die = card.get_current_die(self.game)
+        die.add_levels(2)
+        card.final_bonus = 12
+        self.actor.add_status("强壮", 3)
+        with patch.object(self.game.rng, "randint", return_value=4) as rng:
+            self.assertEqual(die.roll(), (2 + 4) * 3 - 1)
+        rng.assert_called_once_with(1, 4)
+
+    def test_active_leafs_printed_piercing_damage_still_uses_damage_rules(self):
+        self.actor.add_status("深秋·风卷残叶·活化", 1)
+        self.place(self.cards["lan_leaf_3"])
+        self.enemy.add_status("致命失衡", 1)
+        self.enemy.shield = 2
+        self.enemy.reinforced_shield = 2
+        with self.game.context.collect_facts() as facts:
+            self.fight()
+        damage, = [d for k, d in facts if k == "direct_damage"]
+        self.assertEqual((damage["grade"], damage["amount"], damage["lost"]), ("pierce", 6, 4))
+        self.assertEqual((self.enemy.hp, self.enemy.shield, self.enemy.reinforced_shield), (76, 0, 0))
+        self.assertNotIn("致命失衡", self.enemy.statuses)
 
     def test_active_spike_win_loss_and_unopposed_dice(self):
         for opponent_bases, results, damage, bursts in (
@@ -541,13 +613,15 @@ class LanQingTests(unittest.TestCase):
         from entry.entry import Entry
         spec = {"id":"sample", "name":"样本", "cost":4, "range_level":2, "entries":["DRAW 3"],
                 "dice":[{"type":"skip"}, {"type":"blunt", "level":4, "roll_max":10, "base_value":3,
-                          "multiplier":2, "entries":["9物理"], "resource_cost":{"status":"电流", "amount":2}}]}
+                          "multiplier":2, "fixed_scores":True, "entries":["9物理"],
+                          "resource_cost":{"status":"电流", "amount":2}}]}
         rule = Entry.from_spec(self.actor, {"trigger":"on_skill_use", "operation":{"op":"program",
             "code":["$self", "副本", {"literal":spec}, "BLANK_SKILL_FACE", "SET_CHARACTER_STATE"]}})
         self.game.context._invoke(rule)
         result = self.actor.rule_state["副本"]
         self.assertEqual(result["dice"], [
-            {"type":"skip"}, {"type":"blank", "level":4, "roll_max":10, "base_value":3, "multiplier":2}])
+            {"type":"skip"}, {"type":"blank", "level":4, "roll_max":10, "base_value":3,
+                              "multiplier":2, "fixed_scores":True}])
         self.assertEqual(result["cost"], 0)
         self.assertNotIn("entries", result)
         self.assertNotIn("range_level", result)

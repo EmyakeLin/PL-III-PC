@@ -90,14 +90,16 @@ def _usable_component(component):
 def handle_final_add(ctx):
     amount, component = ctx.pop(), ctx.pop()
     if _usable_component(component):
-        component.final_bonus += amount
+        if not getattr(component, "fixed_scores", False):
+            component.final_bonus += amount
         return component.final_bonus
 
 
 def handle_die_base_add(ctx):
     amount, die = ctx.pop(), ctx.pop()
     if _usable_component(die):
-        die.base_value += amount
+        if not die.fixed_scores:
+            die.base_value += amount
         return die.base_value
 
 
@@ -585,6 +587,8 @@ def handle_roll_update(ctx):
     amount, mode, die = ctx.pop(), ctx.pop(), ctx.pop()
     if mode not in ("set", "add"):
         raise ValueError(f"未知的掷骰修正 {mode!r}")
+    if die.fixed_scores:
+        return
     if ctx.current_op == OpCode.QUEUE_ROLL_UPDATE:
         ctx.roll_adjustments.setdefault(die, []).append((mode, amount))
     else:
@@ -614,7 +618,7 @@ def handle_roll(ctx):
         if rolled is None:
             ctx.current_op = None
             return
-    die.value = max(low, min(high, rolled))
+    die.value = rolled if die.fixed_scores else max(low, min(high, rolled))
     for mode, amount in ctx.roll_adjustments.pop(die, ()):
         ctx.eval_block([die, mode, amount, OpCode.UPDATE_ROLL])
     if getattr(die, "card", None) is not None:
@@ -625,7 +629,14 @@ def handle_roll(ctx):
 
 def handle_sample_roll_value(ctx):
     bonus, high, low, die = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    if die.fixed_scores:
+        low, high, bonus = 1, die.roll_max, 0
     ctx.stack.extend((die, getattr(ctx.game, "rng", random).randint(low, high)))
+    raw = ctx.execute_op(OpCode.RESOLVE_RAW_ROLL, low=low, high=high)
+    if raw is None:
+        ctx.current_op = None
+        return
+    ctx.stack.extend((die, raw))
     value = ctx.execute_op(OpCode.RESOLVE_ROLL_VALUE, low=low, high=high)
     if value is None:
         ctx.current_op = None
@@ -634,8 +645,9 @@ def handle_sample_roll_value(ctx):
 
 
 def handle_roll_value(ctx):
-    value = ctx.pop()
-    ctx.pop()
+    value, die = ctx.pop(), ctx.pop()
+    if ctx.current_op == OpCode.RESOLVE_ROLL_VALUE and die.fixed_scores:
+        return ctx.event["value"]
     return value
 
 
@@ -1242,6 +1254,7 @@ DISPATCH_TABLE = {
     OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
     OpCode.DEFER_REMAINING_DICE: handle_defer_remaining_dice, OpCode.RESOLVE_ROLL_VALUE: handle_roll_value,
     OpCode.SAMPLE_ROLL_VALUE: handle_sample_roll_value, OpCode.SELECT_ROLL_VALUE: handle_roll_value,
+    OpCode.RESOLVE_RAW_ROLL: handle_roll_value,
     OpCode.PAIR_SKILL_COPY: handle_pair_skill_copy, OpCode.RESOLVE_DAMAGE_STATUS: handle_damage_status,
     OpCode.TAKE_HAND_CARD: handle_take_hand_card, OpCode.CHOOSE_SLOT: handle_choose_slot,
     OpCode.CHECK_DEATH: handle_check_death, OpCode.RANDOM_INT: handle_random_int,
@@ -1324,6 +1337,7 @@ OPERANDS = {
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
     OpCode.DEFER_REMAINING_DICE: ("card", "slot"), OpCode.RESOLVE_ROLL_VALUE: ("die", "value"),
     OpCode.SAMPLE_ROLL_VALUE: ("die", "low", "high", "bonus"), OpCode.SELECT_ROLL_VALUE: ("die", "value"),
+    OpCode.RESOLVE_RAW_ROLL: ("die", "value"),
     OpCode.PAIR_SKILL_COPY: ("card", "sample"),
     OpCode.RESOLVE_DAMAGE_STATUS: ("target", "status", "penetration", "factor"),
     OpCode.TAKE_HAND_CARD: ("target", "receiver"), OpCode.CHOOSE_SLOT: ("subject", "candidates", "continuation"),

@@ -36,7 +36,7 @@
     ],
     "麻痹": [
       {
-        "trigger": "BEFORE RESOLVE_ROLL_VALUE",
+        "trigger": "BEFORE RESOLVE_RAW_ROLL",
         "description": "本次战斗骰取两枚同范围骰的绝对差，随后减少1麻痹。",
         "subject": "source",
         "when": [{"left":"$event.die.card","op":"ne","right":null}],
@@ -971,7 +971,7 @@
                 {
                   "type": "pierce",
                   "level": 2,
-                  "fixed_level": true,
+                  "fixed_scores": true,
                   "multiplier": 10,
                   "entries": [
                     "3穿甲",

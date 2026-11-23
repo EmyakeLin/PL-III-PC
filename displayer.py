@@ -30,7 +30,8 @@ def _printed_die(spec):
     return {
         "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
-        "range_traits": [*describe_range_traits(spec), *(["被动激活"] if spec.get("passive_activation") else [])],
+        "range_traits": [*describe_range_traits(spec), *die.score_traits(),
+                         *(["被动激活"] if spec.get("passive_activation") else [])],
         "resource_cost": dict(spec["resource_cost"]) if spec.get("resource_cost") else None,
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
         "entries": [describe_entry(entry) for entry in die.entries],

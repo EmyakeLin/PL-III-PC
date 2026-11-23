@@ -68,6 +68,9 @@ class Dice:
             raise ValueError("拼点胜利条件须为 higher 或 lower")
         if type(data.get("fixed_level", False)) is not bool:
             raise ValueError("固定印刷骰级须为布尔值")
+        self.fixed_scores = data.get("fixed_scores", False)
+        if type(self.fixed_scores) is not bool:
+            raise ValueError("锁定骰子数值须为布尔值")
         kind = data["type"]
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
@@ -181,11 +184,13 @@ class Dice:
 
     @property
     def modified_level(self):
+        if self.fixed_scores:
+            return self._printed_level.value
         return self._printed_level.value + self._level_bonus + (self.card.level_bonus if self.card else 0)
 
     @property
     def level(self):
-        if self.data.get("fixed_level"):
+        if self.fixed_scores or self.data.get("fixed_level"):
             return self._printed_level
         value = self.modified_level if self._resolved_level is None else self._resolved_level
         return DiceLevel(min(DiceLevel.D20.value, max(DiceLevel.D4.value, value)))
@@ -201,8 +206,12 @@ class Dice:
             self._resolved_level = value
             return self.level.value
         if opcode == OpCode.RESOLVE_FINAL_SCORE:
+            if self.fixed_scores:
+                value = self.calculate_final_score()
             self.final_score = value
         else:
+            if self.fixed_scores:
+                value = self.get_value()
             self.clash_score = value
         return value
 
@@ -251,11 +260,18 @@ class Dice:
             value = _evaluate(_formula_tree(self.calc_formula), {
                 "b": self.base_value, "v": self.value, "m": self.multiplier, "f": self.final_bonus,
             })
-        if self.card is not None:
+        if self.card is not None and not self.fixed_scores:
             value += self.card.final_bonus
             if self.card.character is not None and self.type != "blank":
                 value += self.card.character.status_modifier("final_score")
         return value
+
+    def score_traits(self):
+        if self.fixed_scores:
+            return ["骰级与点数锁定，按取值结果和印刷算式结算"]
+        if self.data.get("fixed_level"):
+            return ["固定骰面范围，忽略骰级升降"]
+        return []
 
     def roll(self, *, clash=False):
         self.final_score = self.clash_score = None
@@ -281,8 +297,7 @@ def describe_die(data):
     traits = describe_range_traits(data)
     if data.get("clash_order") == "lower":
         traits.append("拼点逆转")
-    if data.get("fixed_level"):
-        traits.append("固定骰面范围，忽略骰级升降")
+    traits.extend(die.score_traits())
     if data.get("passive_activation"):
         traits.append("被动激活")
     if cost := data.get("resource_cost"):

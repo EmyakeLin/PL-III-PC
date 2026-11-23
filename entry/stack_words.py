@@ -49,8 +49,8 @@ def blank_skill_face(vm):
         return
     dice = []
     for printed in face.get("dice", ()):
-        die = {key: printed[key] for key in ("level", "roll_max", "fixed_level", "base_value", "multiplier",
-                                              "calc_formula", "calc_fomula") if key in printed}
+        die = {key: printed[key] for key in ("level", "roll_max", "fixed_level", "fixed_scores", "base_value",
+                                              "multiplier", "calc_formula", "calc_fomula") if key in printed}
         die["type"] = "skip" if printed["type"] == "skip" else "blank"
         dice.append(die)
     vm.push(dict(id=face["id"], name=face["name"] + "（空白复制品）", cost=0, dice=dice))

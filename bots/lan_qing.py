@@ -28,14 +28,16 @@ FACE_VALUE = {
 
 
 @cache
-def _attack_counts():
+def _printed_dice_traits():
     # The compact seat frame omits dice. Read only the public printed faces.
     actor = next(c for c in load_characters_from_packs() if c["id"] == "lan_qing")
-    counts = {}
+    traits = {}
     for skill in actor["skills"]:
         for active, face in ((False, skill), (True, skill.get("forms", {}).get("active", skill))):
-            counts[skill["id"], active] = sum(d["type"] in ("slash", "pierce", "blunt") for d in face["dice"])
-    return counts
+            dice = face["dice"]
+            attacks = sum(d["type"] in ("slash", "pierce", "blunt") for d in dice)
+            traits[skill["id"], active] = attacks, any(not d.get("fixed_scores") for d in dice)
+    return traits
 
 
 def _cards(slot, side):
@@ -128,7 +130,7 @@ class _Turn:
                     continue
                 budget -= card["cost"]
                 enhanced = _use_face(key, active)
-                attacks = _attack_counts().get((key, enhanced), 1)
+                attacks, benefits_from_infusion = _printed_dice_traits().get((key, enhanced), (1, True))
                 value += FACE_VALUE.get(key, (2.0,))[enhanced]
                 if key == "lan_open":
                     hp -= 1
@@ -137,7 +139,8 @@ class _Turn:
                     value -= 1.8 if hp <= 3 else 0.3
                 if key == "lan_turn":
                     strength += 2
-                value += min(4, strength) * 0.35
+                if benefits_from_infusion:
+                    value += min(4, strength) * 0.35
                 value += min(4, shock[enemy_id]) * attacks * 0.31
                 if not contested:
                     value += 0.35 * attacks
