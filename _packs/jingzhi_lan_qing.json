@@ -1,6 +1,6 @@
 {
   "faction": "经值事务所",
-  "turn_end_statuses": ["残雪·本回合基础值","涌流灌注","电击","麻痹","电流"],
+  "turn_end_statuses": ["涌流灌注","电击","麻痹","电流"],
   "status_rules": {
     "电叉·回环舞·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
     "电叉·极锐刺·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
@@ -113,7 +113,7 @@
                 "op": "program",
                 "code": [
                   "$event.opponent_die", "DESTROY", "$event.die", "lose", "SET_UNOPPOSED_RESULT", "$self",
-                  "残雪·本回合基础值", 2, "STATUS"
+                  "幽兰残雪·拼负回合", "$game.turn_number", "SET_CHARACTER_STATE"
                 ]
               }
             },
@@ -123,8 +123,9 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$event.die", "$self", "残雪·本回合基础值", "STATUS_COUNT", "$self.rule_state", "永久基础值", 0, "LOOKUP",
-                  "ADD", "DIE_BASE_ADD"
+                  "$event.die", "$self.rule_state", "永久基础值", 0, "LOOKUP",
+                  "$self.rule_state", "幽兰残雪·拼负回合", null, "LOOKUP", "$game.turn_number", "EQ",
+                  [2, "ADD"], "WHEN", "DIE_BASE_ADD"
                 ]
               }
             }

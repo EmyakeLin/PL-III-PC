@@ -174,6 +174,29 @@ class LanQingTests(unittest.TestCase):
         self.assertEqual((first.base_value, second.base_value), (0, 2))
         self.assertEqual(self.enemy.statuses.get("电击"), 2)
 
+    def test_snow_passive_combines_die_growth_and_this_turns_first_loss(self):
+        self.place(self.cards["lan_light"])
+        follow_up = self.place(self.training(self.actor, 0, 0, 0), 1)
+        opponent = self.place(self.training(self.enemy, 50, 50, 50), 1)
+        status_writes = []
+        self.game.context.register_entries(self.actor, [dict(
+            trigger="BEFORE STATUS", subject="target",
+            operation=lambda ctx: status_writes.append(ctx.event["status"]))])
+        self.fight()
+
+        self.assertEqual(self.actor.rule_state["永久基础值"], 1)
+        self.assertEqual([d.base_value for d in follow_up.instantiated_dice], [1, 3, 3])
+        self.assertEqual([d.base_value for d in opponent.instantiated_dice], [50, 50, 50])
+        self.assertNotIn("残雪·本回合基础值", status_writes)
+        self.assertNotIn("残雪·本回合基础值", self.actor.statuses)
+
+        self.game.finish_turn()
+        self.game.start_turn()
+        next_card = self.place(self.training(self.actor, 0, 0))
+        self.place(self.training(self.enemy, 50, 50))
+        self.fight()
+        self.assertEqual([d.base_value for d in next_card.instantiated_dice], [1, 3])
+
     def test_single_survivor_uses_the_declared_result_or_ordinary_win(self):
         for result in (None, "lose", "draw", "win", "invalid"):
             with self.subTest(result=result):
