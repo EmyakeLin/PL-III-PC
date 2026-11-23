@@ -1,5 +1,26 @@
 # 当前设计与工作记录
 
+## 2.5D 活牌桌转正、开牌前交锋重做、扣置卡背与规则修正（2026-11-24）
+
+### 已确认规则与内核修正
+- **所有远程技能可在开牌前打出**（`models/card.py`）：`Card.can_open_pre_reveal` 新增 `self.effective_range > 0` 通则，常驻远程（澜清「转势·涌流灌注」、赫克「枪刃迸射」、林秋「空断」）与当前满足条件的条件远程（流阴「洞穿希望」、李凌「机动·贯彻长空」）统一自动获得开牌前权限；仅单颗骰子带远程的近战技能（如「出其不意」）不受影响。
+- **骰间插入技能继承当前交锋目标**（`pipeline/pipeline.py`）：子管线加载 `before_die` / `after_die` 插入的技能牌（如林秋「出其不意」插入「空断」）时，若无显式声明目标，则从挂起的父技能 `parent_pipe` 继承当前交锋仍存活的目标角色，避免对方牌已耗尽时误退回全局默认集火目标。
+- **林秋「分界」指定摧毁范围**（`_packs/xinxing_lin_qiu.json`）：移除 `$event.item.character == $event.target` 限制，命中后可指定并摧毁敌方本回合仍在场的任意一张未摧毁技能。
+- **扣置牌角色卡背与归属公开**（`battle_ui/match.py`、`displayer.py`、`card_print.js`、`combat_tabletop.js`、`game_director.js`、`table_overlays.js`）：
+  - 扣置牌卡背严格采用所属角色特征色，并支持角色 JSON 配置 `"card_back"`（内置 `star`/`diamond`/`rings`/`lattice`/`crescent`/`crest`/`wave`/`portal` 纹样或 `{pattern, color, image_url}` 对象）。
+  - 鼠标悬停对方扣置牌时不掀牌、不泄露卡面，弹出「归属 · 角色名」徽章并点亮角色归属连线；`effect_choice` 选牌面板中的扣置牌同步展示所属角色名与角色专属卡背。
+- **回合结束暂停时机**（`battle_ui/match.py`）：回合结束暂停点提前至 `before_turn_end`（`logic_turn_end` 回收牌之前），使已结算交锋与卡牌保留在牌桌上供复盘，点击「下一回合」后再执行收牌。
+
+### 2.5D 常驻牌桌、开牌前重做与三渲二骰子转正
+- **2.5D 活牌桌正式接管主干**（`combat_tabletop.js`、`game_director.js`）：
+  - 统一承载置卡、开牌前、开牌、战斗焦点与回合结束平铺，严格左右对称（左 P1 / 右 P2）与平放统一实体牌面；支持 Hermite 手牌飞入、卡片中心物理悬停抬升、2.5D 原地翻牌、P2 视角飞牌方向、`effect_choice` 焦点行徽章/叠牌选点、战中拖拽同步，以及每帧同步平铺静息槽位矩形（修复回合结束连线残留战斗放大坐标的旧 bug）；修复 `_renderClashMedallions` 重复重建导致 `effectMarks` 访问已销毁 `Graphics.clear()` 的报错。
+- **开牌前交锋声称与预置解绑重做**（`battle_ui/match.py`、`battle_ui/session.py`、`combat_tabletop.js`、`game_director.js`）：
+  - 置卡期新增独立「声称开牌前交锋」开关（不锁常规置卡；未声称且无预置时置卡后自动跳过己方主动进攻，对手攻来仍自动弹出迎击/放行）；声称后解锁独立的「预置开牌前」模式，支持私密预排草稿、费用/目标动态校验、60fps 动态瞄准连线与开牌前一键发出；迎击阶段自动聚焦待响应行并提供醒目的待迎击投放槽与「放行此交锋」按钮。
+- **三渲二 3D 骰子与风格化 DCC d16**（`three_world.js`、`physics.js`、`presentation_fx.js`、`timeline_sequencer.js`）：
+  - 保留严格队列阻塞（上一批骰子未自然消失不放下一批）、不穿模半径与静息高度、原版爆发式拼点对撞；以 `ENABLE_CLASH_Z_BOUNCE = false` 保留但禁用对撞 3D 纵深落地回弹分支（注释明确记录其为悬空与无限翻滚根源），并修复摧毁/跳过骰子补生成重影与拼后无限翻滚。
+  - 按 DCC 严格对跖截球体（8 对平行圆形平面 + 光滑球面腰带）完成粗勾边三渲二风格化与单例缓存实装，替换原双八棱锥 d16。
+- **收尾清理**：前置安全存档提交 `6af94a8` 后，删除冗余目录 `battle_ui/static/mock_clash/` 与 `game_director.js` 中旧牌桌死代码（`preDuelPage`、`_combatRail`、`_duelScrollCtl`、`buildBoardCardTag` 等）。本次收口按作者要求未运行自动化测试，均经实机对战与代码路径核对。
+
 ## 流阴技能组打磨：逆流溯源触发条件与重打覆盖（2026-11-24）
 
 - **已确认文义**：

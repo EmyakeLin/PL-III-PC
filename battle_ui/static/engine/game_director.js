@@ -35,7 +35,6 @@ import {
   drawCostCrystal,
   buildCardBack,
   buildCardFront,
-  buildBoardCardTag,
   buildFullCard,
   buildVerbatimCardPanel,
   buildRichVerbatimText,
@@ -251,14 +250,8 @@ export class GameDirector {
     this.activeHeroPanel = null; // { charId, side, tab, scrollY, maxScroll, rect, node }
     this.passiveDrawer = null;   // { scrollY1, scrollY2, maxScrollBySide, splitX, rect, node }
     this.sidePanelActors = [];
-    this._duelScrollCtl = null;
-    this._combatRail = null;
-    this._combatScrollCtl = null;
-    this.combatScrollY = null;
     this._combatScrollOffsetY = 0;
     this._lastActiveCombatDuelKey = null;
-    this._activeCombatCardNodes = [];
-    this._combatCardScrollByKey = new Map();
     this._clashHeaderMeta = null;
     this.effectMarks = [];
     this.choiceSafeTop = 64;
@@ -273,9 +266,6 @@ export class GameDirector {
     this.finishScrollY = 0;
     this.lastPointerX = this.w * 0.5;
     this.lastPointerY = this.h * 0.5;
-    this.duelScrollY = 0;
-    this.duelMaxScroll = 0;
-    this._duelSlotCountPrev = 0;
     this.wingScrollY = { 1: 0, 2: 0 };
     this.wingMaxScroll = { 1: 0, 2: 0 };
     this.wingViewports = {};
@@ -287,7 +277,6 @@ export class GameDirector {
     this.regularSlotRects = new Map();
     this.regularLaneRects = new Map();
     this.preRevealSlotRects = new Map();
-    this.preDuelPage = 0;
     this.pileCenters = new Map();
     this.handCardViews = new Map();
     this.preTimerTexts = [];
@@ -887,9 +876,6 @@ export class GameDirector {
     const nextRosterSig = (nextState.frame?.players || [])
       .map((p) => (p.characters || []).map((c) => c.id).join(',')).join('|');
     if (isInitial || matchChanged || prevTurn !== nextTurn || prevRosterSig !== nextRosterSig) {
-      this.duelScrollY = 0;
-      this.preDuelPage = 0;
-      this._duelSlotCountPrev = 0;
       this.tabletop?.resetMatch(nextState.frame?.combat ? 1 : 0);
     }
     if (isInitial || matchChanged || prevRosterSig !== nextRosterSig) {
@@ -2061,14 +2047,10 @@ export class GameDirector {
     this.regularLaneRects.clear();
     this.preRevealSlotRects.clear();
     this.preTimerTexts = [];
-    this._duelScrollCtl = null;
-    this._combatRail = null;
-    this._combatScrollCtl = null;
     this._combatScrollOffsetY = 0;
     this.clashLayer.y = 0;
     this.clashLayer.mask = null;
     this.combatCardRects.clear();
-    this._activeCombatCardNodes = [];
     this.clashMedallionCenters.clear();
     this._clashHeaderMeta = null;
     this.effectMarks = [];
@@ -2092,7 +2074,6 @@ export class GameDirector {
       return;
     }
 
-    this.combatScrollY = null;
     this._lastActiveCombatDuelKey = null;
     this.combatPeekKey = null;
     this._rebuildConfrontationBridge();
@@ -2316,7 +2297,6 @@ export class GameDirector {
       this.preRevealSlotRects.set(num, rect);
     }
     this.duelViewport = { top: stageTop, bottom: stageTop + stageH, left: arenaX, right: arenaX + arenaW };
-    this._duelScrollCtl = null;
   }
 
   /**
@@ -2381,11 +2361,8 @@ export class GameDirector {
     }
     this.duelViewport = { top: stageTop, bottom: stageTop + stageH, left: arenaX, right: arenaX + arenaW };
 
-    this._combatScrollCtl = null;
-    this.combatScrollY = 0;
     this._combatScrollOffsetY = 0;
     this.combatCardRects = this.tabletop.combatCardRects;
-    this._activeCombatCardNodes = [];
     this.choiceSafeTop = clashTop + clashH + 6;
     this._clashHeaderMeta = {
       combat,
@@ -3273,7 +3250,6 @@ export class GameDirector {
         onPick: (option) => this._sendAction('use_special', { option }),
         onSelectionChange: (choiceIndex) => {
           for (const mark of this.effectMarks) mark.draw(mark.index === choiceIndex);
-          this._combatRail?.highlightChoice(choiceIndex);
         },
         onInspect: (card, ownerSide, anchorX, anchorY) => {
           this.hoveredCard = card ? { card, side: ownerSide, anchorX, anchorY, source: 'effect' } : null;
@@ -3934,32 +3910,6 @@ export class GameDirector {
       this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
       if (this.tabletop.handleWheel(e.deltaY)) return;
     }
-
-    // 9. Smooth wheel scrolling inside overflowing active combat cards (30 dice / 1000 chars)
-    if (this.state.frame?.combat && this._activeCombatCardNodes?.length) {
-      for (const item of this._activeCombatCardNodes) {
-        if (
-          item.node && !item.node.destroyed && item.node.maxScroll > 0
-          && this.lastPointerX >= item.x && this.lastPointerX <= item.x + item.w
-          && this.lastPointerY >= item.y && this.lastPointerY <= item.y + item.h
-        ) {
-          item.node.scrollBy(e.deltaY * 0.65);
-          this._combatCardScrollByKey.set(item.cardKey, item.node.scrollY);
-          return;
-        }
-      }
-    }
-    const { stageBottom } = this.layout;
-
-    // 10. O(1) Smooth Scroll for Center Duel Bridge (① ↓ ② ↓ ③ — NEVER rebuilds hand cards!)
-    if (this.lastPointerY > stageBottom + 12) return;
-    if (this._duelScrollCtl && this.duelMaxScroll > 0 && !this.state.frame?.combat) {
-      this._duelScrollCtl.setScroll(this.duelScrollY + e.deltaY * 0.6);
-      if (this.hoveredCard?.source === 'board') {
-        this.hoveredCard = null;
-        this._renderInspection();
-      }
-    }
   }
 
   _onKeyDown(e) {
@@ -4146,11 +4096,6 @@ export class GameDirector {
       this.preRevealSlotRects.clear();
       for (const [num, rect] of this.tabletop.preRevealSlotRects.entries()) {
         this.preRevealSlotRects.set(num, rect);
-      }
-    }
-    if (this._activeCombatCardNodes?.length) {
-      for (const item of this._activeCombatCardNodes) {
-        if (item.node && !item.node.destroyed) item.node.tick(dtSec);
       }
     }
 
