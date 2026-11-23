@@ -1457,7 +1457,6 @@
           "id": "lan_end",
           "name": "终雪",
           "cost": 1,
-          "range_level": 3,
           "entries": [
             {
               "trigger": "on_skill_use",

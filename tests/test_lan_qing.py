@@ -194,9 +194,7 @@ class LanQingTests(unittest.TestCase):
                 self.enemy.add_status("失衡", stacks)
                 other.add_status("致命失衡", fatal)
                 card = self.place(self.cards["lan_end"])
-                defense = self.training(self.enemy, -50, -50, -50, -50)
-                defense.data["range_level"] = 3
-                self.place(defense)
+                self.place(self.training(self.enemy, -50, -50, -50))
                 self.fight()
                 self.assertEqual(card.use_state["拼点加值"], expected)
                 self.assertEqual([d.clash_score - d.final_score for d in card.instantiated_dice], [expected] * 3)
@@ -234,7 +232,7 @@ class LanQingTests(unittest.TestCase):
         self.left.max_cost = 1
         self.actor.independent_cost = 0
         end = self.place(self.cards["lan_end"])
-        self.assertEqual((end.name, end.cost, end.effective_range), ("终雪", 1, 3))
+        self.assertEqual((end.name, end.cost, end.effective_range), ("终雪", 1, 0))
         self.fight()
         self.assertEqual(self.left.available_cost, 0)
         self.assertEqual([d.roll_max for d in end.instantiated_dice], [12, 12, 8])
@@ -243,6 +241,17 @@ class LanQingTests(unittest.TestCase):
         self.assertEqual(self.actor.statuses["残雪·幽蓝流光·活化"], 1)
         self.assertNotIn("残雪·幽兰流光·活化", self.actor.statuses)
         self.assertEqual(self.cards["lan_light"].name, "残雪·幽蓝流光")
+
+    def test_end_snow_primes_ultimate_against_melee_but_is_blanked_by_extreme_range(self):
+        for enemy_range in (0, 3):
+            with self.subTest(enemy_range=enemy_range):
+                self.start_game()
+                self.place(self.cards["lan_end"])
+                opponent = self.training(self.enemy, -50, -50, -50)
+                opponent.data["range_level"] = enemy_range
+                self.place(opponent)
+                self.fight()
+                self.assertEqual(self.actor.statuses.get("残雪·幽蓝流光·活化", 0), int(enemy_range == 0))
 
     def test_active_leaf_locks_only_the_die_level(self):
         for status, stacks in (("骰子等级提升", 2), ("骰子等级降低", 5)):
