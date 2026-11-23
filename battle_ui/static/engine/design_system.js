@@ -309,6 +309,7 @@ export const RANK_COLOR = {
   ELITE: 0x1a825e,
   BOSS: 0xc2641a,
   EMPOWERED_BOSS: 0xc93e2b,
+  EXTREME: 0xa52d42,
 };
 
 export const LEVEL_MAX = { 1: 4, 2: 6, 3: 8, 4: 12, 5: 16, 6: 20 };
@@ -317,6 +318,7 @@ export const RANK_LABEL = {
   ELITE: '精英',
   BOSS: '首领',
   EMPOWERED_BOSS: '强化首领',
+  EXTREME: '极端战力',
 };
 export const RANGE_LABELS = ['', '普通远程', '强化远程', '极限远程'];
 

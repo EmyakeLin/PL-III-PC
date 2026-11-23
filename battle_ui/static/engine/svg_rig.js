@@ -353,7 +353,7 @@ function resolveCompactProfile(ch, pal) {
   const id = ch?.id || '';
   if (COMPACT_PROFILES[id]) return COMPACT_PROFILES[id];
   const h = hashStr(`${id}:${ch?.name || ''}`);
-  const isBoss = ch?.rank === 'BOSS' || ch?.rank === 'EMPOWERED_BOSS';
+  const isBoss = ['BOSS', 'EMPOWERED_BOSS', 'EXTREME'].includes(ch?.rank);
   const halos = ['soft', 'astrolabe', 'ember', 'prism', 'compass'];
   const capes = ['wind_ribbons', 'draped_cape', 'flowing_cape', 'scarf', 'draped_cloak'];
   const torsos = ['mantle', 'tactical_strap', 'coat_diamond', 'armored', 'split_robe'];

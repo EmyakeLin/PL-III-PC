@@ -71,7 +71,7 @@ export function roomTableState(room, assets) {
   }
   const canPick = room.can_rematch || room.can_restart || (room.selectable && !room.ready && side !== null);
   const editableSides = canPick
-    ? (room.bot_side ? [side, room.bot_side] : [side]) : [];
+    ? (room.bot_side && !room.challenge ? [side, room.bot_side] : [side]) : [];
   const tableAssets = { ...assets };
   const copies = frame.players.flatMap(player => player.characters).filter(c => c.printed_id && c.printed_id !== c.id);
   if (copies.length) {
@@ -116,7 +116,7 @@ function findRoomMove(state, action, payload) {
   });
 }
 
-function battleRecordText({ bot_side: botSide, events, finished, frame, winner_side: winnerSide }) {
+function battleRecordText({ bot_side: botSide, challenge, events, finished, frame, winner_side: winnerSide }) {
   let matchNumber = 1;
   let start = 0;
   for (const [index, event] of events.entries()) {
@@ -126,7 +126,7 @@ function battleRecordText({ bot_side: botSide, events, finished, frame, winner_s
     }
   }
 
-  const sideName = (side) => side === botSide ? '电脑对手' : `玩家 ${side}`;
+  const sideName = (side) => side === botSide ? (challenge || '电脑对手') : `玩家 ${side}`;
   const teams = frame.players.map(({ side, characters }) => {
     const roster = characters.map(character => character.name).join('、');
     return `${sideName(side)}（${characters.length} 人）　${roster}`;

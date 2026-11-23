@@ -194,7 +194,7 @@ function updateFighterPicker(selector, side, lobby, locked) {
     const opponentSide = 3 - side;
     const opponentPick = lobby.picks[opponentSide];
     fillRows(selector, lobby.characters, fighter => fighter.id, () => make("option"), (option, fighter) => {
-        const taken = fighter.id === opponentPick && !fighter.mirror_allowed;
+        const taken = fighter.id === opponentPick && (room.challenge || !fighter.mirror_allowed);
         option.value = fighter.id;
         option.disabled = taken;
         setText(option, fighter.name + (taken ? "（对方已选）" : ""));
@@ -212,13 +212,13 @@ function updateLobby(isReady, busy) {
     const locked = busy || isReady;
     updateFighterPicker(byId("fighter-pick"), room.side, lobby, locked);
     byId("bot-pick-field").hidden = !botMatch;
-    if (botMatch) updateFighterPicker(byId("bot-pick"), botSide, lobby, locked);
-    const title = botMatch ? "选择双方出战角色" : "我的出战角色";
+    if (botMatch) updateFighterPicker(byId("bot-pick"), botSide, lobby, locked || Boolean(room.challenge));
+    const title = room.challenge ? "挑战 · " + room.challenge : botMatch ? "选择双方出战角色" : "我的出战角色";
     const startLabel = botMatch ? "开战" : isReady ? "已准备" : "确认角色并准备";
     setText(byId("lobby-title"), title);
     byId("lobby-ready").disabled = locked;
     setText(byId("lobby-ready"), startLabel);
-    const note = botMatch ? "允许镜像的角色可同选。" : isReady ? "角色已锁定，等待另一席准备。" :
+    const note = room.challenge ? "选择你的出战角色。" : botMatch ? "允许镜像的角色可同选。" : isReady ? "角色已锁定，等待另一席准备。" :
         "双方各选一名角色，允许镜像的角色可同选。准备后锁定角色。对局中可以随时暂停查看场内行动。";
     setText(byId("lobby-note"), note);
 }

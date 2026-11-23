@@ -62,6 +62,8 @@ class Dice:
         for key in ("range_level", "ignore_range"):
             validate_range_trait(data, key)
         self.data = data
+        if type(data.get("passive_activation", False)) is not bool:
+            raise ValueError("被动激活须为布尔值")
         kind = data["type"]
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
@@ -105,6 +107,10 @@ class Dice:
     @property
     def is_passive(self):
         return self.type in ("block", "evade")
+
+    @property
+    def can_attack_alone(self):
+        return self.is_attack and not self.data.get("passive_activation", False)
 
     def pay_use_cost(self):
         """Pay once, after insertions have resolved and before this use is paired."""
@@ -256,6 +262,8 @@ def describe_die(data):
     die.value = die.roll_max
     last = die.get_value()
     traits = describe_range_traits(data)
+    if data.get("passive_activation"):
+        traits.append("被动激活")
     if cost := data.get("resource_cost"):
         traits.append(f"使用本骰须消耗{cost['amount']}{cost['status']}")
     effects = "；".join([*traits, *(describe_entry(entry) for entry in die.entries)])

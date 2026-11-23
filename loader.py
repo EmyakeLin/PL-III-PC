@@ -100,7 +100,7 @@ def base_effects():
     return _shared_effects(PACKS).resolve_aliases()
 
 
-def load_characters_from_packs(packs_dir=None):
+def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
     from models.card import validate_skill_traits
     from models.conditions import validate_skill_gate
     from models.character import CharacterRank, RANK_SKILL_COUNT
@@ -112,7 +112,7 @@ def load_characters_from_packs(packs_dir=None):
     characters = []
     ids = set()
     definitions = _shared_effects(directory)
-    for path in sorted(directory.glob("*.json")):
+    for path in [*sorted(directory.glob("*.json")), *extra_packs]:
         pack = _read_pack(path, definitions)
         try:
             for original in pack.get("characters", ()):
@@ -140,6 +140,8 @@ def load_characters_from_packs(packs_dir=None):
                 card_ids = set()
                 for card in char["skills"]:
                     validate_skill_traits(card)
+                    if card.get("deck", "draw") not in ("draw", "decisive"):
+                        raise ValueError(f"{card['name']} 指定了无效的起始牌堆")
                     if card["id"] in card_ids or card["cost"] < 0:
                         raise ValueError(f"{char['name']} 的技能 ID 重复或费用无效")
                     card_ids.add(card["id"])

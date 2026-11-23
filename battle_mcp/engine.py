@@ -18,8 +18,8 @@ def hand_card_label(card):
 
 
 class ArenaEngine(BattleMatch):
-    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False):
-        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters)
+    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=()):
+        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs)
         for player in self.game.players:
             if player.side == bot_side:
                 player.target_priority = (("hp", 1), ("lightcore_hp", 1))

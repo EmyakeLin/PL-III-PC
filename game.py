@@ -67,6 +67,7 @@ class Game:
                 character.init_cards()
                 character.setup_deck()
             player.cardspace.draw.shuffle(self.rng)
+            player.cardspace.decisive.shuffle(self.rng)
 
     def next_step(self):
         if self.pending_draw is not None and not self.is_over:
@@ -241,7 +242,7 @@ class Game:
             return False
         return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
 
-    def place_in_duel(self, side, content, duel_idx, *, special=False, queued=False):
+    def place_in_duel(self, side, content, duel_idx, *, special=False, queued=False, regular=False):
         # Once regular placement closes, only an executing rule effect may insert a card.
         if self.pre_reveal.phase != "idle" and not special and not queued and not self.context.executions:
             return False
@@ -252,20 +253,19 @@ class Game:
         if any(content in slot.content.get(side, ()) for slot in self.board_slots()):
             return False
         zones = player.cardspace
-        old_zone = next((zone for zone in (zones.hand, zones.draw, zones.delayed_discard,
-                                            zones.out_of_combat) if content in zone.content), None)
+        old_zone = next((zone for zone in zones.piles() if content in zone.content), None)
         event = dict(side=side, source=owner, card=content)
         self.context.dispatch_pipeline("before_place", **event)
         if not owner.is_alive or content.state == CardState.NEGATED:
             return False
         if old_zone is not None and content not in old_zone.content:
             return False
-        space = self.duelspace if special or queued else self.active_duelspace
+        space = self.duelspace if special or queued or regular else self.active_duelspace
         if queued and ((content not in zones.hand.content and not content.temporary) or duel_idx >= len(space.space)
                        or not self.pipeline.can_join(space.space[duel_idx])):
             return False
         with self.context.binding(special_placement=content if special else None,
-                                  queued_placement=content if queued else None):
+                                  queued_placement=content if queued else None, regular_placement=regular):
             placed = self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
         if not placed or duel_idx >= len(space.space):
             return False
@@ -341,7 +341,7 @@ class Game:
                     # and local state even if the physical card is returned to its owner.
                     self.context.withdraw_card_use(card, None, used=True, scopes=("turn",))
                 card.return_to_printed_owner()
-                card.player.cardspace.draw.add_card(card)
+                card.home_deck.add_card(card)
         for player in self.players:
             recycled[player.side]["discard_count"] = len(player.cardspace.delayed_discard.content)
             player.cardspace.delayed_discard.push_to_draw()

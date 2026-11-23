@@ -3,6 +3,7 @@
 Run with python -m unittest tests.entry_semantics.
 """
 MODULES = (
+    "tests.test_carrier_challenge.CarrierTests",
     "tests.test_lan_qing",
     "tests.test_entry_authoring_contract",
     "tests.test_entry_execution_paths",

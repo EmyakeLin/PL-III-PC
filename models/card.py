@@ -128,6 +128,9 @@ class Card:
         self.player = player
         self.character = character
         self.printed_owner = character
+        self.deck_owner = character
+        self.deck_name = data.get("deck", "draw")
+        self.ignore_conditions = False
         self.temporary = temporary
         self.printed_data = data
         self.data = data
@@ -159,8 +162,12 @@ class Card:
             self.refresh_status_form()
 
     def meets_use_requirements(self):
-        return all(self.character is not None and self.character.statuses.get(name, 0) >= minimum
+        return self.ignore_conditions or all(self.character is not None and self.character.statuses.get(name, 0) >= minimum
                    for name, minimum in self.data.get("requires_status", {}).items())
+
+    @property
+    def home_deck(self):
+        return self.deck_owner.player.cardspace.zone(self.deck_name)
 
     @property
     def can_open_pre_reveal(self):
@@ -300,12 +307,12 @@ class Card:
         self.refresh_status_form()
 
     def belongs_to(self, character):
-        """Both current use and printed ownership matter when a character leaves battle."""
-        return self.character is character or self.printed_owner is character
+        """A card leaves with its current controller or the owner of its home deck."""
+        return self.character is character or self.deck_owner is character
 
     def return_to_printed_owner(self):
         self.reset_for_draw()
-        self.set_controller(self.printed_owner)
+        self.set_controller(self.deck_owner)
 
     def dissolve(self):
         """Release a temporary skill's listeners and any materialized dice when it leaves play."""
@@ -317,7 +324,7 @@ class Card:
 
     @property
     def effective_range(self):
-        return range_trait(self.data, "range_level", self)
+        return min(3, range_trait(self.data, "range_level", self) + self.use_state.get("range_bonus", 0))
 
     @property
     def effective_ignore_range(self):

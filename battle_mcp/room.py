@@ -64,7 +64,12 @@ def bot_roster(roster):
 
 
 class Room:
-    def __init__(self, roster=None, seed=None, *, selectable=False, bot=False):
+    def __init__(self, roster=None, seed=None, *, selectable=False, bot=False, challenge=None):
+        self.challenge = challenge
+        if challenge:
+            bot = True
+            if roster is None:
+                roster = [["plan_b_annolin"], [challenge.character_id]]
         self.bot_side = 2 if bot else None
         self._seed = seed
         self._lobby_picks = bot_roster(roster) if bot and roster is not None else None
@@ -88,8 +93,13 @@ class Room:
 
     def _build_engine(self, picks):
         roster = [picks[side] for side in SEATS]
+        if self.challenge:
+            human, opponent = ([team] if isinstance(team, str) else team for team in roster)
+            if opponent != [self.challenge.character_id] or self.challenge.character_id in human:
+                raise ValueError("挑战对手固定，请从其余角色中选择自己的阵容。")
         open_rosters = self.bot_side is not None and all(isinstance(team, list) for team in roster)
-        return ArenaEngine(roster, seed=self._seed, bot_side=self.bot_side, open_rosters=open_rosters)
+        return ArenaEngine(roster, seed=self._seed, bot_side=self.bot_side, open_rosters=open_rosters,
+                           extra_packs=self.challenge.packs if self.challenge else ())
 
     def _seat_pick(self, picks, side, character_id):
         team = picks[side]
@@ -177,6 +187,8 @@ class Room:
                                            for s, team in self._lobby_picks.items()}}
             if self.bot_side is not None:
                 view["bot_side"] = self.bot_side
+            if self.challenge:
+                view["challenge"] = self.challenge.name
             return view
 
     def canvas_state(self, side, after=None):
@@ -210,6 +222,7 @@ class Room:
                 "has_special_actions": self._has_human_special_options(side),
                 "frame": frame, "options": options, "started": len(self.seated) == 2,
                 "ready": side in self.seated, "bot_side": self.bot_side,
+                "challenge": self.challenge.name if self.challenge else None,
                 "selectable": self._lobby_picks is not None,
                 "paused_by": self.paused_by, "can_pause": self._can_pause(side),
                 "window_remaining": self.engine._window_size - self.engine.game.placed_this_window
@@ -659,7 +672,7 @@ class Room:
                         self.engine.draw_bottom(self.bot_side, choose_draw_bottom(draw))
                         continue
                     moves = [move for move in self.engine.options(self.bot_side) if move["kind"] in plans.ORDINARY]
-                    move = choose_move(state, moves)
+                    move = (self.challenge.choose_move if self.challenge else choose_move)(state, moves)
                     if move is not None:
                         for side in edges.keys() - {self.bot_side}:
                             self._note("decision", "请选择当前行动。", audiences=(side,), wake=(side,))

@@ -3,6 +3,7 @@
 import argparse
 
 from loader import load_characters_from_packs
+from .challenges import CHALLENGES
 from .network import lan_address
 from .transport import ArenaServer
 
@@ -13,6 +14,8 @@ def main():
                         metavar=("P1", "P2"), help="玩家一和玩家二的出战角色 ID")
     parser.add_argument("--port", type=int, default=8766, help="房间端口，0 表示自动分配")
     parser.add_argument("--bot", action="store_true", help="开启本机单角色 1v1 人机对战")
+    parser.add_argument("--challenge", nargs="?", const="carrier", choices=CHALLENGES,
+                        help="本机挑战：carrier 结构化载体（默认），lan_qing 幽兰残雪·澜清")
     parser.add_argument("--lan", action="store_true", help="在局域网网卡上创建玩家联机房间")
     parser.add_argument("--address", metavar="IP", help="在指定的本机 IPv4 网卡上创建联机房间")
     parser.add_argument("--public-url", metavar="HTTPS_URL", help="使用已有 HTTPS 反向代理的公开来源生成联机邀请")
@@ -27,11 +30,14 @@ def main():
         parser.error("端口必须在 0 到 65535 之间。")
     from .room import Room
     multiplayer = args.lan or args.address is not None or args.public_url is not None
+    if args.challenge and (args.bot or multiplayer):
+        parser.error("--challenge 单独开启本机挑战房间。")
     if args.bot and multiplayer:
         parser.error("--bot 仅在本机运行，不能和联机参数同时使用。")
     try:
         address = args.address if args.address is not None else (lan_address() if args.lan else "127.0.0.1")
-        room = Room(args.roster, seed=args.seed, selectable=multiplayer, bot=args.bot)
+        room = Room(args.roster, seed=args.seed, selectable=multiplayer, bot=args.bot,
+                    challenge=CHALLENGES.get(args.challenge))
         server = ArenaServer(room, args.port, address=address, public_url=args.public_url)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
@@ -40,11 +46,13 @@ def main():
         print(f"观战页面  {url}/")
         print(f"Canvas 观战页面  {url}/canvas/")
         for seat, token in server.tokens.items():
-            player_path = "/canvas/" if args.bot else "/"
+            player_path = "/canvas/" if room.bot_side else "/"
             print(f"玩家 {seat} 私人邀请  {url}{player_path}#token={token}")
-            if not args.bot:
+            if not room.bot_side:
                 print(f"玩家 {seat} Canvas 邀请  {url}/canvas/#token={token}")
-        if args.bot:
+        if room.challenge:
+            print(f"挑战 · {room.challenge.name}。打开玩家 1 的邀请，选择自己的阵容后开战。")
+        elif args.bot:
             print("打开玩家 1 的邀请，选择双方角色后点击开战。")
         elif multiplayer:
             print(f"房间监听  {server.server_address[0]}:{server.server_port}")

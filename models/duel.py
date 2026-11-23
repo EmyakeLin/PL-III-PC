@@ -78,8 +78,8 @@ class DuelSlot:
         return (not card.destroyed and card.character.is_alive and card.instantiated_dice is instances
                 and card in origin.get_content(card.player.side))
 
-    def next_combat_card(self, side):
-        ordinary = self.next_playable_card(side)
+    def next_combat_card(self, side, *, advance=True):
+        ordinary = self.next_playable_card(side) if advance else next(self.playable_cards(side), None)
         if ordinary is not None:
             return ordinary
         return next((card for card in self.dice_tails

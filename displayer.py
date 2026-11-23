@@ -29,7 +29,7 @@ def _printed_die(spec):
     return {
         "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
-        "range_traits": describe_range_traits(spec),
+        "range_traits": [*describe_range_traits(spec), *(["被动激活"] if spec.get("passive_activation") else [])],
         "resource_cost": dict(spec["resource_cost"]) if spec.get("resource_cost") else None,
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
         "entries": [describe_entry(entry) for entry in die.entries],
@@ -435,6 +435,8 @@ class Displayer:
             "placement_ended": player in self._game.ended_player,
             "characters": [self._character(c, own) for c in player.characters],
             "draw_count": len(zones.draw.content), "hand_count": len(zones.hand.content),
+            "decisive_count": len(zones.decisive.content) if any(c.deck_name == "decisive"
+                for actor in player.characters for c in actor.skills) else None,
             "delayed_discard_count": len(zones.delayed_discard.content),
             "out_of_combat_count": len(zones.out_of_combat.content),
             "hand": [{**_visible_card(c), "action_key": hand_key(c), "use_restricted": c.character.skill_restricted(c)}

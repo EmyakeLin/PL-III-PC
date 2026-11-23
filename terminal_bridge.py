@@ -123,7 +123,8 @@ class TerminalBridge:
     @staticmethod
     def character_summary(data):
         rank = CharacterRank[data["rank"]]
-        label = {"NORMAL": "常人", "ELITE": "精英", "BOSS": "Boss", "EMPOWERED_BOSS": "强化 Boss"}[rank.name]
+        label = {"NORMAL": "常人", "ELITE": "精英", "BOSS": "Boss", "EMPOWERED_BOSS": "强化 Boss",
+                 "EXTREME": "极端战力"}[rank.name]
         title = f"　{data['title']}" if data.get("title") else ""
         integrity = Character.initial_lightcore_max(data["max_hp"])
         return (f"{data['name']}{title}　{label}　生命 {data['max_hp']}　完整度 {integrity}"

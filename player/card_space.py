@@ -107,8 +107,8 @@ class DelayedDiscard(CardList):
     def push_to_draw(self):
         while self.content:
             card = self.content[0]
-            card.set_controller(card.printed_owner)
-            self.move_card_to(0, card.player.cardspace.draw)
+            card.set_controller(card.deck_owner)
+            self.move_card_to(0, card.home_deck)
           
 class OutOfCombat(CardList):
     def __init__(self, player: Player, all_cards = None):
@@ -117,13 +117,16 @@ class OutOfCombat(CardList):
 
 class CardSpace():
     def zone(self, name):
-        if name not in ("hand", "draw", "delayed_discard", "out_of_combat"):
+        if name not in ("hand", "draw", "decisive", "delayed_discard", "out_of_combat"):
             raise ValueError(f"未知牌区 {name!r}")
         return getattr(self, name)
 
     def __init__(self, player: Player):
-        """Default: only Hand, Draw, DelayedDiscard, and OutOfCombat"""
         self.hand = Hand(player)
         self.draw = Draw(player)
+        self.decisive = Draw(player)
         self.delayed_discard = DelayedDiscard(player)
         self.out_of_combat = OutOfCombat(player)
+
+    def piles(self):
+        return self.hand, self.draw, self.decisive, self.delayed_discard, self.out_of_combat

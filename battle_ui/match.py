@@ -148,8 +148,8 @@ def _roster_preview(spec, color=None, sprite_url=None):
 class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
-    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False):
-        pool = {spec["id"]: spec for spec in load_characters_from_packs()}
+    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False, extra_packs=()):
+        pool = {spec["id"]: spec for spec in load_characters_from_packs(extra_packs=extra_packs)}
         teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
         self._character_colors = _assign_character_colors(pool)
         self._character_sprites = _discover_character_sprites(pool)

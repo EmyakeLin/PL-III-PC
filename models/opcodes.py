@@ -33,6 +33,7 @@ def handle_clamp(ctx):
 
 
 _BINARY_OPERATIONS = {
+    OpCode.DIVIDE: operator.truediv, OpCode.MAX: max,
     OpCode.PAIR: lambda left, right: (left, right), OpCode.IS: operator.is_, OpCode.FLOOR_DIV: operator.floordiv, OpCode.MIN: min,
     OpCode.COALESCE: lambda value, default: default if value is None else value,
     OpCode.ALL_IN: lambda members, collection: all(item in collection for item in members),
@@ -464,7 +465,7 @@ def handle_pay_cost(ctx):
         ctx.event["failure_reason"] = f"费用不足（需 {cost}，现有 {personal + max(0, player.available_cost)}）"
         return False
     extra = card.data.get("resource_cost")
-    if extra and card.range_deficit < 3:
+    if extra and card.range_deficit < 3 and not card.ignore_conditions:
         ctx.stack.extend((character, extra["status"], extra["amount"]))
         spend = ctx.execute_op(OpCode.SPEND_STATUS, require_full=True, result_field=None)
         if not spend or spend["result"] is None or not spend.get("paid_in_full"):
@@ -538,7 +539,7 @@ def handle_place(ctx):
                     or game.special.first_open_slot(side) != idx):
         return False
     queued = ctx.event.get("queued_placement") is card
-    space = game.duelspace if special or queued else game.active_duelspace
+    space = game.duelspace if special or queued or ctx.event.get("regular_placement") else game.active_duelspace
     # Opening a new numbered pre-reveal duel requires a player's attack declaration.
     if space is not game.duelspace and idx >= len(space.space):
         return False
@@ -562,7 +563,7 @@ def handle_place(ctx):
     slot.add_content(side, card)
     face_up = game.cards_revealed or space is not game.duelspace
     card.state = CardState.PLACED_FACE_UP if face_up else CardState.PLACED_FACE_DOWN
-    for zone in (zones.hand, zones.draw, zones.delayed_discard, zones.out_of_combat):
+    for zone in zones.piles():
         if card in zone.content:
             zone.remove_card(zone.content.index(card))
             break
@@ -626,12 +627,10 @@ def handle_pair_skill_copy(ctx):
 
 def handle_move_card(ctx):
     zone, card = ctx.pop(), ctx.pop()
-    if zone not in ("hand", "draw", "delayed_discard", "out_of_combat"):
-        raise ValueError(f"未知牌区 {zone!r}")
     if card is None or card.destroyed or not card.character.is_alive or ctx.game.special.is_locked(card):
         return False
     zones = card.player.cardspace
-    destination = getattr(zones, zone)
+    destination = zones.zone(zone)
     if card in destination.content:
         return False
     for slot in ctx.game.board_slots():
@@ -644,7 +643,7 @@ def handle_move_card(ctx):
                 card.reset_for_draw()
                 destination.add_card(card)
             return True
-    for pile in (zones.hand, zones.draw, zones.delayed_discard, zones.out_of_combat):
+    for pile in zones.piles():
         if card in pile.content:
             if pile is zones.hand and ctx.event["play_from_hand"]:
                 record_hand_play(card)
@@ -691,10 +690,6 @@ def handle_resolve_damage(ctx):
         ctx.current_op = None
         return
     ctx.event.update(amount=amount, damage_amount=amount)
-    duel = getattr(ctx.game, "resolving_duel", None)
-    if duel is not None and len(ctx.op_stack) > 1 and ctx.op_stack[-2] == OpCode.DAMAGE:
-        duel.damage_taken[target] = duel.damage_taken.get(target, 0) + amount
-        ctx.event["duel"] = duel
     return amount
 
 
@@ -796,8 +791,13 @@ def handle_damage(ctx):
         ctx.current_op = None
         return None
     ctx.event["damage_multiplier"] = multiplier
-    hp_lost = target.apply_resolved_damage(damage, grade)
-    ctx.event.update(amount=damage, damage_amount=damage, hp_lost=hp_lost,
+    ctx.stack.extend((target, damage, grade))
+    receipt = ctx.execute_op(OpCode.APPLY_DAMAGE, result_field=None)
+    if receipt is None or receipt.get("result") is None:
+        ctx.current_op = None
+        return
+    hp_lost, damage, grade = receipt["result"], receipt["amount"], receipt["penetration"]
+    ctx.event.update(amount=damage, damage_amount=damage, penetration=grade, hp_lost=hp_lost,
                      damage_dealt=True, damage_received=damage > 0)
     damage_die = ctx.event["damage_die"]
     if damage_die is not None:
@@ -1028,7 +1028,67 @@ def handle_discard(ctx):
         return card
 
 
+def handle_place_empty_regular(ctx):
+    card = ctx.pop()
+    if card is None or card not in card.home_deck.content:
+        return False
+    side = card.player.side
+    index = ctx.game.special.first_open_slot(side)
+    return ctx.game.place_in_duel(side, card, index, regular=True)
+
+
+def handle_stage_pre_attack(ctx):
+    target, card = ctx.pop(), ctx.pop()
+    if (card is None or card.destroyed or card not in card.home_deck.content or target is None
+            or not target.is_alive or target.player is card.player or ctx.game.pre_reveal.phase != "idle"):
+        return False
+    ctx.game.pre_reveal.stage_attack(card, target, None, card.home_deck)
+    return True
+
+
+def handle_join_duel(ctx):
+    slot, card = ctx.pop(), ctx.pop()
+    if (card is None or card.destroyed or card not in card.home_deck.content
+            or slot is None or slot is not ctx.game.resolving_duel or slot.next_combat_card(card.player.side, advance=False)):
+        return False
+    card.home_deck.remove_card(card.home_deck.content.index(card))
+    slot.add_content(card.player.side, card)
+    card.state = CardState.PLACED_FACE_UP
+    return True
+
+
+def handle_apply_damage(ctx):
+    grade, amount, target = ctx.pop(), ctx.pop(), ctx.pop()
+    ctx.event.update(amount=amount, penetration=grade)
+    duel = getattr(ctx.game, "resolving_duel", None)
+    if duel is not None:
+        duel.damage_taken[target] = duel.damage_taken.get(target, 0) + amount
+    return target.apply_resolved_damage(amount, grade)
+
+
+def handle_take_board_card(ctx):
+    ignore_conditions, deck, card, actor = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    if deck not in ("draw", "decisive") or type(ignore_conditions) is not bool:
+        raise ValueError("收牌需要普通或决战牌堆及是否忽略使用条件。")
+    if card is None or card.temporary or actor is None or not actor.is_alive or card.destroyed:
+        return False
+    slot = next((s for s in ctx.game.board_slots() if card in s.get_content(card.player.side)), None)
+    if slot is None or actor.player is card.player or ctx.game.special.is_locked(card):
+        return False
+    slot.remove_card(card)
+    ctx.game.pipeline.retire_moved_skill(slot, card)
+    card.reset_for_draw()
+    card.set_controller(actor)
+    card.deck_owner, card.deck_name = actor, deck
+    card.ignore_conditions = ignore_conditions
+    card.home_deck.add_card(card)
+    return True
+
+
 DISPATCH_TABLE = {
+    OpCode.PLACE_EMPTY_REGULAR: handle_place_empty_regular, OpCode.STAGE_PRE_ATTACK: handle_stage_pre_attack,
+    OpCode.JOIN_DUEL: handle_join_duel, OpCode.TAKE_BOARD_CARD: handle_take_board_card,
+    OpCode.APPLY_DAMAGE: handle_apply_damage,
     OpCode.PUBLISH: handle_publish,
     OpCode.SAMPLE_INT: handle_random_int,
     OpCode.TRANSFER_HAND_CARD: handle_transfer_hand_card,
@@ -1104,6 +1164,9 @@ DISPATCH_TABLE = {
 
 # Names follow stack order so pre/post listeners can inspect explicit action operands.
 OPERANDS = {
+    OpCode.PLACE_EMPTY_REGULAR: ("card",), OpCode.STAGE_PRE_ATTACK: ("card", "target"),
+    OpCode.JOIN_DUEL: ("card", "slot"), OpCode.TAKE_BOARD_CARD: ("receiver", "card", "deck", "ignore_conditions"),
+    OpCode.APPLY_DAMAGE: ("target", "amount", "penetration"),
     OpCode.PUBLISH: ("name", "fields"),
     OpCode.SAMPLE_INT: ("low", "high"),
     OpCode.TRANSFER_HAND_CARD: ("giver", "card", "receiver"),

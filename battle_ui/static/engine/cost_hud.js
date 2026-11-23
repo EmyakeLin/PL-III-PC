@@ -1546,6 +1546,7 @@ export function createDiegeticDeckPiles({ side = 1, align = 'left', onOpenPile =
 
   root.sync = ({
     drawCount = 0,
+    decisiveCount = null,
     discardCount = 0,
     outCount = 0,
     discardCards = [],
@@ -1553,6 +1554,7 @@ export function createDiegeticDeckPiles({ side = 1, align = 'left', onOpenPile =
     playerName: nextName = '',
   } = {}) => {
     if (nextName) playerName = nextName;
+    pileMap.get('draw').labelText.text = decisiveCount == null ? '牌' : `普 ${drawCount} · 决 ${decisiveCount}`;
     const updates = [
       { key: 'draw', count: Math.max(0, Math.round(Number(drawCount) || 0)), cards: null },
       { key: 'delayed_discard', count: Math.max(0, Math.round(Number(discardCount) || 0)), cards: Array.isArray(discardCards) ? discardCards : [] },

@@ -1,4 +1,5 @@
 from collections import Counter
+from decimal import Decimal
 from enum import Enum, auto
 import random
 
@@ -13,6 +14,7 @@ class CharacterRank(Enum):
     ELITE = auto()
     BOSS = auto()
     EMPOWERED_BOSS = auto()
+    EXTREME = auto()
 
 
 class SpeedDie(Dice):
@@ -24,8 +26,8 @@ class SpeedDie(Dice):
         self.owner = self.character = owner
 
 
-RANK_DUEL_MAP = dict(zip(CharacterRank, (1, 2, 3, 4)))
-RANK_SKILL_COUNT = dict(zip(CharacterRank, (3, 5, 7, 11)))
+RANK_DUEL_MAP = dict(zip(CharacterRank, (1, 2, 3, 4, 5)))
+RANK_SKILL_COUNT = dict(zip(CharacterRank, (3, 5, 7, 11, 15)))
 SHIELD_FIELDS = {
     "normal": "shield", "shield": "shield", "护盾": "shield", "普通护盾": "shield",
     "reinforced": "reinforced_shield", "强化护盾": "reinforced_shield",
@@ -36,6 +38,11 @@ DAMAGE_GRADES = {
     "pierce": "pierce", "piercing": "pierce", "armor_piercing": "pierce", "穿甲": "pierce",
     "concept": "concept", "super_armor_piercing": "concept", "超穿甲": "concept",
 }
+
+
+def _public_amount(value):
+    """Keep whole amounts integral in public snapshots and receipts."""
+    return int(value) if value == int(value) else float(value)
 
 
 class Character:
@@ -104,6 +111,19 @@ class Character:
         return self.game is not None and self.game.turn_history.clash_count(self, "win") > 0
 
     @property
+    def hp(self):
+        return int(self._hp)
+
+    @hp.setter
+    def hp(self, value):
+        self._hp = max(Decimal(0), Decimal(str(value)))
+
+    def _deduct_hp(self, amount):
+        lost = min(self._hp, Decimal(str(amount)))
+        self._hp -= lost
+        return _public_amount(lost)
+
+    @property
     def max_hp(self):
         return max(0, self._base_max_hp + self._status_max_hp_delta)
 
@@ -165,7 +185,7 @@ class Character:
 
     def setup_deck(self):
         for card in self.skills:
-            zone = self.player.cardspace.out_of_combat if card.out_of_combat else self.player.cardspace.draw
+            zone = self.player.cardspace.out_of_combat if card.out_of_combat else card.home_deck
             zone.add_card(card)
 
     def reset_shields(self):
@@ -275,7 +295,7 @@ class Character:
 
     def skill_restricted(self, card):
         from entry.play_conditions import denies_skill_use
-        return not card.meets_use_requirements() or denies_skill_use(self, card)
+        return not card.ignore_conditions and (not card.meets_use_requirements() or denies_skill_use(self, card))
 
     def apply_status_delta(self, name, amount, *, notify=True, defer_effects=False):
         """Commit a resolved STATUS or SPEND_STATUS and bind entries to its holder."""
@@ -336,7 +356,7 @@ class Character:
         cap_delta = (value - previous) * self.status_rules.get(name, {}).get("max_hp_per_stack", 0)
         if cap_delta:
             self._status_max_hp_delta += cap_delta
-            self.hp = min(self.hp, self.max_hp)
+            self.hp = min(self._hp, self.max_hp)
             self.check_death()
         if previous != value:
             for card in self.conditional_cards:
@@ -433,9 +453,9 @@ class Character:
     def heal(self, amount):
         if not self.is_alive or amount <= 0:
             return 0
-        old_hp = self.hp
-        self.hp = min(self.max_hp, self.hp + int(amount))
-        recovered = self.hp - old_hp
+        old_hp = self._hp
+        self.hp = min(self.max_hp, old_hp + Decimal(str(amount)))
+        recovered = _public_amount(self._hp - old_hp)
         if recovered > 0 and old_hp >= self.max_lightcore_hp:
             # An actual heal at or above the integrity cap is unconditional death.
             self.hp = 0
@@ -449,8 +469,7 @@ class Character:
     def lose_hp(self, amount):
         if not self.is_alive or amount <= 0:
             return 0
-        lost = min(self.hp, amount)
-        self.hp -= lost
+        lost = self._deduct_hp(amount)
         self.check_death()
         if lost:
             self.record("health_lost", amount=lost, hp=self.hp, maximum=self.max_hp)
@@ -472,7 +491,7 @@ class Character:
         """Settle a resolved damage amount against shields and return the HP lost to this hit."""
         if not self.is_alive or incoming <= 0:
             return 0
-        remaining = incoming
+        remaining = Decimal(str(incoming))
         absorbed, eroded = {}, {}
         multiplier = self._effect_context.event.get("damage_multiplier", 1)
         # A shield below the incident grade wears down even when it cannot absorb damage.
@@ -486,16 +505,17 @@ class Character:
             absorb = ("reinforced_shield", "shield")
             erode = ()
         for field in absorb:
-            blocked = min(getattr(self, field), remaining)
-            setattr(self, field, getattr(self, field) - blocked)
+            balance = Decimal(str(getattr(self, field)))
+            blocked = min(balance, remaining)
+            setattr(self, field, _public_amount(balance - blocked))
             remaining -= blocked
-            absorbed[field] = blocked
+            absorbed[field] = _public_amount(blocked)
         for field in erode:
-            worn = min(getattr(self, field), incoming)
-            setattr(self, field, getattr(self, field) - worn)
-            eroded[field] = worn
-        lost = min(self.hp, remaining)
-        self.hp -= lost
+            balance = Decimal(str(getattr(self, field)))
+            worn = min(balance, Decimal(str(incoming)))
+            setattr(self, field, _public_amount(balance - worn))
+            eroded[field] = _public_amount(worn)
+        lost = self._deduct_hp(remaining)
         self._status_event("on_direct_damage_applied",
                            suppressed_damage_statuses=self._effect_context.event.get("suppressed_damage_statuses", ()))
         self.check_death()
@@ -520,7 +540,7 @@ class Character:
         self._status_listeners.clear()
         self.player.retire_faction_passives(self)
         zones = self.player.cardspace
-        removed = list(self.skills)
+        removed = [card for card in self.skills if card.belongs_to(self)]
         hand_changes = []
         for player in self.game.players:
             spaces = player.cardspace
@@ -530,7 +550,7 @@ class Character:
             if taken:
                 hand_changes.append((hand, before, len(hand.content)))
                 removed.extend(taken)
-            for pile in (spaces.draw, spaces.delayed_discard):
+            for pile in (spaces.draw, spaces.decisive, spaces.delayed_discard):
                 removed.extend(pile.remove_character(self))
         for slot in self.game.board_slots():
             for card in slot.remove_character(self):
@@ -538,9 +558,9 @@ class Character:
                     self.game.pipeline.withdraw_skill(slot, card)
                 removed.append(card)
         for card in dict.fromkeys(removed):
-            if card.printed_owner is not self:
+            if card.deck_owner is not self:
                 card.return_to_printed_owner()
-                card.player.cardspace.draw.add_card(card)
+                card.home_deck.add_card(card)
                 continue
             card.set_controller(self)
             card.destroyed = True

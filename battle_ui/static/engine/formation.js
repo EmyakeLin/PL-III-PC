@@ -40,6 +40,7 @@ const RANK_TIER = {
   ELITE: 1,
   BOSS: 2,
   EMPOWERED_BOSS: 3,
+  EXTREME: 4,
 };
 
 /**
@@ -458,7 +459,7 @@ export function resolveInfiniteActorSpec(character, side = 1) {
   const auraMotif = AURA_MOTIFS[hAura % AURA_MOTIFS.length];
   const mantleStyle = MANTLE_STYLES[hDetail % MANTLE_STYLES.length];
 
-  const silhouetteScale = rankTier === 3 ? 1.12 : rankTier === 2 ? 1.08 : rankTier === 1 ? 1.03 : 1.0;
+  const silhouetteScale = rankTier >= 3 ? 1.12 : rankTier === 2 ? 1.08 : rankTier === 1 ? 1.03 : 1.0;
 
   return {
     id,

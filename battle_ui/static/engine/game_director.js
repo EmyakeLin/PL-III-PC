@@ -1536,6 +1536,7 @@ export class GameDirector {
     let phaseLabel = this.state?.special_timing && ['timing', 'combat'].includes(this.state.mode) ? this.state.special_timing
       : (PHASE_NAMES[frame?.phase] || frame?.phase || '');
     if (room?.mode === 'lobby') phaseLabel = room.ready ? '等待另一席准备' : room.bot_side ? '离线人机对战' : '对局准备';
+    if (room?.mode === 'lobby' && room.challenge) phaseLabel = `挑战 · ${room.challenge}`;
     if (room?.paused_by) phaseLabel = room.paused_by === room.side ? '对局已暂停' : '等待对方继续';
     else if (room?.mode === 'waiting') phaseLabel = room.bot_side ? '电脑正在行动' : '等待当前席位行动';
     this.topBar.sync({
@@ -1712,6 +1713,7 @@ export class GameDirector {
     if (piles) {
       piles.sync({
         drawCount: player.draw_count ?? 0,
+        decisiveCount: player.decisive_count,
         discardCount: player.delayed_discard_count ?? 0,
         outCount: player.out_of_combat_count ?? 0,
         discardCards: player.delayed_discard || [],
@@ -3632,7 +3634,7 @@ export class GameDirector {
       const cap = m.maxPerSide ?? 10;
       const roomLobby = this.transport.isRoom ? {
         editableSides: this.state.editable_sides,
-        sideNames: this.state.bot_side ? { 1: '我的角色', 2: '电脑对手' } : null,
+        sideNames: this.state.bot_side ? { 1: '我的角色', 2: this.state.challenge ? '挑战对手' : '电脑对手' } : null,
         openTeams: Boolean(this.state.bot_side),
         quantity: m.quantity,
         quantityInput: m.quantityInput,
@@ -3688,6 +3690,10 @@ export class GameDirector {
           if (!canEdit(m.assignSide)) return;
           const own = m.assignSide === 1 ? m.team1 : m.team2;
           const other = m.assignSide === 1 ? m.team2 : m.team1;
+          if (this.state.challenge && other.includes(cid)) {
+            this.showToast('这名角色是本场挑战对手。', INK.gold, 1.8);
+            return;
+          }
           const limit = m.maxPerSide ?? 10;
           const picked = (this.state.roster_catalog || []).find((c) => c.id === cid);
           const idx = own.indexOf(cid);
@@ -3919,7 +3925,7 @@ export class GameDirector {
       const canRematch = !this.transport.isRoom || this.state.can_rematch;
       const ov = buildFinishOverlay(w, h, {
         winnerSide,
-        winnerName: winnerSide === this.state.bot_side ? '电脑对手' : null,
+        winnerName: winnerSide === this.state.bot_side ? (this.state.challenge || '电脑对手') : null,
         turn: this.state.frame.turn,
         history: this.state.history || [],
         onExport: this.openBattleRecord,

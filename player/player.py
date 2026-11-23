@@ -96,7 +96,8 @@ class Player:
             return
         keep = self.game.gamerule.DRAW_COUNT + int(self.game.turn_count == 0)
         if alive_count == 1:
-            self.draw_card(keep)
+            with self.game.context.binding(turn_draw=True):
+                self.draw_card(keep)
         else:
             return self.select_card(keep + alive_count - 1, keep)
 

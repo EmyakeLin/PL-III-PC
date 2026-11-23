@@ -189,6 +189,13 @@ class PreRevealPhase:
             raise ValueError("指定的常规交锋不存在。")
         if (character, duel_index) not in self.attack_targets(card):
             raise ValueError("此牌只能指定对方已置牌的常规交锋。")
+        slot = self.stage_attack(card, character, duel_index, card.player.cardspace.hand)
+        self._refresh(offer_interception_to=enemy)
+        return slot
+
+    def stage_attack(self, card, character, duel_index, origin):
+        """Publish a numbered attack from its actual zone before inviting responses."""
+        enemy = self.opponent(card.player)
         slot = PreRevealDuel(self.game, card, character, duel_index, pre_reveal=True)
         if duel_index is not None and card.data.get("pre_reveal_bind") == "declared_card":
             slot.required_card = next(self.game.duelspace.space[duel_index].playable_cards(enemy.side))
@@ -196,8 +203,7 @@ class PreRevealPhase:
         self.game.context.record("attack_declared", series="pre_reveal", number=len(self.space.space),
                                  player=card.player.name, card=card.name, target=getattr(character, "name", None),
                                  duel_index=duel_index)
-        self.play_declared_skill(slot, card, character)
-        self._refresh(offer_interception_to=enemy)
+        self.play_declared_skill(slot, card, character, origin=origin)
         return slot
 
     def _pending_slot(self, player, duel_number):
@@ -232,15 +238,17 @@ class PreRevealPhase:
         slot.ready = True
         self._refresh()
 
-    def play_declared_skill(self, slot, card, target):
+    def play_declared_skill(self, slot, card, target, *, origin=None):
         # Settle the new zone before publishing the change in hand size.
-        if not card.temporary:
+        hand = card.player.cardspace.hand
+        if origin is None:
+            origin = hand
+        if not card.temporary and origin is hand:
             record_hand_play(card)
         slot.add_content(card.player.side, card)
         card.state = CardState.PLACED_FACE_UP
         if not card.temporary:
-            hand = card.player.cardspace.hand
-            hand.remove_card(hand.content.index(card))
+            origin.remove_card(origin.content.index(card))
         self.game.context.dispatch_pipeline(
             "on_pre_reveal_play", side=card.player.side, source=card.character, card=card,
             target=target, target_duel_index=slot.target_duel_index, duel=slot,

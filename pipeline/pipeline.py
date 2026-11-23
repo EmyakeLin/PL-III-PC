@@ -560,6 +560,24 @@ class Pipeline:
                     yield tuple("before_skill_choice" if p.side in frame.before_use_sides else None
                                 for p in self.game.players)
                 frame.before_use_sides.clear()
+                declared_target = None
+                attack = None
+                defender = None
+                if len(entering) == 1 and any(e.trigger == "before_unopposed_ranged_skill" for e in self.game.context.entries):
+                    attack = next(slot.playable_cards(entering[0].side), None)
+                    if attack and attack.effective_range:
+                        defender = self.side_pipelines[self.game.pre_reveal.opponent(attack.player).side]
+                if defender and not slot.next_combat_card(defender.side, advance=False):
+                    declared_target = slot.resolve_target_character(attack.player.side)
+                    self.game.context.dispatch_pipeline("before_unopposed_ranged_skill", source=attack.character,
+                                                        card=attack, target=declared_target, duel=slot, side=attack.player.side)
+                    if slot.next_combat_card(defender.side, advance=False):
+                        if defender not in pipes:
+                            defender.push_pack(steps.DUEL)
+                            yield from self._run_to([defender], steps.NEXT_CARD)
+                            pipes.append(defender)
+                            pipes.sort(key=lambda p: p.side != self.game.first_player.side)
+                        entering.append(defender)
                 entrants = []
                 for pipe in entering:
                     card = slot.next_combat_card(pipe.side)
@@ -570,7 +588,8 @@ class Pipeline:
                     pipe.payment = None
                     pipe.withdrawn = pipe.used = False
                     pipe.opposing_card = None
-                    pipe.target = (slot.resolve_target_character(pipe.side)
+                    pipe.target = (declared_target if card is attack and declared_target is not None else
+                                   slot.resolve_target_character(pipe.side)
                                    if frame.interrupt or frame.space is self.game.pre_reveal.space else None)
                     if card in frame.pairing_copies.values() or slot.tail_is_live(card):
                         pipe.paid = pipe.used = True
@@ -702,7 +721,7 @@ class Pipeline:
                 continue
             with self.game.context.binding(**self._event(p)):
                 other = next((pipe.die for pipe in ready if pipe is not p), None)
-                if other is None and p.die.is_attack:
+                if other is None and p.die.can_attack_alone:
                     other = self._pending_response_die(p)
                 paid = self._pay_die_against(p.die, other, skipping=skipping)
             if not paid:
@@ -781,7 +800,7 @@ class Pipeline:
                     card.range_opponent, card.range_deficit = opponent, deficit
 
     def _pair_dice(self, ready):
-        solo = len(ready) == 1 and ready[0].die.is_attack
+        solo = len(ready) == 1 and ready[0].die.can_attack_alone
         attempted_responses = set()
         response = self._pending_response_die(ready[0]) if solo else None
         for pipe in ready:
@@ -789,7 +808,7 @@ class Pipeline:
             if blanks and response is None:
                 pipe.die.make_blank()
         for pipe in ready:
-            if pipe.die.is_attack and self._die_live(pipe):
+            if pipe.die.is_attack and (len(ready) == 2 or solo) and self._die_live(pipe):
                 with self._die_range(pipe.die, response):
                     self.game.context.dispatch_pipeline("before_dice_pair", **self._event(pipe))
         routed = any(p.die.attack_redirected for p in ready)
@@ -797,7 +816,7 @@ class Pipeline:
             for pipe in ready:
                 if pipe.card.range_deficit >= 2 and pipe.die.is_attack and not self._reserved_target(pipe):
                     pipe.die.make_blank()
-        if len(ready) == 1 and ready[0].die.is_attack:
+        if solo and ready[0].die.can_attack_alone:
             attacker = ready[0]
             target = self._reserved_target(attacker)
             if target and (yield from self._contest_solo(attacker, target, start_attacker=True,
@@ -810,8 +829,8 @@ class Pipeline:
         stops = {}
         for pipe in ready:
             die = pipe.die
-            if can_pair or (die.is_attack and (not die.attack_redirected
-                                               or die.attack_target and die.attack_target.is_alive)):
+            if can_pair or (die.can_attack_alone and (not die.attack_redirected
+                                                     or die.attack_target and die.attack_target.is_alive)):
                 pipe.push_pack(steps.DICE)
                 active.append(pipe)
                 stops[pipe.side] = steps.CAN_CLASH
@@ -933,12 +952,12 @@ class Pipeline:
             reply.card._release_dice()
 
     def _solo(self, pipe, *, attempted=None):
-        target = self._reserved_target(pipe) if pipe.die.is_attack else None
+        target = self._reserved_target(pipe) if pipe.die.can_attack_alone else None
         if target and (yield from self._contest_solo(pipe, target, attempted=attempted)):
             return
         if pipe.card.range_deficit >= 2 and pipe.die.is_attack:
             pipe.die.make_blank()
-        if not pipe.die.is_attack:
+        if not pipe.die.can_attack_alone:
             pipe.die.clash_result = "skip"
             pipe.push_pack(steps.PASSIVE_SKIP)
             yield from self._run_to([pipe], "on_clash_skip")
