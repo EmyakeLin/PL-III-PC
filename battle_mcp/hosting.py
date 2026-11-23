@@ -89,6 +89,11 @@ class Lobby:
         self._lock = Lock()
         self._closed = False
 
+    @property
+    def room_count(self):
+        with self._lock:
+            return len(self._rooms)
+
     @staticmethod
     def variant(mode, variant):
         modes = mode_definitions()
