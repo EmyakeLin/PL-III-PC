@@ -163,10 +163,10 @@ class LanQingTests(unittest.TestCase):
         with self.game.context.collect_facts() as facts:
             self.fight()
         hits = [data["target"] for kind, data in facts if kind == "hit"]
-        self.assertEqual(hits, [self.enemy.combat_name] * 3 + [other.combat_name, self.enemy.combat_name])
+        self.assertEqual(hits, [self.enemy.combat_name] * 3 + [other.combat_name])
         self.assertEqual(card.instantiated_dice[2].landed_hits, 2)
         self.assertEqual([a.statuses["麻痹"] for a in (self.enemy, other)], [4, 4])
-        self.assertEqual([a.statuses["电流"] for a in (self.enemy, other)], [8, 3])
+        self.assertEqual([a.statuses["电流"] for a in (self.enemy, other)], [5, 3])
         # First hit succeeds at 20, removes five, then grants its printed three.
         checks = [data["before"] for kind, data in facts if kind == "status_check" and data["check"] == "stagger"]
         self.assertEqual(checks, [20, 19, 1])
@@ -186,7 +186,7 @@ class LanQingTests(unittest.TestCase):
                 segment = next(data for kind, data in facts if kind == "direct_damage")
                 self.assertEqual((segment["grade"], segment["lost"]), (grade, 0 if grade == "normal" else expected))
 
-    def test_maple_snapshots_enemy_stagger_at_use_and_caps_only_its_clash_score(self):
+    def test_end_snow_snapshots_enemy_stagger_at_use_and_caps_only_its_clash_score(self):
         for stacks, fatal, expected in ((3, 1, 0), (4, 1, 1), (20, 20, 8)):
             with self.subTest(stacks=stacks, fatal=fatal):
                 self.start_game()
@@ -199,49 +199,150 @@ class LanQingTests(unittest.TestCase):
                 self.place(defense)
                 self.fight()
                 self.assertEqual(card.use_state["拼点加值"], expected)
-                self.assertEqual([d.clash_score - d.final_score for d in card.instantiated_dice], [expected] * 4)
+                self.assertEqual([d.clash_score - d.final_score for d in card.instantiated_dice], [expected] * 3)
 
-    def test_maple_last_die_pierces_then_destroys_only_on_hit(self):
+    def test_active_leaf_is_one_extreme_range_die_and_only_destroys_on_hit(self):
         for blocked in (False, True):
             with self.subTest(blocked=blocked):
                 self.start_game()
-                card = self.place(self.cards["lan_end"])
-                self.assertEqual((card.name, card.cost, card.effective_range), ("枫落", 4, 3))
-                opposing = self.training(self.enemy, *([-50] * 5))
+                leaf = self.cards["lan_leaf_3"]
+                self.assertEqual(leaf.effective_range, 0)
+                self.actor.add_status("深秋·风卷残叶·活化", 1)
+                self.place(leaf)
+                self.assertEqual(leaf.effective_range, 3)
+                opposing = self.training(self.enemy, -50, -50)
                 opposing.data["range_level"] = 3
                 self.place(opposing)
                 self.enemy.shield = 20
                 if blocked:
                     self.game.context.register_entries(self.enemy, [dict(
-                        trigger="BEFORE RESOLVE_HIT", subject="target",
-                        when=[dict(left="$event.die.type", op="eq", right="pierce")],
-                        operation={"op":"cancel"})])
-                path = []
-                self.game.context.register_entries(self.actor, [
-                    dict(trigger="AFTER DAMAGE", subject="source",
-                         operation=lambda ctx: path.append((ctx.event["target"], ctx.event["amount"],
-                                                            ctx.event["penetration"]))),
-                    dict(trigger="AFTER DESTROY", subject="any",
-                         operation=lambda ctx: path.append(ctx.event["target"]))])
-                self.fight()
-                self.assertEqual([(d.type, d.roll_max, d.multiplier) for d in card.instantiated_dice],
-                                 [("slash", 12, 1), ("slash", 12, 1), ("slash", 8, 1), ("pierce", 12, 4)])
-                self.assertEqual(card.instantiated_dice[3].final_score, 48)
+                        trigger="BEFORE RESOLVE_HIT", subject="target", operation={"op":"cancel"})])
+                scores = []
+                self.game.context.register_entries(self.actor, [dict(trigger="AFTER RESOLVE_FINAL_SCORE",
+                    subject="source", operation=lambda ctx: scores.append(ctx.event["result"]))])
+                with self.game.context.collect_facts() as facts:
+                    self.fight()
+                self.assertEqual(scores, [60])
                 self.assertEqual(opposing.destroyed, not blocked)
-                self.assertEqual(path, [] if blocked else [(self.enemy, 3, "pierce"), opposing])
-                self.assertEqual((self.enemy.hp, self.enemy.shield), (80, 20) if blocked else (77, 17))
-                self.assertEqual(self.actor.statuses["残雪·幽兰流光·活化"], 1)
+                self.assertEqual([d["grade"] for k, d in facts if k == "direct_damage" and d["target"] == self.enemy.combat_name],
+                                 [] if blocked else ["pierce"])
+                self.assertEqual(self.enemy.hp, 80 if blocked else 77)
+                self.assertIn(leaf, self.left.cardspace.hand.content)
+                self.assertNotIn("深秋·风卷残叶·活化", self.actor.statuses)
 
-    def test_maple_requires_four_cost_and_old_activation_name_uses_the_same_charge(self):
-        self.left.max_cost = 3
+    def test_end_snow_cost_range_and_old_activation_name(self):
+        self.left.max_cost = 1
         self.actor.independent_cost = 0
-        self.place(self.cards["lan_end"])
+        end = self.place(self.cards["lan_end"])
+        self.assertEqual((end.name, end.cost, end.effective_range), ("终雪", 1, 3))
         self.fight()
+        self.assertEqual(self.left.available_cost, 0)
+        self.assertEqual([d.roll_max for d in end.instantiated_dice], [12, 12, 8])
+        self.assertEqual(self.actor.statuses["残雪·幽蓝流光·活化"], 1)
+        self.actor.add_status("残雪·幽兰流光·活化", 1)
+        self.assertEqual(self.actor.statuses["残雪·幽蓝流光·活化"], 1)
         self.assertNotIn("残雪·幽兰流光·活化", self.actor.statuses)
-        self.actor.add_status("残雪·幽蓝流光·活化", 1)
-        self.assertEqual(self.actor.statuses["残雪·幽兰流光·活化"], 1)
-        self.assertNotIn("残雪·幽蓝流光·活化", self.actor.statuses)
-        self.assertEqual(self.cards["lan_light"].data["name"], "残雪·幽兰流光")
+        self.assertEqual(self.cards["lan_light"].name, "残雪·幽蓝流光")
+
+    def test_active_leaf_locks_only_the_die_level(self):
+        for status, stacks in (("骰子等级提升", 2), ("骰子等级降低", 5)):
+            with self.subTest(status=status):
+                self.start_game()
+                self.actor.rule_state.update({"风卷残叶骰级": 3, "永久基础值": 1})
+                self.actor.add_status(status, stacks)
+                self.actor.add_status("强壮", 2)
+                self.actor.add_status("深秋·风卷残叶·活化", 1)
+                self.place(self.cards["lan_leaf_3"])
+                normal = self.place(self.cards["lan_leaf_4"], 1)
+                rolls = []
+
+                def record(ctx):
+                    die = ctx.event["die"]
+                    rolls.append((die.card.id, die.level.value, die.roll_max, die.value, die.multiplier,
+                                  die.base_value, ctx.event["result"]))
+
+                self.game.context.register_entries(self.actor, [dict(
+                    trigger="AFTER RESOLVE_FINAL_SCORE", subject="source", operation=record)])
+                self.fight()
+                self.assertEqual(rolls[0], ("lan_leaf_3", 2, 6, 6, 10, 1, 72))
+                # The normal leaf still receives both the permanent and the turn modifiers.
+                self.assertEqual(normal.instantiated_dice[1].roll_max, 20 if stacks == 2 else 4)
+
+    def test_active_spike_win_loss_and_unopposed_dice(self):
+        for opponent_bases, results, damage, bursts in (
+                ([-50, -50, -50], ["win", "win", "win"], [1, 2], [1, 3]),
+                ([-50, 60, -50], ["win", "lose", "win"], [1, 1], [1, 3]),
+                ([-50, -50], ["win", "win", None], [1, 2], [1]),
+                ([], [None, None, None], [1, 1], [])):
+            with self.subTest(results=results):
+                self.start_game()
+                self.actor.add_status("电叉·极锐刺·活化", 1)
+                spike = self.place(self.cards["lan_spike_3"])
+                if opponent_bases:
+                    target = self.training(self.enemy, *opponent_bases)
+                    target.data["range_level"] = 1
+                    self.place(target)
+                burst_positions = []
+                self.game.context.register_entries(self.actor, [dict(trigger="AFTER STAGGER", subject="any",
+                    operation=lambda ctx: burst_positions.append(ctx.event["die"].position))])
+                with self.game.context.collect_facts() as facts:
+                    self.fight()
+                self.assertEqual([d.clash_result for d in spike.instantiated_dice], results)
+                self.assertEqual([(d.roll_max, d.multiplier) for d in spike.instantiated_dice], [(12, 1), (12, 1), (12, 3)])
+                self.assertEqual([(d["amount"], d["grade"]) for k, d in facts
+                                  if k == "direct_damage" and d["target"] == self.enemy.combat_name],
+                                 [(n, "pierce") for n in damage])
+                self.assertEqual(burst_positions, bursts)
+                self.assertEqual(self.enemy.statuses["电击"], 4)
+                if opponent_bases:
+                    self.assertTrue(target.destroyed)
+
+    def test_spike_bonus_skips_an_inserted_skill_and_expires_if_its_tail_is_destroyed(self):
+        for destroy_tail in (False, True):
+            with self.subTest(destroy_tail=destroy_tail):
+                self.start_game()
+                self.actor.add_status("电叉·极锐刺·活化", 1)
+                spike = self.place(self.cards["lan_spike_3"])
+                opposing = self.training(self.enemy, -50, -50, -50, -50)
+                opposing.data["range_level"] = 1
+                self.place(opposing)
+                extra = self.training(self.actor, 40)
+                extra.data["range_level"] = 1
+                self.left.cardspace.hand.add_card(extra)
+                followup = self.place(self.training(self.actor, 40), 1)
+
+                def insert(ctx):
+                    self.assertTrue(ctx.eval_block([extra, {"at":"after_die"}, OpCode.INSERT_SKILL]))
+                    if destroy_tail:
+                        ctx.eval_block([next(spike.planned_dice(self.game, after_current=True)), OpCode.DESTROY])
+
+                self.game.context.register_entries(self.actor, [dict(
+                    trigger="on_clash_win", subject="source", operation=insert,
+                    when=[dict(left="$event.card.id", op="eq", right=spike.id),
+                          dict(left="$event.die.position", op="eq", right=2)])])
+                with self.game.context.collect_facts() as facts:
+                    self.fight()
+                self.assertIn(extra, self.game.used_cards)
+                self.assertIn(followup, self.game.used_cards)
+                amounts = [d["amount"] for k, d in facts if k == "direct_damage" and d["target"] == self.enemy.combat_name]
+                self.assertEqual(amounts, [1, 1, 1] if destroy_tail else [1, 1, 2, 1])
+
+    def test_second_spike_repeat_uses_bonus_even_when_it_loses_without_damage(self):
+        self.actor.add_status("电叉·极锐刺·活化", 1)
+        spike = self.place(self.cards["lan_spike_3"])
+        opposing = self.training(self.enemy, -50, -50, 60, -50)
+        opposing.data["range_level"] = 1
+        self.place(opposing)
+        self.game.context.register_entries(self.actor, [dict(trigger="on_clash_win", subject="source",
+            when=[dict(left="$event.die.position", op="eq", right=2),
+                  dict(left="$event.die.is_repeat", op="eq", right=False)],
+            operation={"op":"program","code":["$event.die","REPEAT_DIE"]})])
+        with self.game.context.collect_facts() as facts:
+            self.fight()
+        self.assertEqual([(d.position, d.clash_result) for d in spike.instantiated_dice],
+                         [(1, "win"), (2, "win"), (2, "lose"), (3, "win")])
+        self.assertEqual([d["amount"] for k, d in facts
+                          if k == "direct_damage" and d["target"] == self.enemy.combat_name], [1, 1])
 
     def test_current_overflow_requires_distinct_choices_before_recycling(self):
         cards = [self.training(self.enemy, n) for n in (1, 2, 3)]
@@ -351,7 +452,7 @@ class LanQingTests(unittest.TestCase):
 
     def test_ultimate_counts_names_and_excludes_itself_in_the_other_branch(self):
         names = ["电叉·回环舞·活化", "电叉·极锐刺·活化", "深秋·风卷残叶·活化"]
-        own = "残雪·幽兰流光·活化"
+        own = "残雪·幽蓝流光·活化"
         for prior, charged in ((1, False), (2, False), (0, True), (3, True)):
             with self.subTest(prior=prior, charged=charged):
                 self.start_game()
@@ -449,7 +550,7 @@ class LanQingTests(unittest.TestCase):
                 self.start_game()
                 if active:
                     self.actor.add_status("深秋·风卷残叶·活化", 1)
-                leaf = self.place(self.cards["lan_leaf_3"])
+                leaf = self.place(self.cards["lan_leaf_4" if active else "lan_leaf_3"])
                 opponent = self.place(self.training(self.enemy, -20, -20, -20))
                 with self.game.context.collect_facts() as facts:
                     self.fight()
@@ -457,9 +558,9 @@ class LanQingTests(unittest.TestCase):
                 self.assertEqual(opponent.instantiated_dice[1].keep_position, active)
                 self.assertEqual(opponent.instantiated_dice[2].clash_result, "lose")
                 scored = [d for k, d in facts if k == "clash_scored"]
-                self.assertEqual(scored[1]["sides"][0][1], "blunt" if active else "slash")
+                self.assertEqual(scored[1]["sides"][0][1], "slash")
 
-    def test_maple_continues_past_one_cancelled_secondary_hit(self):
+    def test_end_snow_continues_past_one_cancelled_secondary_hit(self):
         shielded = self.dummy(self.right, "拦截")
         last = self.dummy(self.right, "后列")
         self.left.set_default_target(self.enemy)
@@ -501,10 +602,10 @@ class LanQingTests(unittest.TestCase):
         faces = {
             "open": ("evade blunt", ""), "dance_2": ("slash slash", "block blunt slash"),
             "dance_3": ("slash evade evade", "slash slash slash"), "turn": ("pierce pierce", ""),
-            "spike_2": ("pierce blunt", "pierce slash"), "spike_3": ("pierce block blunt", "pierce"),
-            "close": ("block evade block evade", ""), "leaf_3": ("evade slash evade", "evade slash blunt"),
+            "spike_2": ("pierce blunt", "pierce slash"), "spike_3": ("pierce block blunt", "pierce pierce pierce"),
+            "close": ("block evade block evade", ""), "leaf_3": ("evade slash evade", "pierce"),
             "leaf_4": ("evade slash blunt", "evade pierce slash blunt"),
-            "light": ("pierce blunt", "evade slash pierce"), "end": ("slash slash slash pierce", "")}
+            "light": ("pierce blunt", "evade slash pierce"), "end": ("slash slash slash", "")}
         self.assertEqual(set(self.cards), {"lan_" + key for key in faces})
         for ident, forms in faces.items():
             for active, types in enumerate(forms):

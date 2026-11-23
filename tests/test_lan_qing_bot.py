@@ -29,8 +29,8 @@ class LanQingDecisions(unittest.TestCase):
         moves = [{"kind": "place", "card_id": k} for k in keys] + [{"kind": "end"}]
         return choose_move(self.frame, moves).get("card_id")
 
-    def test_nine_cost_can_prime_ultimate_and_eight_cost_cannot(self):
-        self.own["cost"]["available"] = 9 - self.actor["cost"]["available"]
+    def test_six_cost_can_prime_ultimate_and_five_cost_cannot(self):
+        self.own["cost"]["available"] = 6 - self.actor["cost"]["available"]
         self.assertEqual(self.place("lan_light", "lan_end"), "lan_end")
         self.own["cost"]["available"] -= 1
         self.assertEqual(self.place("lan_light", "lan_end"), "lan_light")
@@ -77,10 +77,10 @@ class LanQingDecisions(unittest.TestCase):
 
     def test_shock_favors_three_hits_over_the_single_high_power_die(self):
         self.actor["duels"]["max"] = 1
-        self.actor["statuses"] = {DANCE: 1, SPIKE: 1}
-        self.assertEqual(self.place("lan_dance_3", "lan_spike_3"), "lan_spike_3")
+        self.actor["statuses"] = {LEAF: 1, SPIKE: 1}
+        self.assertEqual(self.place("lan_leaf_3", "lan_spike_3"), "lan_leaf_3")
         self.other["characters"][0]["statuses"]["电击"] = 4
-        self.assertEqual(self.place("lan_dance_3", "lan_spike_3"), "lan_dance_3")
+        self.assertEqual(self.place("lan_leaf_3", "lan_spike_3"), "lan_spike_3")
 
     def slot(self, number, key):
         return {"number": number, "sides": [{"side": 1, "cards": [{"hidden": True}]},

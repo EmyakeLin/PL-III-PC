@@ -12,7 +12,7 @@ from loader import load_characters_from_packs
 DANCE = "电叉·回环舞·活化"
 SPIKE = "电叉·极锐刺·活化"
 LEAF = "深秋·风卷残叶·活化"
-LIGHT = "残雪·幽兰流光·活化"
+LIGHT = "残雪·幽蓝流光·活化"
 FAMILIES = {DANCE, SPIKE, LEAF}
 STARTERS = {"lan_open": DANCE, "lan_turn": SPIKE, "lan_close": LEAF, "lan_end": LIGHT}
 PAIRS = {"lan_dance_2": DANCE, "lan_dance_3": DANCE, "lan_spike_2": SPIKE,
@@ -20,10 +20,10 @@ PAIRS = {"lan_dance_2": DANCE, "lan_dance_3": DANCE, "lan_spike_2": SPIKE,
 
 # Tactical weights for the normal and active faces of each skill.
 FACE_VALUE = {
-    "lan_open": (1.4,), "lan_turn": (3.5,), "lan_close": (2.7,), "lan_end": (5.2,),
+    "lan_open": (1.4,), "lan_turn": (3.5,), "lan_close": (2.7,), "lan_end": (3.7,),
     "lan_light": (5.6, 8.8), "lan_dance_2": (3.1, 4.1), "lan_dance_3": (3.7, 5.8),
     "lan_spike_2": (2.8, 4.4), "lan_spike_3": (2.5, 6.7),
-    "lan_leaf_3": (3.2, 5.4), "lan_leaf_4": (5.4, 7.8),
+    "lan_leaf_3": (3.2, 7.5), "lan_leaf_4": (5.4, 7.8),
 }
 
 
@@ -146,7 +146,7 @@ class _Turn:
                 if key == "lan_end":
                     value += min(8, stagger // 8) * 0.45
                 heavy_hit = (key in ("lan_light", "lan_leaf_3", "lan_leaf_4")
-                             or enhanced and key in ("lan_spike_3", "lan_dance_3"))
+                             or enhanced and (key == "lan_dance_3" or key == "lan_spike_3" and contested))
                 if heavy_hit and self.enemies[enemy_id]["statuses"].get("致命失衡"):
                     value += 1.5
                 if key == "lan_light" or (enhanced and key in ("lan_leaf_4", "lan_dance_3")):
