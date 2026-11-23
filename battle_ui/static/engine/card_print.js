@@ -137,6 +137,7 @@ export function buildBoardCardTag(card, {
   height = null,
   playMode = null,
   rangeDeficit = 0,
+  activeDieNumber = null,
 } = {}) {
   const pal = deriveCardPalette(accentColor, side);
   const W = Math.max(96, Math.round(width));
@@ -145,7 +146,7 @@ export function buildBoardCardTag(card, {
   if (card.printed_text && !isBlanked) {
     const printW = Math.max(200, W);
     const face = buildFullCard(card, { side, accentColor, width: printW, fixedHeight: H * printW / W,
-      dense: true, centered: true, playMode, rangeDeficit });
+      dense: true, centered: true, playMode, rangeDeficit, activeDieNumber });
     const root = new PIXI.Container();
     face.scale.set(W / printW);
     root.addChild(face);
@@ -227,6 +228,10 @@ export function buildBoardCardTag(card, {
     const ds = DIE_STYLE[dType] || DIE_STYLE.blank;
     const { badge, restEntries } = isBlanked ? { badge: null, restEntries: [] } : extractDieDamageBadge(die.entries);
 
+    if (activeDieNumber === i + 1) {
+      rowG.roundRect(padX - 2, ry + 1, W - padX * 2 + 4, rowH - 2, 3).fill({ color: INK.goldBg, alpha: 0.95 })
+        .stroke({ width: 1.1, color: INK.gold, alpha: 0.9 });
+    }
     rowG.roundRect(padX, ry + 2, 2.4, rowH - 4, 1).fill({ color: ds.color, alpha: 0.9 });
     if (i < maxRows - 1) {
       rowG.moveTo(padX + 4, ry + rowH).lineTo(W - padX, ry + rowH).stroke({ width: 0.75, color: INK.hairline });
@@ -520,7 +525,29 @@ export function buildFullCard(card, {
 
   sheet.addChild(content);
 
-  if (!legal) {
+  const isDestroyedCard = Boolean(card.destroyed || card.state === 'negated');
+  if (isDestroyedCard) {
+    const shatter = new PIXI.Graphics();
+    shatter.roundRect(0, 0, W, H, 8)
+      .fill({ color: 0x2c2420, alpha: 0.34 })
+      .stroke({ width: 2, color: 0xb83a2a, alpha: 0.9 });
+    shatter.moveTo(10, 10).lineTo(W - 10, H - 10)
+      .moveTo(W - 10, 10).lineTo(10, H - 10)
+      .stroke({ width: 2.2, color: 0xb83a2a, alpha: 0.55 });
+    const stampW = Math.min(W - 20, 86);
+    const stampH = 22;
+    shatter.roundRect((W - stampW) / 2, (H - stampH) / 2, stampW, stampH, 5)
+      .fill({ color: 0x3b1814, alpha: 0.92 })
+      .stroke({ width: 1.4, color: 0xe86b58, alpha: 0.95 });
+    sheet.addChild(shatter);
+    const stampTxt = new PIXI.Text({
+      text: '已摧毁',
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: 0xffece8, letterSpacing: 1.5 },
+    });
+    stampTxt.anchor.set(0.5);
+    stampTxt.position.set(W / 2, H / 2);
+    sheet.addChild(stampTxt);
+  } else if (!legal) {
     const wash = new PIXI.Graphics();
     wash.roundRect(0, 0, W, H, 8).fill({ color: 0xf5f1e7, alpha: 0.48 });
     sheet.addChild(wash);

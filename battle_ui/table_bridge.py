@@ -101,3 +101,51 @@ class TableBridge:
                                      if field != "concept_shield"})
             else:
                 self._append("heal" if kind == "health_recovered" else "lose_hp", **health, amount=data["amount"])
+        elif kind == "lightcore_damage":
+            self._append(
+                "lightcore_damage",
+                target_side=data.get("side"),
+                target_id=data.get("character_id"),
+                target_name=data.get("character_name") or data.get("target"),
+                amount=data.get("amount", 0),
+                lost=data.get("lost", 0),
+                lightcore_after=data.get("hp", 0),
+                max_lightcore=data.get("maximum", 0),
+            )
+        elif kind == "lightcore_collapse":
+            self._append(
+                "lightcore_collapse",
+                target_side=data.get("side"),
+                target_id=data.get("character_id"),
+                target_name=data.get("character_name") or data.get("target"),
+            )
+        elif kind == "lightcore_restored":
+            self._append(
+                "lightcore_restored",
+                target_side=data.get("side"),
+                target_id=data.get("character_id"),
+                target_name=data.get("character_name") or data.get("target"),
+                lightcore_after=data.get("hp", 0),
+                max_lightcore=data.get("maximum", 0),
+            )
+        elif kind == "card_destroyed":
+            self._append(
+                "card_destroyed",
+                side=data.get("side"),
+                character_id=data.get("character_id"),
+                character_name=data.get("character_name"),
+                card_id=data.get("card_id"),
+                instance_id=data.get("instance_id"),
+                card_name=data.get("card"),
+            )
+        elif kind == "die_destroyed":
+            self._append(
+                "die_destroyed",
+                side=data.get("side"),
+                character_id=data.get("character_id"),
+                character_name=data.get("character_name"),
+                card_id=data.get("card_id"),
+                card_name=data.get("card"),
+                position=data.get("position"),
+                die_type=data.get("die_type"),
+            )

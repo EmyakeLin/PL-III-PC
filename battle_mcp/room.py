@@ -352,10 +352,14 @@ class Room:
 
     def _beat_delay(self):
         mode = self.engine._mode()
-        if self.engine.event["kind"] == "scores_ready":
-            return 1.8
+        ev_kind = self.engine.event["kind"]
+        if ev_kind in ("roll", "scores_ready"):
+            return 2.2
         if mode == "combat":
-            return 1.15
+            last_fx = self.engine.presentation.events[-1]["kind"] if self.engine.presentation.events else None
+            if last_fx in ("dice_roll", "dice_clash"):
+                return 2.0
+            return 1.35
         return 0.95
 
     def _can_advance_beat(self, side):

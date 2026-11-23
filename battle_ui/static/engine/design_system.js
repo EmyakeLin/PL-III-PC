@@ -342,42 +342,6 @@ export const OFFICIAL_STATUS_RULES = {
   骰级免疫: '使有效骰级等于该骰的印刷等级，升级和降级均不能改变它。生效回合结束时清除。',
 };
 
-const TIMING_PREFIXES = [
-  { phrase: '本技能发动后', group: 'skill' },
-  { phrase: '下骰使用时', group: 'skill' },
-  { phrase: '使用时', group: 'skill' },
-  { phrase: '使用后', group: 'skill' },
-  { phrase: '拼点胜利时', group: 'clash' },
-  { phrase: '拼点失败时', group: 'clash' },
-  { phrase: '拼点平局时', group: 'clash' },
-  { phrase: '跳过拼点时', group: 'clash' },
-  { phrase: '若首骰命中', group: 'hit' },
-  { phrase: '命中目标', group: 'hit' },
-  { phrase: '命中前', group: 'hit' },
-  { phrase: '命中时', group: 'hit' },
-  { phrase: '暴击时', group: 'hit' },
-  { phrase: '回合开始前', group: 'turn' },
-  { phrase: '回合开始时', group: 'turn' },
-  { phrase: '回合结束时', group: 'turn' },
-  { phrase: '交锋开始时', group: 'turn' },
-  { phrase: '交锋结束时', group: 'turn' },
-  { phrase: '开牌前', group: 'turn' },
-];
-
-const STATUS_NAMES_SORTED = Object.keys(STATUS_COLORS).sort((a, b) => b.length - a.length);
-
-const INLINE_TOKEN_RE = new RegExp(
-  [
-    '(「[^」]+」)',
-    '(超穿甲伤害|穿甲伤害|普通伤害|物理伤害)',
-    '(概念护盾|强化护盾|普通护盾|护盾)',
-    '(极限远程|强化远程|普通远程)',
-    `(${STATUS_NAMES_SORTED.join('|')})`,
-    '((?:[+−\\-×≥≤]\\s*\\d+(?:~\\d+)?)|(?:\\d+~\\d+)|(?:\\d+\\s*(?:层|点|次|张|级)))',
-  ].join('|'),
-  'g'
-);
-
 let _measureCtx = null;
 function getMeasureCtx() {
   if (!_measureCtx && typeof document !== 'undefined') {
@@ -479,31 +443,8 @@ export function exactSkillTraitSpecs(card) {
 }
 
 export function extractDieDamageBadge(entries) {
-  const list = (entries || []).filter(Boolean);
-  let badge = null;
-  const restEntries = [];
-  for (const raw of list) {
-    const trimmed = String(raw).trim();
-    if (!badge) {
-      const m = trimmed.match(/^(\d+)\s*点?\s*(普通伤害|穿甲伤害|超穿甲伤害|普通|穿甲|超穿甲|物理)$/);
-      if (m) {
-        const amount = Number(m[1]);
-        const kindRaw = m[2];
-        const grade = kindRaw.includes('超穿甲') ? 'concept' : kindRaw.includes('穿甲') ? 'pierce' : 'normal';
-        const style = DAMAGE_GRADE_STYLE[grade];
-        badge = {
-          amount,
-          grade,
-          exactText: trimmed,
-          shortText: `${amount}${style.short}`,
-          style,
-        };
-        continue;
-      }
-    }
-    restEntries.push(trimmed);
-  }
-  return { badge, restEntries };
+  const restEntries = (entries || []).filter(Boolean).map((raw) => String(raw).trim());
+  return { badge: null, restEntries };
 }
 
 // ── Clean Architectural Vector Iconography ──
@@ -845,76 +786,8 @@ export function drawCostCrystal(g, cx, cy, r, fillCol, rimCol = INK.paper) {
   ]).fill({ color: INK.paper, alpha: 0.24 });
 }
 
-// ── Clean Editorial 100% Verbatim Rich-Text Renderer (ZERO bulky pills!) ──
+// ── Pure Verbatim Text Renderer (ZERO regex guessing, ZERO synthetic highlight boxes!) ──
 
-function classifyInlineMatch(match) {
-  if (match[1]) return { color: INK.goldDeep, bold: true, font: FONT_UI };
-  if (match[2]) {
-    const txt = match[2];
-    const st = txt.includes('超穿甲') ? DAMAGE_GRADE_STYLE.concept : txt.includes('穿甲') ? DAMAGE_GRADE_STYLE.pierce : DAMAGE_GRADE_STYLE.normal;
-    return { color: st.color, bold: true, font: FONT_UI };
-  }
-  if (match[3]) {
-    const txt = match[3];
-    const st = txt.includes('概念') ? SHIELD_STYLE.concept : txt.includes('强化') ? SHIELD_STYLE.reinforced : SHIELD_STYLE.normal;
-    return { color: st.color, bold: true, font: FONT_UI };
-  }
-  if (match[4]) return { color: TRAIT_STYLE.range.color, bold: true, font: FONT_UI };
-  if (match[5]) return { color: STATUS_COLORS[match[5]] || INK.primary, bold: true, font: FONT_UI };
-  if (match[6]) return { color: INK.strong, bold: true, font: FONT_NUM };
-  return { color: INK.primary, bold: false, font: FONT_UI };
-}
-
-function tokenizeLine(line, baseColor, muted) {
-  const tokens = [];
-  let rest = line;
-
-  for (const tp of TIMING_PREFIXES) {
-    if (rest.startsWith(tp.phrase)) {
-      const ts = TIMING_STYLE[tp.group];
-      tokens.push({
-        kind: 'timing',
-        text: tp.phrase,
-        color: muted ? INK.muted : ts.color,
-        wash: muted ? INK.paperSoft : ts.wash,
-        rule: muted ? INK.line : ts.rule,
-        bold: true,
-        font: FONT_UI,
-      });
-      rest = rest.slice(tp.phrase.length);
-      break;
-    }
-  }
-
-  INLINE_TOKEN_RE.lastIndex = 0;
-  let lastIdx = 0;
-  let m;
-  while ((m = INLINE_TOKEN_RE.exec(rest)) !== null) {
-    if (m.index > lastIdx) {
-      tokens.push({ kind: 'text', text: rest.slice(lastIdx, m.index), color: baseColor, bold: false, font: FONT_UI });
-    }
-    const cls = classifyInlineMatch(m);
-    tokens.push({
-      kind: 'text',
-      text: m[0],
-      color: muted ? INK.muted : cls.color,
-      bold: cls.bold,
-      font: cls.font,
-    });
-    lastIdx = m.index + m[0].length;
-  }
-  if (lastIdx < rest.length) {
-    tokens.push({ kind: 'text', text: rest.slice(lastIdx), color: baseColor, bold: false, font: FONT_UI });
-  }
-  return tokens;
-}
-
-/**
- * Editorial 100% Verbatim Rich-Text Renderer:
- *  - Leading timing phrases get a whisper-soft tint wash + crisp 1.5px bottom rule (NO heavy border boxes!)
- *  - Status names, shields, damage grades & numbers render in crisp bold semantic color
- *  - ZERO characters added, deleted, or reworded!
- */
 export function buildRichVerbatimText(text, {
   maxWidth = 240,
   fontSize = 11.2,
@@ -930,9 +803,7 @@ export function buildRichVerbatimText(text, {
     return root;
   }
 
-  const markG = new PIXI.Graphics();
-  root.addChild(markG);
-
+  const fill = muted ? INK.muted : baseColor;
   const paragraphs = String(text).split('\n');
   let cursorY = 0;
   let maxLineW = 0;
@@ -943,84 +814,23 @@ export function buildRichVerbatimText(text, {
       cursorY += Math.round(lineHeight * 0.5);
       continue;
     }
-    const tokens = tokenizeLine(para, muted ? INK.muted : baseColor, muted);
-    let cursorX = 0;
-
-    const flushNewLine = () => {
-      maxLineW = Math.max(maxLineW, cursorX);
-      cursorX = 0;
-      cursorY += lineHeight;
-    };
-
-    for (const tok of tokens) {
-      if (tok.kind === 'timing') {
-        const tw = measureTextWidth(tok.text, fontSize, true, FONT_UI);
-        const pw = Math.ceil(tw) + 5;
-        const ph = Math.max(13, Math.round(fontSize + 3.5));
-        if (cursorX > 0 && cursorX + pw > maxWidth) flushNewLine();
-        const py = cursorY + Math.max(0, (lineHeight - ph) / 2);
-        // Clean editorial highlight wash + crisp hairline underline (NO cluttered pill border!)
-        markG.roundRect(cursorX, py, pw, ph, 2.5).fill({ color: tok.wash, alpha: 0.92 });
-        markG.moveTo(cursorX + 1, py + ph - 0.5).lineTo(cursorX + pw - 1, py + ph - 0.5)
-          .stroke({ width: 1.4, color: tok.rule, alpha: 0.78 });
-        const pt = new PIXI.Text({
-          text: tok.text,
-          style: { fontFamily: FONT_UI, fontSize, fontWeight: '800', fill: tok.color },
-        });
-        pt.anchor.set(0, 0.5);
-        pt.position.set(cursorX + 2.5, py + ph / 2);
-        root.addChild(pt);
-        cursorX += pw + 2;
-        continue;
-      }
-
-      let buf = '';
-      let bufW = 0;
-      const emitBuf = () => {
-        if (!buf) return;
-        const t = new PIXI.Text({
-          text: buf,
-          style: {
-            fontFamily: tok.font,
-            fontSize,
-            fontWeight: tok.bold ? '800' : '400',
-            fill: tok.color,
-          },
-        });
-        t.anchor.set(0, 0.5);
-        t.position.set(cursorX, cursorY + lineHeight / 2);
-        root.addChild(t);
-        cursorX += bufW;
-        buf = '';
-        bufW = 0;
-      };
-
-      const wholeW = measureTextWidth(tok.text, fontSize, tok.bold, tok.font);
-      if (cursorX + wholeW <= maxWidth) {
-        buf = tok.text;
-        bufW = wholeW;
-        emitBuf();
-      } else if (tok.bold && wholeW <= maxWidth && cursorX > 0 && tok.text.length <= 6) {
-        flushNewLine();
-        buf = tok.text;
-        bufW = wholeW;
-        emitBuf();
-      } else {
-        for (const ch of tok.text) {
-          const cw = measureTextWidth(ch, fontSize, tok.bold, tok.font);
-          if (cursorX + bufW + cw > maxWidth && (cursorX > 0 || buf.length > 0)) {
-            emitBuf();
-            flushNewLine();
-          }
-          buf += ch;
-          bufW += cw;
-        }
-        emitBuf();
-      }
-    }
-
-    maxLineW = Math.max(maxLineW, cursorX);
-    cursorY += lineHeight;
+    const block = new PIXI.Text({
+      text: para,
+      style: {
+        fontFamily: FONT_UI,
+        fontSize,
+        fontWeight: '500',
+        fill,
+        lineHeight,
+        wordWrap: true,
+        breakWords: true,
+        wordWrapWidth: Math.max(40, maxWidth),
+      },
+    });
+    block.position.set(0, cursorY);
+    root.addChild(block);
+    maxLineW = Math.max(maxLineW, Math.min(maxWidth, block.width));
+    cursorY += Math.max(lineHeight, Math.ceil(block.height));
     if (pIdx < paragraphs.length - 1) cursorY += paragraphGap;
   }
 

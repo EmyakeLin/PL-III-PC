@@ -764,6 +764,103 @@ export class TabletopAudio {
   }
 
   /**
+   * Crystalline polyhedral die fracture & violent shatter.
+   */
+  dieShatter(pan = 0) {
+    const ctx = this._ensure();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const p = this._jitter(0.05);
+
+    this._noiseBurst(ctx, {
+      start: now,
+      duration: 0.036,
+      filterType: 'bandpass',
+      freqStart: 4200 * p,
+      freqEnd: 1400 * p,
+      q: 2.2,
+      peak: 0.24,
+      attack: 0.001,
+      pan,
+      paper: false,
+    });
+    this._tone(ctx, {
+      start: now,
+      duration: 0.14,
+      type: 'triangle',
+      freqStart: 980 * p,
+      freqEnd: 175 * p,
+      peak: 0.16,
+      attack: 0.001,
+      pan,
+    });
+    [0.03, 0.068, 0.105, 0.148, 0.195].forEach((dt, idx) => {
+      const f = (2400 + idx * 540) * p;
+      this._tone(ctx, {
+        start: now + dt,
+        duration: 0.055,
+        type: 'sine',
+        freqStart: f,
+        freqEnd: f * 0.78,
+        peak: 0.068 * (1 - idx * 0.14),
+        attack: 0.001,
+        pan: Math.max(-0.75, Math.min(0.75, pan + (idx % 2 ? 0.18 : -0.18))),
+      });
+    });
+  }
+
+  /**
+   * Heavy skill card diagonal cleave, cardstock tear & cinder burst.
+   */
+  cardShatter(pan = 0) {
+    const ctx = this._ensure();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const p = this._jitter(0.04);
+
+    // Crisp crimson slash cleave
+    this._noiseBurst(ctx, {
+      start: now,
+      duration: 0.065,
+      filterType: 'bandpass',
+      freqStart: 3600 * p,
+      freqEnd: 880 * p,
+      q: 1.6,
+      peak: 0.25,
+      attack: 0.002,
+      pan,
+      paper: true,
+    });
+    // Low shatter body impact
+    this._tone(ctx, {
+      start: now + 0.02,
+      duration: 0.18,
+      type: 'sine',
+      freqStart: 164 * p,
+      freqEnd: 42 * p,
+      peak: 0.26,
+      attack: 0.002,
+      pan,
+      lpFreq: 480,
+    });
+    // Secondary paper rip & ember crackles
+    [0.055, 0.105, 0.16, 0.22].forEach((dt, idx) => {
+      this._noiseBurst(ctx, {
+        start: now + dt,
+        duration: 0.032,
+        filterType: 'bandpass',
+        freqStart: (1850 + idx * 420) * p,
+        freqEnd: 740 * p,
+        q: 2.0,
+        peak: 0.13 * (1 - idx * 0.18),
+        attack: 0.002,
+        pan: Math.max(-0.75, Math.min(0.75, pan + (idx % 2 ? 0.22 : -0.22))),
+        paper: true,
+      });
+    });
+  }
+
+  /**
    * Weighty visceral damage impact: sub-punch + damped armor crunch + impact slap.
    */
   hitDamage(heavy = false, pan = 0) {

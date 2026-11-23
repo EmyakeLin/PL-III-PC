@@ -722,7 +722,8 @@ class BattleMatch:
         return rolled_sides
 
     def _combat_stop(self, nodes):
-        checkpoints = ("logic_duel_start", "on_clash_win", "on_clash_draw", "on_clash_lose",
+        checkpoints = ("logic_duel_start", "logic_dice_clash", "before_dice_hit",
+                       "on_clash_win", "on_clash_draw", "on_clash_lose",
                        "on_clash_skip", "after_dice_hit", "logic_skill_use")
         if not any(node in checkpoints for node in nodes):
             return False
@@ -730,6 +731,17 @@ class BattleMatch:
         combat = self._views[None].snapshot()["combat"]
         if combat is None:
             return False
+        # Roll-first gate: pause strictly AFTER rolling and BEFORE clash resolution or hit damage!
+        if "logic_dice_clash" in nodes or "before_dice_hit" in nodes:
+            rolled = self._emit_unannounced_rolls(combat)
+            if rolled:
+                prefix = {"pre_reveal": "开牌前交锋", "regular": "常规交锋", "instant": "即时交锋"}[combat["kind"]]
+                roll_summary = " · ".join(f"{sd['character_name']} 掷出 {sd['rolled_value']}" for sd in rolled)
+                self._history.append(f"{prefix} {combat['duel_number']}　{roll_summary}。")
+                return True
+            if not any(n in ("logic_duel_start", "on_clash_win", "on_clash_draw", "on_clash_lose",
+                             "on_clash_skip", "after_dice_hit", "logic_skill_use") for n in nodes):
+                return False
         actions = []
         scores = []
         pause = "logic_skill_use" in nodes and bool(combat["suspended"])

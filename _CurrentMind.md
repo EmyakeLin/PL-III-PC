@@ -1,5 +1,47 @@
 # 当前设计与工作记录
 
+## 对战画布去网页化（2026-11-23）
+
+作者评价：整个对战界面被一批网页式部件拖垮；攻击特效与 3D 骰子对撞必须保留。作者点名的五类问题部件全部改为游戏内表现，攻击特效、骰子对撞、`TimelineSequencer` 时序与内核桥接均未改动。
+
+- **交锋进度**：删除可滚动交锋列表、圆角条目、「已完成/待结算」标签、细滚动条、「回到当前交锋」胶囊和顶部文字进度轨（`buildScalableDuelRail` 已移除）。`combat_timeline.js` 改为 `buildDuelGemTrack`：竞技场顶端一条宝石线，一场交锋一颗（开牌前六边形、即时细菱、常规方菱）；已结算暗色实心，当前金色并呼吸光环，待结算空心。悬停宝石把该场的牌以小实体牌浮出，点击钉住。若可选的场上目标位于非当前交锋，宝石带翠绿外环；效果选择仅一场含目标时自动钉住，目标经 `_markEffectTarget` 在浮出的牌上点选。战斗舞台不再滚动。
+- **中央卡面**：两张平铺原文大面板改为 `buildActiveDuelStage`，在对撞区下方左右各立一张实体牌（`buildBoardCardTag`，各向内倾斜），悬停看完整原文。`buildBoardCardTag` 新增 `activeDieNumber`，高亮当前骰位。空位只画淡色牌影，不写「无迎击技能」。`combatCardRects` 仍按 side 提供给特效锚点。
+- **场内行动**：删除顶部提示栏、胶囊按钮行、「清单(N)」及其全屏清单（`buildSpecialOverlay` 已移除），也删除手牌上方的操作面板。`field_action_workspace.js` 改为两部分。`buildFieldActionLayer` 把角色主动能力做成圆形纹章，悬挂在该角色头顶；无目标能力直接发动，有目标能力先点亮再点目标。选中手牌后，牌上方弹出一弧圆形印章，每个直接动作一枚（置入、按牌面打出、以此牌发动能力、迎击；进攻或替换目标只有一个时也给印章），悬停才显示名称。多个进攻目标仍只在战场上发光点选或拖放。`fieldDockActions` 把「返回战场」「放行即时 N」、让过等无空间对象的选择并入右下指令坞的封蜡按钮。Esc 先放下选中牌或已点亮的能力，再按一次才离开场内行动。
+- **字幕与提示字**：删除拍次字幕条（`createBeatCaption` 已移除，`createLightcoreBar` 保留）。掷骰和对撞期间收起推进按钮，落定后再出现，不再显示「掷骰中…/对撞结算中…」。对撞勋章也不再写「投掷中…/对撞中…」。
+- **查阅面板**：`table_overlays.js` 的竖向和横向可拖拽滚动条统一换成 `makeScrollCue`。没有轨道和滑块，只在仍可滚动的一端显示黄铜小箭头，点一下翻约一页，滚轮照旧可用；工厂原有的 `onChange` 与 `_updateThumb` 契约不变。被动典录里的「查档 ↗」文字链接换成折页档案图标，整行仍可点开角色档案。
+
+### 验证记录
+- `node --check` 覆盖 `battle_ui/static/engine/*.js`，全部通过。在 PIXI 替身下导入 `game_director.js`，ESM 链接成功，没有缺失导出。
+- 新增 `tests/frontend/`（PIXI 替身 + 加载钩子），运行 `node --import ./tests/frontend/register.mjs --test tests/frontend/test_game_stage.mjs tests/frontend/test_director_stage.mjs`，10/10 通过。成对对照包括：悬停待结算宝石出现浮牌，悬停当前宝石不出现；钉住的浮牌在指针离开后保留，并只标出该场目标，未钉住时不标；轨道上没有「已完成/待结算/回到当前交锋」等字样；双方均有牌时左右对立，缺一方时只画牌影且无文字。另外三组：一张牌有一个进攻目标时出现印章，有两个时不出现；无目标能力直接发动，有目标能力点亮后再点一次熄灭；有待处理进攻时不提供「返回战场」，无待处理进攻时提供。另用真实 `GameDirector._rebuildCombatShowdownStage` 驱动两种情形：普通战斗时两张舞台牌都在，没有浮牌，也没有滚动提示字；目标位于常规②的效果选择会自动钉住常规②，并只标出 1 个目标。
+- Python：`tests.entry_semantics`、`tests.test_room_pacing_and_dice_presentation` 通过。`tests.test_battle_session` 有 3 项失败（「出战角色不在本房间的卡包中」、热座新局模式为 `timing`），属于既有问题：在干净的 HEAD 工作树上同样是这 3 项失败。这次只改了前端 JS，与此无关。
+- 未在浏览器里目测；视觉需作者实机确认。
+
+## 画布前端解耦重构与演出时序对齐（2026-11-23）
+
+### 事实与顶层桥接边界
+- 内核 `models/opcodes.py` 的 `lightcore_damage`、`lightcore_collapse`、`lightcore_restored`、`card_destroyed`、`die_destroyed` 事实补充 `side`、`character_id`、`character_name`（及卡牌/骰子标识）字段，原有键名与结算顺序不变。
+- `battle_ui/table_bridge.py` 顶层桥将上述五类内核事实直接投影为桌面动画事件，不向内核回写任何 UI 状态。
+- `battle_ui/session.py` 为热座 `BattleSession` 增加单调递增的 `match_number`，`action == "new"` 时递增，避免热座重开时前端因旧 `lastFxSeq` 漏演或误播回合初速度骰。
+
+### 前端正交拆解与视觉保留
+- 新建 `battle_ui/static/engine/timeline_sequencer.js`（无 PIXI 依赖的纯状态机）：统一管理单调 `lastFxSeq`、同轮 `dice_roll + dice_clash` 去重合并、严格 `combat_strike` 先于伤害/光点/摧毁/阵亡排序、跨拍清理残留 3D 骰子与物理对撞组、速度骰平局重掷清场与全程遮蔽直到胜负落定、`pendingCombatRollKeys`（点数先投后显）与 `pendingClashOutcomeKeys`（物理对撞瞬间揭示胜负与姿态）、延迟释放 HP 与光点完整性条、以及完成门控 `isSettled`（`autoPace` 仅在演出落定后倒计时，绝不腰斩动画）。
+- 新建 `battle_ui/static/engine/presentation_fx.js`：将所有事件演出注册为独立处理器，完整保留并强化 3D 多面体骰子对撞（`physics.js` 同步 `lungeDelay=0.34s` + `onImpact` 回调）与攻击特效（斩击弧光、突刺光枪、打击震波、护盾碎裂、角色自定义 `FxDirector` 配方与 WebAudio 音效），并新增光点伤害、光点形态群崩塌、光点重建、卡牌摧毁与骰子摧毁专用视觉与飘字。
+- 新建 `battle_ui/static/engine/beat_caption.js`：拆分角色脚下晶莹光点完整性条（`createLightcoreBar`）与不遮挡舞台的实时拍次叙事带（`createBeatCaption`，在速度/拼点未揭示前自动隐藏防止剧透）。
+- `battle_ui/static/engine/design_system.js` 彻底删除 `INLINE_TOKEN_RE`、`TIMING_PREFIXES`、`STATUS_NAMES_SORTED`、`classifyInlineMatch`、`tokenizeLine` 与正则猜框/猜高亮逻辑，恢复纯 `PIXI.Text` 原文排版；`battle_ui/static/engine/card_print.js` 为 `card.destroyed || card.state === 'negated'` 的牌面增加猩红碎裂交叉与「已摧毁」印章。
+- `battle_ui/static/engine/game_director.js` 删去 515 行耦合的内联 FX 调度代码，改为组合 `TimelineSequencer`、`PresentationFx`、`BeatCaption` 与光点完整性条，并补全角色脚下速度文本的开局遮蔽。
+
+### 验证记录
+- `node --check` 检查全部 13 个前端模块均通过。
+- Node ESM 专测（`scratch/test_frontend_refactor.mjs`）6/6 通过：覆盖同轮去重与打击先于后果、两拍制“先滚骰锁定后端 → 解锁 → 物理对撞”严格阻断门控、速度平局清场重掷全程锁定且不复播、战斗中重连不误播速度骰及新局重置、`collectChronicleDuels` 已完成/当前/待结算分区、以及 `analyzeFieldActions` / `resolveFieldHighlights` 活桌面场内行动空间映射。
+- Python 单测全部通过：`tests.test_room_pacing_and_dice_presentation`（10/10，含单方面攻击与拼点均严格先停在掷骰拍、待下一拍才执行命中/拼点结算的断言，以及光点伤害/崩塌/重建、卡牌与骰子摧毁桥接投影、热座 `match_number` 递增专测）、`tests.entry_semantics`（161/161）、`tests.test_displayer`（9/9）、`tests.test_liu_yin`（30/30）。
+
+### 二期细化（2026-11-23）
+- **光点血槽零跳变按需显现**：角色脚下血条基座（`hudBoxH`）与护盾/状态行（`row3Y`）保持固定像素坐标；光点完整性条（`createLightcoreBar`）默认隐藏（`alpha = 0`），仅当角色首次受到光点伤害或完整度上限降低时在预留细槽中平滑展开淡入，全过程零布局跳变。
+- **掷骰动画期间严格阻断后端**：`battle_ui/match.py` `_combat_stop` 新增 `logic_dice_clash` 与未播报 `before_dice_hit` 断点，使单方面攻击与拼点都在掷出点数后立即暂停于结算之前；`TimelineSequencer.isRollAnimating` 在速度骰、掷骰、物理对撞期间全面阻断 `GameDirector._sendAction` 的推进与出牌请求并将推进钮锁定为「掷骰中… / 对撞结算中…」，待动画完成后才释放并进入结算；PVP 房间同步提高掷骰拍超时兜底并由客户端在动画落定后自动投票推进。
+- **骰子与技能摧毁专属 3D 碎裂特效**：`three_world.js` 新增 `spawnDieShatter`（多面体剪影 + 猩红交叉斩裂 + 12 块 3D 四面体碎片炸散）与 `spawnCardShatter`（牌面猩红对角裂痕 + 8 块 3D 翻飞撕裂牌片），`audio.js` 新增 `dieShatter` 与 `cardShatter`，并按真实战场牌位与对撞勋章坐标精准锚定触发。
+- **交锋完成缩小上移与滚轮纵览**：新建 `battle_ui/static/engine/combat_timeline.js`，战斗阶段中已完成交锋自动缩小为紧凑历史条并上移至当前对撞舞台上方（默认露出最近一场已完结交锋），待结算交锋列于下方，鼠标滚轮可在中央竞技场内自由上下浏览历史与后续交锋，并附「回到当前交锋」一键回正与悬停看原稿牌面。
+- **高自由度活桌面「场内行动」**：新建 `battle_ui/static/engine/field_action_workspace.js`，移除遮屏选择题弹窗，进入场内行动时保持战场角色、场上交锋位与完整扇形手牌全部鲜活可交互；点选/拖拽发光手牌可直接指定敌方角色进攻、点击场上牌替换、置入交锋或按牌面打出，顶部浮条呈现角色主动能力与即时回应，并保留可选「清单(N)」回退视图。
+
 ## 流阴卡面原稿（2026-11-23）
 
 作者最后贴出的全文保存在 `_packs/printed/流阴.txt`。从“光生会 执政 流阴”到「形态灭杀」末句按原稿保存，包括全角标点、非断行空格和段间空行。流阴的角色介绍、五个被动、三项专属状态、十一张牌与「领域覆写」从该文件取印刷文字。卡包继续按先前确认的对象和状态结算，例如「领域覆写」选敌方，「战甲塑造」给目标施加环境压制。印刷文字保留本次原稿中的“任意目标”和“领域压制”。

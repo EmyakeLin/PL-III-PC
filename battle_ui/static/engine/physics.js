@@ -91,8 +91,14 @@ export class TabletopPhysics {
             Body.setAngularVelocity(right, 0.18);
           }
 
+          const impact = { x: support.x, y: support.y, speed: relVel, group };
+          if (group.onImpact) {
+            const cb = group.onImpact;
+            group.onImpact = null;
+            cb(impact);
+          }
           if (this.onClashImpact) {
-            this.onClashImpact({ x: support.x, y: support.y, speed: relVel, group });
+            this.onClashImpact(impact);
           }
         }
       }
@@ -144,7 +150,7 @@ export class TabletopPhysics {
   /**
    * Create two colliding Matter.js bodies directly bound to the two clashing 3D dice.
    */
-  createClashDicePair({ cx, cy, radius = 26, outcome = 'draw', winnerColor = 0xe89b32 }) {
+  createClashDicePair({ cx, cy, radius = 26, outcome = 'draw', winnerColor = 0xe89b32, lungeDelay = 0.34, onImpact = null }) {
     const { Bodies, Composite } = this.Matter;
     this.clearClashGroups();
 
@@ -168,10 +174,12 @@ export class TabletopPhysics {
       cy,
       outcome,
       winnerColor,
+      lungeDelay,
+      onImpact: typeof onImpact === 'function' ? onImpact : null,
       lunged: false,
       collided: false,
       age: 0,
-      life: 2.35,
+      life: 2.0,
     };
     leftBody._clashGroup = group;
     rightBody._clashGroup = group;
@@ -266,11 +274,12 @@ export class TabletopPhysics {
         Body.setAngularVelocity(b, Math.abs(da) < 0.001 ? 0 : da * 0.28);
       }
 
-      // Clash dice phases: 0..0.44s settle at left/right spots -> 0.44s lunge into real collision!
+      // Clash dice phases: 0..lungeDelay settle at left/right spots (dice reveal numbers) -> lunge into real collision!
       for (const g of this.clashGroups) {
         g.age += FIXED_DT / 1000;
+        const delay = g.lungeDelay ?? 0.34;
         if (!g.lunged) {
-          if (g.age < 0.44) {
+          if (g.age < delay) {
             const lx = g.cx - 122;
             const rx = g.cx + 122;
             Body.applyForce(g.leftBody, g.leftBody.position, {
@@ -283,9 +292,18 @@ export class TabletopPhysics {
             });
           } else {
             g.lunged = true;
-            Body.setVelocity(g.leftBody, { x: 16.5, y: (g.cy - g.leftBody.position.y) * 0.08 });
-            Body.setVelocity(g.rightBody, { x: -16.5, y: (g.cy - g.rightBody.position.y) * 0.08 });
+            Body.setVelocity(g.leftBody, { x: 18.5, y: (g.cy - g.leftBody.position.y) * 0.08 });
+            Body.setVelocity(g.rightBody, { x: -18.5, y: (g.cy - g.rightBody.position.y) * 0.08 });
           }
+        } else if (!g.collided && g.age >= delay + 0.28) {
+          g.collided = true;
+          const impact = { x: g.cx, y: g.cy, speed: 12, group: g };
+          if (g.onImpact) {
+            const cb = g.onImpact;
+            g.onImpact = null;
+            cb(impact);
+          }
+          if (this.onClashImpact) this.onClashImpact(impact);
         }
       }
 

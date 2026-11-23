@@ -912,17 +912,20 @@ def handle_lightcore_damage(ctx):
     collapsed = lost > 0 and target.lightcore_hp == 0
     ctx.event.update(amount=amount, lightcore_lost=lost, lightcore_collapsed=collapsed)
     ctx.record("lightcore_damage", source=getattr(ctx.event.get("source"), "combat_name", None),
+               side=target.player.side, character_id=target.id, character_name=target.name,
                target=target.combat_name, amount=amount, lost=lost,
                hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
     if collapsed:
         # This whole segment has been consumed. A subsequent segment sees the new pool.
-        ctx.record("lightcore_collapse", target=target.combat_name)
+        ctx.record("lightcore_collapse", side=target.player.side, character_id=target.id,
+                   character_name=target.name, target=target.combat_name)
         with ctx.binding(source=target, damage_cause="光点形态群崩塌"):
             ctx.eval_block([target, (target.original_max_hp + 1) // 2, OpCode.REAL_DAMAGE])
         target.max_lightcore_hp = max(0, target.max_lightcore_hp - 4)
         target.lightcore_hp = target.max_lightcore_hp
-        ctx.record("lightcore_restored", target=target.combat_name, hp=target.lightcore_hp,
-                   maximum=target.max_lightcore_hp)
+        ctx.record("lightcore_restored", side=target.player.side, character_id=target.id,
+                   character_name=target.name, target=target.combat_name,
+                   hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
     return amount
 
 
@@ -1093,13 +1096,33 @@ def handle_destroy(ctx):
     elif isinstance(target, Card):
         if target.destroyed:
             return False
-        ctx.record("card_destroyed", card=target.name)
+        ctx.record(
+            "card_destroyed",
+            card=target.name,
+            card_id=target.id,
+            instance_id=target.instance_id,
+            side=target.player.side if target.player else None,
+            character_id=target.character.id if target.character else None,
+            character_name=target.character.name if target.character else None,
+        )
         target.destroyed = True
         target.state = CardState.NEGATED
         publish_disabled_skill(ctx, target, "destroy")
     elif hasattr(target, "card") and hasattr(target, "roll"):
         if not target.destroyed:
-            ctx.record("die_destroyed", position=getattr(target, "position", None))
+            owning_card = getattr(target, "card", None)
+            owner = getattr(owning_card, "character", None)
+            player = getattr(owning_card, "player", None)
+            ctx.record(
+                "die_destroyed",
+                position=getattr(target, "position", None),
+                die_type=getattr(target, "type", None),
+                card=owning_card.name if owning_card else None,
+                card_id=owning_card.id if owning_card else None,
+                side=player.side if player else None,
+                character_id=owner.id if owner else None,
+                character_name=owner.name if owner else None,
+            )
             target.keep_position = ctx.event.get("keep_position", False)
         target.destroyed = True
     else:

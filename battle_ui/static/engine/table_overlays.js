@@ -208,7 +208,7 @@ function cullHorizontalItems(container, scrollX, viewW, buffer = 220) {
   }
 }
 
-// ── 0. TACTILE TABLETOP SEAL BUTTON & DRAGGABLE SCROLLBARS ──
+// ── 0. TACTILE TABLETOP SEAL BUTTON & SCROLL CUES ──
 
 export function makeSealButton(label, {
   width = 138,
@@ -298,142 +298,78 @@ export function makeSealButton(label, {
   return c;
 }
 
-function makeSmoothScrollbar({ x, y, height, totalH, viewH, scrollY = 0, accentColor = INK.secondary, onChange }) {
-  const maxScroll = Math.max(0, totalH - viewH);
-  const track = new PIXI.Container();
-  track.position.set(x, y);
-  const trackH = Math.max(24, height);
-  const thumbH = Math.max(28, Math.round(trackH * (viewH / Math.max(viewH + 1, totalH))));
-  const travel = Math.max(1, trackH - thumbH);
+/**
+ * Scroll cue in place of a scrollbar: no track, no thumb. A small brass chevron sits at each end
+ * of the scrollable edge and only shows while there is more content that way. Clicking a chevron
+ * turns roughly one page; the wheel keeps working through the owning panel.
+ * Keeps the old factory contract: positioned at (x, y), `onChange(next)`, `_updateThumb(scroll)`.
+ */
+function makeScrollCue({ vertical, x, y, length, total, view, scroll = 0, accentColor = INK.goldDeep, onChange }) {
+  const maxScroll = Math.max(0, total - view);
+  const root = new PIXI.Container();
+  root.position.set(x, y);
+  let cur = Math.max(0, Math.min(maxScroll, scroll));
 
-  const trackG = new PIXI.Graphics();
-  trackG.roundRect(-5, 0, 14, trackH, 6).fill({ color: INK.paper, alpha: 0.001 });
-  trackG.roundRect(0, 0, 4.5, trackH, 2.2).fill({ color: INK.hairline, alpha: 0.95 })
-    .stroke({ width: 0.6, color: INK.line, alpha: 0.6 });
-  track.addChild(trackG);
-
-  const thumbG = new PIXI.Graphics();
-  const drawThumb = (active) => {
-    thumbG.clear();
-    thumbG.roundRect(-1.2, 0, 7, thumbH, 3.5)
-      .fill({ color: accentColor, alpha: active ? 0.96 : 0.74 })
-      .stroke({ width: 0.75, color: INK.paper, alpha: 0.5 });
-    const mid = thumbH / 2;
-    thumbG.moveTo(0.8, mid - 3).lineTo(3.8, mid - 3).stroke({ width: 0.9, color: INK.paper, alpha: 0.65 });
-    thumbG.moveTo(0.8, mid + 3).lineTo(3.8, mid + 3).stroke({ width: 0.9, color: INK.paper, alpha: 0.65 });
+  const makeChevron = (dir) => {
+    const c = new PIXI.Container();
+    const g = new PIXI.Graphics();
+    const draw = (hov) => {
+      g.clear();
+      g.circle(0, 0, 10).fill({ color: INK.paper, alpha: hov ? 0.98 : 0.82 })
+        .stroke({ width: 1.2, color: accentColor, alpha: hov ? 0.95 : 0.6 });
+      const s = 4;
+      const pts = vertical
+        ? (dir < 0 ? [-s, s * 0.5, 0, -s * 0.5, s, s * 0.5] : [-s, -s * 0.5, 0, s * 0.5, s, -s * 0.5])
+        : (dir < 0 ? [s * 0.5, -s, -s * 0.5, 0, s * 0.5, s] : [-s * 0.5, -s, s * 0.5, 0, -s * 0.5, s]);
+      g.moveTo(pts[0], pts[1]).lineTo(pts[2], pts[3]).lineTo(pts[4], pts[5])
+        .stroke({ width: 1.8, color: accentColor, cap: 'round', join: 'round' });
+    };
+    draw(false);
+    c.addChild(g);
+    c.eventMode = 'static';
+    c.cursor = 'pointer';
+    c.hitArea = new PIXI.Circle(0, 0, 13);
+    c.on('pointerover', () => draw(true));
+    c.on('pointerout', () => draw(false));
+    c.on('pointerdown', (e) => e.stopPropagation());
+    c.on('pointertap', (e) => {
+      e.stopPropagation();
+      const next = Math.max(0, Math.min(maxScroll, cur + dir * view * 0.8));
+      sync(next);
+      onChange?.(next);
+    });
+    return c;
   };
-  drawThumb(false);
-  track.addChild(thumbG);
 
-  const updateThumb = (sy) => {
-    const c = Math.max(0, Math.min(maxScroll, sy));
-    thumbG.y = maxScroll > 0 ? (c / maxScroll) * travel : 0;
-  };
-  updateThumb(scrollY);
+  const len = Math.max(24, length);
+  const back = makeChevron(-1);
+  const fwd = makeChevron(1);
+  if (vertical) {
+    back.position.set(2, 10);
+    fwd.position.set(2, len - 10);
+  } else {
+    back.position.set(10, 2);
+    fwd.position.set(len - 10, 2);
+  }
+  root.addChild(back, fwd);
 
-  let dragging = false;
-  const applyLocalY = (localY) => {
-    const ratio = Math.max(0, Math.min(1, (localY - thumbH / 2) / travel));
-    const next = ratio * maxScroll;
-    updateThumb(next);
-    if (onChange) onChange(next);
-  };
+  function sync(next) {
+    cur = Math.max(0, Math.min(maxScroll, next));
+    back.visible = maxScroll > 0 && cur > 1;
+    fwd.visible = maxScroll > 0 && cur < maxScroll - 1;
+  }
+  sync(cur);
 
-  track.eventMode = 'static';
-  track.cursor = 'pointer';
-  track.on('pointerover', () => drawThumb(true));
-  track.on('pointerout', () => { if (!dragging) drawThumb(false); });
-  track.on('pointerdown', (e) => {
-    e.stopPropagation();
-    dragging = true;
-    drawThumb(true);
-    const local = track.toLocal(e.global);
-    applyLocalY(local.y);
-  });
-  track.on('globalpointermove', (e) => {
-    if (!dragging) return;
-    const local = track.toLocal(e.global);
-    applyLocalY(local.y);
-  });
-  const endDrag = () => {
-    if (!dragging) return;
-    dragging = false;
-    drawThumb(false);
-  };
-  track.on('pointerup', endDrag);
-  track.on('pointerupoutside', endDrag);
-
-  track._updateThumb = updateThumb;
-  return track;
+  root._updateThumb = sync;
+  return root;
 }
 
-function makeHorizontalScrollbar({ x, y, width, totalW, viewW, scrollX = 0, accentColor = INK.secondary, onChange }) {
-  const maxScroll = Math.max(0, totalW - viewW);
-  const track = new PIXI.Container();
-  track.position.set(x, y);
-  const trackW = Math.max(36, width);
-  const thumbW = Math.max(32, Math.round(trackW * (viewW / Math.max(viewW + 1, totalW))));
-  const travel = Math.max(1, trackW - thumbW);
+function makeSmoothScrollbar({ x, y, height, totalH, viewH, scrollY = 0, accentColor, onChange }) {
+  return makeScrollCue({ vertical: true, x, y, length: height, total: totalH, view: viewH, scroll: scrollY, accentColor, onChange });
+}
 
-  const trackG = new PIXI.Graphics();
-  trackG.roundRect(0, -5, trackW, 14, 6).fill({ color: INK.paper, alpha: 0.001 });
-  trackG.roundRect(0, 0, trackW, 4.5, 2.2).fill({ color: INK.hairline, alpha: 0.95 })
-    .stroke({ width: 0.6, color: INK.line, alpha: 0.6 });
-  track.addChild(trackG);
-
-  const thumbG = new PIXI.Graphics();
-  const drawThumb = (active) => {
-    thumbG.clear();
-    thumbG.roundRect(0, -1.2, thumbW, 7, 3.5)
-      .fill({ color: accentColor, alpha: active ? 0.96 : 0.74 })
-      .stroke({ width: 0.75, color: INK.paper, alpha: 0.5 });
-    const mid = thumbW / 2;
-    thumbG.moveTo(mid - 3, 0.8).lineTo(mid - 3, 3.8).stroke({ width: 0.9, color: INK.paper, alpha: 0.65 });
-    thumbG.moveTo(mid + 3, 0.8).lineTo(mid + 3, 3.8).stroke({ width: 0.9, color: INK.paper, alpha: 0.65 });
-  };
-  drawThumb(false);
-  track.addChild(thumbG);
-
-  const updateThumb = (sx) => {
-    const c = Math.max(0, Math.min(maxScroll, sx));
-    thumbG.x = maxScroll > 0 ? (c / maxScroll) * travel : 0;
-  };
-  updateThumb(scrollX);
-
-  let dragging = false;
-  const applyLocalX = (localX) => {
-    const ratio = Math.max(0, Math.min(1, (localX - thumbW / 2) / travel));
-    const next = ratio * maxScroll;
-    updateThumb(next);
-    if (onChange) onChange(next);
-  };
-
-  track.eventMode = 'static';
-  track.cursor = 'pointer';
-  track.on('pointerover', () => drawThumb(true));
-  track.on('pointerout', () => { if (!dragging) drawThumb(false); });
-  track.on('pointerdown', (e) => {
-    e.stopPropagation();
-    dragging = true;
-    drawThumb(true);
-    const local = track.toLocal(e.global);
-    applyLocalX(local.x);
-  });
-  track.on('globalpointermove', (e) => {
-    if (!dragging) return;
-    const local = track.toLocal(e.global);
-    applyLocalX(local.x);
-  });
-  const endDrag = () => {
-    if (!dragging) return;
-    dragging = false;
-    drawThumb(false);
-  };
-  track.on('pointerup', endDrag);
-  track.on('pointerupoutside', endDrag);
-
-  track._updateThumb = updateThumb;
-  return track;
+function makeHorizontalScrollbar({ x, y, width, totalW, viewW, scrollX = 0, accentColor, onChange }) {
+  return makeScrollCue({ vertical: false, x, y, length: width, total: totalW, view: viewW, scroll: scrollX, accentColor, onChange });
 }
 
 // ── 1. DIEGETIC ILLUMINATED FOLIO HERO SIDE PANEL (10v10+ SCALABLE) ──
@@ -934,12 +870,15 @@ export function buildPassiveDrawer({
         chTxt.position.set(25, rhH / 2);
         rowHead.addChild(chTxt);
 
-        const openLink = new PIXI.Text({
-          text: '查档 ↗',
-          style: { fontFamily: FONT_UI, fontSize: 10.8, fontWeight: '800', fill: theme.accent },
-        });
-        openLink.anchor.set(1, 0.5);
-        openLink.position.set(innerColW - 10, rhH / 2);
+        // dossier glyph (folded page) instead of a text link; the whole row opens the character sheet
+        const openLink = new PIXI.Graphics();
+        const gx = innerColW - 18;
+        const gy = rhH / 2;
+        openLink.poly([gx - 6, gy - 8, gx + 3, gy - 8, gx + 7, gy - 4, gx + 7, gy + 8, gx - 6, gy + 8])
+          .fill({ color: INK.paper }).stroke({ width: 1.3, color: theme.accent });
+        openLink.poly([gx + 3, gy - 8, gx + 3, gy - 4, gx + 7, gy - 4]).stroke({ width: 1, color: theme.accent });
+        openLink.moveTo(gx - 3, gy - 1).lineTo(gx + 4, gy - 1).moveTo(gx - 3, gy + 3).lineTo(gx + 4, gy + 3)
+          .stroke({ width: 1, color: theme.accent, alpha: 0.8 });
         rowHead.addChild(openLink);
 
         rowHead._itemTop = cy;
@@ -1745,245 +1684,6 @@ export function buildEffectChoice(w, h, {
     const nextPage = page + direction;
     if (nextPage >= 0 && nextPage < pages) showPage(nextPage);
   };
-  return root;
-}
-
-export function buildSpecialOverlay(w, h, {
-  side,
-  timing,
-  options = [],
-  duels = [],
-  pendingAttack,
-  scrollY = 0,
-  onPick,
-  onSwitchSide,
-  onLeave,
-  onScrollChange = null,
-}) {
-  const root = new PIXI.Container();
-  const theme = SIDE_THEME[side] || SIDE_THEME[1];
-
-  const veil = new PIXI.Graphics();
-  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.18 });
-  veil.eventMode = 'static';
-  root.addChild(veil);
-
-  const panelW = Math.min(720, w - 24);
-  const headerH = 48;
-  const footerH = 50;
-  const maxBodyH = Math.min(Math.max(84, Math.floor(h * 0.44) - headerH), 322);
-
-  // Pre-build semantic action seal cards to measure exact scrollable height
-  const bodyInnerW = panelW - 52;
-  const builtCards = [];
-  let cy = 6;
-  const cardGap = 9;
-
-  options.forEach((opt, idx) => {
-    const ks = SPECIAL_KIND_STYLE[opt.kind] || SPECIAL_KIND_STYLE.special;
-    const textW = Math.max(76, bodyInnerW - 104);
-    const target = opt.effect_target;
-    let targetLine = '';
-    if (target?.zone === 'board' && (opt.kind === 'replace' || (opt.kind === 'ability' && !opt.duel_number))) {
-      targetLine = `${DUEL_LABEL[target.kind]} ${target.number} · 第 ${target.position} 张`;
-    } else if (opt.response_number) {
-      const duel = duels.find((slot) => slot.number === opt.response_number);
-      const attack = duel?.sides.find((entry) => entry.side === duel.attacking_side)?.cards.find((card) => card.play_mode === 'active');
-      if (attack) {
-        const destination = duel.target?.kind === 'duel' ? `常规交锋 ${duel.target.number}` : duel.target?.name;
-        targetLine = [attack.name, destination].filter(Boolean).join(' → ');
-      }
-    }
-    const lbl = new PIXI.Text({
-      text: [opt.label, targetLine].filter(Boolean).join('\n'),
-      style: {
-        fontFamily: FONT_UI,
-        fontSize: 12.8,
-        fontWeight: '800',
-        fill: INK.strong,
-        lineHeight: 19,
-        wordWrap: true,
-        breakWords: true,
-        wordWrapWidth: textW,
-      },
-    });
-    const cardH = Math.max(46, Math.ceil(lbl.height) + 18);
-
-    const card = new PIXI.Container();
-    const bg = new PIXI.Graphics();
-    const drawCard = (hov, pressed = false) => {
-      bg.clear();
-      const dy = pressed ? 1 : 0;
-      bg.roundRect(1.5, pressed ? 2 : 3.5, bodyInnerW, cardH, 8).fill({ color: INK.shadow, alpha: hov ? 0.28 : 0.16 });
-      bg.roundRect(0, dy, bodyInnerW, cardH, 8)
-        .fill({ color: hov ? ks.wash : INK.paper })
-        .stroke({ width: hov ? 1.8 : 1.15, color: hov ? ks.color : INK.line });
-      // Semantic 4px left stripe
-      bg.roundRect(0, dy + 2, 4.5, cardH - 4, 2).fill({ color: ks.color });
-      // Action type emblem medallion
-      bg.circle(26, dy + cardH / 2, 13)
-        .fill({ color: ks.wash })
-        .stroke({ width: 1.1, color: ks.color, alpha: 0.7 });
-      drawActionEmblem(bg, opt.kind, 26, dy + cardH / 2, 7.2, ks.color);
-      // Kind tag capsule on right
-      const tagW = 42;
-      bg.roundRect(bodyInnerW - tagW - 10, dy + cardH / 2 - 10, tagW, 20, 5)
-        .fill({ color: ks.wash })
-        .stroke({ width: 0.9, color: ks.color, alpha: 0.6 });
-    };
-    drawCard(false, false);
-    card.addChild(bg);
-
-    lbl.anchor.set(0, 0.5);
-    lbl.position.set(48, cardH / 2);
-    card.addChild(lbl);
-
-    const kTxt = new PIXI.Text({
-      text: ks.label,
-      style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '900', fill: ks.color },
-    });
-    kTxt.anchor.set(0.5);
-    kTxt.position.set(bodyInnerW - 31, cardH / 2);
-    card.addChild(kTxt);
-
-    card.position.set(0, cy);
-    card._itemTop = cy;
-    card._itemBottom = cy + cardH;
-    card._interactiveItem = true;
-    card._idx = idx;
-    card._drawCard = drawCard;
-    builtCards.push(card);
-    cy += cardH + cardGap;
-  });
-
-  const contentH = options.length ? cy + 4 : 72;
-  const viewH = Math.max(84, Math.min(maxBodyH, contentH));
-  const panelH = headerH + viewH + footerH + 18;
-  const px = (w - panelW) / 2;
-  const py = Math.max(4, h - panelH - 12);
-
-  // Illuminated Interrupt Folio Frame
-  const panel = new PIXI.Graphics();
-  drawFolioFrame(panel, px, py, panelW, panelH, {
-    accent: theme.accent,
-    bg: INK.paper,
-    radius: 14,
-    edgeDepth: 4.5,
-    shadowAlpha: 0.34,
-    topRibbonH: headerH - 2,
-    ribbonFill: theme.warmTint,
-    cornerDiamonds: true,
-    diamondColor: INK.gold,
-  });
-  // Top urgency seal accent bar
-  panel.roundRect(px + 20, py + 1.5, panelW - 40, 4, 2).fill({ color: theme.accent });
-  drawLightStar(panel, px + 30, py + headerH / 2, 10, theme.accent, 0.94);
-  drawDiamondDivider(panel, px + 22, px + panelW - 22, py + panelH - footerH, INK.hairline, INK.gold);
-  panel.eventMode = 'static';
-  panel.on('pointertap', (e) => e.stopPropagation());
-  root.addChild(panel);
-
-  const title = new PIXI.Text({
-    text: timing ? `${theme.name} · ${timing}` : `${theme.name} · 特殊行动`,
-    style: { fontFamily: FONT_UI, fontSize: 17.5, fontWeight: '900', fill: theme.accent, letterSpacing: 1 },
-  });
-  title.anchor.set(0, 0.5);
-  title.position.set(px + 48, py + headerH / 2);
-  root.addChild(title);
-
-  // Scrollable Viewport for Action Seal Cards
-  const vx = px + 20;
-  const vy = py + headerH + 8;
-  const vw = panelW - 40;
-
-  const maskG = new PIXI.Graphics();
-  maskG.rect(vx - 2, vy, vw + 4, viewH).fill({ color: 0xffffff });
-  root.addChild(maskG);
-
-  const body = new PIXI.Container();
-  body.position.set(vx, vy);
-  body.mask = maskG;
-  root.addChild(body);
-
-  if (!options.length) {
-    const empty = new PIXI.Text({
-      text: '当前时点无可发动的特殊行动',
-      style: { fontFamily: FONT_UI, fontSize: 13.5, fontWeight: '700', fill: INK.muted },
-    });
-    empty.anchor.set(0.5);
-    empty.position.set(vw / 2, viewH / 2);
-    body.addChild(empty);
-  } else {
-    for (const card of builtCards) {
-      card.eventMode = 'static';
-      card.cursor = 'pointer';
-      card.on('pointerover', (e) => {
-        if (!pointerInsideLocalRect(root, e.global, vx, vy, vw, viewH)) return;
-        card._drawCard(true, false);
-      });
-      card.on('pointerout', () => card._drawCard(false, false));
-      card.on('pointerdown', (e) => {
-        if (!pointerInsideLocalRect(root, e.global, vx, vy, vw, viewH)) return;
-        e.stopPropagation();
-        card._drawCard(true, true);
-      });
-      card.on('pointerup', () => card._drawCard(true, false));
-      card.on('pointertap', (e) => {
-        if (!pointerInsideLocalRect(root, e.global, vx, vy, vw, viewH)) return;
-        e.stopPropagation();
-        onPick(card._idx);
-      });
-      body.addChild(card);
-    }
-  }
-
-  const maxScroll = Math.max(0, contentH - viewH);
-  let curScroll = Math.max(0, Math.min(maxScroll, scrollY));
-  let sb = null;
-  const applyScroll = (nextY, emit = true) => {
-    curScroll = Math.max(0, Math.min(maxScroll, nextY));
-    body.y = vy - curScroll;
-    cullVerticalItems(body, curScroll, viewH);
-    if (sb) sb._updateThumb(curScroll);
-    if (emit && onScrollChange) onScrollChange(curScroll);
-    return curScroll;
-  };
-  applyScroll(curScroll, false);
-
-  if (maxScroll > 0) {
-    sb = makeSmoothScrollbar({
-      x: vx + vw - 6,
-      y: vy + 4,
-      height: viewH - 8,
-      totalH: contentH,
-      viewH,
-      scrollY: curScroll,
-      accentColor: theme.accent,
-      onChange: (val) => applyScroll(val, true),
-    });
-    root.addChild(sb);
-  }
-
-  const footY = py + panelH - footerH + 11;
-  if (onSwitchSide) {
-    const switchBtn = makeSealButton('切换席位', {
-      width: 120, height: 36, accent: INK.secondary, fontSize: 12.5, radius: 9, onClick: onSwitchSide,
-    });
-    switchBtn.position.set(px + 20, footY);
-    root.addChild(switchBtn);
-  }
-
-  if (!pendingAttack) {
-    const closeBtn = makeSealButton('返回战场', {
-      width: 120, height: 36, accent: theme.accent, solid: true, fontSize: 13, radius: 9, onClick: onLeave,
-    });
-    closeBtn.position.set(px + panelW - 140, footY);
-    root.addChild(closeBtn);
-  }
-
-  root._maxScroll = maxScroll;
-  root._rect = { x: px, y: py, w: panelW, h: panelH };
-  root.setScroll = (nextY) => applyScroll(nextY, true);
   return root;
 }
 

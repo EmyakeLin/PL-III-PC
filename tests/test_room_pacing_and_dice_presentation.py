@@ -5,6 +5,8 @@ from itertools import count
 
 from battle_mcp.room import Room
 from battle_ui.match import BattleMatch
+from battle_ui.session import BattleSession
+from models.opcode import OpCode
 
 
 class _RoomHelper:
@@ -276,6 +278,21 @@ class DiceRollEventAlignmentTests(unittest.TestCase):
             else:
                 break
 
+        # Step 1: Roll beat stops STRICTLY BEFORE hit damage / combat_strike executes!
+        roll_snap = self._advance_until(
+            match,
+            lambda s: any(e["kind"] == "dice_roll" and e.get("one_sided") for e in s["fx_events"]),
+        )
+        self.assertFalse(
+            any(e["kind"] == "combat_strike" and e.get("one_sided") for e in roll_snap["fx_events"]),
+            "Backend must pause after solo dice_roll BEFORE executing combat_strike & hit settlement!",
+        )
+        self.assertFalse(
+            any(e["kind"] == "damage" for e in roll_snap["fx_events"]),
+            "Backend must NOT deal damage on the solo dice_roll beat before roll animation finishes!",
+        )
+
+        # Step 2: Only after advancing past the roll beat does combat_strike settle!
         snap = self._advance_until(
             match,
             lambda s: any(e["kind"] == "combat_strike" and e.get("one_sided") for e in s["fx_events"]),
@@ -289,7 +306,7 @@ class DiceRollEventAlignmentTests(unittest.TestCase):
         self.assertTrue(roll_indices, "Solo attack must emit a dice_roll event!")
         self.assertLess(roll_indices[0], strike_idx, "dice_roll must precede combat_strike!")
 
-    def test_clash_emits_dice_clash_and_does_not_duplicate_roll_on_hit(self):
+    def test_clash_pauses_after_roll_before_clash_resolution_and_does_not_reroll_on_hit(self):
         match = BattleMatch(["plan_b_annolin", "plan_b_heck"], seed=12)
         snap = match.snapshot()
         placed = set()
@@ -306,6 +323,18 @@ class DiceRollEventAlignmentTests(unittest.TestCase):
             else:
                 break
 
+        # First combat dice_roll beat must stop BEFORE dice_clash settles!
+        roll_snap = self._advance_until(
+            match,
+            lambda s: any(e["kind"] == "dice_roll" for e in s["fx_events"]),
+            limit=40,
+        )
+        self.assertTrue(any(e["kind"] == "dice_roll" for e in roll_snap["fx_events"]))
+        self.assertFalse(
+            any(e["kind"] == "dice_clash" for e in roll_snap["fx_events"]),
+            "Backend must pause after clash dice_roll BEFORE resolving dice_clash!",
+        )
+
         snap = self._advance_until(
             match,
             lambda s: s["mode"] == "turn_end",
@@ -319,16 +348,89 @@ class DiceRollEventAlignmentTests(unittest.TestCase):
                 self.assertIn("die_number", sd)
                 if not sd.get("skipped"):
                     self.assertIsNotNone(sd.get("rolled_value"))
-        clash_keys = {
-            (e["turn"], e["duel_kind"], e["duel_number"], e["round_id"], sd["side"], sd["die_number"])
-            for e in clashes for sd in e["sides"] if not sd.get("skipped")
-        }
-        dup_rolls = [
-            e for e in events if e["kind"] == "dice_roll"
-            for sd in e["sides"]
-            if (e["turn"], e["duel_kind"], e["duel_number"], e["round_id"], sd["side"], sd["die_number"]) in clash_keys
-        ]
-        self.assertEqual(dup_rolls, [])
+        # Each clash round rolls ONCE (before dice_clash), never again on hit.
+        rolls_by_key = {}
+        for e in events:
+            if e["kind"] == "dice_roll":
+                for sd in e["sides"]:
+                    k = (e["turn"], e["duel_kind"], e["duel_number"], e["round_id"], sd["side"], sd["die_number"])
+                    rolls_by_key[k] = rolls_by_key.get(k, 0) + 1
+        for clash in clashes:
+            for sd in clash["sides"]:
+                if not sd.get("skipped") and sd.get("rolled_value") is not None:
+                    k = (clash["turn"], clash["duel_kind"], clash["duel_number"], clash["round_id"], sd["side"], sd["die_number"])
+                    self.assertEqual(rolls_by_key.get(k, 0), 1, f"Die {k} should roll exactly once before clash!")
+                    self.assertTrue(clash.get("already_rolled"), "dice_clash must mark already_rolled=True after roll beat")
+
+
+class DestroyAndLightcoreBridgeTests(unittest.TestCase):
+    def test_lightcore_damage_collapse_and_restore_project_to_fx_events(self):
+        match = BattleMatch(["plan_b_annolin", "plan_b_heck"], seed=21)
+        game = match.game
+        attacker = game.players[0].characters[0]
+        target = game.players[1].characters[0]
+        initial_max = target.max_lightcore_hp
+        self.assertGreater(initial_max, 4)
+
+        with game.context.binding(source=attacker, target=target):
+            game.context.eval_block([target, 3, OpCode.LIGHTCORE_DAMAGE])
+        partial = [e for e in match.snapshot()["fx_events"] if e["kind"] == "lightcore_damage"]
+        self.assertEqual(len(partial), 1)
+        self.assertEqual(partial[0]["target_side"], target.player.side)
+        self.assertEqual(partial[0]["target_id"], target.id)
+        self.assertEqual(partial[0]["amount"], 3)
+        self.assertEqual(partial[0]["lost"], 3)
+        self.assertEqual(partial[0]["lightcore_after"], initial_max - 3)
+        self.assertEqual(partial[0]["max_lightcore"], initial_max)
+
+        # Dealing remaining lightcore damage triggers collapse -> real damage -> restored pool (-4 max).
+        with game.context.binding(source=attacker, target=target):
+            game.context.eval_block([target, initial_max, OpCode.LIGHTCORE_DAMAGE])
+        events = match.snapshot()["fx_events"]
+        kinds = [e["kind"] for e in events if e["kind"].startswith("lightcore_")]
+        self.assertEqual(kinds, ["lightcore_damage", "lightcore_damage", "lightcore_collapse", "lightcore_restored"])
+        collapse = next(e for e in events if e["kind"] == "lightcore_collapse")
+        restored = next(e for e in events if e["kind"] == "lightcore_restored")
+        self.assertEqual((collapse["target_side"], collapse["target_id"]), (target.player.side, target.id))
+        self.assertEqual(restored["max_lightcore"], initial_max - 4)
+        self.assertEqual(restored["lightcore_after"], initial_max - 4)
+
+    def test_card_destroyed_and_die_destroyed_project_to_fx_events(self):
+        match = BattleMatch(["plan_b_annolin", "plan_b_heck"], seed=22)
+        game = match.game
+        card = game.players[0].cardspace.hand.content[0]
+        die = next(card.planned_dice(game))
+
+        game.context.eval_block([die, OpCode.DESTROY])
+        game.context.eval_block([card, OpCode.DESTROY])
+
+        events = match.snapshot()["fx_events"]
+        die_ev = next(e for e in events if e["kind"] == "die_destroyed")
+        card_ev = next(e for e in events if e["kind"] == "card_destroyed")
+
+        self.assertEqual(die_ev["side"], card.player.side)
+        self.assertEqual(die_ev["character_id"], card.character.id)
+        self.assertEqual(die_ev["card_id"], card.id)
+        self.assertEqual(die_ev["position"], die.position)
+        self.assertEqual(die_ev["die_type"], die.type)
+
+        self.assertEqual(card_ev["side"], card.player.side)
+        self.assertEqual(card_ev["character_id"], card.character.id)
+        self.assertEqual(card_ev["card_id"], card.id)
+        self.assertEqual(card_ev["instance_id"], card.instance_id)
+        self.assertEqual(card_ev["card_name"], card.name)
+
+    def test_battle_session_increments_match_number_on_new_match(self):
+        session = BattleSession(seed=5, roster=["plan_b_annolin", "plan_b_heck"])
+        first = session.state()
+        self.assertEqual(first["match_number"], 1)
+        status, second = session.command({
+            "action": "new",
+            "revision": first["revision"],
+            "roster": ["plan_b_heck", "plan_b_annolin"],
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(second["match_number"], 2)
 
 
 if __name__ == "__main__":

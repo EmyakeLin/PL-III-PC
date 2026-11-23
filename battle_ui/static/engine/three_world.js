@@ -1130,6 +1130,251 @@ export class ThreeWorld {
   }
 
   /**
+   * 3D Die Destruction VFX: faceted polyhedral die silhouette cleaved by a crimson X-slash,
+   * then violently exploding into tumbling 3D tetrahedral shards!
+   */
+  spawnDieShatter({ x, y, colorHex = 0xc93a2b, dieColorHex = null, radius = 28 }) {
+    const center = this.screenToWorld(x, y, 56);
+    const group = new THREE.Group();
+    group.position.copy(center);
+
+    const geometries = [];
+    const materials = [];
+
+    // Phase 1 core die silhouette + wireframe crack glow
+    const coreGeo = new THREE.OctahedronGeometry(radius * 0.88, 0);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: dieColorHex ?? colorHex,
+      transparent: true,
+      opacity: 0.88,
+      depthWrite: false,
+    });
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    const wireGeo = new THREE.EdgesGeometry(coreGeo);
+    const wireMat = new THREE.LineBasicMaterial({
+      color: 0xfff3de,
+      transparent: true,
+      opacity: 0.96,
+    });
+    const wireMesh = new THREE.LineSegments(wireGeo, wireMat);
+    const coreGroup = new THREE.Group();
+    coreGroup.add(coreMesh, wireMesh);
+    group.add(coreGroup);
+    geometries.push(coreGeo, wireGeo);
+    materials.push(coreMat, wireMat);
+
+    // Crossed crimson cleave blades (X fracture across the die)
+    const slashGeo = makeDiamondSpikeGeo(radius * 3.1, 4.4, radius * 1.55);
+    const slashMat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.96,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const slash1 = new THREE.Mesh(slashGeo, slashMat);
+    slash1.position.set(-radius * 1.1, radius * 1.1, 6);
+    slash1.rotation.z = -Math.PI * 0.25;
+    const slash2 = new THREE.Mesh(slashGeo, slashMat);
+    slash2.position.set(-radius * 1.1, -radius * 1.1, 6);
+    slash2.rotation.z = Math.PI * 0.25;
+    const slashGroup = new THREE.Group();
+    slashGroup.add(slash1, slash2);
+    group.add(slashGroup);
+    geometries.push(slashGeo);
+    materials.push(slashMat);
+
+    // Phase 2 tumbling 3D polyhedral shatter shards
+    const shardGeo = new THREE.TetrahedronGeometry(radius * 0.34, 0);
+    const shardMat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.94,
+      depthWrite: false,
+    });
+    const shardRimMat = new THREE.MeshBasicMaterial({
+      color: 0xfff0d4,
+      transparent: true,
+      opacity: 0.88,
+      wireframe: true,
+      depthWrite: false,
+    });
+    geometries.push(shardGeo);
+    materials.push(shardMat, shardRimMat);
+
+    const shards = [];
+    for (let i = 0; i < 12; i++) {
+      const ang = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.35;
+      const spd = 150 + Math.random() * 195;
+      const mesh = new THREE.Mesh(shardGeo, i % 3 === 0 ? shardRimMat : shardMat);
+      mesh.visible = false;
+      mesh.scale.setScalar(0.65 + Math.random() * 0.7);
+      group.add(mesh);
+      shards.push({
+        mesh,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd + 48,
+        vz: 70 + Math.random() * 140,
+        rx: (Math.random() - 0.5) * 16,
+        ry: (Math.random() - 0.5) * 16,
+        rz: (Math.random() - 0.5) * 14,
+      });
+    }
+
+    this.scene.add(group);
+    this.emitShockwave(x, y, colorHex, 0.48);
+    this.spawnImpactBurst(x, y, colorHex, 24, true);
+
+    this.vfxEffects.push({
+      kind: 'die_shatter',
+      group,
+      coreGroup,
+      slashGroup,
+      shards,
+      coreMat,
+      wireMat,
+      slashMat,
+      shardMat,
+      shardRimMat,
+      geometries,
+      materials,
+      age: 0,
+      life: 0.78,
+    });
+  }
+
+  /**
+   * 3D Skill Card Destruction VFX: card silhouette slashed diagonally with glowing crimson fractures,
+   * then tearing apart into 8 tumbling 3D cardstock shards & embers!
+   */
+  spawnCardShatter({ x, y, width = 128, height = 178, colorHex = 0xc93a2b }) {
+    const center = this.screenToWorld(x, y, 52);
+    const group = new THREE.Group();
+    group.position.copy(center);
+
+    const geometries = [];
+    const materials = [];
+
+    // Phase 1 card silhouette & glowing crimson border
+    const cardGeo = new THREE.PlaneGeometry(width, height);
+    const cardMat = new THREE.MeshBasicMaterial({
+      color: 0x3b1b18,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const borderGeo = new THREE.EdgesGeometry(cardGeo);
+    const borderMat = new THREE.LineBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.98,
+    });
+    const frameGroup = new THREE.Group();
+    frameGroup.add(new THREE.Mesh(cardGeo, cardMat), new THREE.LineSegments(borderGeo, borderMat));
+    group.add(frameGroup);
+    geometries.push(cardGeo, borderGeo);
+    materials.push(cardMat, borderMat);
+
+    // Diagonal crimson fracture blades across the card face
+    const diag = Math.hypot(width, height) * 0.92;
+    const crackGeo = makeDiamondSpikeGeo(diag, 5.4, diag * 0.5);
+    const crackMat = new THREE.MeshBasicMaterial({
+      color: 0xffd7cc,
+      transparent: true,
+      opacity: 0.98,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const crackOuterMat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.94,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const crack1 = new THREE.Mesh(crackGeo, crackOuterMat);
+    crack1.position.set(-width * 0.45, height * 0.45, 5);
+    crack1.rotation.z = -Math.atan2(height, width);
+    const crack2 = new THREE.Mesh(crackGeo, crackMat);
+    crack2.position.set(-width * 0.45, -height * 0.45, 6);
+    crack2.rotation.z = Math.atan2(height, width);
+    const crackGroup = new THREE.Group();
+    crackGroup.add(crack1, crack2);
+    group.add(crackGroup);
+    geometries.push(crackGeo);
+    materials.push(crackMat, crackOuterMat);
+
+    // Phase 2 torn 3D cardstock shards (2x4 grid flying apart with 3D curl/spin)
+    const cols = 2;
+    const rows = 4;
+    const pieceW = width / cols;
+    const pieceH = height / rows;
+    const pieceGeo = new THREE.PlaneGeometry(pieceW * 0.92, pieceH * 0.92);
+    const pieceMat = new THREE.MeshBasicMaterial({
+      color: 0xf7efe0,
+      transparent: true,
+      opacity: 0.94,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const pieceEdgeGeo = new THREE.EdgesGeometry(pieceGeo);
+    const pieceEdgeMat = new THREE.LineBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.95,
+    });
+    geometries.push(pieceGeo, pieceEdgeGeo);
+    materials.push(pieceMat, pieceEdgeMat);
+
+    const shards = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const ox = (c - 0.5) * pieceW;
+        const oy = (1.5 - r) * pieceH;
+        const holder = new THREE.Group();
+        holder.position.set(ox, oy, 2);
+        holder.add(new THREE.Mesh(pieceGeo, pieceMat), new THREE.LineSegments(pieceEdgeGeo, pieceEdgeMat));
+        holder.visible = false;
+        group.add(holder);
+        const ang = Math.atan2(oy, ox) + (Math.random() - 0.5) * 0.45;
+        const spd = 120 + Math.random() * 145;
+        shards.push({
+          mesh: holder,
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd + 35,
+          vz: 55 + Math.random() * 110,
+          rx: (Math.random() - 0.5) * 11,
+          ry: (Math.random() - 0.5) * 11,
+          rz: (Math.random() - 0.5) * 8,
+        });
+      }
+    }
+
+    this.scene.add(group);
+    this.emitShockwave(x, y, colorHex, 0.56);
+    this.spawnImpactBurst(x, y, colorHex, 30, true);
+
+    this.vfxEffects.push({
+      kind: 'card_shatter',
+      group,
+      frameGroup,
+      crackGroup,
+      shards,
+      cardMat,
+      borderMat,
+      crackMat,
+      crackOuterMat,
+      pieceMat,
+      pieceEdgeMat,
+      geometries,
+      materials,
+      age: 0,
+      life: 0.86,
+    });
+  }
+
+  /**
    * 3D Luminous Parabolic Energy Comet with tapered curved ribbon tail!
    */
   spawnEnergyBeam({ fromX, fromY, toX, toY, colorHex = 0xd48e1a, duration = 0.48 }) {
@@ -1508,6 +1753,71 @@ export class ThreeWorld {
         if (t >= 1) {
           this.emitShockwave(v.toX, v.toY, v.colorHex, 0.52);
           this.spawnImpactBurst(v.toX, v.toY, v.colorHex, 14, false);
+        }
+      } else if (v.kind === 'die_shatter') {
+        const splitT = 0.22;
+        if (t < splitT) {
+          const p = t / splitT;
+          v.coreGroup.visible = true;
+          v.coreGroup.rotation.x += dtSec * 8;
+          v.coreGroup.rotation.y += dtSec * 11;
+          v.coreGroup.scale.setScalar(1 + Math.sin(p * Math.PI) * 0.24);
+          v.slashGroup.visible = true;
+          v.slashGroup.scale.setScalar(0.35 + p * 0.95);
+          v.slashMat.opacity = 0.98;
+        } else {
+          const p = (t - splitT) / (1 - splitT);
+          v.coreGroup.visible = false;
+          v.slashGroup.visible = p < 0.35;
+          v.slashMat.opacity = Math.max(0, 1 - p / 0.35) * 0.92;
+          const fade = Math.pow(1 - p, 1.35);
+          v.shardMat.opacity = fade * 0.94;
+          v.shardRimMat.opacity = fade * 0.88;
+          for (const sh of v.shards) {
+            sh.mesh.visible = true;
+            sh.vz -= 520 * dtSec;
+            sh.mesh.position.x += sh.vx * dtSec;
+            sh.mesh.position.y += sh.vy * dtSec;
+            sh.mesh.position.z = Math.max(2, sh.mesh.position.z + sh.vz * dtSec);
+            sh.vx *= Math.pow(0.28, dtSec);
+            sh.vy *= Math.pow(0.28, dtSec);
+            sh.mesh.rotation.x += sh.rx * dtSec;
+            sh.mesh.rotation.y += sh.ry * dtSec;
+            sh.mesh.rotation.z += sh.rz * dtSec;
+          }
+        }
+      } else if (v.kind === 'card_shatter') {
+        const splitT = 0.24;
+        if (t < splitT) {
+          const p = t / splitT;
+          v.frameGroup.visible = true;
+          v.frameGroup.scale.setScalar(1 + Math.sin(p * Math.PI) * 0.08);
+          v.crackGroup.visible = true;
+          v.crackGroup.scale.setScalar(0.2 + p * 0.96);
+          v.cardMat.opacity = 0.72 * (1 - p * 0.3);
+          v.borderMat.opacity = 0.98;
+        } else {
+          const p = (t - splitT) / (1 - splitT);
+          v.frameGroup.visible = false;
+          v.crackGroup.visible = p < 0.32;
+          const crackFade = Math.max(0, 1 - p / 0.32);
+          v.crackMat.opacity = crackFade * 0.98;
+          v.crackOuterMat.opacity = crackFade * 0.92;
+          const fade = Math.pow(1 - p, 1.3);
+          v.pieceMat.opacity = fade * 0.94;
+          v.pieceEdgeMat.opacity = fade * 0.94;
+          for (const sh of v.shards) {
+            sh.mesh.visible = true;
+            sh.vz -= 420 * dtSec;
+            sh.mesh.position.x += sh.vx * dtSec;
+            sh.mesh.position.y += sh.vy * dtSec;
+            sh.mesh.position.z = Math.max(2, sh.mesh.position.z + sh.vz * dtSec);
+            sh.vx *= Math.pow(0.32, dtSec);
+            sh.vy *= Math.pow(0.32, dtSec);
+            sh.mesh.rotation.x += sh.rx * dtSec;
+            sh.mesh.rotation.y += sh.ry * dtSec;
+            sh.mesh.rotation.z += sh.rz * dtSec;
+          }
         }
       }
 
