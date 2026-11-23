@@ -7,6 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from battle_ui.assets import resolve_static
+
 from .decision_view import decision_view
 from .declarations import EVENTS, KINDS
 from .manual import ManualDesk
@@ -75,8 +77,19 @@ TOOLS = [
 ]
 BY_NAME = {item["name"]: item for item in TOOLS}
 READ_ONLY = {"rules", "observe", "wait"}
-SELECT_CHARACTER = object_schema({"character_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
+SELECT_CHARACTER = object_schema({"character_id": TEXT, "target_side": NUMBER,
+                                  "revision": REVISION, "request_id": REQUEST_ID},
                                  ("character_id", "revision", "request_id"))
+CANVAS_READY = object_schema({"character_id": TEXT,
+                              "roster": {"type": "array", "minItems": 2, "maxItems": 2},
+                              "revision": REVISION, "request_id": REQUEST_ID}, ("revision", "request_id"))
+CANVAS_REMATCH = object_schema({key: CANVAS_READY["properties"][key] for key in ("roster", "revision", "request_id")},
+                               ("revision", "request_id"))
+CANVAS_STATE = object_schema({"after": TEXT})
+CANVAS_DRAW = object_schema({"card_ids": {"type": "array", "items": TEXT},
+                             "revision": REVISION, "request_id": REQUEST_ID},
+                            ("card_ids", "revision", "request_id"))
+NO_ARGUMENTS = object_schema({})
 
 
 class RequestError(ValueError):
@@ -94,7 +107,7 @@ def check_arguments(schema, arguments):
     for key, value in arguments.items():
         if key in ("revision", "cursor") and (type(value) is not int or value < 0):
             raise RequestError(400, f"{key} 必须是非负整数。", -32602)
-        if key in ("topic", "option_id", "character_id", "request_id") and (
+        if key in ("topic", "option_id", "character_id", "request_id", "after") and (
                 not isinstance(value, str) or not 0 < len(value) <= (128 if key == "request_id" else 1024)):
             raise RequestError(400, f"{key} 必须是有效文字。", -32602)
         if key == "timeout" and (type(value) not in (int, float) or not 0 <= value <= 60):
@@ -109,8 +122,11 @@ class ArenaServer(ThreadingHTTPServer):
     def __init__(self, room, port=8766, *, address="127.0.0.1", public_url=None):
         address = ipv4_address(address)
         external = https_origin(public_url) if public_url is not None else None
+        bot_side = getattr(room, "bot_side", None)
+        if bot_side is not None and (address != "127.0.0.1" or external):
+            raise ValueError("离线人机房间只监听本机。")
         self.room = room
-        self.tokens = {seat: secrets.token_urlsafe(32) for seat in (1, 2)}
+        self.tokens = {seat: secrets.token_urlsafe(32) for seat in (1, 2) if seat != bot_side}
         self.desk = ManualDesk(room)
         self.desk_token = secrets.token_urlsafe(32)
         super().__init__((address, port), ArenaHandler)
@@ -212,19 +228,22 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 return
         raise RequestError(403, "请从房间公布的地址访问。")
 
-    def _content_length(self):
+    def _content_length(self, limit=65536):
         try:
             length = int(self.headers.get("Content-Length", ""))
         except ValueError:
             raise RequestError(411, "需要 Content-Length。") from None
-        if not 0 <= length <= 65536:
+        if length < 0 or (limit is not None and length > limit):
             raise RequestError(413, "请求过大。")
         return length
 
-    def _json_body(self):
+    def _json_body(self, *, limit=65536):
         if self.headers.get_content_type() != "application/json":
             raise RequestError(415, "请求需要 application/json。")
-        body = self.rfile.read(self._content_length())
+        try:
+            body = self.rfile.read(self._content_length(limit))
+        except OverflowError:
+            raise RequestError(413, "请求过大。") from None
         self._body_received = True
         try:
             return json.loads(body.decode("utf-8"))
@@ -261,7 +280,14 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 filename, mime = ASSETS[path]
                 self._send(200, (STATIC_DIR / filename).read_bytes(), mime)
             else:
-                self._send(404, {"error": "页面不存在。"})
+                asset_path = path.removeprefix("/canvas") if path.startswith("/canvas/") else path
+                shared_asset = path.startswith(("/canvas/", "/sprites/", "/fx_scripts/", "/status_icons/"))
+                asset = resolve_static(asset_path) if shared_asset else None
+                if asset is None:
+                    self._send(404, {"error": "页面不存在。"})
+                else:
+                    filename, mime = asset
+                    self._send(200, filename.read_bytes(), mime)
         except RequestError as exc:
             self._send(exc.status, {"error": str(exc)})
 
@@ -322,6 +348,34 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 value = self.server.desk_command(path.removeprefix("/api/desk/"), seats, self._json_body())
                 return self._send(200, value)
             side = self.server.side_for(authorization)
+            if path == "/api/canvas/assets":
+                check_arguments(NO_ARGUMENTS, self._json_body())
+                return self._send(200, self.server.room.canvas_assets())
+            if path == "/api/canvas/state":
+                args = self._json_body()
+                check_arguments(CANVAS_STATE, args)
+                return self._send(200, self.server.room.canvas_state(side, **args))
+            if path in ("/api/canvas/ready", "/api/canvas/rematch", "/api/canvas/draw_bottom", "/api/canvas/target", "/api/canvas/next"):
+                if side is None:
+                    raise RequestError(403, "请使用自己的席位邀请。")
+                # A local human-vs-bot roster or draw selection can grow with the lineup.
+                limit = None if getattr(self.server.room, "bot_side", None) is not None else 65536
+                args = self._json_body(limit=limit)
+                if path == "/api/canvas/next":
+                    check_arguments(BY_NAME["ready"]["inputSchema"], args)
+                    return self._send(200, self.server.room.next_beat(side, **args))
+                if path == "/api/canvas/draw_bottom":
+                    check_arguments(CANVAS_DRAW, args)
+                    return self._send(200, self.server.room.draw_bottom(side, **args))
+                if path == "/api/canvas/target":
+                    check_arguments(object_schema({"character_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
+                                                  ("character_id", "revision", "request_id")), args)
+                    return self._send(200, self.server.room.set_default_target(side, **args))
+                if path == "/api/canvas/rematch":
+                    check_arguments(CANVAS_REMATCH, args)
+                    return self._send(200, self.server.room.rematch(side, **args))
+                check_arguments(CANVAS_READY, args)
+                return self._send(200, self.server.room.ready(side, **args, human=True, canvas=True))
             if path == "/api/follow":
                 args = self._json_body()
                 check_arguments(BY_NAME["wait"]["inputSchema"], args)

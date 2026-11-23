@@ -4,9 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>光点计划 III</title>
-  <link rel="stylesheet" href="/style.css">
-  <script src="/vendor/matter.min.js" defer></script>
-  <script type="module" src="/app.js"></script>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./vendor/matter.min.js" defer></script>
+  <script type="module" src="./app.js"></script>
+  <template id="battle-record-template">
+    <dialog id="battle-record" aria-labelledby="battle-record-title">
+      <form method="dialog" class="battle-record-panel">
+        <header>
+          <h1 id="battle-record-title">战局记录</h1>
+          <button autofocus>关闭</button>
+        </header>
+        <textarea readonly aria-label="纯文本战局记录"></textarea>
+        <footer>
+          <p role="status"></p>
+          <button type="button" id="copy-battle-record" disabled>复制全文</button>
+        </footer>
+      </form>
+    </dialog>
+  </template>
 </head>
 <body>
   <canvas id="three-canvas"></canvas>

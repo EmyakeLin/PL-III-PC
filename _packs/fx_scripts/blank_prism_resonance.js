@@ -11,7 +11,7 @@ export function onPrismStrike(api, ctx) {
   const midY = (from.y + to.y) * 0.5;
 
   // Dual refracted gold prism echo beams fanning slightly around the main strike line
-  setTimeout(() => {
+  api.defer(() => {
     api.three?.spawnEnergyBeam({
       fromX: from.x,
       fromY: from.y - 18,
@@ -23,7 +23,7 @@ export function onPrismStrike(api, ctx) {
     api.three?.triggerRipple(midX, midY, 0xd9a838);
   }, 75);
 
-  setTimeout(() => {
+  api.defer(() => {
     api.three?.spawnImpactBurst(to.x, to.y, 0xf2d98c, 18, false);
   }, 140);
 }

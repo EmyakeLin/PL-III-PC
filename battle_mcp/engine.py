@@ -18,8 +18,11 @@ def hand_card_label(card):
 
 
 class ArenaEngine(BattleMatch):
-    def __init__(self, roster=None, seed=None):
-        super().__init__(roster=roster, seed=seed)
+    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False):
+        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters)
+        for player in self.game.players:
+            if player.side == bot_side:
+                player.target_priority = (("hp", 1), ("lightcore_hp", 1))
         self.game.pipeline.pause_on_clash_scores = True
         self.event = {"kind": "setup", "turn": 0}
         self._hidden_ability_targets = {player.side: {} for player in self.game.players}
@@ -43,6 +46,8 @@ class ArenaEngine(BattleMatch):
             return "skill_choice"
         if self.game.special.pending_attack is not None:
             return "instant_response"
+        if self._draw_seat is not None:
+            return "draw_select"
         if self.mode == "handoff":
             return "pre_reveal" if self._pre_seat else "placement"
         if self.mode in ("pre_attack", "intercept"):
@@ -54,6 +59,8 @@ class ArenaEngine(BattleMatch):
         mode = self._mode()
         if mode == "skill_choice":
             return [self.game.special.decision_owner.side]
+        if mode == "draw_select":
+            return [self._draw_seat.side]
         if mode == "placement":
             return [self.game.placing.side]
         if mode == "pre_reveal":
@@ -71,13 +78,17 @@ class ArenaEngine(BattleMatch):
         effect_choice = self._views[side].effect_choice()
         if effect_choice:
             frame["effect_choice"] = effect_choice
+        if side is not None and self._mode() == "draw_select":
+            draw = self._current_draw_prompt(viewer_side=side)
+            if draw is not None:
+                frame["draw_select"] = draw
         return frame
 
     def catalog(self):
         return self._views[None].catalog()
 
     def options(self, side):
-        if side is None or self.game_over:
+        if side is None or self.game_over or self._mode() == "draw_select":
             return []
         player = self._choose_seat(side, self.game.players)
         mode = self._mode()
@@ -185,6 +196,14 @@ class ArenaEngine(BattleMatch):
     def current_move(self, side, move):
         requested = action_fields(move)
         return next((a for a in self.options(side) if action_fields(a) == requested), None)
+
+    def draw_bottom(self, side, card_ids):
+        if self._mode() != "draw_select" or side != self._draw_seat.side:
+            raise ValueError("当前未轮到本席选择置底牌。")
+        self._draw_bottom_action(card_ids)
+        self.revision += 1
+        self.event = self._event("action")
+        self.event.update(actor_side=side, action_kind="draw_bottom", text=self._history[-1])
 
     def apply(self, side, move):
         player = self._choose_seat(side, self.game.players)

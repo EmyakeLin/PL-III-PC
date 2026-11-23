@@ -188,6 +188,14 @@ export class TabletopPhysics {
     this.clashGroups = [];
   }
 
+  clearMatch() {
+    const { Composite } = this.Matter;
+    this.clearClashGroups();
+    this.pruneHandCards(new Set());
+    Composite.remove(this.world, this.shards.map(shard => shard.body));
+    this.shards.length = 0;
+  }
+
   spawnShieldShards(x, y, color, count = 9, eroded = false) {
     const { Bodies, Body, Composite } = this.Matter;
     for (let i = 0; i < count; i++) {

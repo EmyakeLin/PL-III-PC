@@ -7,6 +7,7 @@ from itertools import combinations
 import io
 import random
 
+from battle_mcp.bot import printed_card_value
 from game import Game
 from loader import load_characters_from_packs
 from main import play_game
@@ -28,12 +29,8 @@ MATCHUPS = {
 
 def card_value(card):
     """固定估价只看印刷面。进攻骰、骰面、费用及射程影响置牌优先级。"""
-    value = 3 * card.cost + 3 * card.range_level
-    for spec in card.data["dice"]:
-        die = Dice(spec)
-        value += (die.roll_max + 1) / 2 + die.base_value + die.final_bonus
-        value += 2 if die.is_attack else 0
-    return value
+    dice = ((die.type, die.roll_max, die.base_value, die.final_bonus) for die in map(Dice, card.data["dice"]))
+    return printed_card_value(card.cost, card.range_level, dice)
 
 
 class ReplayPlayer(Player):

@@ -116,12 +116,13 @@ function clearContainer(c) {
 }
 
 export class GameDirector {
-  constructor(app, physics, threeWorld, audio, transport) {
+  constructor(app, physics, threeWorld, audio, transport, openBattleRecord = null) {
     this.app = app;
     this.physics = physics;
     this.three = threeWorld;
     this.audio = audio;
     this.transport = transport;
+    this.openBattleRecord = openBattleRecord;
 
     this.w = app.screen.width;
     this.h = app.screen.height;
@@ -132,9 +133,11 @@ export class GameDirector {
       three: threeWorld,
       physics,
       audio,
-      getActorNode: (cid) => this.actorNodes.get(cid) || null,
-      getActorPos: (cid) => this._actorPos(cid),
-      getMotion: (cid) => this._getMotion(cid),
+      getActorNode: (cid, side) => this.actorNodes.get(this._characterKey(cid, side)) || null,
+      getActorPos: (cid, side) => this._actorPos(cid, side),
+      getMotion: (cid, side) => this._getMotion(cid, side),
+      getMatchNumber: () => this.state?.match_number,
+      deferFx: (action, delay) => this._deferFx(action, delay),
       getClashCenter: () => ({
         x: (this.layout?.arenaX || 0) + (this.layout?.arenaW || this.w) * 0.5,
         y: (this.layout?.arenaTop || 60) + 132,
@@ -162,6 +165,14 @@ export class GameDirector {
     this.autoPace = true;
     this.autoTimer = 0;
     this.pendingFieldAction = false;
+    this.specialMenuOpen = false;
+    this._fxGen = 0;
+    this._revealedRollKeys = new Set();
+    this._pendingCombatRollKeys = new Set();
+    this._pendingSpeedReveal = false;
+    this._deferredHpOverrides = new Map();
+    this._wingHeadRefs = new Map();
+    this._clashHeaderMeta = null;
 
     // Inspection & interactive state
     this.hoveredCard = null;
@@ -173,6 +184,8 @@ export class GameDirector {
     this.dragState = null;
     this.selectedHandCardId = null;
     this.focusedCharId = null;
+    this.focusedSide = null;
+    this.mirroredIds = new Set();
     this.focusedDuelNumber = null;
     this._ignoreNextStageTapUntil = 0;
     this._fighterFloorDrawers = new Map();
@@ -183,6 +196,7 @@ export class GameDirector {
     this.sidePanelActors = [];
     this._duelScrollCtl = null;
     this._combatRail = null;
+    this._clashHeaderMeta = null;
     this.effectMarks = [];
     this.choiceSafeTop = 64;
     this._activeOverlayNode = null;
@@ -211,6 +225,7 @@ export class GameDirector {
     this.regularSlotRects = new Map();
     this.regularLaneRects = new Map();
     this.preRevealSlotRects = new Map();
+    this.preDuelPage = 0;
     this.pileCenters = new Map();
     this.handCardViews = new Map();
     this.preTimerTexts = [];
@@ -270,6 +285,12 @@ export class GameDirector {
       width: this.w,
       pad: 16,
       onToggleAuto: () => {
+        if (this.transport.isRoom && !this.state?.client_paced) {
+          this.specialMenuOpen = false;
+          if (this.state?.paused_by === this.state?.side) this._sendAction('leave_special');
+          else if (this.state?.can_pause) this._sendAction('open_special');
+          return;
+        }
         this.autoPace = !this.autoPace;
         this.pendingFieldAction = false;
         this.autoTimer = 0.35;
@@ -453,9 +474,10 @@ export class GameDirector {
     const charId = card.character_id;
     const cardCost = Math.max(0, Number(card.cost) || 0);
     this.focusedCharId = charId;
+    this.focusedSide = side;
     const hud = this.costHuds[side];
     if (hud) hud.setIntent({ charId, cardCost });
-    const pos = this._actorPos(charId);
+    const pos = this._actorPos(charId, side);
     const colorHex = this._resolveCharColor(charId, side);
     this.three.setIntentFocus({ active: true, x: pos.x, y: pos.y, colorHex });
   }
@@ -490,7 +512,7 @@ export class GameDirector {
     const frame = this.state?.frame;
     if (!frame) return true;
     const mode = this.state.mode;
-    if (frame.combat || mode === 'draw_select' || mode === 'reveal' || mode === 'turn_end' || mode === 'finished') {
+    if (frame.combat || !['placement', 'pre_attack', 'intercept'].includes(mode)) {
       return false;
     }
     const viewerSide = frame.viewer_side;
@@ -503,18 +525,20 @@ export class GameDirector {
     const h = this.h;
     const pad = 16;
     const hasHand = this._hasLiveHand();
+    const compactRoom = this.transport.isRoom && w < 900;
     // Full-width Open Sunlit Battlefield (NO narrow 210px passive sidebars eating 34% of the screen!)
     const battleX = pad;
-    const battleW = Math.max(760, w - pad * 2);
+    const battleW = Math.max(compactRoom ? 340 : 760, w - pad * 2);
     // Generous left & right fighter bands (standing WebGL actors + underfoot HUD + character-anchored passive chips)
-    const fighterBandW = Math.round(Math.max(216, Math.min(280, battleW * 0.235)));
+    const fighterBandW = compactRoom ? Math.round(battleW * 0.21)
+      : Math.round(Math.max(216, Math.min(280, battleW * 0.235)));
     const wingW = fighterBandW;
     const leftFighterX = battleX + Math.round(fighterBandW * 0.50);
     const rightFighterX = battleX + battleW - Math.round(fighterBandW * 0.50);
     // Expansive central confrontational arena for upright vertical duel cards & combat showdown!
     const narrowCombat = Boolean(this.state?.frame?.combat) && w < 2 * pad + fighterBandW + 14 + 440;
     const arenaX = narrowCombat ? pad : battleX + fighterBandW + 14;
-    const arenaW = narrowCombat ? w - 2 * pad : Math.max(440, battleW - fighterBandW * 2 - 28);
+    const arenaW = narrowCombat ? w - 2 * pad : Math.max(compactRoom ? 160 : 440, battleW - fighterBandW * 2 - 28);
 
     // FIXED full-height world vertical stage coordinates across ALL phases (placement -> pre_reveal -> reveal -> combat -> turn_end)!
     // Diegetic fanned hand floats organically at the lower-center edge — ZERO exclusive web bottom dock bar & ZERO layout jump on reveal!
@@ -541,17 +565,88 @@ export class GameDirector {
     };
   }
 
-  _getMotion(charId) {
-    let m = this.actorMotion.get(charId);
+  _characterKey(charId, side) {
+    return this.mirroredIds.has(charId) ? `${side || this.state?.frame.viewer_side || 1}:${charId}` : charId;
+  }
+
+  _getMotion(charId, side) {
+    const key = this._characterKey(charId, side);
+    let m = this.actorMotion.get(key);
     if (!m) {
       m = { lunge: 0, recoil: 0, evade: 0, hitFlash: 0, healGlow: 0, passiveFlare: 0 };
-      this.actorMotion.set(charId, m);
+      this.actorMotion.set(key, m);
     }
     return m;
   }
 
+  _combatRollKey(turn, kind, duelNumber, roundId, side, dieNumber) {
+    return `${turn || 0}:${kind || ''}:${duelNumber || 0}:${roundId || 0}:${side || 0}:${dieNumber || 0}`;
+  }
+
+  _coalesceFxBatch(events) {
+    const clashRounds = new Set();
+    for (const ev of events) {
+      if (ev.kind === 'dice_clash') {
+        clashRounds.add(`${ev.turn || 0}:${ev.duel_kind || ''}:${ev.duel_number || 0}:${ev.round_id || 0}`);
+      }
+    }
+    if (!clashRounds.size) return events;
+    return events.filter((ev) => {
+      if (ev.kind !== 'dice_roll') return true;
+      const rk = `${ev.turn || 0}:${ev.duel_kind || ''}:${ev.duel_number || 0}:${ev.round_id || 0}`;
+      return !clashRounds.has(rk);
+    });
+  }
+
+  _revealWingSpeeds() {
+    this._pendingSpeedReveal = false;
+    this._syncTopBar();
+    const frame = this.state?.frame;
+    if (!frame) return;
+    for (const [side, ref] of this._wingHeadRefs.entries()) {
+      if (!ref.headTxt || ref.headTxt.destroyed) continue;
+      const isFirst = frame.first_side === side;
+      const speedVal = Number(ref.player.speed || 0).toFixed(ref.player.speed % 1 ? 1 : 0);
+      ref.headTxt.text = `${ref.seatName}${isFirst ? ' ★先手' : ''} · 速${speedVal} · 手牌${ref.player.hand_count}`;
+    }
+    if (this.passiveDrawer) this._rebuildSidePanels();
+  }
+
+  _releaseDeferredHp() {
+    if (!this._deferredHpOverrides.size) return;
+    this._deferredHpOverrides.clear();
+    for (const hw of this.hpWidgets.values()) {
+      if (hw.bar && !hw.bar.destroyed && hw.actualHp != null) {
+        hw.bar.setHp(hw.actualHp, hw.maxHp, { immediate: false });
+      }
+    }
+  }
+
+  _revealCombatRolls(keys) {
+    let changed = false;
+    for (const k of keys) {
+      this._revealedRollKeys.add(k);
+      if (this._pendingCombatRollKeys.delete(k)) changed = true;
+    }
+    if (changed && this._clashHeaderMeta && this.state?.frame?.combat) {
+      this._renderClashMedallions();
+    }
+  }
+
   applyState(nextState, { isInitial = false } = {}) {
-    this.autoTimer = nextState.mode === 'combat' ? 1.25 : 0.85;
+    const prevState = this.state;
+    const prevStarted = Boolean(prevState?.started);
+    const matchChanged = Boolean(prevState && nextState.match_number !== prevState.match_number);
+    if (matchChanged) this._resetMatchVisuals();
+    this._fxGen += 1;
+    const fxGen = this._fxGen;
+    this._pendingSpeedReveal = false;
+    this._pendingCombatRollKeys.clear();
+    this._deferredHpOverrides.clear();
+    if (this.transport.isRoom && (matchChanged || !nextState.is_paused_by_me)) {
+      this.specialMenuOpen = false;
+    }
+    this.autoTimer = nextState.mode === 'combat' ? 1.25 : nextState.mode === 'turn_end' ? 1.0 : 0.85;
     // STRICT PRIVACY CLEAR on every state update
     this.hoveredCard = null;
     this.hoveredInfo = null;
@@ -559,7 +654,7 @@ export class GameDirector {
     this.selectedHandCardId = null;
     this.focusedDuelNumber = null;
     this._clearCardIntent();
-    if (nextState.mode === 'handoff' || nextState.mode === 'special_handoff' || nextState.effect_choice) {
+    if (matchChanged || nextState.mode === 'handoff' || nextState.mode === 'special_handoff' || nextState.effect_choice) {
       this.activeHeroPanel = null;
       this.passiveDrawer = null;
       this.pileModal = null;
@@ -567,18 +662,20 @@ export class GameDirector {
     }
     this._renderInspection();
 
-    const prevMode = this.state?.mode;
-    const prevTurn = this.state?.frame?.turn;
+    const prevMode = prevState?.mode;
+    const prevTurn = prevState?.frame?.turn;
     const nextTurn = nextState.frame?.turn;
-    const prevRosterSig = (this.state?.frame?.players || [])
+    const prevRosterSig = (prevState?.frame?.players || [])
       .map((p) => (p.characters || []).map((c) => c.id).join(',')).join('|');
     const nextRosterSig = (nextState.frame?.players || [])
       .map((p) => (p.characters || []).map((c) => c.id).join(',')).join('|');
-    if (isInitial || prevTurn !== nextTurn || prevRosterSig !== nextRosterSig) {
+    if (isInitial || matchChanged || prevTurn !== nextTurn || prevRosterSig !== nextRosterSig) {
       this.duelScrollY = 0;
+      this.preDuelPage = 0;
       this._duelSlotCountPrev = 0;
+      this._revealedRollKeys.clear();
     }
-    if (isInitial || prevRosterSig !== nextRosterSig) {
+    if (isInitial || matchChanged || prevRosterSig !== nextRosterSig) {
       this.activeHeroPanel = null;
       this.passiveDrawer = null;
       this.hpTrailState.clear();
@@ -590,10 +687,22 @@ export class GameDirector {
       this.finishScrollY = 0;
     }
 
-    const previousStack = this.state?.frame?.combat?.suspended || [];
+    const previousStack = prevState?.frame?.combat?.suspended || [];
     const nextDepth = nextState.frame?.combat?.suspended?.length || 0;
     const resumedPlay = previousStack[nextDepth];
     this.state = nextState;
+    const [left, right] = nextState.frame.players;
+    const rightIds = new Set(right.characters.map(character => character.id));
+    this.mirroredIds = new Set(left.characters.map(character => character.id).filter(id => rightIds.has(id)));
+    if (this.transport.isRoom) {
+      if (matchChanged || (!prevStarted && nextState.started) || (!nextState.can_rematch && !nextState.can_restart && (nextState.started || nextState.ready))) {
+        this.rosterModal = null;
+      } else if (this.rosterModal && !nextState.bot_side) {
+        const other = 3 - nextState.side;
+        const player = nextState.frame.players.find(p => p.side === other);
+        this.rosterModal[`team${other}`] = player.characters.map(c => c.id);
+      }
+    }
     if (nextState.character_sprites) {
       setCharacterSpriteUrls(nextState.character_sprites);
     }
@@ -608,16 +717,80 @@ export class GameDirector {
     this.three.setPhaseTint(phaseTint);
     this.three.setCombatFocus(isCombat);
 
+    const events = nextState.fx_events || [];
+    let fresh = [];
+    let initialLastSpeed = null;
+    let initialPassives = [];
+    if (isInitial) {
+      if (events.length) {
+        initialLastSpeed = [...events].reverse().find((e) => e.kind === 'speed_roll') || null;
+        initialPassives = events.filter((e) => e.kind === 'passive_trigger');
+        this.lastFxSeq = events[events.length - 1].seq;
+        if (initialLastSpeed && !isCombat && (nextState.frame?.turn || 0) <= 1) {
+          this._pendingSpeedReveal = true;
+        }
+      }
+      if (isCombat) {
+        const combat = nextState.frame.combat;
+        for (const s of combat.sides || []) {
+          if (s.die && s.die.rolled_value != null) {
+            this._revealedRollKeys.add(this._combatRollKey(
+              nextTurn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? s.die.position
+            ));
+          }
+        }
+      }
+    } else {
+      fresh = this._coalesceFxBatch(events.filter((e) => e.seq > this.lastFxSeq));
+      if (fresh.length) {
+        this.lastFxSeq = events[events.length - 1].seq;
+        if (fresh.some((e) => e.kind === 'speed_roll')) {
+          this._pendingSpeedReveal = true;
+        }
+        for (const ev of fresh) {
+          if (ev.kind === 'dice_roll' || ev.kind === 'dice_clash') {
+            for (const sd of ev.sides || []) {
+              if (sd.skipped || sd.rolled_value == null) continue;
+              const k = this._combatRollKey(
+                ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position
+              );
+              if (!this._revealedRollKeys.has(k)) {
+                this._pendingCombatRollKeys.add(k);
+              }
+            }
+          }
+        }
+        if (this._pendingCombatRollKeys.size > 0 && prevState?.frame?.players) {
+          const prevHpMap = new Map();
+          for (const p of prevState.frame.players) {
+            for (const c of p.characters || []) {
+              prevHpMap.set(this._characterKey(c.id, p.side), c.hp);
+            }
+          }
+          for (const ev of fresh) {
+            if (ev.kind === 'damage' || ev.kind === 'lose_hp' || ev.kind === 'heal') {
+              const ck = this._characterKey(ev.target_id, ev.target_side);
+              if (prevHpMap.has(ck)) this._deferredHpOverrides.set(ck, prevHpMap.get(ck));
+            }
+          }
+        }
+      }
+    }
+
     for (const p of nextState.frame?.players || []) {
       for (const c of p.characters || []) {
-        if (!this.hpDisplay.has(c.id) || isInitial) {
-          this.hpDisplay.set(c.id, c.hp);
+        const key = this._characterKey(c.id, p.side);
+        if (!this.hpDisplay.has(key) || isInitial) {
+          this.hpDisplay.set(key, c.hp);
         }
       }
     }
 
     this._rebuildAll();
-    if (!isInitial && resumedPlay && prevTurn === nextTurn && prevRosterSig === nextRosterSig && !nextState.frame?.is_over) {
+    if (isInitial && this.transport.isRoom && nextState.side && !nextState.started && !nextState.ready) {
+      this._openRosterModal();
+    }
+    if (!isInitial && !matchChanged && resumedPlay && prevTurn === nextTurn && prevRosterSig === nextRosterSig && !nextState.frame?.is_over) {
       const combat = nextState.frame?.combat;
       const restored = combat
         ? combat.kind === resumedPlay.kind && combat.duel_number === resumedPlay.duel_number
@@ -625,63 +798,161 @@ export class GameDirector {
       if (restored) this.showToast(`返回${pausedPlayLabel(resumedPlay)}`, INK.gold, 1.6);
     }
 
-    const events = nextState.fx_events || [];
     if (isInitial) {
-      if (events.length) {
-        const lastSpeed = [...events].reverse().find((e) => e.kind === 'speed_roll');
-        const initialPassives = events.filter((e) => e.kind === 'passive_trigger');
-        this.lastFxSeq = events[events.length - 1].seq;
-        if (lastSpeed) this._playSpeedRollFx(lastSpeed, true);
-        initialPassives.forEach((ev, idx) => {
-          setTimeout(() => this._playPassiveTriggerFx(ev, true), 180 + idx * 240);
+      if (initialLastSpeed) {
+        this._playSpeedRollFx(initialLastSpeed, true, () => {
+          if (this._fxGen === fxGen) this._revealWingSpeeds();
         });
       }
-    } else {
-      const fresh = events.filter((e) => e.seq > this.lastFxSeq);
-      if (fresh.length) {
-        this.lastFxSeq = fresh[fresh.length - 1].seq;
-        this._consumeFxEvents(fresh);
-      }
+      initialPassives.forEach((ev, idx) => {
+        this._deferFx(() => this._playPassiveTriggerFx(ev, true), 180 + idx * 240);
+      });
+    } else if (fresh.length) {
+      this._consumeFxEvents(fresh, fxGen);
     }
   }
 
-  _consumeFxEvents(events) {
+  _resetMatchVisuals() {
+    this.lastFxSeq = 0;
+    this._fxGen += 1;
+    this._revealedRollKeys.clear();
+    this._pendingCombatRollKeys.clear();
+    this._pendingSpeedReveal = false;
+    this._deferredHpOverrides.clear();
+    this.hpDisplay.clear();
+    this.hpWidgets.clear();
+    this.actorMotion.clear();
+    this.passivePulses.clear();
+    this.floaters.length = 0;
+    clearContainer(this.fxTextLayer);
+    this.banner = this.toast = null;
+    this.shakeTime = this.shakePower = 0;
+    this._renderToast();
+    this.physics.clearMatch();
+    this.three.clearMatchFx();
+  }
+
+  _deferFx(action, delay) {
+    const matchNumber = this.state?.match_number;
+    setTimeout(() => {
+      if (this.state?.match_number === matchNumber) action();
+    }, delay);
+  }
+
+  _runStaggeredFx(events, gen) {
     let delay = 0;
     for (const ev of events) {
-      const run = () => this._triggerSingleFx(ev);
+      const run = () => {
+        if (gen != null && this._fxGen !== gen) return;
+        this._triggerSingleFx(ev);
+      };
       if (delay <= 0) run();
-      else setTimeout(run, delay);
-      if (ev.kind === 'speed_roll') delay += 460;
-      else if (ev.kind === 'card_pull') delay += 360;
-      else if (ev.kind === 'cards_reveal') delay += 320;
-      else if (ev.kind === 'dice_clash') delay += 280;
-      else if (ev.kind === 'combat_strike') delay += 220;
-      else if (ev.kind === 'damage') delay += 170;
-      else if (ev.kind === 'passive_trigger') delay += 140;
-      else delay += 55;
+      else this._deferFx(run, delay);
+      if (ev.kind === 'speed_roll') delay += 360;
+      else if (ev.kind === 'card_pull') delay += 320;
+      else if (ev.kind === 'cards_reveal') delay += 280;
+      else if (ev.kind === 'dice_clash' || ev.kind === 'dice_roll') delay += 260;
+      else if (ev.kind === 'combat_strike') delay += 180;
+      else if (ev.kind === 'damage') delay += 140;
+      else if (ev.kind === 'passive_trigger') delay += 120;
+      else delay += 45;
     }
   }
 
-  _actorPos(charId) {
-    const node = this.actorNodes.get(charId);
+  _consumeFxEvents(events, gen = this._fxGen) {
+    const speedIdx = events.findIndex((e) => e.kind === 'speed_roll');
+    const rollIdx = events.findIndex((e) => e.kind === 'dice_roll' || e.kind === 'dice_clash');
+
+    // Speed roll gates speed numbers & follow-up turn-start effects on 3D speed dice landing.
+    if (speedIdx >= 0 && rollIdx < 0) {
+      const pre = events.slice(0, speedIdx);
+      const speedEv = events[speedIdx];
+      const post = events.slice(speedIdx + 1);
+      const hasMoreSpeed = post.some((e) => e.kind === 'speed_roll');
+      if (pre.length) this._runStaggeredFx(pre, gen);
+      this._playSpeedRollFx(speedEv, false, () => {
+        if (this._fxGen !== gen) return;
+        if (hasMoreSpeed) {
+          this._deferFx(() => {
+            if (this._fxGen === gen) this._consumeFxEvents(post, gen);
+          }, 180);
+          return;
+        }
+        this._revealWingSpeeds();
+        if (post.length) this._runStaggeredFx(post, gen);
+      });
+      return;
+    }
+
+    // Combat die roll / clash gates medallion numbers, HP drop, strike & damage FX on 3D dice landing.
+    if (rollIdx >= 0) {
+      const pre = [];
+      const rolls = [];
+      const post = [];
+      for (const ev of events) {
+        if (ev.kind === 'dice_roll' || ev.kind === 'dice_clash') {
+          rolls.push(ev);
+        } else if (ev.kind === 'card_pull' || ev.kind === 'cards_reveal' || ev.kind === 'cost_pay' || ev.kind === 'turn_recycle' || ev.kind === 'draw' || ev.kind === 'cost_refill') {
+          pre.push(ev);
+        } else {
+          post.push(ev);
+        }
+      }
+      if (pre.length) this._runStaggeredFx(pre, gen);
+      const rollEv = rolls[rolls.length - 1];
+      const rollKeys = (rollEv.sides || [])
+        .filter((sd) => !sd.skipped && sd.rolled_value != null)
+        .map((sd) => this._combatRollKey(
+          rollEv.turn ?? this.state?.frame?.turn, rollEv.duel_kind, rollEv.duel_number, rollEv.round_id, sd.side, sd.die_number ?? sd.position
+        ));
+      const needsReveal = rollKeys.some((k) => this._pendingCombatRollKeys.has(k));
+      const finishAfterRoll = () => {
+        if (this._fxGen !== gen) return;
+        this._revealCombatRolls(rollKeys);
+        this._releaseDeferredHp();
+        if (post.length) {
+          this._deferFx(() => {
+            if (this._fxGen === gen) this._runStaggeredFx(post, gen);
+          }, rollEv.kind === 'dice_clash' && needsReveal ? 140 : 60);
+        }
+      };
+      if (rollEv.kind === 'dice_clash') {
+        this._playDiceClashFx(rollEv, needsReveal ? finishAfterRoll : null);
+        if (!needsReveal) finishAfterRoll();
+      } else {
+        this._playDiceRollFx(rollEv, needsReveal ? finishAfterRoll : null);
+        if (!needsReveal) finishAfterRoll();
+      }
+      return;
+    }
+
+    this._runStaggeredFx(events, gen);
+  }
+
+  _actorPos(charId, side) {
+    const key = this._characterKey(charId, side);
+    const node = this.actorNodes.get(key);
     if (node) return { x: node.cx, y: node.cy };
-    const r = this.charRects.get(charId);
+    const r = this.charRects.get(key);
     if (r) return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
     return { x: this.w * 0.5, y: this.h * 0.45 };
   }
 
-  _resolveActorPosForSightline(idOrName) {
+  _resolveActorPosForSightline(idOrName, side) {
     if (!idOrName) return null;
-    const node = this.actorNodes.get(idOrName);
+    const key = this._characterKey(idOrName, side);
+    const node = this.actorNodes.get(key);
     if (node) return { x: node.cx, y: node.cy };
-    const r = this.charRects.get(idOrName);
+    const r = this.charRects.get(key);
     if (r) return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
     for (const p of this.state?.frame?.players || []) {
+      if (side && p.side !== side) continue;
       const ch = (p.characters || []).find((c) => c.name === idOrName);
       if (ch) {
-        const n = this.actorNodes.get(ch.id);
+        const matchedKey = this._characterKey(ch.id, p.side);
+        const n = this.actorNodes.get(matchedKey);
         if (n) return { x: n.cx, y: n.cy };
-        const cr = this.charRects.get(ch.id);
+        const cr = this.charRects.get(matchedKey);
         if (cr) return { x: cr.x + cr.w / 2, y: cr.y + cr.h / 2 };
       }
     }
@@ -729,7 +1000,7 @@ export class GameDirector {
       if (ev.paid) {
         this.audio.coinClink(0.95);
         const ca = this.costHuds[ev.side]?.getAnchor() || this.costAnchors.get(ev.side);
-        const pos = this._actorPos(ev.character_id);
+        const pos = this._actorPos(ev.character_id, ev.side);
         if (ev.cost > 0) {
           if (ca) {
             this.three.spawnEnergyBeam({
@@ -773,7 +1044,7 @@ export class GameDirector {
           if (!(d.sides[sideStr] || []).length) continue;
           const rect = this.regularSlotRects.get(`${d.number}:${s}`);
           if (rect) {
-            setTimeout(() => {
+            this._deferFx(() => {
               this.audio.cardFlip(s === 1 ? -0.2 : 0.2);
               this.three.emitShockwave(rect.cx, rect.cy, SIDE_THEME[s].accent);
               this.three.spawnCardFlipArc({
@@ -786,31 +1057,33 @@ export class GameDirector {
         }
       });
       this._showBanner('统一开牌', INK.gold, 1.4);
+    } else if (ev.kind === 'dice_roll') {
+      this._playDiceRollFx(ev);
     } else if (ev.kind === 'dice_clash') {
       this._playDiceClashFx(ev);
     } else if (ev.kind === 'damage') {
       this._playDamageFx(ev);
     } else if (ev.kind === 'heal') {
       this.audio.healChime();
-      const pos = this._actorPos(ev.target_id);
-      this._getMotion(ev.target_id).healGlow = 1.0;
+      const pos = this._actorPos(ev.target_id, ev.target_side);
+      this._getMotion(ev.target_id, ev.target_side).healGlow = 1.0;
       this.three.spawnImpactBurst(pos.x, pos.y, 0x269463, 14, false);
       this._spawnFloater(pos.x, pos.y - 36, `+${ev.amount}`, 0x269463, 19, 'clash');
     } else if (ev.kind === 'lose_hp') {
       this.audio.hitDamage(ev.amount >= 3);
-      const pos = this._actorPos(ev.target_id);
-      this._getMotion(ev.target_id).recoil = 0.7;
-      this._getMotion(ev.target_id).hitFlash = 0.8;
+      const pos = this._actorPos(ev.target_id, ev.target_side);
+      this._getMotion(ev.target_id, ev.target_side).recoil = 0.7;
+      this._getMotion(ev.target_id, ev.target_side).hitFlash = 0.8;
       if (ev.amount >= 3) this.three.emitShockwave(pos.x, pos.y, 0xc44569);
       this._spawnFloater(pos.x, pos.y - 34, `失去 ${ev.amount} 生命`, 0xc44569, 16, ev.amount >= 3 ? 'heavy' : 'clash');
     } else if (ev.kind === 'breath_crit') {
       this.audio.clashImpact(true);
-      const pos = this._actorPos(ev.character_id);
+      const pos = this._actorPos(ev.character_id, ev.side);
       this.three.emitShockwave(pos.x, pos.y, 0x1a8775);
       this._spawnFloater(pos.x, pos.y - 46, '✦ 暴击', 0x1a8775, 19, 'heavy');
       this.three.spawnImpactBurst(pos.x, pos.y, 0x24967c, 26, true);
     } else if (ev.kind === 'stagger_check') {
-      const pos = this._actorPos(ev.target_id);
+      const pos = this._actorPos(ev.target_id, ev.target_side);
       if (ev.triggered) {
         this._triggerShake(8, 0.3);
         this.three.emitShockwave(pos.x, pos.y, 0xd4223a);
@@ -828,7 +1101,7 @@ export class GameDirector {
     } else if (ev.kind === 'character_death') {
       this.audio.clashImpact(true);
       this._triggerShake(11, 0.45);
-      const pos = this._actorPos(ev.character_id);
+      const pos = this._actorPos(ev.character_id, ev.side);
       this.three.emitShockwave(pos.x, pos.y, 0xcf4330);
       this.physics.spawnShieldShards(pos.x, pos.y, 0xcf4330, 18, true);
       this.three.spawnImpactBurst(pos.x, pos.y, 0xcf4330, 38, true);
@@ -857,13 +1130,13 @@ export class GameDirector {
   }
 
   _playPassiveTriggerFx(ev, silent) {
-    const node = this.actorNodes.get(ev.character_id);
+    const node = this.actorNodes.get(this._characterKey(ev.character_id, ev.side));
     const pan = node ? (node.side === 1 ? -0.3 : 0.3) : 0;
-    const key = `${ev.character_id}:${ev.passive_name}`;
+    const key = `${this._characterKey(ev.character_id, ev.side)}:${ev.passive_name}`;
     this.passivePulses.set(key, 1.65);
 
-    const pos = this._actorPos(ev.character_id);
-    this._getMotion(ev.character_id).passiveFlare = 1.0;
+    const pos = this._actorPos(ev.character_id, ev.side);
+    this._getMotion(ev.character_id, ev.side).passiveFlare = 1.0;
 
     const customRecipe = this.fxDirector.resolvePassiveRecipe(ev);
     const playedCustom = customRecipe && this.fxDirector.playRecipe(customRecipe, {
@@ -871,6 +1144,7 @@ export class GameDirector {
       attackerId: ev.character_id,
       defenderId: ev.character_id,
       attackerSide: node?.side || null,
+      defenderSide: node?.side || null,
       defaultColor: INK.gold,
     }, { silent });
 
@@ -892,7 +1166,7 @@ export class GameDirector {
   }
 
   _playStatusChangeFx(ev) {
-    const pos = this._actorPos(ev.character_id);
+    const pos = this._actorPos(ev.character_id, ev.side);
     const col = getStatusColor(ev.status, INK.secondary);
     const sign = ev.delta > 0 ? '+' : '';
     const customRecipe = ev.delta > 0 ? this.fxDirector.resolveStatusRecipe(ev) : null;
@@ -912,7 +1186,7 @@ export class GameDirector {
 
   _playShieldGainFx(ev) {
     this.audio.shieldBlock();
-    const pos = this._actorPos(ev.character_id);
+    const pos = this._actorPos(ev.character_id, ev.side);
     const st = SHIELD_STYLE[ev.shield_kind] || SHIELD_STYLE.normal;
     this.three.spawnShieldDomePulse({ x: pos.x, y: pos.y, radius: 56, colorHex: st.color });
     this._spawnFloater(pos.x, pos.y - 36, `+${ev.amount} ${st.label}`, st.color, 14, 'shield');
@@ -936,13 +1210,15 @@ export class GameDirector {
     const from = this.fxDirector.resolveAnchor('attacker.bone_weapon', {
       attackerId: ev.attacker_id,
       defenderId: ev.target_id,
+      attackerSide: ev.attacker_side,
+      defenderSide: ev.target_side,
     });
-    const to = this._actorPos(ev.target_id);
+    const to = this._actorPos(ev.target_id, ev.target_side);
 
     // Physical actor lunge & target recoil!
-    this._getMotion(ev.attacker_id).lunge = 1.0;
-    this._getMotion(ev.target_id).recoil = 0.85;
-    this._getMotion(ev.target_id).hitFlash = 0.9;
+    this._getMotion(ev.attacker_id, ev.attacker_side).lunge = 1.0;
+    this._getMotion(ev.target_id, ev.target_side).recoil = 0.85;
+    this._getMotion(ev.target_id, ev.target_side).hitFlash = 0.9;
 
     if (ev.die_type === 'slash') {
       this.audio.clashImpact(true);
@@ -958,40 +1234,92 @@ export class GameDirector {
     }
   }
 
-  _playSpeedRollFx(ev, silent) {
+  _playSpeedRollFx(ev, silent, onRevealed = null) {
     if (!silent) this.audio.diceRoll();
     const { arenaX, arenaW, arenaTop } = this.layout;
     const cx = arenaX + arenaW * 0.5;
     const cy = arenaTop + 175;
-    let idx = 0;
+    const launchSpecs = [];
     for (const s of ev.sides || []) {
       const sign = s.side === 1 ? -1 : 1;
-      for (const r of s.rolls || []) {
-        this.three.launchDie({
+      const rolls = (s.rolls || []).slice(0, 3);
+      for (const [idx, r] of rolls.entries()) {
+        launchSpecs.push({
           sides: 4,
           dieType: 'speed',
           rolledValue: r.speed,
           subLabel: r.name.slice(0, 4),
           startX: cx + sign * 220,
           startY: cy + 50,
-          targetX: cx + sign * (78 + (idx % 3) * 56),
+          targetX: cx + sign * (78 + idx * 56),
           targetY: cy,
           radius: 23,
           lifetime: 1.65,
+          revealDelay: 0.28,
         });
-        idx++;
       }
     }
-    if (ev.winner_side === null) {
-      this._showBanner(`速度平局（第 ${ev.attempt} 次）· 重掷`, INK.gold, 1.3);
-    } else {
-      const s1 = ev.sides.find((x) => x.side === 1)?.team_speed ?? 0;
-      const s2 = ev.sides.find((x) => x.side === 2)?.team_speed ?? 0;
-      this._showBanner(`速度 ${s1} : ${s2} · ${SIDE_THEME[ev.winner_side].name}先手`, SIDE_THEME[ev.winner_side].accent, 1.6);
+    const showSpeedBanner = () => {
+      if (ev.winner_side === null) {
+        this._showBanner(`速度平局（第 ${ev.attempt} 次）· 重掷`, INK.gold, 1.3);
+      } else {
+        const s1 = ev.sides.find((x) => x.side === 1)?.team_speed ?? 0;
+        const s2 = ev.sides.find((x) => x.side === 2)?.team_speed ?? 0;
+        this._showBanner(`速度 ${s1} : ${s2} · ${SIDE_THEME[ev.winner_side].name}先手`, SIDE_THEME[ev.winner_side].accent, 1.6);
+      }
+      onRevealed?.();
+    };
+    if (!launchSpecs.length) {
+      showSpeedBanner();
+      return;
+    }
+    let remaining = launchSpecs.length;
+    const handleOneReveal = () => {
+      remaining -= 1;
+      if (remaining === 0) showSpeedBanner();
+    };
+    for (const spec of launchSpecs) {
+      this.three.launchDie({ ...spec, onReveal: handleOneReveal });
     }
   }
 
-  _playDiceClashFx(ev) {
+  _playDiceRollFx(ev, onRevealed = null) {
+    this.audio.diceRoll();
+    const { arenaX, arenaW, arenaTop } = this.layout;
+    const cx = arenaX + arenaW * 0.5;
+    const cy = arenaTop + 132;
+    const sidesList = ev.sides || [];
+    if (!sidesList.length) {
+      onRevealed?.();
+      return;
+    }
+    let remaining = sidesList.length;
+    const handleOneReveal = () => {
+      remaining -= 1;
+      if (remaining === 0) onRevealed?.();
+    };
+    for (const sd of sidesList) {
+      const isP1 = sd.side === 1;
+      const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
+      const displayVal = sd.clash_score ?? sd.final_score ?? sd.rolled_value ?? '—';
+      this.three.launchDie({
+        sides,
+        dieType: sd.type || 'blank',
+        rolledValue: displayVal,
+        subLabel: `1~${sides}`,
+        startX: cx + (isP1 ? -210 : 210),
+        startY: cy + 28,
+        targetX: sidesList.length === 1 ? cx : cx + (isP1 ? -78 : 78),
+        targetY: cy,
+        radius: 28,
+        lifetime: 1.85,
+        revealDelay: 0.26,
+        onReveal: handleOneReveal,
+      });
+    }
+  }
+
+  _playDiceClashFx(ev, onRevealed = null) {
     this.audio.diceRoll();
     const { arenaX, arenaW, arenaTop } = this.layout;
     const cx = arenaX + arenaW * 0.5;
@@ -1000,18 +1328,18 @@ export class GameDirector {
     const p1 = (ev.sides || []).find((s) => s.side === 1);
     const p2 = (ev.sides || []).find((s) => s.side === 2);
 
-    // Trigger kinetic actor stances (evade wind-dash / attack lunge / block stance)
-    for (const sd of ev.sides || []) {
-      if (sd.character_id) {
+    const triggerOutcomeStances = () => {
+      for (const sd of ev.sides || []) {
+        if (!sd.character_id) continue;
         if (sd.result === 'win' && sd.type === 'evade') {
-          this._getMotion(sd.character_id).evade = 1.0;
-          const pos = this._actorPos(sd.character_id);
+          this._getMotion(sd.character_id, sd.side).evade = 1.0;
+          const pos = this._actorPos(sd.character_id, sd.side);
           this.three.triggerRipple(pos.x, pos.y, DIE_STYLE.evade.color);
         } else if (sd.result === 'win' && sd.type === 'block') {
-          const pos = this._actorPos(sd.character_id);
+          const pos = this._actorPos(sd.character_id, sd.side);
           this.three.spawnBlockBarrier({ x: pos.x + (sd.side === 1 ? 36 : -36), y: pos.y, colorHex: DIE_STYLE.block.color });
         } else if (sd.result === 'win') {
-          this._getMotion(sd.character_id).lunge = 0.65;
+          this._getMotion(sd.character_id, sd.side).lunge = 0.65;
           const winRecipe = this.fxDirector.resolveClashWinRecipe(sd);
           if (winRecipe) {
             const opp = (ev.sides || []).find((o) => o.side !== sd.side);
@@ -1026,8 +1354,10 @@ export class GameDirector {
           }
         }
       }
-    }
+      onRevealed?.();
+    };
 
+    const revealDelay = onRevealed ? 0.26 : (ev.already_rolled ? 0.04 : 0.26);
     if (p1 && p2 && !p1.skipped && !p2.skipped) {
       const outcome = p1.result === 'win' ? 'left_win' : p2.result === 'win' ? 'right_win' : 'draw';
       const winDie = p1.result === 'win' ? p1 : p2.result === 'win' ? p2 : null;
@@ -1035,6 +1365,11 @@ export class GameDirector {
       const group = this.physics.createClashDicePair({ cx, cy, radius: 28, outcome, winnerColor: winColor });
       group.winDieType = winDie?.type || null;
 
+      let remaining = 2;
+      const handleOneReveal = () => {
+        remaining -= 1;
+        if (remaining === 0) triggerOutcomeStances();
+      };
       for (const [sd, body] of [[p1, group.leftBody], [p2, group.rightBody]]) {
         const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
         this.three.launchDie({
@@ -1049,16 +1384,28 @@ export class GameDirector {
           physicsBody: body,
           radius: 28,
           lifetime: 2.35,
+          revealDelay,
+          onReveal: handleOneReveal,
         });
       }
     } else {
-      for (const sd of ev.sides || []) {
+      const sidesList = ev.sides || [];
+      if (!sidesList.length) {
+        triggerOutcomeStances();
+        return;
+      }
+      let remaining = sidesList.length;
+      const handleOneReveal = () => {
+        remaining -= 1;
+        if (remaining === 0) triggerOutcomeStances();
+      };
+      for (const sd of sidesList) {
         const isP1 = sd.side === 1;
         const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
         this.three.launchDie({
           sides,
           dieType: sd.type || 'blank',
-          rolledValue: sd.clash_score ?? sd.rolled_value ?? '—',
+          rolledValue: sd.skipped ? '跳过' : (sd.clash_score ?? sd.rolled_value ?? '—'),
           subLabel: sd.skipped ? '跳过' : `1~${sides}`,
           startX: cx + (isP1 ? -210 : 210),
           startY: cy,
@@ -1066,13 +1413,15 @@ export class GameDirector {
           targetY: cy,
           radius: 27,
           lifetime: 1.9,
+          revealDelay: sd.skipped ? 0.14 : revealDelay,
+          onReveal: handleOneReveal,
         });
       }
     }
   }
 
   _playDamageFx(ev) {
-    const pos = this._actorPos(ev.target_id);
+    const pos = this._actorPos(ev.target_id, ev.target_side);
     const tx = pos.x;
     const ty = pos.y;
 
@@ -1106,8 +1455,8 @@ export class GameDirector {
     if (ev.hp_lost > 0) {
       const isHeavy = ev.hp_lost >= 3 || (ev.multiplier && ev.multiplier > 1);
       this.audio.hitDamage(isHeavy);
-      this._getMotion(ev.target_id).recoil = 1.0;
-      this._getMotion(ev.target_id).hitFlash = 1.0;
+      this._getMotion(ev.target_id, ev.target_side).recoil = 1.0;
+      this._getMotion(ev.target_id, ev.target_side).hitFlash = 1.0;
       this._triggerShake(Math.min(11, 5 + ev.hp_lost * 2), 0.28);
       this.three.spawnImpactBurst(tx, ty, 0xcf4330, 24, isHeavy);
       if (isHeavy) this.three.emitShockwave(tx, ty, 0xcf4330);
@@ -1183,12 +1532,19 @@ export class GameDirector {
     if (!this.topBar || this.topBar.destroyed) return;
     const frame = this.state?.frame;
     this.topBar.resize(this.layout.w || this.w, this.layout.pad ?? 16);
+    const room = this.transport.isRoom ? this.state : null;
+    let phaseLabel = this.state?.special_timing && ['timing', 'combat'].includes(this.state.mode) ? this.state.special_timing
+      : (PHASE_NAMES[frame?.phase] || frame?.phase || '');
+    if (room?.mode === 'lobby') phaseLabel = room.ready ? '等待另一席准备' : room.bot_side ? '离线人机对战' : '对局准备';
+    if (room?.paused_by) phaseLabel = room.paused_by === room.side ? '对局已暂停' : '等待对方继续';
+    else if (room?.mode === 'waiting') phaseLabel = room.bot_side ? '电脑正在行动' : '等待当前席位行动';
     this.topBar.sync({
-      turn: frame?.turn || 1,
-      phaseLabel: this.state?.special_timing && ['timing', 'combat'].includes(this.state.mode) ? this.state.special_timing
-        : (PHASE_NAMES[frame?.phase] || frame?.phase || ''),
-      firstSide: frame?.first_side ?? null,
-      autoPace: this.autoPace,
+      turn: frame?.turn || 0,
+      phaseLabel,
+      firstSide: this._pendingSpeedReveal ? null : (frame?.first_side ?? null),
+      autoPace: room && !room.client_paced ? !room.paused_by : this.autoPace,
+      playbackEnabled: !room || room.client_paced || room.can_pause || (room.side !== null && room.paused_by === room.side),
+      rosterEnabled: !room || Boolean(room.side && ((!room.started && !room.ready) || room.can_restart || room.can_rematch)),
       muted: this.audio.muted,
       passivesOpen: Boolean(this.passiveDrawer),
     });
@@ -1222,6 +1578,7 @@ export class GameDirector {
     this.charRects.clear();
     this.actorNodes.clear();
     this.hpWidgets.clear();
+    this._wingHeadRefs.clear();
     this.passivePlates.clear();
     this._fighterFloorDrawers.clear();
     this.wingViewports = {};
@@ -1319,15 +1676,17 @@ export class GameDirector {
 
     // 1. Wing Header: Faction Name + Initiative + Speed + Hand Count
     const headY = 46;
-    const isFirst = frame.first_side === side;
-    const speedVal = Number(player.speed || 0).toFixed(player.speed % 1 ? 1 : 0);
+    const isFirst = !this._pendingSpeedReveal && frame.first_side === side;
+    const speedVal = this._pendingSpeedReveal ? '—' : Number(player.speed || 0).toFixed(player.speed % 1 ? 1 : 0);
+    const seatName = this.state.bot_side === side ? '电脑对手' : player.name;
     const headTxt = new PIXI.Text({
-      text: `${player.name}${isFirst ? ' ★先手' : ''} · 速${speedVal} · 手牌${player.hand_count}`,
+      text: `${seatName}${isFirst ? ' ★先手' : ''} · 速${speedVal} · 手牌${player.hand_count}`,
       style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: theme.accent },
     });
     headTxt.anchor.set(isLeft ? 0 : 1, 0);
     headTxt.position.set(isLeft ? wx + 2 : wx + wingW - 2, headY);
     this.wingsLayer.addChild(headTxt);
+    this._wingHeadRefs.set(side, { headTxt, player, theme, seatName });
 
     // 2. Sync Persistent Spring-Physical Cost HUD & 2.5D Diegetic Deck Piles (ZERO destroy/rebuild!)
     const costPool = this._computeCostDisplayPool(player);
@@ -1429,7 +1788,9 @@ export class GameDirector {
     }
 
     const scrollRefs = [];
-    const orderedSlots = [...formation.slots].sort((a, b) => a.zIndex - b.zIndex);
+    const windowed = formation.scrollable && chars.length > 12;
+    const visibleSlots = windowed ? formation.slots.filter(slot => slot.visible) : [...formation.slots];
+    const orderedSlots = visibleSlots.sort((a, b) => a.zIndex - b.zIndex);
     for (const slot of orderedSlots) {
       const ch = chars[slot.index];
       if (!ch) continue;
@@ -1448,7 +1809,12 @@ export class GameDirector {
       this._wingScrollCtl[side] = {
         setScroll: (nextY) => {
           const clamped = Math.max(0, Math.min(formation.maxScroll, nextY));
+          if (windowed && clamped === this.wingScrollY[side]) return;
           this.wingScrollY[side] = clamped;
+          if (windowed) {
+            this._rebuildConfrontationWings();
+            return;
+          }
           floorHost.y = -clamped;
           actorHost.y = -clamped;
           for (const ref of scrollRefs) {
@@ -1554,6 +1920,7 @@ export class GameDirector {
         maxHeight: maxH,
         players,
         catalogById: catById,
+        hideSpeed: this._pendingSpeedReveal,
         scrollY1: this.passiveDrawer.scrollY1 || 0,
         scrollY2: this.passiveDrawer.scrollY2 || 0,
         onOpenHeroSheet: (cid, s) => this._openHeroSheet(cid, s),
@@ -1591,10 +1958,11 @@ export class GameDirector {
       const panelX = side === 1
         ? Math.min(w - pad - panelW, leftWingX + wingW + 10)
         : Math.max(pad, rightWingX - panelW - 10);
-      const actorNode = this.actorNodes.get(ch.id);
+      const actorNode = this.actorNodes.get(this._characterKey(ch.id, side));
       const preferredTop = actorNode ? Math.round(actorNode.cy - panelH * 0.38) : 64;
       const panelTop = Math.max(52, Math.min(Math.max(52, fanClearBottom - panelH - 4), preferredTop));
-      const canSetTarget = Boolean(activeSide && activeSide !== side && ch.alive);
+      const canSetTarget = Boolean(activeSide && activeSide !== side && ch.alive &&
+        (!this.transport.isRoom || (this.state.started && pl.characters.filter(c => c.alive).length > 1)));
       const isDefault = canSetTarget && this.state.default_targets?.[String(activeSide)] === ch.id;
 
       const panel = buildHeroSidePanel({
@@ -1655,6 +2023,7 @@ export class GameDirector {
     zoneBottom = 560,
   } = {}) {
     const theme = SIDE_THEME[side];
+    const actorKey = this._characterKey(ch.id, side);
     const activeSide = this.state.active_side;
     const defaultTarget = activeSide && activeSide !== side && this.state.default_targets?.[String(activeSide)] === ch.id;
     const catChar = this._catalogChar(ch.id);
@@ -1676,14 +2045,14 @@ export class GameDirector {
       this.selectedHandCardId
       && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
       && activeSide && side !== activeSide && ch.alive
-      && (this.state.legal_attack_cards || []).includes(this.selectedHandCardId)
+      && this._canAttackTarget(this.selectedHandCardId, 'character', ch.id)
     );
 
     const floorMark = new PIXI.Graphics();
     floorMark.eventMode = 'none';
     const drawFloor = (hovered) => {
       if (floorMark.destroyed) return;
-      const isInspected = Boolean(this.activeHeroPanel && this.activeHeroPanel.charId === ch.id);
+      const isInspected = this.activeHeroPanel?.charId === ch.id && this.activeHeroPanel.side === side;
       floorMark.clear();
       if (hovered || isAttackTargetSelected || isInspected) {
         floorMark.ellipse(cx, localActorY + actorR * 0.66, actorR * 1.24, actorR * 0.37)
@@ -1698,7 +2067,7 @@ export class GameDirector {
       }
     };
     drawFloor(false);
-    this._fighterFloorDrawers.set(ch.id, drawFloor);
+    this._fighterFloorDrawers.set(actorKey, drawFloor);
     floorHost.addChild(floorMark);
 
     // Living Animated Character Actor standing free on the open battlefield!
@@ -1707,10 +2076,10 @@ export class GameDirector {
     actor.position.set(cx, localActorY);
     actor.eventMode = 'none';
     actor.interactiveChildren = false;
-    actor.tick(this.time, this._getMotion(ch.id), ch);
+    actor.tick(this.time, this._getMotion(ch.id, side), ch);
     actorHost.addChild(actor);
     const actorNode = { actor, liveCh: ch, cx, cy: screenActorY, side };
-    this.actorNodes.set(ch.id, actorNode);
+    this.actorNodes.set(actorKey, actorNode);
 
     // Generous hit target rectangle covering the full standing figure (crown/weapon/body) + underfoot HUD
     const hudX = Math.round(cx - hudW / 2);
@@ -1722,8 +2091,8 @@ export class GameDirector {
     const hitTop = Math.round(localActorY - actorR * 1.42);
     const rectH = (localHudY + hudCoreH + 6) - hitTop;
     const baseRectY = hitTop;
-    const rect = { x: hitLeft, y: scrollable ? (baseRectY - scrollY) : baseRectY, w: hitW, h: rectH, side };
-    this.charRects.set(ch.id, rect);
+    const rect = { x: hitLeft, y: scrollable ? (baseRectY - scrollY) : baseRectY, w: hitW, h: rectH, side, characterId: ch.id };
+    this.charRects.set(actorKey, rect);
 
     const triggerFighterTap = (e) => {
       if (this.dragState) return;
@@ -1751,6 +2120,7 @@ export class GameDirector {
       if (this.dragState) return;
       drawFloor(true);
       this.focusedCharId = ch.id;
+      this.focusedSide = side;
       this.three.setIntentFocus({
         active: true,
         x: actorNode.cx,
@@ -1790,9 +2160,8 @@ export class GameDirector {
     hud.addChild(bg);
 
     // Row 1: Name + Duel Quota pips + Speed + Personal Cost crystal
-    const rawName = compactHud && ch.name.length > 4 ? `${ch.name.slice(0, 4)}` : ch.name;
     const nameTxt = new PIXI.Text({
-      text: `${rawName}${ch.alive ? '' : ' [亡]'}`,
+      text: `${ch.name}${ch.alive ? '' : ' [亡]'}`,
       style: {
         fontFamily: FONT_UI,
         fontSize: compactHud ? 10.2 : teamCount === 3 ? 11.5 : 12.5,
@@ -1800,6 +2169,8 @@ export class GameDirector {
         fill: ch.alive ? INK.strong : INK.muted,
       },
     });
+    const nameWidth = hudW - (compactHud ? 40 : 48);
+    if (nameTxt.width > nameWidth) nameTxt.scale.x = nameWidth / nameTxt.width;
     nameTxt.position.set(compactHud ? 6 : 8, compactHud ? 2.5 : 4);
     hud.addChild(nameTxt);
 
@@ -1846,14 +2217,15 @@ export class GameDirector {
     const numReserve = compactHud ? 40 : 52;
     const barW = Math.max(36, hudW - numReserve);
 
-    const prevTrail = this.hpTrailState.get(ch.id);
+    const targetHp = this._deferredHpOverrides.has(actorKey) ? this._deferredHpOverrides.get(actorKey) : ch.hp;
+    const prevTrail = this.hpTrailState.get(actorKey);
     const initHp = !prevTrail
-      ? ch.hp
-      : ch.hp < prevTrail.trailHp
+      ? targetHp
+      : targetHp < prevTrail.trailHp
         ? prevTrail.trailHp
-        : ch.hp > prevTrail.hp
+        : targetHp > prevTrail.hp
           ? prevTrail.hp
-          : ch.hp;
+          : targetHp;
     const hpBar = createDelayedHpBar({
       width: barW,
       height: barH,
@@ -1862,8 +2234,8 @@ export class GameDirector {
       hp: initHp,
       radius: compactHud ? 4 : 5,
     });
-    if (prevTrail && ch.hp !== initHp) {
-      hpBar.setHp(ch.hp, ch.max_hp, { immediate: false });
+    if (prevTrail && targetHp !== initHp) {
+      hpBar.setHp(targetHp, ch.max_hp, { immediate: false });
     }
     hpBar.position.set(infoX, hpY);
 
@@ -1875,8 +2247,8 @@ export class GameDirector {
     hpTxt.anchor.set(1, 0.5);
     hpTxt.position.set(hudW - (compactHud ? 4.5 : 6), hpY + barH / 2);
     hud.addChild(hpBar, hpTxt);
-    this.hpWidgets.set(ch.id, { bar: hpBar, hpTxt, maxHp: ch.max_hp });
-    this.hpTrailState.set(ch.id, { hp: barState.displayHp, trailHp: barState.trailHp, lastTargetHp: barState.hp });
+    this.hpWidgets.set(actorKey, { bar: hpBar, hpTxt, maxHp: ch.max_hp, actualHp: ch.hp });
+    this.hpTrailState.set(actorKey, { hp: barState.displayHp, trailHp: barState.trailHp, lastTargetHp: barState.hp });
 
     // Row 3: Floating Active Shields (ONLY if > 0) + Limbus Status Icons cleanly below HP bar!
     const row3Y = hudBoxH + 3;
@@ -2028,6 +2400,7 @@ export class GameDirector {
     this.preTimerTexts = [];
     this._duelScrollCtl = null;
     this._combatRail = null;
+    this._clashHeaderMeta = null;
     this.effectMarks = [];
     this.choiceSafeTop = this.layout.arenaTop;
     const choosingEffect = Boolean(this.state.effect_choice);
@@ -2106,6 +2479,11 @@ export class GameDirector {
 
     // 1. Pre-Reveal / Instant Arch (ONLY visible when active — renders FULL readable cards directly!)
     if (showPreLane) {
+      const perPage = Math.max(1, Math.floor((arenaW - 6) / 225));
+      const pageCount = Math.max(1, Math.ceil(allTopDuels.length / perPage));
+      this.preDuelPage = Math.min(this.preDuelPage, pageCount - 1);
+      const paged = pageCount > 1;
+      const visibleDuels = allTopDuels.slice(this.preDuelPage * perPage, (this.preDuelPage + 1) * perPage);
       const preH = allTopDuels.length > 0
         ? Math.min(206, Math.max(146, Math.round(arenaH * 0.48)))
         : Math.min(82, Math.round(arenaH * 0.22));
@@ -2128,13 +2506,13 @@ export class GameDirector {
         cue.position.set(arenaX + arenaW / 2, arenaTop + preH / 2);
         this.boardLayer.addChild(cue);
       } else {
-        const count = allTopDuels.length;
+        const count = paged ? perPage : visibleDuels.length;
         const slotGap = 10;
         const slotW = Math.floor((arenaW - 16 - (count - 1) * slotGap) / count);
-        const slotH = preH - 14;
+        const slotH = preH - (paged ? 37 : 14);
         const startX = arenaX + 8;
 
-        allTopDuels.forEach((slot, idx) => {
+        visibleDuels.forEach((slot, idx) => {
           const sx = startX + idx * (slotW + slotGap);
           const sy = arenaTop + 7;
           const isPendingForMe = slot._kind === 'pre_reveal' && !slot.ready && pendingNumbers.has(slot.number);
@@ -2241,6 +2619,7 @@ export class GameDirector {
                   anchorX: cxCard, anchorY: cyCard, cardH: drawH, source: 'board', sourceSprite: spr,
                 };
                 this.focusedCharId = card.character_id || null;
+                this.focusedSide = side;
                 this.focusedDuelNumber = slot._kind === 'pre_reveal' ? { kind: 'pre_reveal', number: slot.number } : null;
                 this._renderInspection();
               });
@@ -2254,6 +2633,7 @@ export class GameDirector {
               spr.eventMode = 'static';
               spr.on('pointerover', () => {
                 this.focusedCharId = card.character_id || null;
+                this.focusedSide = side;
                 this.focusedDuelNumber = slot._kind === 'pre_reveal' ? { kind: 'pre_reveal', number: slot.number } : null;
               });
               spr.on('pointerout', () => {
@@ -2275,6 +2655,28 @@ export class GameDirector {
             this.boardLayer.addChild(passBtn);
           }
         });
+        if (paged) {
+          const cx = arenaX + arenaW / 2;
+          const y = arenaTop + preH - 26;
+          const label = new PIXI.Text({ text: `${this.preDuelPage + 1} / ${pageCount}`,
+            style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: INK.goldDeep } });
+          label.anchor.set(0.5, 0);
+          label.position.set(cx, y + 3);
+          this.boardLayer.addChild(label);
+          for (const delta of [-1, 1]) {
+            const nextPage = this.preDuelPage + delta;
+            const button = makeSealButton(delta < 0 ? '‹' : '›', {
+              width: 30, height: 21, fontSize: 12, radius: 5, accent: INK.gold,
+              disabled: nextPage < 0 || nextPage >= pageCount,
+              onClick: () => {
+                this.preDuelPage = nextPage;
+                this._rebuildDynamicBoard();
+              },
+            });
+            button.position.set(cx + (delta < 0 ? -64 : 34), y);
+            this.boardLayer.addChild(button);
+          }
+        }
       }
     }
 
@@ -2339,7 +2741,10 @@ export class GameDirector {
     );
 
     const laneMeta = [];
-    for (let i = 0; i < slotCount; i++) {
+    const windowed = slotCount > 24;
+    const firstSlot = windowed ? Math.max(0, Math.floor(this.duelScrollY / stepY) - 1) : 0;
+    const lastSlot = windowed ? Math.min(slotCount, Math.ceil((this.duelScrollY + regH) / stepY) + 1) : slotCount;
+    for (let i = firstSlot; i < lastSlot; i++) {
       const number = i + 1;
       const baseLy = baseStartY + i * stepY;
       const baseMidY = baseLy + laneH / 2;
@@ -2352,7 +2757,7 @@ export class GameDirector {
       this.regularLaneRects.set(number, laneRect);
 
       const bridgeG = new PIXI.Graphics();
-      if (isPreAttackSelected && i < duels.length) {
+      if (isPreAttackSelected && i < duels.length && this._canAttackTarget(this.selectedHandCardId, 'duel', number)) {
         bridgeG.roundRect(bridgeSpanX, baseLy + 1, bridgeSpanW, laneH - 2, 10)
           .fill({ color: 0xfce6df, alpha: 0.35 })
           .stroke({ width: 1.6, color: 0xcf4932, alpha: 0.8 });
@@ -2474,9 +2879,10 @@ export class GameDirector {
               const gp = spr.getGlobalPosition();
               if (gp.y < regTop - 20 || gp.y > regTop + regH + 20) return;
               this.focusedCharId = ownerId;
+              this.focusedSide = s;
               this.focusedDuelNumber = number;
               if (ownerId) {
-                const pos = this._actorPos(ownerId);
+                const pos = this._actorPos(ownerId, s);
                 this.three.setIntentFocus({ active: true, x: pos.x, y: pos.y, colorHex: ownerColor });
               }
               if (card.hidden) {
@@ -2521,6 +2927,7 @@ export class GameDirector {
                 anchorX: gp.x, anchorY: gp.y, cardH: spr._boxHeight, source: 'board', sourceSprite: spr,
               };
               this.focusedCharId = ownerId;
+              this.focusedSide = s;
               this.focusedDuelNumber = number;
               this._renderInspection();
             });
@@ -2560,7 +2967,13 @@ export class GameDirector {
 
     this._duelScrollCtl = {
       setScroll: (nextY) => {
-        this.duelScrollY = Math.max(0, Math.min(this.duelMaxScroll, nextY));
+        const clamped = Math.max(0, Math.min(this.duelMaxScroll, nextY));
+        if (this.duelScrollY === clamped) return;
+        this.duelScrollY = clamped;
+        if (windowed) {
+          this._rebuildDynamicBoard();
+          return;
+        }
         duelContent.y = -this.duelScrollY;
         for (const lm of laneMeta) {
           const ly = lm.baseLy - this.duelScrollY;
@@ -2648,118 +3061,8 @@ export class GameDirector {
     }
     const clashH = 148;
     this.choiceSafeTop = clashTop + clashH + 6;
-    const cx = arenaX + arenaW / 2;
-
-    const arenaG = new PIXI.Graphics();
-    arenaG.roundRect(arenaX, clashTop, arenaW, clashH, 16)
-      .fill({ color: INK.paper, alpha: 0.72 })
-      .stroke({ width: 1.6, color: INK.gold, alpha: 0.72 });
-    // Center confrontation axis & luminous clash ring (where the Matter.js 3D dice physically smash!)
-    arenaG.moveTo(arenaX + 18, clashTop + clashH / 2).lineTo(arenaX + arenaW - 18, clashTop + clashH / 2)
-      .stroke({ width: 1.2, color: INK.line, alpha: 0.65 });
-    arenaG.circle(cx, clashTop + clashH / 2, 42)
-      .fill({ color: INK.goldBg, alpha: 0.55 })
-      .stroke({ width: 1.8, color: INK.gold, alpha: 0.75 });
-    this.clashLayer.addChild(arenaG);
-
-    const kindName = { pre_reveal: '开牌前', regular: '常规', instant: '即时' }[combat.kind] || '交锋';
-    const roundBadge = new PIXI.Text({
-      text: `${kindName}${CIRCLED[(combat.duel_number || 1) - 1] || combat.duel_number} · 第 ${combat.round_id || 1} 轮`,
-      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: INK.gold },
-    });
-    roundBadge.anchor.set(0.5, 0);
-    roundBadge.position.set(cx, clashTop + 6);
-    this.clashLayer.addChild(roundBadge);
-
-    const vsTxt = new PIXI.Text({
-      text: 'VS',
-      style: { fontFamily: FONT_NUM, fontSize: 16, fontWeight: '900', fill: INK.gold },
-    });
-    vsTxt.anchor.set(0.5);
-    vsTxt.position.set(cx, clashTop + clashH / 2);
-    this.clashLayer.addChild(vsTxt);
-
-    // Draw Left (P1) & Right (P2) Sculpted Live Die Score Medallions
-    const medW = Math.min(226, Math.max(116, Math.floor(arenaW / 2 - (arenaW < 400 ? 20 : 42))));
-    for (const s of combat.sides || []) {
-      const isLeft = s.side === 1;
-      const mx = isLeft ? arenaX + 10 : arenaX + arenaW - medW - 10;
-      const my = clashTop + 26;
-      const mh = clashH - 36;
-      const die = s.die;
-      const theme = SIDE_THEME[s.side];
-
-      if (!die) {
-        const empty = new PIXI.Text({
-          text: `${theme.name} · 无对位`,
-          style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '700', fill: INK.muted },
-        });
-        empty.anchor.set(0.5);
-        empty.position.set(mx + medW / 2, my + mh / 2);
-        this.clashLayer.addChild(empty);
-        continue;
-      }
-
-      const ds = DIE_STYLE[die.type] || DIE_STYLE.blank;
-      const win = die.result === 'win';
-      const lose = die.result === 'lose';
-      const mg = new PIXI.Graphics();
-      mg.roundRect(mx, my, medW, mh, 12)
-        .fill({ color: win ? INK.goldBg : ds.bg, alpha: lose ? 0.65 : 0.96 })
-        .stroke({ width: win ? 2.5 : 1.4, color: win ? INK.gold : ds.color });
-      mg.roundRect(mx + 2, my + 4, 4, mh - 8, 2).fill({ color: win ? INK.gold : ds.color });
-      drawUnifiedDieFrame(mg, die.type, mx + 25, my + 24, 9.2, { active: win, muted: lose });
-      this.clashLayer.addChild(mg);
-
-      const rangeStr = formatDieRange(die);
-      const outcome = win
-        ? (die.win_branch_skipped ? '胜（跳过拼赢）' : '胜')
-        : lose ? '负' : die.result === 'draw' ? '平' : die.result === 'skip' ? '跳过' : '';
-      const repeatHit = die.hit_index > 1 ? `第 ${die.hit_index} 次命中` : '';
-      const resLabel = [outcome, repeatHit].filter(Boolean).join(' · ');
-
-      const head = new PIXI.Text({
-        text: `${ds.label} ${rangeStr}${s.range_deficit ? ` 压制-${s.range_deficit}` : ''}`,
-        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: INK.primary },
-      });
-      head.position.set(mx + 38, my + 12);
-      this.clashLayer.addChild(head);
-
-      // 4-Layer Score Breakdown Cascade
-      const layers = [
-        `基础 ${die.base_value ?? 0}`,
-        `变动 ${die.rolled_value ?? '—'}`,
-        `最终 ${die.final_score ?? '—'}`,
-      ].join('  ·  ');
-      const lTxt = new PIXI.Text({
-        text: layers,
-        style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '700', fill: INK.secondary },
-      });
-      lTxt.position.set(mx + 14, my + mh - 24);
-      this.clashLayer.addChild(lTxt);
-
-      // Big Clash Score Numeral + Win/Lose Stamp
-      const scoreVal = die.clash_score !== null && die.clash_score !== undefined ? String(die.clash_score) : '—';
-      const scTxt = new PIXI.Text({
-        text: scoreVal,
-        style: {
-          fontFamily: FONT_NUM, fontSize: 34, fontWeight: '900',
-          fill: win ? ds.color : lose ? INK.muted : INK.primary,
-        },
-      });
-      scTxt.anchor.set(1, 0.5);
-      scTxt.position.set(mx + medW - 14, my + 42);
-      this.clashLayer.addChild(scTxt);
-
-      if (resLabel) {
-        const rt = new PIXI.Text({
-          text: resLabel,
-          style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: win ? INK.gold : lose ? INK.muted : INK.secondary },
-        });
-        rt.position.set(mx + 38, my + 34);
-        this.clashLayer.addChild(rt);
-      }
-    }
+    this._clashHeaderMeta = { combat, clashTop, clashH, arenaX, arenaW };
+    this._renderClashMedallions();
 
     // 3. Face-to-Face Active Skill Cards with FULL 100% VERBATIM RULE TEXT directly on the Showdown Stage!
     const cardsTop = clashTop + clashH + 12;
@@ -2814,6 +3117,132 @@ export class GameDirector {
         const target = option.effect_target;
         this._markEffectTarget(this.boardLayer, target.kind, target.number, side, target.position,
           panel.x, panel.y, colW * panel.scale.x, panel._boxHeight * panel.scale.y);
+      }
+    }
+  }
+
+  _renderClashMedallions() {
+    if (!this._clashHeaderMeta || !this.state?.frame?.combat) return;
+    clearContainer(this.clashLayer);
+    const { combat, clashTop, clashH, arenaX, arenaW } = this._clashHeaderMeta;
+    const turn = this.state.frame.turn;
+    const cx = arenaX + arenaW / 2;
+
+    const arenaG = new PIXI.Graphics();
+    arenaG.roundRect(arenaX, clashTop, arenaW, clashH, 16)
+      .fill({ color: INK.paper, alpha: 0.72 })
+      .stroke({ width: 1.6, color: INK.gold, alpha: 0.72 });
+    // Center confrontation axis & luminous clash ring (where the Matter.js 3D dice physically smash!)
+    arenaG.moveTo(arenaX + 18, clashTop + clashH / 2).lineTo(arenaX + arenaW - 18, clashTop + clashH / 2)
+      .stroke({ width: 1.2, color: INK.line, alpha: 0.65 });
+    arenaG.circle(cx, clashTop + clashH / 2, 42)
+      .fill({ color: INK.goldBg, alpha: 0.55 })
+      .stroke({ width: 1.8, color: INK.gold, alpha: 0.75 });
+    this.clashLayer.addChild(arenaG);
+
+    const kindName = { pre_reveal: '开牌前', regular: '常规', instant: '即时' }[combat.kind] || '交锋';
+    const roundBadge = new PIXI.Text({
+      text: `${kindName}${CIRCLED[(combat.duel_number || 1) - 1] || combat.duel_number} · 第 ${combat.round_id || 1} 轮`,
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '800', fill: INK.gold },
+    });
+    roundBadge.anchor.set(0.5, 0);
+    roundBadge.position.set(cx, clashTop + 6);
+    this.clashLayer.addChild(roundBadge);
+
+    const vsTxt = new PIXI.Text({
+      text: 'VS',
+      style: { fontFamily: FONT_NUM, fontSize: 16, fontWeight: '900', fill: INK.gold },
+    });
+    vsTxt.anchor.set(0.5);
+    vsTxt.position.set(cx, clashTop + clashH / 2);
+    this.clashLayer.addChild(vsTxt);
+
+    // Draw Left (P1) & Right (P2) Sculpted Live Die Score Medallions.
+    // Any die whose 3D roll has not yet landed & revealed its value conceals rolled/final/clash scores & outcome.
+    const medW = Math.min(226, Math.max(116, Math.floor(arenaW / 2 - (arenaW < 400 ? 20 : 42))));
+    for (const s of combat.sides || []) {
+      const isLeft = s.side === 1;
+      const mx = isLeft ? arenaX + 10 : arenaX + arenaW - medW - 10;
+      const my = clashTop + 26;
+      const mh = clashH - 36;
+      const die = s.die;
+      const theme = SIDE_THEME[s.side];
+
+      if (!die) {
+        const empty = new PIXI.Text({
+          text: `${theme.name} · 无对位`,
+          style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '700', fill: INK.muted },
+        });
+        empty.anchor.set(0.5);
+        empty.position.set(mx + medW / 2, my + mh / 2);
+        this.clashLayer.addChild(empty);
+        continue;
+      }
+
+      const rollKey = this._combatRollKey(turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position);
+      const isConcealed = this._pendingCombatRollKeys.has(rollKey) || (die.rolled_value == null && die.result !== 'skip');
+
+      const ds = DIE_STYLE[die.type] || DIE_STYLE.blank;
+      const win = !isConcealed && die.result === 'win';
+      const lose = !isConcealed && die.result === 'lose';
+      const mg = new PIXI.Graphics();
+      mg.roundRect(mx, my, medW, mh, 12)
+        .fill({ color: win ? INK.goldBg : ds.bg, alpha: lose ? 0.65 : 0.96 })
+        .stroke({ width: win ? 2.5 : 1.4, color: win ? INK.gold : ds.color });
+      mg.roundRect(mx + 2, my + 4, 4, mh - 8, 2).fill({ color: win ? INK.gold : ds.color });
+      drawUnifiedDieFrame(mg, die.type, mx + 25, my + 24, 9.2, { active: win, muted: lose });
+      this.clashLayer.addChild(mg);
+
+      const rangeStr = formatDieRange(die);
+      const outcome = isConcealed
+        ? (this._pendingCombatRollKeys.has(rollKey) ? '投掷中…' : '')
+        : win
+          ? (die.win_branch_skipped ? '胜（跳过拼赢）' : '胜')
+          : lose ? '负' : die.result === 'draw' ? '平' : die.result === 'skip' ? '跳过' : '';
+      const repeatHit = !isConcealed && die.hit_index > 1 ? `第 ${die.hit_index} 次命中` : '';
+      const resLabel = [outcome, repeatHit].filter(Boolean).join(' · ');
+
+      const head = new PIXI.Text({
+        text: `${ds.label} ${rangeStr}${s.range_deficit ? ` 压制-${s.range_deficit}` : ''}`,
+        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: INK.primary },
+      });
+      head.position.set(mx + 38, my + 12);
+      this.clashLayer.addChild(head);
+
+      // 4-Layer Score Breakdown Cascade (only displays rolled/final numbers once the 3D die reveals them)
+      const layers = [
+        `基础 ${die.base_value ?? 0}`,
+        `变动 ${isConcealed ? '—' : (die.rolled_value ?? '—')}`,
+        `最终 ${isConcealed ? '—' : (die.final_score ?? '—')}`,
+      ].join('  ·  ');
+      const lTxt = new PIXI.Text({
+        text: layers,
+        style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '700', fill: INK.secondary },
+      });
+      lTxt.position.set(mx + 14, my + mh - 24);
+      this.clashLayer.addChild(lTxt);
+
+      // Big Score Numeral + Win/Lose Stamp (supports both clash_score and solo final_score once revealed)
+      const rawScore = isConcealed ? null : (die.clash_score ?? die.final_score);
+      const scoreVal = rawScore !== null && rawScore !== undefined ? String(rawScore) : '—';
+      const scTxt = new PIXI.Text({
+        text: scoreVal,
+        style: {
+          fontFamily: FONT_NUM, fontSize: 34, fontWeight: '900',
+          fill: win ? ds.color : lose ? INK.muted : INK.primary,
+        },
+      });
+      scTxt.anchor.set(1, 0.5);
+      scTxt.position.set(mx + medW - 14, my + 42);
+      this.clashLayer.addChild(scTxt);
+
+      if (resLabel) {
+        const rt = new PIXI.Text({
+          text: resLabel,
+          style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: win ? INK.gold : lose ? INK.muted : INK.secondary },
+        });
+        rt.position.set(mx + 38, my + 34);
+        this.clashLayer.addChild(rt);
       }
     }
   }
@@ -3120,20 +3549,41 @@ export class GameDirector {
       if ((this.state.eligible_sides || []).length > 1) {
         buttons.push({ label: '切换席位', h: 34, accent: 0x177d6b, solid: false, fn: () => this._sendAction('switch_side') });
       }
-    } else if (mode === 'reveal' || mode === 'combat' || mode === 'turn_end' || mode === 'timing') {
+    } else if ((!this.transport.isRoom || this.state.can_advance) && ['reveal', 'combat', 'turn_end', 'timing'].includes(mode)) {
       const labelMap = {
         reveal: '进入常规交锋',
         combat: '下一拍',
         timing: '下一拍',
         turn_end: '下一回合',
       };
-      buttons.push({ label: labelMap[mode], h: 42, accent: 0x1a825e, solid: true, fn: () => this._sendAction('next') });
+      const label = this.state.next_voted ? '等待对方…' : labelMap[mode];
+      buttons.push({ label, h: 42, accent: 0x1a825e, solid: !this.state.next_voted, fn: () => this._sendAction('next') });
     }
 
-    if (this.state.special_available && mode !== 'finished' && mode !== 'draw_select' && mode !== 'special' && mode !== 'special_handoff') {
+    if (this.transport.isRoom && this.state.is_paused_by_me && !this.specialMenuOpen) {
+      buttons.push({ label: '继续对局', h: 38, accent: INK.gold, solid: true, fn: () => this._sendAction('leave_special') });
+    }
+
+    if (this.state.special_available && mode !== 'finished' && mode !== 'draw_select' && mode !== 'special' && mode !== 'special_handoff' && !this.specialMenuOpen) {
       const privateSide = this.state.frame.viewer_side;
-      buttons.push({ label: this.autoPace && ['timing', 'combat', 'reveal'].includes(mode) ? '暂停并行动' : '场内行动', h: 34, accent: 0x177d6b, solid: true,
+      const pauseLabel = (this.transport.isRoom && !this.state.client_paced)
+        || (this.autoPace && ['timing', 'combat', 'reveal'].includes(mode));
+      buttons.push({ label: pauseLabel ? '暂停并行动' : '场内行动', h: 34, accent: 0x177d6b, solid: true,
         fn: () => {
+          if (this.transport.isRoom) {
+            this.specialMenuOpen = true;
+            if (this.state.client_paced) {
+              this.autoPace = false;
+              this._syncTopBar();
+            }
+            if (this.state.is_paused_by_me) {
+              this._rebuildActionControls();
+              this._rebuildOverlay();
+              return;
+            }
+            this._sendAction('open_special');
+            return;
+          }
           if (['timing', 'combat', 'reveal'].includes(mode)) {
             this.autoPace = false;
             this._syncTopBar();
@@ -3180,6 +3630,14 @@ export class GameDirector {
     if (this.rosterModal) {
       const m = this.rosterModal;
       const cap = m.maxPerSide ?? 10;
+      const roomLobby = this.transport.isRoom ? {
+        editableSides: this.state.editable_sides,
+        sideNames: this.state.bot_side ? { 1: '我的角色', 2: '电脑对手' } : null,
+        openTeams: Boolean(this.state.bot_side),
+        quantity: m.quantity,
+        quantityInput: m.quantityInput,
+      } : null;
+      const canEdit = side => !roomLobby || roomLobby.editableSides.includes(side);
       const ov = buildRosterOverlay(w, h, {
         catalog: this.state.roster_catalog || [],
         team1: m.team1,
@@ -3188,9 +3646,28 @@ export class GameDirector {
         hoveredChar: m.hoveredChar,
         factionFilter: m.factionFilter || null,
         maxPerSide: cap,
+        roomLobby,
         galleryScrollY: m.galleryScrollY || 0,
         inspectScrollY: m.inspectScrollY || 0,
-        onSetAssignSide: (s) => { m.assignSide = s; this._rebuildOverlay(); },
+        onSetAssignSide: (s) => {
+          if (!canEdit(s)) return;
+          m.assignSide = s;
+          this._rebuildOverlay();
+        },
+        onQuantity: (count) => {
+          if (count == null) m.quantityInput = '';
+          else {
+            m.quantity = count;
+            m.quantityInput = null;
+          }
+          this._rebuildOverlay();
+        },
+        onClearSide: (side) => {
+          if (!canEdit(side)) return;
+          m[`team${side}`] = [];
+          m.assignSide = side;
+          this._rebuildOverlay();
+        },
         onSetMaxPerSide: (nextCap) => {
           m.maxPerSide = nextCap;
           if (typeof nextCap === 'number' && Number.isFinite(nextCap) && nextCap >= 1) {
@@ -3208,18 +3685,36 @@ export class GameDirector {
           this._rebuildOverlay();
         },
         onToggleChar: (cid) => {
+          if (!canEdit(m.assignSide)) return;
           const own = m.assignSide === 1 ? m.team1 : m.team2;
           const other = m.assignSide === 1 ? m.team2 : m.team1;
           const limit = m.maxPerSide ?? 10;
+          const picked = (this.state.roster_catalog || []).find((c) => c.id === cid);
           const idx = own.indexOf(cid);
-          if (idx >= 0) own.splice(idx, 1);
+          if (roomLobby?.openTeams) {
+            const slot = `team${m.assignSide}`;
+            try {
+              m[slot] = own.concat(Array(m.quantity).fill(cid));
+            } catch (error) {
+              if (!(error instanceof RangeError)) throw error;
+              this.showToast('当前浏览器无法分配这么多出战位置。', INK.gold, 2.5);
+              return;
+            }
+          }
+          else if (idx >= 0) own.splice(idx, 1);
+          else if (roomLobby) {
+            if (other.includes(cid) && !picked?.mirror_allowed) {
+              this.showToast('该角色已由另一席选中。', INK.gold, 1.8);
+              return;
+            }
+            own.splice(0, own.length, cid);
+          }
           else {
             const oIdx = other.indexOf(cid);
             if (oIdx >= 0) other.splice(oIdx, 1);
             if (limit <= 0 || !Number.isFinite(limit) || own.length < limit) own.push(cid);
             else this.showToast(`每方最多选 ${limit} 名角色。`, INK.gold, 1.8);
           }
-          const picked = (this.state.roster_catalog || []).find((c) => c.id === cid);
           if (picked && m.hoveredChar?.id !== picked.id) {
             m.hoveredChar = picked;
             m.inspectScrollY = 0;
@@ -3230,8 +3725,9 @@ export class GameDirector {
           this._rebuildOverlay();
         },
         onRemoveFromSide: (side, cid) => {
+          if (!canEdit(side)) return;
           const list = side === 1 ? m.team1 : m.team2;
-          const idx = list.indexOf(cid);
+          const idx = roomLobby?.openTeams ? list.lastIndexOf(cid) : list.indexOf(cid);
           if (idx >= 0) list.splice(idx, 1);
           m.assignSide = side;
           this.hoveredCard = null;
@@ -3261,6 +3757,10 @@ export class GameDirector {
         onGalleryScrollChange: (val) => { m.galleryScrollY = val; },
         onInspectScrollChange: (val) => { m.inspectScrollY = val; },
         onStart: async (teams) => {
+          if (roomLobby) {
+            await this._sendAction('new', { roster: teams });
+            return;
+          }
           this.rosterModal = null;
           this.hoveredCard = null;
           this._renderInspection();
@@ -3292,6 +3792,7 @@ export class GameDirector {
         catalog: this.state.catalog,
         characterColors: this.state.character_colors || {},
         history: this.state.history || [],
+        onExport: this.state.started ? this.openBattleRecord : null,
         onTab: (tab) => { m.tab = tab; m.scrollY = 0; this._rebuildOverlay(); },
         onScrollChange: (val) => { m.scrollY = val; },
         onClose: () => { this.codexModal = null; this._rebuildOverlay(); },
@@ -3354,14 +3855,17 @@ export class GameDirector {
       this.overlayLayer.addChild(ov);
     } else if (mode === 'draw_select' && this.state.draw_select) {
       const prompt = this.state.draw_select;
+      const chooseKeep = this.transport.isRoom && prompt.keep < prompt.discard_count;
+      const selectionCount = chooseKeep ? prompt.keep : prompt.discard_count;
       const ov = buildDrawSelectOverlay(w, h, {
         prompt,
+        chooseKeep,
         selectedIds: this.drawSelected,
         characterColors: this.state.character_colors || {},
         scrollX: this.drawSelectScrollX || 0,
         onToggle: (cid) => {
           if (this.drawSelected.has(cid)) this.drawSelected.delete(cid);
-          else if (this.drawSelected.size < prompt.discard_count) this.drawSelected.add(cid);
+          else if (this.drawSelected.size < selectionCount) this.drawSelected.add(cid);
           else {
             const first = this.drawSelected.values().next().value;
             this.drawSelected.delete(first);
@@ -3370,7 +3874,12 @@ export class GameDirector {
           this.audio.cardSlide();
           this._rebuildOverlay();
         },
-        onConfirm: () => this._sendAction('draw_bottom', { card_ids: Array.from(this.drawSelected) }),
+        onConfirm: () => {
+          const ids = chooseKeep
+            ? prompt.candidates.map(c => c.action_key || c.id).filter(id => !this.drawSelected.has(id))
+            : Array.from(this.drawSelected);
+          this._sendAction('draw_bottom', { card_ids: ids });
+        },
         onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
           this.hoveredCard = card
             ? {
@@ -3384,7 +3893,7 @@ export class GameDirector {
       });
       this._activeOverlayNode = { kind: 'draw_select', node: ov };
       this.overlayLayer.addChild(ov);
-    } else if (mode === 'special') {
+    } else if (mode === 'special' || (this.transport.isRoom && this.state.is_paused_by_me && this.specialMenuOpen)) {
       const ov = buildSpecialOverlay(w, h, {
         side: this.state.active_side,
         timing: this.state.special_timing,
@@ -3392,25 +3901,39 @@ export class GameDirector {
         duels: this.state.frame.special_duels || [],
         pendingAttack: this.state.special_pending,
         scrollY: this.specialScrollY || 0,
-        onPick: (idx) => this._sendAction('use_special', { option: idx }),
+        onPick: (idx) => {
+          this.specialMenuOpen = false;
+          this._sendAction('use_special', { option: idx });
+        },
         onSwitchSide: this.state.eligible_sides?.length > 1 ? () => this._sendAction('switch_side') : null,
-        onLeave: () => this._sendAction('leave_special'),
+        onLeave: () => {
+          this.specialMenuOpen = false;
+          this._sendAction('leave_special');
+        },
         onScrollChange: (val) => { this.specialScrollY = val; },
       });
       this._activeOverlayNode = { kind: 'special', node: ov };
       this.overlayLayer.addChild(ov);
     } else if (mode === 'finished') {
+      const winnerSide = this.state.frame.winner_side;
+      const canRematch = !this.transport.isRoom || this.state.can_rematch;
       const ov = buildFinishOverlay(w, h, {
-        winnerSide: this.state.frame.winner_side,
+        winnerSide,
+        winnerName: winnerSide === this.state.bot_side ? '电脑对手' : null,
         turn: this.state.frame.turn,
         history: this.state.history || [],
-        onRematch: () => {
+        onExport: this.openBattleRecord,
+        onRematch: canRematch ? () => {
+          if (this.transport.isRoom) {
+            this._sendAction('rematch');
+            return;
+          }
           const teams = (this.state.frame.players || []).map((p) => p.characters.map((c) => c.id));
           this.three.clearDice();
           this.physics.clearClashGroups();
           this._sendAction('new', { roster: teams });
-        },
-        onNewRoster: () => this._openRosterModal(),
+        } : null,
+        onNewRoster: canRematch ? () => this._openRosterModal() : null,
       });
       this._activeOverlayNode = { kind: 'finished', node: ov };
       this.overlayLayer.addChild(ov);
@@ -3418,9 +3941,11 @@ export class GameDirector {
   }
 
   _openRosterModal() {
+    const room = this.transport.isRoom ? this.state : null;
+    if (room && (!room.side || (!room.can_rematch && !room.can_restart && (room.started || room.ready)))) return;
     const players = this.state?.frame?.players || [];
-    const t1 = players[0]?.characters?.map((c) => c.id) || ['plan_b_annolin'];
-    const t2 = players[1]?.characters?.map((c) => c.id) || ['waa_lake'];
+    const t1 = players[0]?.characters?.map((c) => c.printed_id || c.id) || ['plan_b_annolin'];
+    const t2 = players[1]?.characters?.map((c) => c.printed_id || c.id) || ['waa_lake'];
     const catalog = this.state?.roster_catalog || [];
     this.activeHeroPanel = null;
     this.passiveDrawer = null;
@@ -3432,10 +3957,12 @@ export class GameDirector {
     this.rosterModal = {
       team1: t1.slice(),
       team2: t2.slice(),
-      assignSide: 1,
-      hoveredChar: catalog.find((c) => c.id === t1[0]) || catalog[0] || null,
+      assignSide: room?.side || 1,
+      hoveredChar: catalog.find((c) => c.id === (room?.side === 2 ? t2[0] : t1[0])) || catalog[0] || null,
       factionFilter: null,
-      maxPerSide: Math.max(10, t1.length, t2.length),
+      maxPerSide: room?.bot_side ? Infinity : room ? 1 : Math.max(10, t1.length, t2.length),
+      quantity: 1,
+      quantityInput: null,
       galleryScrollY: 0,
       inspectScrollY: 0,
       galleryMaxScroll: 0,
@@ -3631,6 +4158,11 @@ export class GameDirector {
     }
   }
 
+  _canAttackTarget(cardId, kind, target) {
+    return (this.state.attack_targets?.[cardId] || []).some(entry =>
+      entry.kind === kind && (kind === 'character' ? entry.id === target : entry.number === target));
+  }
+
   _onPointerUp(e) {
     if (!this.dragState) return;
     const d = this.dragState;
@@ -3688,8 +4220,10 @@ export class GameDirector {
         }
       }
       if (d.canAttack) {
-        for (const [charId, r] of this.charRects.entries()) {
-          if (r.side !== d.side && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        for (const r of this.charRects.values()) {
+          const charId = r.characterId;
+          if (r.side !== d.side && this._canAttackTarget(actKey, 'character', charId)
+              && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
             this.audio.cardPlace();
             this._sendAction('attack', { card_id: actKey, target: { kind: 'character', id: charId } });
             return;
@@ -3701,7 +4235,8 @@ export class GameDirector {
         if (inDuelVp) {
           for (let i = 1; i <= duels.length; i++) {
             const lane = this.regularLaneRects.get(i);
-            if (lane && lane.visible !== false && x >= lane.x - 8 && x <= lane.x + lane.w + 8 && y >= lane.y - 8 && y <= lane.y + lane.h + 8) {
+            if (lane && lane.visible !== false && this._canAttackTarget(actKey, 'duel', i)
+                && x >= lane.x - 8 && x <= lane.x + lane.w + 8 && y >= lane.y - 8 && y <= lane.y + lane.h + 8) {
               this.audio.cardPlace();
               this._sendAction('attack', { card_id: actKey, target: { kind: 'duel', number: i } });
               return;
@@ -3875,6 +4410,23 @@ export class GameDirector {
   }
 
   _onKeyDown(e) {
+    const roster = this.rosterModal;
+    if (roster && roster.quantityInput != null) {
+      e.preventDefault();
+      if (e.key === 'Escape') roster.quantityInput = null;
+      else if (e.key === 'Enter') {
+        const quantity = Number(roster.quantityInput);
+        if (!Number.isSafeInteger(quantity) || quantity < 1) {
+          this.showToast('请输入正整数。', INK.gold, 2);
+          return;
+        }
+        roster.quantity = quantity;
+        roster.quantityInput = null;
+      } else if (e.key === 'Backspace') roster.quantityInput = roster.quantityInput.slice(0, -1);
+      else if (/^\d$/.test(e.key)) roster.quantityInput += e.key;
+      this._rebuildOverlay();
+      return;
+    }
     if (this._activeOverlayNode?.kind === 'effect_choice') {
       if (e.key === 'Tab' || e.key === ' ' || e.key === 'Enter') e.preventDefault();
       if (e.repeat) return;
@@ -3891,9 +4443,12 @@ export class GameDirector {
       }
       return;
     }
-    if (this.state?.mode === 'special' && !this.rosterModal && !this.codexModal && !this.pileModal) {
+    if ((this.state?.mode === 'special' || (this.transport.isRoom && this.state?.is_paused_by_me && this.specialMenuOpen)) && !this.rosterModal && !this.codexModal && !this.pileModal) {
       if (e.key === 'Tab') e.preventDefault();
-      if (e.key === 'Escape' && !this.state.special_pending && !e.repeat) this._sendAction('leave_special');
+      if (e.key === 'Escape' && !this.state.special_pending && !e.repeat) {
+        this.specialMenuOpen = false;
+        this._sendAction('leave_special');
+      }
       if (e.key === 'Escape' || e.key === 'Tab') return;
     }
     if (e.key === 'Tab') {
@@ -3938,7 +4493,7 @@ export class GameDirector {
       const mode = this.state?.mode;
       if (mode === 'handoff' || mode === 'special_handoff') {
         this._sendAction('ready', { side: this.state.active_side || (this.state.eligible_sides || [])[0] });
-      } else if (mode === 'reveal' || mode === 'combat' || mode === 'turn_end' || mode === 'timing') {
+      } else if ((!this.transport.isRoom || this.state?.can_advance) && ['reveal', 'combat', 'turn_end', 'timing'].includes(mode)) {
         this._sendAction('next');
       }
     }
@@ -4026,7 +4581,8 @@ export class GameDirector {
       if (m.healGlow < 0.004) m.healGlow = 0;
       if (m.passiveFlare < 0.004) m.passiveFlare = 0;
     }
-    const activeFocusId = this.focusedCharId || (this.dragState?.card?.character_id ?? null);
+    const activeFocusId = this.focusedCharId ? this._characterKey(this.focusedCharId, this.focusedSide)
+      : this._characterKey(this.dragState?.card?.character_id, this.dragState?.side);
     for (const [charId, node] of this.actorNodes.entries()) {
       if (node.actor && !node.actor.destroyed) {
         if (typeof node.actor.setFocusState === 'function') {
@@ -4194,8 +4750,9 @@ export class GameDirector {
       charColorFn: (cid, s) => this._resolveCharColor(cid, s),
       regularSlotRects: this.regularSlotRects,
       preRevealSlotRects: this.preRevealSlotRects,
-      actorPosFn: (idOrName) => this._resolveActorPosForSightline(idOrName),
+      actorPosFn: (idOrName, side) => this._resolveActorPosForSightline(idOrName, side),
       focusCharId: this.focusedCharId,
+      focusSide: this.focusedSide,
       focusDuelNumber: this.focusedDuelNumber,
       dragState: dragPayload,
       duelViewport: this.duelViewport,
@@ -4251,13 +4808,14 @@ export class GameDirector {
     }
     if (toastCleared) this._renderToast();
 
-    // 10. Optional Auto-Pace during resolution
-    if (this.autoPace && !this.transport.busy && !this.passiveDrawer && !this.rosterModal && !this.codexModal && !this.pileModal) {
+    // 10. Optional Auto-Pace during resolution (Hotseat & Client-Paced PVE!)
+    if ((!this.transport.isRoom || this.state?.client_paced) && this.autoPace && !this.transport.busy && !this.passiveDrawer && !this.rosterModal && !this.codexModal && !this.pileModal) {
       const m = this.state?.mode;
-      if (m === 'combat' || m === 'reveal' || m === 'timing') {
+      const autoModes = this.state?.client_paced ? ['combat', 'reveal', 'timing', 'turn_end'] : ['combat', 'reveal', 'timing'];
+      if (autoModes.includes(m) && (!this.transport.isRoom || this.state?.can_advance)) {
         this.autoTimer -= dtSec;
         if (this.autoTimer <= 0) {
-          this.autoTimer = m === 'combat' ? 1.25 : 0.85;
+          this.autoTimer = m === 'combat' ? 1.25 : m === 'turn_end' ? 1.0 : 0.85;
           this._sendAction('next');
         }
       }

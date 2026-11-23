@@ -11,6 +11,8 @@ from http import HTTPStatus
 from pathlib import Path
 
 from battle_ui.__main__ import BattleSession, STATIC_DIR, _resolve_static
+from battle_ui.match import BattleMatch
+from loader import load_characters_from_packs
 
 
 class CanvasBattleEngineTests(unittest.TestCase):
@@ -120,6 +122,22 @@ class CanvasBattleEngineTests(unittest.TestCase):
             self.assertRegex(ds_src, rf"{dfn}:\s*\{{[^}}]*frame:\s*'square'[^}}]*color:\s*DEFENSE_DIE_COLOR")
         self.assertIn("HP_BAR_COLOR", ds_src)
         self.assertNotIn("highCost", cp_src)
+
+    def test_passive_display_lines_in_roster_and_match_catalogs(self):
+        roster = ["blank_boss", "waa_erkes"]
+        groups = {group["name"]: group for actor in load_characters_from_packs()
+                  if actor["id"] in roster for group in actor["passive_skills"]}
+        expected = {
+            "智脑": [groups["智脑"]["description"]],
+            "纯能电池": [groups["纯能电池"]["description"]],
+            "自发增压武器": [entry["description"] for entry in groups["自发增压武器"]["entries"]],
+        }
+        state = BattleMatch(roster, seed=37).snapshot()
+        selected = [actor for player in state["catalog"]["players"] for actor in player["characters"]]
+        for actors in (state["roster_catalog"], selected):
+            lines = {group["name"]: group["display_lines"] for actor in actors for group in actor["passives"]}
+            for name, original in expected.items():
+                self.assertEqual(lines[name], original, name)
 
     @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
     def test_webgl_pre_reveal_labels_and_burn_fallback_match_the_catalog(self):

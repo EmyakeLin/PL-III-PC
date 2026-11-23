@@ -1,6 +1,6 @@
 """Local two-player battle host for private declarations and public resolution."""
 
-from collections import deque
+from collections import Counter, deque
 import random
 import time
 
@@ -21,7 +21,7 @@ class StaleActionError(ValueError):
     """The client submitted an action for an earlier position."""
 
 
-def _normalize_roster(roster, pool):
+def _normalize_roster(roster, pool, *, open_rosters=False):
     if roster is None:
         roster = ("plan_b_annolin", "plan_b_heck")
     if not isinstance(roster, (tuple, list)) or len(roster) != 2:
@@ -34,12 +34,15 @@ def _normalize_roster(roster, pool):
         raise ValueError("请为双方选择有效的出战角色。")
     seen = set()
     for team in teams:
-        if not 1 <= len(team) <= 3:
+        if not team or (not open_rosters and len(team) > 3):
+            if open_rosters:
+                raise ValueError("双方都需要至少一名出战角色。")
             raise ValueError("每方须选择 1 至 3 名出战角色。")
         team_seen = set()
         for key in team:
-            if (not isinstance(key, str) or key not in pool or key in team_seen
-                    or (key in seen and not pool[key].get("mirror_allowed"))):
+            if not isinstance(key, str) or key not in pool:
+                raise ValueError("出战角色不在本房间的卡包中。")
+            if not open_rosters and (key in team_seen or (key in seen and not pool[key].get("mirror_allowed"))):
                 raise ValueError("请为双方选择不同的有效出战角色。")
             team_seen.add(key)
             seen.add(key)
@@ -132,6 +135,7 @@ def _roster_preview(spec, color=None, sprite_url=None):
         "rank": spec["rank"],
         "max_hp": spec["max_hp"],
         "base_duels": Character.base_duels(spec),
+        "mirror_allowed": bool(spec.get("mirror_allowed")),
         "faction": spec.get("faction", ""),
         "color": color,
         "sprite_url": sprite_url,
@@ -144,9 +148,9 @@ def _roster_preview(spec, color=None, sprite_url=None):
 class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
-    def __init__(self, roster=None, *, seed=None, initial_handoff=False):
+    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False):
         pool = {spec["id"]: spec for spec in load_characters_from_packs()}
-        teams = _normalize_roster(roster, pool)
+        teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
         self._character_colors = _assign_character_colors(pool)
         self._character_sprites = _discover_character_sprites(pool)
         self._character_fx = discover_character_fx(pool, self._character_colors)
@@ -169,6 +173,15 @@ class BattleMatch:
         self.game = Game(players, rng=random.Random(seed))
         self.presentation = TableBridge(self.game.context)
         self.game.deploy_rosters([[pool[key] for key in team] for team in teams])
+        if open_rosters:
+            counts = Counter(key for team in teams for key in team)
+            for team, player in zip(teams, players):
+                teammates = Counter(team)
+                for position, (key, character) in enumerate(zip(team, player.characters), 1):
+                    if counts[key] > 1:
+                        character.id = f"@{player.side}.{position}:{key}"
+                        if teammates[key] > 1:
+                            character.name += f"（{position}号）"
         self._views = {side: Displayer(self.game, viewer_side=side) for side in (None, 1, 2)}
         self._history = deque(maxlen=100)
         self._require_handoff = initial_handoff
@@ -178,6 +191,7 @@ class BattleMatch:
         self._special_open = False
         self._special_seat = None
         self._interrupt_returns = []
+        self._emitted_dice_rolls = set()
         self.game.pipeline.pause_on_clash_scores = True
         self._timing = ""
         self.revision = 0
@@ -190,11 +204,13 @@ class BattleMatch:
     def _legal_cards(self):
         return self.game.legal_placements()
 
-    def _current_draw_prompt(self):
+    def _current_draw_prompt(self, *, viewer_side=None):
         if self.game.pending_draw is None:
             return None
         pending = self.game.pending_draw
-        if self.mode != "draw_select" or self._draw_seat is not pending.player:
+        if self._draw_seat is not pending.player:
+            return None
+        if (self.mode != "draw_select" if viewer_side is None else self._draw_seat.side != viewer_side):
             return None
         return {
             "side": pending.player.side,
@@ -203,12 +219,23 @@ class BattleMatch:
             "candidates": [
                 {
                     **_printed_skill(c.data),
+                    "action_key": key,
                     "character_id": c.character.id,
                     "character_name": c.character.name,
                     "cost": c.cost,
                 }
-                for c in pending.candidates
+                for key, c in self._draw_candidate_keys(pending).items()
             ],
+        }
+
+    def table_assets(self):
+        return {
+            "character_colors": dict(self._character_colors),
+            "character_sprites": dict(self._character_sprites),
+            "character_fx": dict(self._character_fx),
+            "fx_scripts": dict(self._fx_scripts),
+            "status_visuals": dict(self._status_visuals),
+            "roster_catalog": self._roster_catalog,
         }
 
     def snapshot(self):
@@ -272,11 +299,7 @@ class BattleMatch:
             "special_timing": self._timing,
             "draw_select": self._current_draw_prompt(),
             "speed_rolls": list(self.presentation.speed_rolls),
-            "character_colors": dict(self._character_colors),
-            "character_sprites": dict(self._character_sprites),
-            "character_fx": dict(self._character_fx),
-            "fx_scripts": dict(self._fx_scripts),
-            "status_visuals": dict(self._status_visuals),
+            **self.table_assets(),
             "card_owners": card_owners,
             "default_targets": {
                 str(p.side): p.default_target_character.id
@@ -286,7 +309,6 @@ class BattleMatch:
             "fx_events": list(self.presentation.events),
             "frame": frame,
             "catalog": self._views[None].catalog(),
-            "roster_catalog": self._roster_catalog,
             "choices": [dict(c) for c in self.choices],
             "legal_cards": legal_cards, "legal_attack_cards": attacks, "legal_intercept_cards": intercepts,
             "attack_targets": {hand_key(c): [{"kind": "character", "id": actor.id} if actor is not None
@@ -365,17 +387,23 @@ class BattleMatch:
         self.revision += 1
         return self.snapshot()
 
+    @staticmethod
+    def _draw_candidate_keys(pending):
+        cards = pending.candidates
+        counts = Counter(card.id for card in cards)
+        return {card.id if counts[card.id] == 1 else f"instance:{card.instance_id}": card for card in cards}
+
     def _draw_bottom_action(self, card_ids):
         if self.game.pending_draw is None:
             raise ValueError("当前没有待挑选的抽牌候选。")
         pending = self.game.pending_draw
         player = pending.player
-        candidates = pending.candidates
         discard_count = pending.discard_count
         if (not isinstance(card_ids, list) or len(card_ids) != discard_count
+                or not all(isinstance(key, str) for key in card_ids)
                 or len(set(card_ids)) != discard_count):
             raise ValueError(f"请选择 {discard_count} 张不同的牌置于抽牌堆底。")
-        by_id = {c.id: c for c in candidates}
+        by_id = self._draw_candidate_keys(pending)
         if any(cid not in by_id for cid in card_ids):
             raise ValueError("所选置底牌不在当前候选范围内。")
         self.presentation.emit("draw_bottom", side=player.side, count=discard_count)
@@ -638,12 +666,56 @@ class BattleMatch:
                 self.mode = "combat"
                 return
             elif self._timing and self._pause_at_timing():
+                if game.pipeline.in_duel_phase:
+                    combat = self._views[None].snapshot()["combat"]
+                    if combat is not None:
+                        self._emit_unannounced_rolls(combat)
                 self.mode = "timing"
                 return
         self._finish()
 
     def _pause_at_timing(self):
         return bool(special_seats(self.game))
+
+    def _roll_key(self, combat, side_num, die_number):
+        return (self.game.turn_number, combat["kind"], combat["duel_number"], combat["round_id"], side_num, die_number)
+
+    def _emit_unannounced_rolls(self, combat, *, sides_filter=None):
+        game = self.game
+        rolled_sides = []
+        for side, player in zip(combat["sides"], game.players):
+            if sides_filter is not None and player.side not in sides_filter:
+                continue
+            die = side["die"]
+            if not die or die.get("rolled_value") is None:
+                continue
+            die_num = side.get("die_number") or die.get("position")
+            key = self._roll_key(combat, player.side, die_num)
+            if key in self._emitted_dice_rolls:
+                continue
+            pipe = game.pipeline.side_pipelines[player.side]
+            character = pipe.card.character if pipe.card else next(
+                (c for c in player.characters if c.is_alive), player.characters[0])
+            self._emitted_dice_rolls.add(key)
+            rolled_sides.append({
+                "side": player.side,
+                "character_id": character.id,
+                "character_name": character.name,
+                "card_id": side["card_id"],
+                "die_number": die_num,
+                "range_deficit": side["range_deficit"],
+                **die,
+            })
+        if rolled_sides:
+            self.presentation.emit(
+                "dice_roll",
+                duel_kind=combat["kind"],
+                duel_number=combat["duel_number"],
+                round_id=combat["round_id"],
+                one_sided=len(rolled_sides) == 1 and rolled_sides[0].get("result") is None,
+                sides=rolled_sides,
+            )
+        return rolled_sides
 
     def _combat_stop(self, nodes):
         checkpoints = ("logic_duel_start", "on_clash_win", "on_clash_draw", "on_clash_lose",
@@ -706,6 +778,7 @@ class BattleMatch:
                     "character_id": character.id,
                     "character_name": character.name,
                     "card_id": side["card_id"],
+                    "die_number": side.get("die_number") or die.get("position"),
                     "range_deficit": side["range_deficit"],
                     **die,
                 })
@@ -717,12 +790,14 @@ class BattleMatch:
                     "character_id": character.id,
                     "character_name": character.name,
                     "card_id": side["card_id"],
+                    "die_number": side.get("die_number") or die.get("position"),
                     "range_deficit": side["range_deficit"],
                     "skipped": True,
                     **die,
                 })
                 pause = True
             elif node == "after_dice_hit" and die:
+                self._emit_unannounced_rolls(combat, sides_filter={player.side})
                 target = pipe.target or next((c for c in next(
                     p for p in game.players if p is not player).characters if c.is_alive), None)
                 attack = "单方面攻击" if die["result"] is None else "进攻"
@@ -749,12 +824,20 @@ class BattleMatch:
                     actions.append(f"{character.combat_name}{attack}")
                 pause = True
         if clash_sides:
+            rolled_keys = [
+                self._roll_key(combat, sd["side"], sd.get("die_number") or sd.get("position"))
+                for sd in clash_sides
+                if not sd.get("skipped") and sd.get("rolled_value") is not None
+            ]
+            already_rolled = bool(rolled_keys) and all(k in self._emitted_dice_rolls for k in rolled_keys)
+            self._emitted_dice_rolls.update(rolled_keys)
             self.presentation.emit(
                 "dice_clash",
                 duel_kind=combat["kind"],
                 duel_number=combat["duel_number"],
                 round_id=combat["round_id"],
                 blank_round=scored and len(game.pipeline.current_clash_results) == 1,
+                already_rolled=already_rolled,
                 sides=clash_sides,
             )
         if scores:

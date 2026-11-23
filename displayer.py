@@ -63,12 +63,16 @@ def _passives(specs):
     result = []
     for spec in specs:
         if isinstance(spec, dict) and "entries" in spec:
-            result.append({
-                "name": spec.get("name"), "description": spec.get("description"),
-                "entries": [describe_entry(entry) for entry in spec["entries"]],
-            })
+            name = spec.get("name")
+            description = spec.get("description")
+            entries = [describe_entry(entry) for entry in spec["entries"]]
         else:
-            result.append({"name": None, "description": None, "entries": [describe_entry(spec)]})
+            name = description = None
+            entries = [describe_entry(spec)]
+        result.append({
+            "name": name, "description": description, "entries": entries,
+            "display_lines": [description] if description and description.strip() else entries,
+        })
     return result
 
 
@@ -441,7 +445,7 @@ class Displayer:
 
     def _character(self, c, own):
         return {
-            "id": c.id, "name": c.name, "title": c.data.get("title"), "faction": c.faction,
+            "id": c.id, "printed_id": c.data["id"], "name": c.name, "title": c.data.get("title"), "faction": c.faction,
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},

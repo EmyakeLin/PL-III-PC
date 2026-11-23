@@ -54,7 +54,7 @@ function fillRows(list, items, key, create, update) {
     });
     remaining.forEach(node => node.remove());
 }
-const seatName = side => side === 1 ? "席位一" : "席位二";
+const seatName = side => side === room?.bot_side ? "电脑对手" : side === 1 ? "席位一" : "席位二";
 async function api(method, body = {}) {
     const headers = {"Content-Type": "application/json"};
     if (token) headers.Authorization = "Bearer " + token;
@@ -92,7 +92,9 @@ function updateTeam(node, player) {
     const own = player.side === room.side ? " · 我方" : "";
     const seatLabel = seatName(player.side) + own;
     const readiness = room.ready_sides.includes(player.side) ? "已准备" : "待准备";
-    setText(node.querySelector(".team-side"), room.lobby ? seatLabel + " · " + readiness : seatLabel);
+    const showReadiness = room.lobby && !room.bot_side;
+    const teamLabel = showReadiness ? seatLabel + " · " + readiness : seatLabel;
+    setText(node.querySelector(".team-side"), teamLabel);
     setText(node.querySelector(".team-faction"), origin);
     setText(node.querySelector("h3"), fighter.name);
     setText(node.querySelector(".hp"), fighter.hp + " / " + fighter.max_hp);
@@ -188,24 +190,35 @@ function updateBoard(frame) {
         + (card.borrowed ? " · 取自对手" : "") + (card.use_restricted ? " · 当前无法使用" : "")));
 }
 
-function updateLobby(isReady, busy) {
-    const lobby = room.lobby;
-    const picking = Boolean(lobby && room.side);
-    byId("lobby").hidden = !picking;
-    if (!picking) return;
-    const selector = byId("fighter-pick");
-    const opponentPick = lobby.picks[3 - room.side];
+function updateFighterPicker(selector, side, lobby, locked) {
+    const opponentSide = 3 - side;
+    const opponentPick = lobby.picks[opponentSide];
     fillRows(selector, lobby.characters, fighter => fighter.id, () => make("option"), (option, fighter) => {
         const taken = fighter.id === opponentPick && !fighter.mirror_allowed;
         option.value = fighter.id;
         option.disabled = taken;
         setText(option, fighter.name + (taken ? "（对方已选）" : ""));
     });
-    if (!writing) selector.value = lobby.picks[room.side];
-    selector.disabled = busy || isReady;
-    byId("lobby-ready").disabled = busy || isReady;
-    setText(byId("lobby-ready"), isReady ? "已准备" : "确认角色并准备");
-    const note = isReady ? "角色已锁定，等待另一席准备。" :
+    if (!writing) selector.value = lobby.picks[side];
+    selector.disabled = locked;
+}
+function updateLobby(isReady, busy) {
+    const lobby = room.lobby;
+    const picking = Boolean(lobby && room.side);
+    byId("lobby").hidden = !picking;
+    if (!picking) return;
+    const botSide = room.bot_side;
+    const botMatch = Boolean(botSide);
+    const locked = busy || isReady;
+    updateFighterPicker(byId("fighter-pick"), room.side, lobby, locked);
+    byId("bot-pick-field").hidden = !botMatch;
+    if (botMatch) updateFighterPicker(byId("bot-pick"), botSide, lobby, locked);
+    const title = botMatch ? "选择双方出战角色" : "我的出战角色";
+    const startLabel = botMatch ? "开战" : isReady ? "已准备" : "确认角色并准备";
+    setText(byId("lobby-title"), title);
+    byId("lobby-ready").disabled = locked;
+    setText(byId("lobby-ready"), startLabel);
+    const note = botMatch ? "允许镜像的角色可同选。" : isReady ? "角色已锁定，等待另一席准备。" :
         "双方各选一名角色，允许镜像的角色可同选。准备后锁定角色。对局中可以随时暂停查看场内行动。";
     setText(byId("lobby-note"), note);
 }
@@ -215,8 +228,9 @@ function updateControls() {
     const options = room.options || [];
     const busy = writing || disconnected;
     updateLobby(isReady, busy);
-    byId("station").hidden = !mine || room.finished;
+    byId("station").hidden = !mine || room.finished || Boolean(room.bot_side && !room.started);
     document.body.toggleAttribute("data-spectator", !mine || room.finished);
+    byId("prepared").hidden = Boolean(room.bot_side);
     byId("prepared").textContent = ready.length + " / 2 席准备";
     byId("ready").hidden = isReady || room.started || Boolean(room.lobby);
     byId("ready").disabled = busy;
@@ -263,11 +277,12 @@ function consume(data) {
     document.documentElement.dataset.side = room.side || "";
     const manualDesk = byId("manual-desk");
     if (room.side) manualDesk.href = "/desk" + location.hash;
-    manualDesk.hidden = !room.side;
-    setText(byId("seat"), room.side ? seatName(room.side) : "公开观战");
+    manualDesk.hidden = !room.side || Boolean(room.bot_side);
+    const seatLabel = room.side ? (room.bot_side ? "离线人机对战" : seatName(room.side)) : "公开观战";
+    setText(byId("seat"), seatLabel);
     setText(byId("round"), room.started && frame.turn ? "第 " + frame.turn + " 回合" : "对局准备");
     const outcome = room.winner_side ? seatName(room.winner_side) + "获胜" : "平局";
-    let phase = room.started ? phaseNames[frame.phase] || "对局进行中" : "等待双方准备";
+    let phase = room.started ? phaseNames[frame.phase] || "对局进行中" : room.bot_side ? "单角色 1v1" : "等待双方准备";
     if (frame.mode === "placement" && frame.placing_side) phase = seatName(frame.placing_side) + " 常规置卡";
     if (frame.mode === "timing" || frame.mode === "combat") phase = frame.timing || phase;
     if (frame.mode === "skill_choice") phase = frame.timing || "等待技能选择";
@@ -312,6 +327,9 @@ async function write(method, fields) {
 byId("pause-game").addEventListener("click", () => write(room.paused_by === room.side ? "resume" : "pause", {}));
 byId("ready").addEventListener("click", () => write("player_ready", {}));
 byId("fighter-pick").addEventListener("change", event => write("select_character", {character_id: event.target.value}));
+byId("bot-pick").addEventListener("change", event => write("select_character", {
+    character_id: event.target.value, target_side: room.bot_side
+}));
 byId("lobby-ready").addEventListener("click", () => write("player_ready", {}));
 byId("lobby-catalog").addEventListener("click", showCatalog);
 
@@ -398,7 +416,7 @@ async function showCatalog() {
             section.append(make("h3", actor.name));
             const passives = [...(actor.faction_passives || []), ...(actor.passives || [])];
             for (const passive of passives) {
-                const description = passive.description || passive.entries.join("；");
+                const description = passive.display_lines.join("\n");
                 section.append(make("p", [passive.name, description].filter(Boolean).join("　")));
             }
             const links = make("div"); links.className = "toolbar";

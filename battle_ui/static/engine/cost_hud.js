@@ -979,6 +979,7 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
       const ch = characters[i];
       activeIdSet.add(ch.id);
       let tab = tabById.get(ch.id);
+      if (!tab && characters.length > MAX_DIRECT_TABS && i >= OVERFLOW_HEAD_COUNT) continue;
       if (!tab) {
         tab = createTabEntity(ch, i);
         tabById.set(ch.id, tab);
@@ -1032,6 +1033,10 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     if (hasTarget) {
       pendingExit = false;
       exitGraceTimer = 0;
+      if (!tabById.has(charId)) {
+        const index = characters.findIndex(ch => ch.id === charId);
+        if (index >= 0) tabById.set(charId, createTabEntity(characters[index], index));
+      }
       commitIntent(charId, cardCost);
     } else if (activeIntentCharId !== null) {
       // 85ms exit-grace hysteresis so gliding across card gaps never jitters
@@ -1091,12 +1096,12 @@ export function createFactionCostHud({ side = 1, align = 'left', onShockwave = n
     const dockX = getDockX();
     const isAnyActive = activeIntentCharId !== null;
 
-    for (let i = 0; i < characters.length; i++) {
-      const tab = tabById.get(characters[i].id);
-      if (!tab) continue;
-
+    for (const tab of tabById.values()) {
       if (tab.isOverflow && tab.phase === 'SLOT' && tab.visAlpha < 0.01) {
-        tab.container.visible = false;
+        if (tab.id === activeIntentCharId) continue;
+        tabsLayer.removeChild(tab.container);
+        tab.container.destroy({ children: true });
+        tabById.delete(tab.id);
         continue;
       }
 

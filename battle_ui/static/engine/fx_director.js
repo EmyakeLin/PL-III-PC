@@ -30,6 +30,8 @@ export class FxDirector {
     getActorNode,
     getActorPos,
     getMotion,
+    getMatchNumber = () => undefined,
+    deferFx = setTimeout,
     getClashCenter,
     triggerShake,
     spawnFloater,
@@ -41,6 +43,8 @@ export class FxDirector {
     this.getActorNode = getActorNode;
     this.getActorPos = getActorPos;
     this.getMotion = getMotion;
+    this.getMatchNumber = getMatchNumber;
+    this.deferFx = deferFx;
     this.getClashCenter = getClashCenter;
     this.triggerShake = triggerShake;
     this.spawnFloater = spawnFloater;
@@ -60,8 +64,8 @@ export class FxDirector {
    * into exact stage pixel coordinates using PR #1's skeletal bone world positions.
    */
   resolveAnchor(anchorName, ctx) {
-    const fallbackAttacker = ctx.attackerId ? this.getActorPos(ctx.attackerId) : this.getClashCenter();
-    const fallbackDefender = ctx.defenderId ? this.getActorPos(ctx.defenderId) : this.getClashCenter();
+    const fallbackAttacker = ctx.attackerId ? this.getActorPos(ctx.attackerId, ctx.attackerSide) : this.getClashCenter();
+    const fallbackDefender = ctx.defenderId ? this.getActorPos(ctx.defenderId, ctx.defenderSide) : this.getClashCenter();
     if (!anchorName) return fallbackDefender;
 
     if (anchorName === 'clash.center') {
@@ -70,10 +74,11 @@ export class FxDirector {
 
     const [role, part = 'center'] = String(anchorName).split('.');
     const charId = role === 'defender' ? ctx.defenderId : ctx.attackerId;
+    const side = role === 'defender' ? ctx.defenderSide : ctx.attackerSide;
     if (!charId) return role === 'defender' ? fallbackDefender : fallbackAttacker;
 
     if (part.startsWith('bone_')) {
-      const node = this.getActorNode(charId);
+      const node = this.getActorNode(charId, side);
       if (node?.actor && typeof node.actor.getBoneWorldPos === 'function') {
         const bp = node.actor.getBoneWorldPos(part);
         if (bp && Number.isFinite(bp.x) && Number.isFinite(bp.y)) {
@@ -84,7 +89,7 @@ export class FxDirector {
         }
       }
     }
-    return this.getActorPos(charId);
+    return this.getActorPos(charId, side);
   }
 
   /**
@@ -154,14 +159,14 @@ export class FxDirector {
     // 1. Actor Motion
     const motion = recipe.motion || {};
     if (ctx.attackerId) {
-      const am = this.getMotion(ctx.attackerId);
+      const am = this.getMotion(ctx.attackerId, ctx.attackerSide);
       if (motion.lunge) am.lunge = Math.max(am.lunge, motion.lunge);
       if (motion.evade) am.evade = Math.max(am.evade, motion.evade);
       if (motion.healGlow) am.healGlow = Math.max(am.healGlow, motion.healGlow);
       if (motion.passiveFlare) am.passiveFlare = Math.max(am.passiveFlare, motion.passiveFlare);
     }
     if (ctx.defenderId) {
-      const dm = this.getMotion(ctx.defenderId);
+      const dm = this.getMotion(ctx.defenderId, ctx.defenderSide);
       if (motion.recoil) dm.recoil = Math.max(dm.recoil, motion.recoil);
       if (motion.hitFlash) dm.hitFlash = Math.max(dm.hitFlash, motion.hitFlash);
     }
@@ -202,7 +207,7 @@ export class FxDirector {
       const wait = baseDelay + i * stagger;
       const exec = () => this._runSingleAtom(atom, ctx, i);
       if (wait <= 0) exec();
-      else setTimeout(exec, wait);
+      else this.deferFx(exec, wait);
     }
   }
 
@@ -297,6 +302,7 @@ export class FxDirector {
   }
 
   async _invokeCustomScript(scriptRef, ctx) {
+    const matchNumber = this.getMatchNumber();
     try {
       const url = scriptRef.url;
       let modPromise = SCRIPT_CACHE.get(url);
@@ -305,6 +311,7 @@ export class FxDirector {
         SCRIPT_CACHE.set(url, modPromise);
       }
       const mod = await modPromise;
+      if (matchNumber !== this.getMatchNumber()) return;
       const fn = mod?.[scriptRef.export] || mod?.default;
       if (typeof fn !== 'function') return;
 
@@ -313,6 +320,7 @@ export class FxDirector {
         three: this.three,
         physics: this.physics,
         audio: this.audio,
+        defer: this.deferFx,
         resolveAnchor: (name) => this.resolveAnchor(name, ctx),
         shake: (power, durSec = 0.25) => this.triggerShake?.(Math.min(18, power), Math.min(0.7, durSec)),
         floater: (x, y, text, colorHex, kind = 'clash') =>

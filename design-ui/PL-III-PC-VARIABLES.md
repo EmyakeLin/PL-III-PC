@@ -155,6 +155,15 @@
 | style.css 排版 | `--serif`, `--sans`, `--gutter`, `--pad`, `--gap`, `--tap`, `--fast` | 标题与正文字体；自适应横向页边距和卡内边距、区块间距、控件最小高度（px）、按钮状态过渡时长（ms）。 |
 | app.js 席位状态 | `token`, `room`, `writing`, `records`, `current`, `disconnected`, `ready`, `mine`, `isReady`, `options` | 当前链接片段中的私席凭据、最新投影、写入锁、按编号合并的本席事件、快照新旧判断、等待网络恢复的标记、已就绪席位、参赛身份、己方准备状态及此时可执行的合法动作。 |
 | 联机选人 | `lobby`, `picking`, `selector`, `opponentPick`, `taken`, `busy`, `note`, `seatLabel`, `readiness` | 赛前阵容与候选名单、本席可见的选人区、角色选择框、另一席的已选角色、选项已被占用、动作等待回执或网络恢复、准备语义说明，以及双席对照卡的身份与准备文字。 |
+| 离线人机选人 | `bot_side`, `botSide`, `botMatch`, `opponentSide`, `locked`, `title`, `startLabel`, `showReadiness`, `teamLabel`, `target_side` | 房间电脑席位编号、选角区读取的电脑席位、是否为人机对局、相对于当前选择框的另一席、写入或准备期间的控件锁定、选角标题、准备或开战按钮文案、是否显示席位准备状态、队伍身份文案及选角请求指定的目标席位。 |
+| Canvas 房间连接 | `isRoom`, `room`, `assets`, `position`, `engine_revision`, `after`, `options`, `attackTargets` | 是否通过席位房间入场、房间投影、随页面加载的公开战场资源、用于等待下一帧的房间版本与引擎步数组合、引擎步数、客户端已经看到的位置、本席当前可提交的合法动作及按手牌索引的进攻目标。 |
+| Canvas 房间交互 | `roomLobby`, `editableSides`, `editable_sides`, `sideNames`, `playbackEnabled`, `rosterEnabled`, `canLeaveSpecial`, `specialPending`, `compactRoom` | 房间选角配置、各席编辑权限、阵容区的席位文字、节奏与阵容按钮是否可用、发起暂停的席位能否退出场内操作、是否必须回应词条或即时交锋，以及窄窗口里需要缩小的角色翼区和交锋区。 |
+| 镜像战场 | `mirroredIds`, `actorKey`, `focusedSide`, `effectiveSide`, `matchedKey` | 双方共同使用的印刷角色 ID、将镜像角色按席位定位的键、当前悬停角色所属席位、视线使用的角色席位、按角色名称查找后匹配到的显示键。 |
+| 房间内再战 | `match_number`, `matchNumber`, `can_rematch`, `canRematch`, `canPick`, `matchChanged`, `getMatchNumber`, `deferFx`, `history_start` | 从 1 起算的房间局号及异步特效捕获的局号、当前邀请能否从终局开下一局、玩家是否可编辑阵容、来帧是否更换了整场、读取当前局号的回调、按局号约束延迟特效的回调，以及本局战报在房间事件流里的起点。 |
+| 战报来源和文本 | `publicView`, `observation`, `botSide`, `events`, `finished`, `frame`, `winnerSide`, `matchNumber`, `start`, `index`, `event`, `sideName`, `teams`, `side`, `characters`, `roster`, `character`, `result`, `status`, `record` | 以公开权限读取一次完整事件流及同一时刻的阵容和胜负。局号和起点取自再战边界。按席位和角色顺序输出阵容，以本局有效事件的原顺序输出记录。 |
+| 战报导出入口 | `openBattleRecord`, `onExport`, `showExport`, `historyToolsH`, `exportBtn`, `closeWidth`, `tabGap`, `tabWidth` | 原生导出对话框的打开回调、在战报标签当前显示时才占用的工具行及其按钮。页签和关闭按钮随对话区宽度缩放，尺寸以画布像素计算。 |
+| 终局与复制对话框 | `actions`, `btnGap`, `gapsW`, `btnW`, `actionX`, `button`, `transport`, `template`, `dialog`, `field`, `copy`, `status`, `pendingRecord`, `type`, `event`, `record`, `text`, `--record-paper`, `--record-ink`, `--record-line`, `--record-accent` | 终局按钮按可用操作排列，组内间距、按钮宽度和起点单位为像素。从模板创建原生对话框，打开时挂载，只读正文和复制状态随本次导出更新。请求对象标识本次打开，防止较早的返回覆盖后续记录。样式变量用于纸面、文字、边框和操作色。 |
+| 人机编队与多人抽牌 | `openTeams`, `quantity`, `quantityInput`, `teamCounts`, `displayed`, `grouped`, `printed_id`, `copies`, `chooseKeep`, `selectionCount`, `mounted`, `preDuelPage` | 可独立增减双方人数的编队模式、每次添加的出战数量、等待回车确认的数字输入、按印刷角色统计的队内人数、阵容区的显示项、是否合并显示重复角色、供卡面和素材查找的印刷角色标识、需要映射显示资源的角色实例、是否改选保留牌、须选中的数量、抽牌横栏当前建立的卡牌节点，以及开牌前交锋的当前页。 |
 | 阵容图鉴 | `roster`, `picks`, `myIndex`, `opponentIndex`, `requestedRoster`, `request`, `dialog`, `rosterBound` | 画面已接收的角色 ID 列表、本帧按席位排序的列表、双方对应的数组索引、发起图鉴请求时的阵容及该次请求、已打开的规则对话框和内容是否依赖出战阵容。 |
 | 跨设备同步 | `clockOffset`, `controller`, `deadline`, `banner`, `cursor`, `nonce` | 房主时间戳与本地单调时钟的毫秒差，用于计算等待时长；单次 HTTP 请求的中止对象与超时计时器；显示重连进度的区域；长轮询已完整接收的席位事件编号；一次玩家操作的随机标识，丢失回执时沿用。 |
 | 标签与控件 | `kinds`, `phaseNames`, `battles`, `dieNames`, `results` | 动作、阶段、交锋类别、骰种与结果的显示名。 |
@@ -164,6 +173,7 @@
 | 列表与节点 | `tag`, `label`, `node`, `list`, `items`, `item`, `index`, `identity`, `remaining`, `create`, `update`, `invoke`, `first`, `saved`, `field`, `option`, `events`, `a`, `b` | 元素标签、内容和节点；带键列表保留同一实例及焦点；创建、更新、点击回调；下拉首项及选中值、可选动作和按 ID 排序的记录。 |
 | 网络与只读规则 | `method`, `headers`, `body`, `response`, `data`, `error`, `message`, `ms`, `resolve`, `topic`, `guide`, `topics`, `catalog`, `catalogRequest`, `printed`, `ruleVersion`, `version`, `book`, `chapter`, `title`, `content` | 请求方法、席位请求头、含幂等键的操作、响应及重试；重连延迟毫秒及回调；章节索引、印刷图鉴、共享的加载请求、按牌 ID 检索的印刷牌面和浮层代次。 |
 | 图鉴内容 | `enemy`, `targets`, `entries`, `actor`, `skills`, `skill`, `card`, `sections`, `section`, `passives`, `passive`, `description`, `links`, `name`, `detail`, `traits`, `ways`, `way`, `lines`, `fn`, `event` | 候选目标与本席技能、角色与技能原文、被动、状态、导航、卡面费用与许可、骰子行及各控件的动作或提交事件。 |
+| 本地与联机共用的被动数据 | `display_lines` | 选人页、角色侧栏、被动总览和图鉴显示的正文。有整段 `description` 时只显示该段，缺省或空白时按 `entries` 原序逐条显示。 |
 
 ### 本机战桌的效果选择与中断
 

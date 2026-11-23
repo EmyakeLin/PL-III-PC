@@ -9,9 +9,10 @@ from .transport import ArenaServer
 
 def main():
     parser = argparse.ArgumentParser(description="光点计划 III · 双人联机与 AI 对战房间")
-    parser.add_argument("--roster", nargs=2, default=["ember_wen_sheng", "plan_b_annolin"],
+    parser.add_argument("--roster", nargs=2, default=None,
                         metavar=("P1", "P2"), help="玩家一和玩家二的出战角色 ID")
     parser.add_argument("--port", type=int, default=8766, help="房间端口，0 表示自动分配")
+    parser.add_argument("--bot", action="store_true", help="开启本机单角色 1v1 人机对战")
     parser.add_argument("--lan", action="store_true", help="在局域网网卡上创建玩家联机房间")
     parser.add_argument("--address", metavar="IP", help="在指定的本机 IPv4 网卡上创建联机房间")
     parser.add_argument("--public-url", metavar="HTTPS_URL", help="使用已有 HTTPS 反向代理的公开来源生成联机邀请")
@@ -26,18 +27,26 @@ def main():
         parser.error("端口必须在 0 到 65535 之间。")
     from .room import Room
     multiplayer = args.lan or args.address is not None or args.public_url is not None
+    if args.bot and multiplayer:
+        parser.error("--bot 仅在本机运行，不能和联机参数同时使用。")
     try:
         address = args.address if args.address is not None else (lan_address() if args.lan else "127.0.0.1")
-        room = Room(args.roster, seed=args.seed, selectable=multiplayer)
+        room = Room(args.roster, seed=args.seed, selectable=multiplayer, bot=args.bot)
         server = ArenaServer(room, args.port, address=address, public_url=args.public_url)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
     with server:
         url = server.invite_url
         print(f"观战页面  {url}/")
+        print(f"Canvas 观战页面  {url}/canvas/")
         for seat, token in server.tokens.items():
-            print(f"玩家 {seat} 私人邀请  {url}/#token={token}")
-        if multiplayer:
+            player_path = "/canvas/" if args.bot else "/"
+            print(f"玩家 {seat} 私人邀请  {url}{player_path}#token={token}")
+            if not args.bot:
+                print(f"玩家 {seat} Canvas 邀请  {url}/canvas/#token={token}")
+        if args.bot:
+            print("打开玩家 1 的邀请，选择双方角色后点击开战。")
+        elif multiplayer:
             print(f"房间监听  {server.server_address[0]}:{server.server_port}")
             print("房主打开玩家 1 的邀请，将玩家 2 的完整邀请发给对手。"
                   "双方选人、准备后开局。重连时打开原来的邀请。")

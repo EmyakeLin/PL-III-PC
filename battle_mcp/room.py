@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from . import declarations as plans
+from .bot import choose_draw_bottom, choose_move
 from .engine import ArenaEngine, action_fields
 
 
@@ -53,17 +54,59 @@ def move_id(side, move):
     return hashlib.sha256(payload).hexdigest()[:20]
 
 
+def bot_roster(roster):
+    if isinstance(roster, (list, tuple)) and len(roster) == 2:
+        if all(isinstance(c, str) for c in roster):
+            return dict(zip(SEATS, roster))
+        if all(isinstance(team, (list, tuple)) and team and all(isinstance(c, str) for c in team) for team in roster):
+            return {side: list(team) for side, team in zip(SEATS, roster)}
+    raise ValueError("双方都需要至少一名有效的出战角色。")
+
+
 class Room:
-    def __init__(self, roster=None, seed=None, *, selectable=False):
-        self.engine = ArenaEngine(roster, seed=seed)
+    def __init__(self, roster=None, seed=None, *, selectable=False, bot=False):
+        self.bot_side = 2 if bot else None
         self._seed = seed
-        self._lobby_picks = ({p.side: p.characters[0].id for p in self.engine.game.players}
-                             if selectable else None)
+        self._lobby_picks = bot_roster(roster) if bot and roster is not None else None
+        self.engine = self._build_engine(self._lobby_picks) if self._lobby_picks else ArenaEngine(roster, seed=seed, bot_side=self.bot_side)
+        if (selectable or bot) and self._lobby_picks is None:
+            self._lobby_picks = {p.side: p.characters[0].id for p in self.engine.game.players}
         self.cv = threading.Condition()
         self.seated = set()
         self.human_seats = set()
+        self.canvas_seats = set()
+        self._next_votes = set()
+        self._revision = dict.fromkeys((None, *SEATS), 0)
+        self._journal = {s: [] for s in self._revision}
+        self._wake = self._revision.copy()
+        self._receipts = {s: {} for s in SEATS}
+        self._match_number = 1
+        self._history_start = self._revision.copy()
+        self._beat_timer = self._timer = self._continuation = None
+        self._closed = False
+        self._reset_match_decisions()
+
+    def _build_engine(self, picks):
+        roster = [picks[side] for side in SEATS]
+        open_rosters = self.bot_side is not None and all(isinstance(team, list) for team in roster)
+        return ArenaEngine(roster, seed=self._seed, bot_side=self.bot_side, open_rosters=open_rosters)
+
+    def _seat_pick(self, picks, side, character_id):
+        team = picks[side]
+        replacement = [character_id, *team[1:]] if isinstance(team, list) else character_id
+        return {**picks, side: replacement}
+
+    def _cancel_match_timers(self):
+        self._cancel_beat()
+        for timer in (self._timer, self._continuation):
+            if timer is not None:
+                timer.cancel()
+        self._timer = self._continuation = None
+
+    def _reset_match_decisions(self):
+        self._cancel_match_timers()
         self.paused_by = None
-        self._beat_timer = None
+        self._next_votes.clear()
         self._plans = {s: {} for s in SEATS}
         self._serial = {s: 0 for s in SEATS}
         self._grants = {s: {} for s in SEATS}
@@ -71,24 +114,13 @@ class Room:
         self._anchors = {}
         self._bindings = {s: {} for s in SEATS}
         self._previous_choices = dict.fromkeys(SEATS)
-        self._revision = dict.fromkeys((None, *SEATS), 0)
-        self._journal = {s: [] for s in self._revision}
-        self._wake = self._revision.copy()
-        self._receipts = {s: {} for s in SEATS}
         self._since = {}
         self._timer_seen = set()
-        self._timer = None
-        self._continuation = None
-        self._closed = False
 
     def close(self):
         with self.cv:
             self._closed = True
-            self._cancel_beat()
-            if self._timer:
-                self._timer.cancel()
-            if self._continuation:
-                self._continuation.cancel()
+            self._cancel_match_timers()
             self.cv.notify_all()
 
     def _note(self, kind, text, *, audiences=(None, 1, 2), wake=()):
@@ -141,11 +173,61 @@ class Room:
                         declarations=[dict(p, id=key) for key, p in self._plans.get(side, {}).items()])
             if self._lobby_picks is not None and not view["started"]:
                 view["lobby"] = {"characters": [dict(c) for c in self.engine.choices],
-                                 "picks": self._lobby_picks.copy()}
+                                 "picks": {s: team[0] if isinstance(team, list) else team
+                                           for s, team in self._lobby_picks.items()}}
+            if self.bot_side is not None:
+                view["bot_side"] = self.bot_side
             return view
 
-    def _command(self, side, revision, request_id, operation, argument, run):
+    def canvas_state(self, side, after=None):
+        """Wait for the next visible change, including animation beats between decisions."""
+        if side is not None:
+            self._seat(side)
+        with self.cv:
+            def position():
+                return f"{self._revision[side]}:{self.engine.revision}"
+
+            if after is not None:
+                changed = self.cv.wait_for(lambda: self._closed or position() != after, timeout=8)
+                if not changed:
+                    return {"timeout": True}
+            if self._closed:
+                raise ValueError("对战房间已关闭。")
+            frame = self.engine.state(side)
+            options = self._options(side)
+            journal = self._journal[side]
+            history_start = max(self._history_start[side], len(journal) - 100)
+            player = next((p for p in self.engine.game.players if p.side == side), None)
+            target = player.default_target_character if player else None
+            return {
+                "position": position(), "revision": self._revision[side],
+                "engine_revision": self.engine.revision, "side": side,
+                "match_number": self._match_number, "can_rematch": self._can_rematch(side),
+                "can_restart": self._can_restart(side),
+                "client_paced": self._client_paced,
+                "can_advance": self._can_advance_beat(side),
+                "next_voted": side in self._next_votes,
+                "has_special_actions": self._has_human_special_options(side),
+                "frame": frame, "options": options, "started": len(self.seated) == 2,
+                "ready": side in self.seated, "bot_side": self.bot_side,
+                "selectable": self._lobby_picks is not None,
+                "paused_by": self.paused_by, "can_pause": self._can_pause(side),
+                "window_remaining": self.engine._window_size - self.engine.game.placed_this_window
+                if any(move["kind"] == "end" for move in options) else 0,
+                "catalog": self.engine.catalog(),
+                "default_targets": {side: target.id} if target and target.is_alive else {},
+                "history": [entry["text"] for entry in journal[history_start:]],
+                "fx_events": list(self.engine.presentation.events),
+            }
+
+    def canvas_assets(self):
+        with self.cv:
+            return self.engine.table_assets()
+
+    def _command(self, side, revision, request_id, operation, argument, run, *, allow_finished=False):
         self._seat(side)
+        if side == self.bot_side:
+            raise PermissionError("此席位由电脑控制。")
         if not isinstance(request_id, str) or not 1 <= len(request_id) <= 128:
             raise ValueError("请为每个命令提供唯一的 request_id。")
         with self.cv:
@@ -162,49 +244,156 @@ class Room:
                 if due is None or due[0] > time.monotonic():
                     break
                 self._on_timer()
-            # Pause freezes the live position even when a newer beat just appeared.
+            # Pause and default-target updates apply cleanly even if a beat just ticked.
             # Moves and resume still require the exact position the seat observed.
             current = self._revision[side]
             if (type(revision) is not int or not 0 <= revision <= current
-                    or (operation != "pause" and revision != current)):
+                    or (operation not in ("pause", "set_default_target") and revision != current)):
                 raise RoomConflict("局面已更新，请重新观察后行动。")
-            if self.engine.game_over or self._closed:
+            if self._closed or (self.engine.game_over and not allow_finished):
                 raise ValueError("本局已经结束。")
             cursor = len(self._journal[side])
             run()
             receipts[request_id] = signature
             return self.observe(side, cursor)
 
-    def select_character(self, side, character_id, revision, request_id):
+    def select_character(self, side, character_id, revision, request_id, *, target_side=None):
+        target = side if target_side is None else target_side
+
         def commit():
-            if self._lobby_picks is None or side in self.seated:
+            self._seat(target)
+            if target != side and target != self.bot_side:
+                raise PermissionError("只能选择本席或电脑对手的角色。")
+            if self._lobby_picks is None or target in self.seated:
                 raise ValueError("本席当前无法更换出战角色。")
             picked = self._lobby_picks
             character = next((c for c in self.engine.choices if c["id"] == character_id), None)
             if character is None:
                 raise ValueError("出战角色不在本房间的卡包中。")
-            if character_id != picked[side]:
-                roster = {**picked, side: character_id}
-                self.engine = ArenaEngine([roster[s] for s in SEATS], seed=self._seed)
+            roster = self._seat_pick(picked, target, character_id)
+            if roster != picked:
+                self.engine = self._build_engine(roster)
                 self._lobby_picks = roster
-                self._note("select_character", f"席位 {side} 选择了{character['name']}。", wake=SEATS)
-        return self._command(side, revision, request_id, "select_character", character_id, commit)
+                label = "电脑对手" if target == self.bot_side else f"席位 {target}"
+                self._note("select_character", f"{label} 选择了{character['name']}。", wake=SEATS)
+        return self._command(side, revision, request_id, "select_character", [target, character_id], commit)
 
-    def ready(self, side, revision, request_id, *, human=False):
+    def ready(self, side, revision, request_id, *, human=False, canvas=False, character_id=None, roster=None):
         def commit():
             if side in self.seated:
                 raise ValueError("本席已准备。")
+            picks = self._lobby_picks
+            if roster is not None:
+                if self.bot_side is None or character_id is not None:
+                    raise ValueError("只有人机房间可以同时选择双方角色。")
+                picks = bot_roster(roster)
+            elif character_id is not None:
+                if picks is None:
+                    raise ValueError("本房间使用预设阵容。")
+                picks = self._seat_pick(picks, side, character_id)
+            if picks != self._lobby_picks:
+                self.engine = self._build_engine(picks)
+                self._lobby_picks = picks
             self.seated.add(side)
-            if human:
+            if human or self.bot_side is not None:
                 self.human_seats.add(side)
+            if canvas:
+                self.canvas_seats.add(side)
             self._note("ready", f"席位 {side} 已准备。", wake=SEATS)
+            if self.bot_side is not None:
+                self.seated.add(self.bot_side)
             if len(self.seated) == 2:
                 self._drive()
-        return self._command(side, revision, request_id, "ready", human, commit)
+        return self._command(side, revision, request_id, "ready", [human, canvas, character_id, roster], commit)
+
+    @property
+    def _client_paced(self):
+        """Single local Canvas human vs bot: client drives combat/reveal beats like hotseat."""
+        return (self.bot_side is not None and bool(self.canvas_seats)
+                and self.human_seats == self.canvas_seats)
+
+    def _has_human_special_options(self, side):
+        if side not in self.human_seats or len(self.seated) != 2 or self.engine.game_over:
+            return False
+        return bool(self.engine._special_options(side))
+
+    def _should_stop_human_beat(self):
+        mode = self.engine._mode()
+        event = self.engine.event
+        if mode == "advance" or event["kind"] == "setup":
+            return False
+        if mode in ("reveal", "combat", "turn_end"):
+            return True
+        if mode == "timing":
+            if event["kind"] == "scores_ready" or event.get("timing") == "技能使用前，可换卡":
+                return any(self._has_human_special_options(s) for s in self.human_seats)
+            return False
+        return False
+
+    def _beat_delay(self):
+        mode = self.engine._mode()
+        if self.engine.event["kind"] == "scores_ready":
+            return 1.8
+        if mode == "combat":
+            return 1.15
+        return 0.95
+
+    def _can_advance_beat(self, side):
+        return (side in self.human_seats and len(self.seated) == 2 and not self.engine.game_over
+                and self.paused_by is None and not self._continuation
+                and not self.engine.required_sides() and not self._asked
+                and self._should_stop_human_beat())
+
+    def _can_rematch(self, side):
+        if not self.engine.game_over or side not in self.human_seats:
+            return False
+        return self.bot_side is not None or len(self.human_seats) == 2
+
+    def _can_restart(self, side):
+        return self.bot_side is not None and side in self.human_seats and len(self.seated) == 2
+
+    def rematch(self, side, revision, request_id, *, roster=None):
+        def commit():
+            if not (self._can_rematch(side) or self._can_restart(side)):
+                raise ValueError("当前对局尚未开战或不支持再战。")
+            if roster is not None and self.bot_side is None:
+                raise ValueError("联机再战沿用当前双方阵容。")
+            if roster is not None:
+                picks = bot_roster(roster)
+            elif self._lobby_picks is not None:
+                picks = self._lobby_picks
+            else:
+                picks = {p.side: [c.printed_id or c.id for c in p.characters] for p in self.engine.game.players}
+            engine = self._build_engine(picks)
+            self._reset_match_decisions()
+            self.engine = engine
+            if self._lobby_picks is not None or self.bot_side is not None:
+                self._lobby_picks = picks
+            self._match_number += 1
+            self._history_start = {s: len(events) for s, events in self._journal.items()}
+            self._note("match_start", f"第 {self._match_number} 局开始。", wake=SEATS)
+            self._drive()
+
+        return self._command(side, revision, request_id, "rematch", roster, commit, allow_finished=True)
+
+    def next_beat(self, side, revision, request_id):
+        def commit():
+            if not self._can_advance_beat(side):
+                raise ValueError("当前不在可推进的结算节拍。")
+            if self._client_paced:
+                self._step_beat()
+                return
+            self._next_votes.add(side)
+            if self.human_seats <= self._next_votes:
+                self._step_beat()
+            else:
+                self._note("next_vote", f"席位 {side} 已准备好进入下一拍。", audiences=(side,), wake=(side,))
+        return self._command(side, revision, request_id, "next_beat", None, commit)
 
     def _can_pause(self, side):
         return (side in self.human_seats and len(self.seated) == 2 and not self.engine.game_over
                 and self.paused_by is None and not self._continuation
+                and self.engine._mode() != "draw_select"
                 and self.engine.game.special.decision_owner is None
                 and self.engine.game.special.pending_attack is None)
 
@@ -267,6 +456,25 @@ class Room:
                 self._release(side)
                 self._drive()
         return self._command(side, revision, request_id, "act", option_id, commit)
+
+    def draw_bottom(self, side, card_ids, revision, request_id):
+        def commit():
+            self.engine.draw_bottom(side, card_ids)
+            self._drive()
+        return self._command(side, revision, request_id, "draw_bottom", card_ids, commit)
+
+    def set_default_target(self, side, character_id, revision, request_id):
+        def commit():
+            if len(self.seated) != 2:
+                raise ValueError("对局开始后才能指定集火目标。")
+            player = self.engine._choose_seat(side, self.engine.game.players)
+            enemy = self.engine._choose_seat(3 - side, self.engine.game.players)
+            target = next((c for c in enemy.characters if c.id == character_id and c.is_alive), None)
+            if target is None:
+                raise ValueError("请选择存活的敌方角色。")
+            player.set_default_target(target)
+            self._note("default_target", f"默认目标设为{target.name}。", audiences=(side,), wake=(side,))
+        return self._command(side, revision, request_id, "set_default_target", character_id, commit)
 
     def _record(self, event):
         kind = event["kind"]
@@ -445,14 +653,29 @@ class Room:
                 auto_count += 1
                 break
             else:
+                if self.bot_side in required and self.paused_by is None and not self._asked:
+                    state = self.engine.state(self.bot_side)
+                    if draw := state.get("draw_select"):
+                        self.engine.draw_bottom(self.bot_side, choose_draw_bottom(draw))
+                        continue
+                    moves = [move for move in self.engine.options(self.bot_side) if move["kind"] in plans.ORDINARY]
+                    move = choose_move(state, moves)
+                    if move is not None:
+                        for side in edges.keys() - {self.bot_side}:
+                            self._note("decision", "请选择当前行动。", audiences=(side,), wake=(side,))
+                        automatic.append((self.bot_side, move, self._window()))
+                        process = False
+                        continue
                 if self.paused_by is not None or required or self._asked:
                     for side in edges:
                         self._note("decision", "请选择当前行动。", audiences=(side,), wake=(side,))
                     break
-                if self.human_seats:
-                    self._beat_timer = threading.Timer(0.85, self._advance_beat)
-                    self._beat_timer.daemon = True
-                    self._beat_timer.start()
+                if self.human_seats and self._should_stop_human_beat():
+                    self._next_votes.clear()
+                    if not self._client_paced:
+                        self._beat_timer = threading.Timer(self._beat_delay(), self._advance_beat)
+                        self._beat_timer.daemon = True
+                        self._beat_timer.start()
                     break
                 self.engine.advance()
         self._schedule()
@@ -462,22 +685,31 @@ class Room:
             self._beat_timer.cancel()
             self._beat_timer = None
 
+    def _step_beat(self):
+        self._cancel_beat()
+        self._next_votes.clear()
+        self.engine.advance()
+        event = self.engine.event
+        if event["kind"] == "timing" and not event.get("text"):
+            self._note("timing", event["timing"])
+        self._drive()
+        self.cv.notify_all()
+
     def _advance_beat(self):
         with self.cv:
             if self._beat_timer is not threading.current_thread():
                 return
             self._beat_timer = None
-            self.engine.advance()
-            event = self.engine.event
-            if event["kind"] == "timing" and not event.get("text"):
-                self._note("timing", event["timing"])
-            self._drive()
+            self._step_beat()
 
     def _resume(self, remaining):
         with self.cv:
+            if self._continuation is not threading.current_thread():
+                return
             self._continuation = None
             if not self._closed and not self.engine.game_over:
                 self._drive(process=False, initial_auto=remaining)
+                self.cv.notify_all()
 
     def _timers(self):
         for side in SEATS:
@@ -499,12 +731,15 @@ class Room:
         next_timer = min(self._timers(), default=None)
         if next_timer is not None:
             deadline, _ = next_timer
-            self._timer = threading.Timer(max(0, deadline-time.monotonic()), self._on_timer)
+            self._timer = threading.Timer(max(0, deadline-time.monotonic()), self._on_timer,
+                                          args=(self._match_number,))
             self._timer.daemon = True
             self._timer.start()
 
-    def _on_timer(self):
+    def _on_timer(self, match_number=None):
         with self.cv:
+            if match_number is not None and match_number != self._match_number:
+                return
             if self._closed or self.engine.game_over or self.paused_by is not None:
                 return
             expired = sorted(self._timers())

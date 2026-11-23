@@ -141,14 +141,14 @@ function clampControlPointToViewport(p0, cp, p1, vp, pad = 6) {
   return { x: cx, y: cy };
 }
 
-function resolveActorPosition(actorPosFn, charId, fallbackName = null) {
+function resolveActorPosition(actorPosFn, charId, side, fallbackName = null) {
   if (typeof actorPosFn !== 'function') return null;
   if (charId != null) {
-    const p = actorPosFn(charId);
+    const p = actorPosFn(charId, side);
     if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) return p;
   }
   if (fallbackName != null && fallbackName !== charId) {
-    const p = actorPosFn(fallbackName);
+    const p = actorPosFn(fallbackName, side);
     if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) return p;
   }
   return null;
@@ -182,6 +182,7 @@ export function renderFocusSightlines(graphics, {
   preRevealSlotRects = null,
   actorPosFn = null,
   focusCharId = null,
+  focusSide = null,
   focusDuelNumber = null,
   dragState = null,
   duelViewport = null,
@@ -199,6 +200,8 @@ export function renderFocusSightlines(graphics, {
   const isDragging = Boolean(dragState && dragState.moved);
   const dragCharId = isDragging ? (dragState.charId || dragState.card?.character_id || null) : null;
   const effectiveCharId = focusCharId || dragCharId || null;
+  const effectiveSide = focusCharId ? focusSide : dragState?.side;
+  const isFocusedActor = (id, side) => id === effectiveCharId && (!effectiveSide || side === effectiveSide);
 
   let effectiveRegDuel = null;
   let effectivePreDuel = null;
@@ -242,7 +245,7 @@ export function renderFocusSightlines(graphics, {
             ? clamp(well.cy + spreadY, vp.top + 8, vp.bottom - 8)
             : well.cy + spreadY;
           const isRelated = Boolean(
-            (effectiveCharId != null && resolvedCharId === effectiveCharId)
+            (effectiveCharId != null && isFocusedActor(resolvedCharId, sEntry.side))
             || (effectiveRegDuel != null && duel.number === effectiveRegDuel)
           );
           visibleEntries.push({
@@ -301,7 +304,7 @@ export function renderFocusSightlines(graphics, {
     }
 
     // Focused owner-to-card illuminated bezier tether
-    const fp = resolveActorPosition(actorPosFn, item.ownerCharId);
+    const fp = resolveActorPosition(actorPosFn, item.ownerCharId, item.side);
     if (!fp) {
       drawDiamondPip(graphics, item.anchorX, item.anchorY, 4.2, col, {
         alpha: 0.92,
@@ -413,11 +416,12 @@ export function renderFocusSightlines(graphics, {
         }
       }
 
+      const defenderSide = slot.attacking_side ? 3 - slot.attacking_side : null;
       const isFocusedSlot = Boolean(
         (effectivePreDuel != null && slot.number === effectivePreDuel)
         || (effectiveCharId != null && (
-          slotCharIds.some((sc) => sc.charId === effectiveCharId)
-          || slot.target?.id === effectiveCharId
+          slotCharIds.some((sc) => isFocusedActor(sc.charId, sc.side))
+          || isFocusedActor(slot.target?.id, defenderSide)
         ))
         || (effectiveRegDuel != null && slot.target?.kind === 'duel' && slot.target.number === effectiveRegDuel)
       );
@@ -442,8 +446,7 @@ export function renderFocusSightlines(graphics, {
       let to = null;
       let clippedEdge = null; // 'top' | 'bottom' | null
       if (slot.target?.kind === 'duel' && regMap) {
-        const defenderSide = slot.attacking_side ? (3 - slot.attacking_side) : 2;
-        const rawTo = regMap.get(`${slot.target.number}:${defenderSide}`);
+        const rawTo = regMap.get(`${slot.target.number}:${defenderSide || 2}`);
         if (rawTo) {
           if (vp && rawTo.cy < vp.top + 8) {
             to = { x: rawTo.cx, y: vp.top + 10 };
@@ -456,7 +459,7 @@ export function renderFocusSightlines(graphics, {
           }
         }
       } else if (slot.target?.kind === 'character') {
-        const fp = resolveActorPosition(actorPosFn, slot.target.id, slot.target.name);
+        const fp = resolveActorPosition(actorPosFn, slot.target.id, defenderSide, slot.target.name);
         if (fp) to = { x: fp.x, y: fp.y };
       }
 
@@ -526,7 +529,7 @@ export function renderFocusSightlines(graphics, {
       // If this pre-reveal slot is focused, also illuminate owner-to-pre-reveal-card tether
       if (hasFocus && isFocusedSlot) {
         for (const sc of slotCharIds) {
-          const fp = resolveActorPosition(actorPosFn, sc.charId);
+          const fp = resolveActorPosition(actorPosFn, sc.charId, sc.side);
           if (!fp) continue;
           const col = (themes[sc.side] || SIDE_THEME[sc.side] || SIDE_THEME[1]).accent;
           const anchorX = sc.side === 1 ? from.x + 4 : from.x + from.w - 4;
@@ -556,7 +559,7 @@ export function renderFocusSightlines(graphics, {
 
     // Subtle fighter-to-drag-origin tether so player feels who is acting
     if (dragCharId) {
-      const fp = resolveActorPosition(actorPosFn, dragCharId);
+      const fp = resolveActorPosition(actorPosFn, dragCharId, dragState.side);
       if (fp) {
         const cp = { x: (fp.x + x) * 0.5, y: Math.min(fp.y, y) - 28 };
         graphics.moveTo(fp.x, fp.y)
@@ -923,8 +926,7 @@ export function createDiegeticTopBar({
     crestGroup.position.set(curPad, barY);
 
     const maxCrestW = Math.max(180, rightX - curPad - 12);
-    const turnVal = lastSync.turn || 1;
-    turnText.text = `第 ${turnVal} 回合`;
+    turnText.text = lastSync.turn ? `第 ${lastSync.turn} 回合` : '对局准备';
     const phaseStr = lastSync.phaseLabel ? String(lastSync.phaseLabel) : '';
     phaseText.text = phaseStr;
 
@@ -1012,6 +1014,8 @@ export function createDiegeticTopBar({
     phaseLabel = lastSync.phaseLabel,
     firstSide = lastSync.firstSide,
     autoPace = lastSync.autoPace,
+    playbackEnabled = true,
+    rosterEnabled = true,
     muted = lastSync.muted,
     passivesOpen = lastSync.passivesOpen,
   } = {}) => {
@@ -1025,7 +1029,14 @@ export function createDiegeticTopBar({
     const autoNode = sealNodes.get('auto');
     if (autoNode) {
       autoNode.state.active = lastSync.autoPace;
+      autoNode.btn.eventMode = playbackEnabled ? 'static' : 'none';
+      autoNode.btn.alpha = playbackEnabled ? 1 : 0.36;
       autoNode.redrawBtn();
+    }
+    const rosterNode = sealNodes.get('roster');
+    if (rosterNode) {
+      rosterNode.btn.eventMode = rosterEnabled ? 'static' : 'none';
+      rosterNode.btn.alpha = rosterEnabled ? 1 : 0.36;
     }
     const audioNode = sealNodes.get('audio');
     if (audioNode) {

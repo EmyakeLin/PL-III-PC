@@ -1,13 +1,14 @@
 /**
  * 《光点计划 III》纯 WebGL 主入口
- * 零 DOM 控件、零网页排版、亮色无黑无蓝紫：
+ * 对战控件绘制于 WebGL，战报复制使用原生文本框：
  *  - Three.js WebGL（动态亮色光场 GLSL Shader + 真实 3D 多面体骰子 + 3D 双面翻牌与牵制弧 + InstancedMesh 碰撞火花）
  *  - Matter.js（固定 60Hz 时间步：真实拼点双骰碰撞与击退 + 可控阻尼手牌惯性 + 护盾磨损碎裂）
  *  - PixiJS v8 WebGL（透明叠加层：正面无畸变清晰卡牌、紧凑角色牌与实体叠牌、四层拼点条与全部交互）
  */
 
 import * as PIXI from './vendor/pixi.min.mjs';
-import { LocalBattleTransport } from './engine/transport.js';
+import { LocalBattleTransport, RoomSeatTransport } from './engine/transport.js';
+import { bindBattleRecord } from './engine/battle_record.js';
 import { TabletopAudio } from './engine/audio.js';
 import { TabletopPhysics } from './engine/physics.js';
 import { ThreeWorld } from './engine/three_world.js';
@@ -44,8 +45,11 @@ async function boot() {
   });
 
   const audio = new TabletopAudio();
-  const transport = new LocalBattleTransport('');
-  const director = new GameDirector(app, physics, threeWorld, audio, transport);
+  const isRoom = location.pathname.startsWith('/canvas/');
+  const token = new URLSearchParams(location.hash.slice(1)).get('token');
+  const transport = isRoom ? new RoomSeatTransport(token) : new LocalBattleTransport();
+  const openBattleRecord = isRoom ? bindBattleRecord(transport) : null;
+  const director = new GameDirector(app, physics, threeWorld, audio, transport, openBattleRecord);
 
   const handleResize = () => {
     const w = window.innerWidth;
@@ -57,11 +61,19 @@ async function boot() {
   };
   window.addEventListener('resize', handleResize);
 
-  try {
-    const initial = await transport.fetchState();
-    director.applyState(initial, { isInitial: true });
-  } catch (err) {
-    director.showToast(`连接战局失败：${err.message || err}`, 0xcf4932, 6);
+  if (isRoom) {
+    transport.follow(state => director.applyState(state, { isInitial: !director.state }), error => {
+      const message = error?.status === 403 ? '邀请已失效，请用本局的私人邀请。'
+        : error ? '房间连接中断，正在重连。' : '已重新连接房间。';
+      director.showToast(message, error ? 0xcf4932 : 0x1a825e, 5);
+    });
+  } else {
+    try {
+      const initial = await transport.fetchState();
+      director.applyState(initial, { isInitial: true });
+    } catch (err) {
+      director.showToast(`连接战局失败：${err.message || err}`, 0xcf4932, 6);
+    }
   }
 
   let lastTime = performance.now();

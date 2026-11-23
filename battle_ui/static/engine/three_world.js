@@ -674,6 +674,8 @@ export class ThreeWorld {
     physicsBody = null,
     radius = 28,
     lifetime = 1.9,
+    revealDelay = 0.28,
+    onReveal = null,
   }) {
     const pal = DIE_PALETTES[dieType] || DIE_PALETTES.speed;
     const group = new THREE.Group();
@@ -715,6 +717,9 @@ export class ThreeWorld {
       z: 145, vz: 95,
       rotVel: new THREE.Vector3(10 + Math.random() * 6, 9 + Math.random() * 6, 7 + Math.random() * 5),
       age: 0, lifetime, radius,
+      revealDelay: Math.max(0, Number(revealDelay) || 0),
+      revealed: false,
+      onReveal: typeof onReveal === 'function' ? onReveal : null,
     });
   }
 
@@ -1243,6 +1248,31 @@ export class ThreeWorld {
     this.activeDice = [];
   }
 
+  clearMatchFx() {
+    this.clearDice();
+    for (const card of this.flippingCards) this._disposeCardFlip(card);
+    for (const effect of this.vfxEffects) this._disposeVfx(effect);
+    for (const ring of this.rings) this._disposeRing(ring);
+    this.flippingCards.length = this.vfxEffects.length = this.rings.length = 0;
+    for (const spark of this.sparkSlots) spark.age = spark.life;
+    for (const ripple of this.ripples) ripple.active = 0;
+    for (const shockwave of this.shockwaves) shockwave.active = 0;
+  }
+
+  _disposeCardFlip(card) {
+    this.scene.remove(card.mesh);
+    card.frontTex.dispose();
+    card.backTex.dispose();
+    card.frontMat.dispose();
+    card.backMat.dispose();
+  }
+
+  _disposeRing(ring) {
+    this.scene.remove(ring.mesh);
+    ring.geo.dispose();
+    ring.mat.dispose();
+  }
+
   _disposeDie(d) {
     this.scene.remove(d.group, d.shadow, d.badge);
     d.geo.dispose();
@@ -1353,8 +1383,16 @@ export class ThreeWorld {
         d.mesh.rotation.z += d.rotVel.z * dtSec;
       }
 
+      if (!d.revealed && d.age >= d.revealDelay) {
+        d.revealed = true;
+        if (d.onReveal) {
+          const cb = d.onReveal;
+          d.onReveal = null;
+          cb();
+        }
+      }
       const fadeOut = d.age > d.lifetime - 0.32 ? Math.max(0, (d.lifetime - d.age) / 0.32) : 1;
-      const badgeIn = Math.max(0, Math.min(1, (d.age - 0.3) / 0.18));
+      const badgeIn = d.revealed ? Math.max(0, Math.min(1, (d.age - d.revealDelay) / 0.14)) : 0;
       d.badge.position.set(wp.x, wp.y, d.z + d.radius + 14);
       d.badgeMat.opacity = badgeIn * fadeOut;
       d.shadowMat.opacity = 0.3 * shScale * fadeOut;
@@ -1383,11 +1421,7 @@ export class ThreeWorld {
       c.mesh.rotation.x = Math.sin(rawT * Math.PI) * 0.22;
 
       if (rawT >= 1) {
-        this.scene.remove(c.mesh);
-        c.frontTex.dispose();
-        c.backTex.dispose();
-        c.frontMat.dispose();
-        c.backMat.dispose();
+        this._disposeCardFlip(c);
         this.flippingCards.splice(i, 1);
       }
     }
@@ -1523,9 +1557,7 @@ export class ThreeWorld {
       r.mesh.scale.setScalar(1 + t * r.maxScale);
       r.mat.opacity = 0.65 * (1 - t);
       if (t >= 1) {
-        this.scene.remove(r.mesh);
-        r.geo.dispose();
-        r.mat.dispose();
+        this._disposeRing(r);
         this.rings.splice(i, 1);
       }
     }
