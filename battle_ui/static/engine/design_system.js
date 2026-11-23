@@ -150,7 +150,7 @@ export const STATUS_COLORS = {
 };
 
 // Dynamic pack-provided status visuals (`status_visuals` from snapshot):
-// name -> { color?: "#...", icon_url?: "/status_icons/...", icon_svg?: "<svg...>", icon_path?: [...], icon_symbol?: "..." }
+// icon_urls_by_stack matches an exact count; icon_url is also used in the codex.
 const CUSTOM_STATUS_VISUALS = new Map();
 const STATUS_ICON_TEXTURE_CACHE = new Map();
 
@@ -278,6 +278,9 @@ export function setStatusVisuals(visualsMap) {
       _preloadStatusIconUrl(spec.icon_url);
     } else if (spec.icon_svg) {
       _rasterizeStatusSvg(spec.icon_svg, `inline:${name}:${spec.icon_svg.length}`);
+    }
+    for (const url of Object.values(spec.icon_urls_by_stack || {})) {
+      _preloadStatusIconUrl(url);
     }
   }
 }
@@ -739,13 +742,14 @@ export function drawStatusIcon(g, name, cx, cy, r, col) {
  *  - Priority 2: Custom 1-2 char symbol (`icon_symbol`).
  *  - Priority 3: Built-in vector fallback (`drawStatusIcon`).
  */
-export function mountStatusIcon(parentContainer, fallbackGraphics, name, cx, cy, r, col) {
+export function mountStatusIcon(parentContainer, fallbackGraphics, name, cx, cy, r, col, stacks = null) {
   const resolvedCol = col ?? getStatusColor(name);
   const spec = name ? CUSTOM_STATUS_VISUALS.get(name) : null;
+  const url = spec?.icon_urls_by_stack?.[stacks] ?? spec?.icon_url;
 
   let texEntry = null;
-  if (spec?.icon_url) {
-    texEntry = _preloadStatusIconUrl(spec.icon_url);
+  if (url) {
+    texEntry = _preloadStatusIconUrl(url);
   } else if (spec?.icon_svg) {
     texEntry = _rasterizeStatusSvg(spec.icon_svg, `inline:${name}:${spec.icon_svg.length}`);
   } else if (Array.isArray(spec?.icon_path) && spec.icon_path.length) {
@@ -1282,7 +1286,7 @@ export function buildUnifiedEntryPlate({
   root.addChild(g);
 
   if (isStatus) {
-    mountStatusIcon(root, g, statusName, 19, Math.min(totalH / 2, 17), 9, accent);
+    mountStatusIcon(root, g, statusName, 19, Math.min(totalH / 2, 17), 9, accent, statusValue);
     const titleStr = `${statusName}${statusValue !== null ? ' ' + statusValue : ''}${statusBurst ? '（爆发）' : ''}`;
     const hTxt = new PIXI.Text({
       text: titleStr,

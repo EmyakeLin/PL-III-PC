@@ -591,7 +591,7 @@ export function buildHeroSidePanel({
       badgeG.roundRect(bx, curY, bw, 19, 4)
         .fill({ color: burst ? 0xfce0e4 : INK.paperSoft })
         .stroke({ width: burst ? 1.5 : 0.9, color: col });
-      mountStatusIcon(root, badgeG, sName, bx + 9.5, curY + 9.5, 5.6, col);
+      mountStatusIcon(root, badgeG, sName, bx + 9.5, curY + 9.5, 5.6, col, sVal);
       stTxt.anchor.set(0, 0.5);
       stTxt.position.set(bx + 17, curY + 9.5);
       root.addChild(stTxt);

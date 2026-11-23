@@ -196,6 +196,36 @@ class FxDslInterfaceTests(unittest.TestCase):
         self.assertNotIn("icon_svg", syn["恶意状态"])
         self.assertEqual(syn["恶意状态"]["icon_symbol"], "★")
 
+    def test_liu_yin_status_art_is_served_with_exact_stack_variants(self):
+        from xml.etree import ElementTree
+
+        visuals = BattleSession(seed=37).state()["status_visuals"]
+        for name in ("领域洞悉", "环境压制", "战甲"):
+            with self.subTest(status=name):
+                asset, mime = _resolve_static(visuals[name]["icon_url"])
+                self.assertEqual((asset.stem, mime), (name, "image/svg+xml"))
+
+        visual = visuals["环境同调"]
+        variants = visual["icon_urls_by_stack"]
+        self.assertEqual(set(variants), {"1", "2", "3"})
+        self.assertEqual(visual["icon_url"], variants["1"])
+        self.assertEqual(len(set(variants.values())), 3)
+        for level, url in variants.items():
+            with self.subTest(level=level):
+                asset, mime = _resolve_static(url)
+                self.assertEqual(mime, "image/svg+xml")
+                svg = ElementTree.parse(asset).getroot()
+                self.assertIn(f"{level} 层", svg.findtext("{*}title"))
+                self.assertEqual(len(svg.findall(".//{*}path[@fill='#79AC93']")), int(level) - 1)
+                self.assertEqual(bool(svg.findall(".//{*}path[@fill='#FFFDF8']")), level == "3")
+                self.assertIsNone(svg.find(".//{*}animate"))
+
+    def test_stack_icon_map_resolves_only_existing_files_and_positive_stack_keys(self):
+        mapping = {"7": "凝聚.svg", "0": "凝聚.svg", "1.5": "凝聚.svg", "2": "missing.svg"}
+        pool = {"fixture": {"status_rules": {"测试图标": {"icons_by_stack": mapping}}}}
+        visuals = discover_status_visuals(pool)
+        self.assertEqual(visuals["测试图标"]["icon_urls_by_stack"], {"7": visuals["凝聚"]["icon_url"]})
+
 
 if __name__ == "__main__":
     unittest.main()

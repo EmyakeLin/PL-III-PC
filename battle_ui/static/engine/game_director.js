@@ -2305,7 +2305,7 @@ export class GameDirector {
       const glyphLayer = new PIXI.Container();
       const glyphG = new PIXI.Graphics();
       glyphLayer.addChild(glyphG);
-      mountStatusIcon(glyphLayer, glyphG, name, stBoxSize / 2, stBoxSize * 0.45, compactHud ? 5.8 : 7.2, col);
+      mountStatusIcon(glyphLayer, glyphG, name, stBoxSize / 2, stBoxSize * 0.45, compactHud ? 5.8 : 7.2, col, val);
       iconBox.addChild(glyphLayer);
 
       const badgeG = new PIXI.Graphics();

@@ -5,6 +5,7 @@ Allows any status effect to provide its own icon and color via three zero-code p
   2. Inline fields inside `status_rules[<name>]` (in `_packs/effects/*.json` or any `_packs/*.json`):
        - `color`: hex color (sanitized to bright sunlit palette)
        - `icon_svg`: filename under `_packs/status_icons/` OR inline `<svg ...>...</svg>` markup
+       - `icons_by_stack`: exact positive stack count -> SVG filename; other counts use the default icon
        - `icon_path`: SVG path `d` string (or list of `d` strings) inside standard `viewBox="0 0 24 24"`
        - `icon_symbol`: 1-2 char crisp text glyph fallback
   3. Optional manifest `_packs/status_icons/manifest.json` mapping status names to the fields above.
@@ -79,6 +80,17 @@ def _normalize_status_visual(spec, *, root):
             url = _resolve_icon_file(raw_svg, root)
             if url:
                 out["icon_url"] = url
+
+    stack_icons = spec.get("icons_by_stack")
+    if isinstance(stack_icons, dict):
+        urls = {}
+        for count, filename in stack_icons.items():
+            if re.fullmatch(r"[1-9][0-9]*", str(count)):
+                url = _resolve_icon_file(filename, root)
+                if url:
+                    urls[str(count)] = url
+        if urls:
+            out["icon_urls_by_stack"] = urls
 
     paths = _sanitize_icon_path(spec.get("icon_path"))
     if paths:

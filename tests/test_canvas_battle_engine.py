@@ -168,6 +168,62 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertEqual(rendered["badges"], expected)
         self.assertIn(rendered["burn"], state["catalog"]["statuses"]["烧伤"])
 
+    @unittest.skipUnless(shutil.which("node"), "Status icon rendering requires JavaScript")
+    def test_mounted_status_texture_follows_the_current_snapshot(self):
+        match = BattleMatch(["liu_yin", "plan_b_heck"], seed=37)
+        liu = match.game.players[0].characters[0]
+        levels = []
+        for delta in (0, 1, 1, 1, -1, -2, 3):
+            liu.add_status("环境同调", delta)
+            actor = match.snapshot()["frame"]["players"][0]["characters"][0]
+            levels.append(actor["statuses"].get("环境同调"))
+        self.assertEqual(levels, [None, 1, 2, 3, 2, None, 3])
+
+        # Give each fetched SVG its URL as a texture label so the assertion reads
+        # the sprite actually mounted by Pixi, including after a cached downgrade.
+        script = """
+            import assert from 'node:assert/strict';
+            import {readFileSync} from 'node:fs';
+            import * as PIXI from './vendor/pixi.min.mjs';
+            import {mountStatusIcon, setStatusVisuals} from './engine/design_system.js';
+            const {visuals, levels} = JSON.parse(readFileSync(0, 'utf8'));
+            globalThis.fetch = async url => ({ok: true, text: async () => url});
+            globalThis.Image = class {
+                set src(value) { this.label = decodeURIComponent(value.split(',')[1]); this.onload(); }
+            };
+            globalThis.document = {createElement: () => {
+                const canvas = {getContext: () => ({
+                    clearRect() {}, drawImage(image) { canvas.label = image.label; },
+                })};
+                return canvas;
+            }};
+            PIXI.Texture.from = canvas => new PIXI.Texture({label: canvas.label});
+            setStatusVisuals(visuals);
+            const name = '环境同调';
+            async function mounted(status, level) {
+                const host = new PIXI.Container();
+                mountStatusIcon(host, null, status, 8, 8, 6, null, level);
+                await new Promise(resolve => setImmediate(resolve));
+                const sprite = host.children.find(child => child instanceof PIXI.Sprite);
+                assert.ok(sprite);
+                const spriteLabel = sprite.texture.label;
+                host.destroy({children: true});
+                return spriteLabel;
+            }
+            for (const level of levels.filter(level => level !== null)) {
+                assert.equal(await mounted(name, level), visuals[name].icon_urls_by_stack[level]);
+            }
+            assert.equal(await mounted(name), visuals[name].icon_url);
+            assert.equal(await mounted(name, 7), visuals[name].icon_url);
+            assert.equal(await mounted('战甲', 1), visuals['战甲'].icon_url);
+        """
+        visuals = match.table_assets()["status_visuals"]
+        subprocess.run(
+            [shutil.which("node"), "--input-type=module", "-e", script], cwd=STATIC_DIR,
+            input=json.dumps({"visuals": {key: visuals[key] for key in ("环境同调", "战甲")}, "levels": levels}),
+            encoding="utf-8", check=True,
+        )
+
     def test_no_paraphrasing_die_level_labels_or_filler_text(self):
         for name in (
             "design_system.js",
