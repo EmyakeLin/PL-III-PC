@@ -244,7 +244,7 @@ class DisplayerTests(unittest.TestCase):
 
     def test_all_packs_project_structured_damage_parts_and_well_formed_triggers(self):
         from pathlib import Path
-        from displayer import _passives, _printed_skill
+        from displayer import _passives, _printed_skill, format_damage_part
 
         def assert_well_formed_brackets(text, ctx):
             pos = 0
@@ -276,13 +276,37 @@ class DisplayerTests(unittest.TestCase):
                     for die in form["dice"]:
                         self.assertNotIn("printed_line", die)
                         self.assertIn("damage_parts", die)
+                        ranks = []
                         for part in die["damage_parts"]:
                             self.assertIn(part["grade"], ("normal", "pierce", "concept", "lightcore", "real"))
-                            self.assertIsInstance(part["amount"], int)
-                            self.assertTrue(part["text"].startswith(f"{part['amount']}点") and part["text"].endswith("伤害"), part)
+                            self.assertIsInstance(part["amount"], (int, str))
+                            expected = format_damage_part(part["amount"], part["grade"], aoe=part.get("aoe", False))
+                            self.assertEqual(part["text"], expected)
                             self.assertNotIn("label", part)
+                            ranks.append(0 if part["grade"] == "normal" and not part.get("aoe")
+                                         else 1 if part["grade"] == "normal" else 2)
+                        self.assertEqual(ranks, sorted(ranks), die["damage_parts"])
                         for entry in die["entries"]:
                             assert_well_formed_brackets(entry, f"{char['id']}.{form['id']} die")
+
+    def test_concise_damage_formatting_orders_normal_first_and_supports_aoe_and_expressions(self):
+        from displayer import _printed_die
+        mixed = _printed_die({
+            "type": "slash", "level": 3,
+            "entries": [
+                "1真实",
+                "2穿甲",
+                "1物理",
+                {"damage_part": {"amount": 1, "grade": "normal", "aoe": True}, "description": "群体 1"},
+                {"damage_part": {"amount": 1, "grade": "pierce", "aoe": True}, "description": "群体 1 穿甲"},
+                {"damage_part": {"amount": "(能源值-1)", "grade": "lightcore"}, "description": "【命中时】附带效果"},
+            ],
+        })
+        self.assertEqual(
+            [p["text"] for p in mixed["damage_parts"]],
+            ["1", "群体 1", "1 真实", "2 穿甲", "群体 1 穿甲", "(能源值-1) 光点"],
+        )
+        self.assertEqual(mixed["entries"], ["【命中时】附带效果"])
 
     def test_hidden_internal_entries_are_excluded_while_visible_plain_and_triggered_lines_survive(self):
         from displayer import _passives, _printed_skill

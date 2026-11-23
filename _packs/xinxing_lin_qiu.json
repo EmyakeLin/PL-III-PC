@@ -430,7 +430,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "【命中时】令目标弃1卡，施加1星结；重复骰命中时，每4星结追加1点超穿甲伤害，至多3点。"
+                  "description": "【命中时】令目标弃1卡，施加1星结；重复骰命中时，每4星结追加1 超穿甲，至多3。"
                 }
               ]
             }
@@ -538,7 +538,7 @@
                       "GT", ["$event.target",{"local":"extra"},"concept","slash","DAMAGE"], "WHEN"
                     ]
                   },
-                  "description": "【命中时】目标阵营下回合回补费用−1；每6星结追加1点超穿甲伤害，至多2点。"
+                  "description": "【命中时】目标阵营下回合回补费用−1；每6星结追加1 超穿甲，至多2。"
                 }
               ]
             }
@@ -680,7 +680,7 @@
                   "trigger": "on_dice_hit",
                   "when": [{"left":{"field":"$event.target.statuses","key":"星结","default":0},"op":"ge","right":10}],
                   "operation": {"op":"program","code":["$event.target",1,"concept","pierce","DAMAGE"]},
-                  "description": "【命中时】目标至少10星结，追加1点超穿甲伤害。"
+                  "description": "【命中时】目标至少10星结，追加1 超穿甲。"
                 }
               ]
             }

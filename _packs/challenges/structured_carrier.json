@@ -621,7 +621,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "description": "【命中时】造成1点普通伤害，同次用牌仅触发一次。",
+                  "description": "【命中时】1，同次用牌仅触发一次。",
                   "operation": {
                     "op": "program",
                     "code": [
@@ -1506,7 +1506,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "description": "【命中时】目标威压不低于6时，追加独立的1点普通伤害部分。",
+                  "description": "【命中时】目标威压不低于6时，追加独立的1伤害部分。",
                   "operation": {
                     "op": "program",
                     "code": [
@@ -1561,7 +1561,7 @@
                 },
                 {
                   "trigger": "on_dice_hit",
-                  "description": "【命中时】容器发射期间额外追加1点普通伤害。",
+                  "description": "【命中时】容器发射期间额外追加1伤。",
                   "operation": {
                     "op": "program",
                     "code": ["$self.rule_state","容器发射",false,"LOOKUP",["$event.target",1,"normal","$event.die.type","DAMAGE"],"WHEN"],

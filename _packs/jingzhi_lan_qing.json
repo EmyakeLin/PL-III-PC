@@ -395,7 +395,8 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群体造成2点普通伤害。",
+                      "damage_part": {"amount": 2, "grade": "normal", "aoe": true},
+                      "description": "群体 2",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1011,7 +1012,8 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】群体造成2点普通伤害。",
+                  "damage_part": {"amount": 2, "grade": "normal", "aoe": true},
+                  "description": "群体 2",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1090,7 +1092,8 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群体造成3点普通伤害。",
+                      "damage_part": {"amount": 3, "grade": "normal", "aoe": true},
+                      "description": "群体 3",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1110,7 +1113,8 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群体造成1点普通伤害。",
+                      "damage_part": {"amount": 1, "grade": "normal", "aoe": true},
+                      "description": "群体 1",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1217,7 +1221,8 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】群体造成2点普通伤害。",
+                  "damage_part": {"amount": 2, "grade": "normal", "aoe": true},
+                  "description": "群体 2",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1305,7 +1310,8 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群体造成2点普通伤害。",
+                      "damage_part": {"amount": 2, "grade": "normal", "aoe": true},
+                      "description": "群体 2",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1352,7 +1358,8 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群体造成3点普通伤害。",
+                      "damage_part": {"amount": 3, "grade": "normal", "aoe": true},
+                      "description": "群体 3",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",

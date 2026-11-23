@@ -26,38 +26,76 @@ for _node in pipeline_steps.reveal_phase:
     _PHASES[_node.id] = "pre_reveal"
 
 
+_DAMAGE_GRADE_SHORT = {
+    "normal": "",
+    "pierce": "穿甲",
+    "concept": "超穿甲",
+    "lightcore": "光点",
+    "real": "真实",
+}
+
+
+def format_damage_part(amount, grade="normal", *, aoe=False):
+    """Format a structured damage part concisely: '1', '1 真实', '群体 1', '群体 1 穿甲', '(能源值-1) 光点'."""
+    short = _DAMAGE_GRADE_SHORT.get(grade, GRADE_NAMES.get(grade, ""))
+    tokens = []
+    if aoe:
+        tokens.append("群体")
+    tokens.append(str(amount))
+    if short:
+        tokens.append(short)
+    return " ".join(tokens)
+
+
 def _split_die_entries(entries):
-    """Separate structured fixed damage parts from textual trigger entries directly from engine data."""
+    """Separate structured damage parts from textual trigger entries directly from engine data."""
     damage_parts = []
     rule_entries = []
     for entry in entries:
         if isinstance(entry, dict) and entry.get("hidden"):
             continue
+        if isinstance(entry, dict) and isinstance(entry.get("damage_part"), dict):
+            spec = entry["damage_part"]
+            amount = spec.get("amount")
+            grade = spec.get("grade", "normal")
+            aoe = bool(spec.get("aoe", False))
+            formatted = format_damage_part(amount, grade, aoe=aoe)
+            damage_parts.append({
+                "amount": amount,
+                "grade": grade,
+                "aoe": aoe,
+                "text": formatted,
+            })
+            desc = (entry.get("description") or "").strip()
+            if desc and desc not in (formatted, f"【命中时】{formatted}"):
+                rule_entries.append(desc)
+            continue
         if isinstance(entry, str):
             part = damage_part(entry)
             if part is not None:
                 amount, grade = part
-                name = GRADE_NAMES[grade]
                 damage_parts.append({
                     "amount": amount,
                     "grade": grade,
-                    "text": f"{amount}点{name}伤害",
+                    "aoe": False,
+                    "text": format_damage_part(amount, grade),
                 })
                 continue
             independent = independent_damage_part(entry)
             if independent is not None:
                 amount, opcode = independent
                 grade = "lightcore" if opcode is OpCode.LIGHTCORE_DAMAGE else "real"
-                name = "光点" if grade == "lightcore" else "真实"
                 damage_parts.append({
                     "amount": amount,
                     "grade": grade,
-                    "text": f"{amount}点{name}伤害",
+                    "aoe": False,
+                    "text": format_damage_part(amount, grade),
                 })
                 continue
         text = describe_entry(entry)
         if text:
             rule_entries.append(text)
+    damage_parts.sort(key=lambda p: (0 if p["grade"] == "normal" and not p.get("aoe") else 1 if p["grade"] == "normal" else 2))
     return damage_parts, rule_entries
 
 
@@ -126,12 +164,18 @@ def _passives(specs):
     return result
 
 
-def _visible_card(card):
+def _visible_card(card, *, used=False):
     details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
+    live_dice = [_live_die(die) for die in (card.instantiated_dice or ()) if die is not None]
     destroyed = sorted({die.position for die in card.instantiated_dice or () if die and die.destroyed})
     return {**details, "pre_reveal": card.can_open_pre_reveal,
             "character_id": card.character.id, "borrowed": card.printed_owner is not card.character,
             "destroyed_die_positions": destroyed,
+            "destroyed": bool(card.destroyed),
+            "range_deficit": card.range_deficit,
+            "used": bool(used),
+            "current_dice_index": card.current_dice_index,
+            "live_dice": live_dice,
             "instance_id": card.instance_id, "cost": card.cost, "state": card.state.name.lower()}
 
 
@@ -151,9 +195,11 @@ def _live_die(die):
         "position": die.position, "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "level": die.level.value if resolved else None, "roll_max": die.roll_max if resolved else None,
         "base_value": die.base_value, "rolled_value": die.value or None,
+        "multiplier": die.multiplier, "final_bonus": die.final_bonus, "calc_formula": die.calc_formula,
         "final_score": die.final_score, "clash_score": die.clash_score,
         "result": die.clash_result, "win_branch_skipped": die.win_branch_skipped,
         "critical": die.critical, "destroyed": die.destroyed, "hit_index": die.hit_index,
+        "landed_hits": die.landed_hits, "is_repeat": die.is_repeat,
     }
 
 
@@ -415,7 +461,7 @@ class Displayer:
             "pulled_card_id": slot.pulled_card.id if slot.pulled_card else None,
             "resolved_target_id": slot.resolved_target.id if slot.resolved_target else None,
             "sides": [{"side": p.side, "cards": [
-                {**_visible_card(c), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)]}
+                {**_visible_card(c, used=c in self._game.used_cards), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)]}
                       for p in self._game.players],
         }
 
@@ -524,7 +570,7 @@ class Displayer:
         return _board_visible_to(card, self._viewer)
 
     def _board_card(self, card):
-        return _visible_card(card) if self._board_visible(card) else {"hidden": True}
+        return _visible_card(card, used=card in self._game.used_cards) if self._board_visible(card) else {"hidden": True}
 
     def _suspended(self):
         game = self._game
@@ -573,7 +619,11 @@ class Displayer:
                 "play_mode": space.space[index].play_mode(card) if (early or instant) and card is not None else None,
                 "range_deficit": card.range_deficit if card is not None else 0,
                 "character_id": card.character.id if card is not None else None,
+                "character_name": card.character.name if card is not None else None,
                 "target_id": target.id if target is not None and card is not None else None,
+                "target_name": target.name if target is not None and card is not None else None,
+                "paid": pipe.paid,
+                "payment": dict(pipe.payment) if isinstance(pipe.payment, dict) else None,
                 "die_number": card.current_dice_index + 1 if die is not None else None,
                 "die": _live_die(die),
             })

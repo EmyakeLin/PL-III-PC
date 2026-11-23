@@ -610,7 +610,8 @@
                 },
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】2光点；环境同调达到3时，光点伤害+1",
+                  "damage_part": {"amount": 2, "grade": "lightcore"},
+                  "description": "【命中时】环境同调达到3时，光点伤害+1",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -898,7 +899,8 @@
                     },
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】1/3",
+                      "damage_part": {"amount": "目标生命上限1/3（向上取整）", "grade": "concept"},
+                      "description": "目标生命上限1/3（向上取整） 超穿甲",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -939,7 +941,7 @@
                 "3物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "【命中时】施加等同于（环境同调-1）的领域压制",
+                  "description": "【命中时】施加等同于（环境同调-1）的环境压制",
                   "operation": {
                     "op": "program",
                     "code": ["$event.target","环境压制","$self","环境同调","STATUS_COUNT",1,"SUB",0,"MAX","STATUS"]
@@ -1023,7 +1025,8 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】3光点群伤；若生命值高于6，则消耗3生命值以减少6环境压制、光点伤害+6",
+                  "damage_part": {"amount": 3, "grade": "lightcore", "aoe": true},
+                  "description": "【命中时】若生命值高于6，则消耗3生命值以减少6环境压制、光点伤害+6",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1053,7 +1056,7 @@
           "entries": [
             {
               "trigger": "after_skill_use",
-              "description": "【使用后】目标下回合第一交锋中的骰子若变得点数不高于8则使其变为空白骰子（最高话语权）",
+              "description": "【使用后】目标下回合第一交锋中的骰子若变动点数不高于8则使其变为空白骰子（最高话语权）",
               "operation": {
                 "op": "program",
                 "code": [
@@ -1194,7 +1197,8 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】（能源值-1）光点；若造成光点形态群崩塌，则额外使目标光点形态群完整度上限-4；若造成形态群崩塌时目标生命值不高于50%（向上取整），则追加3次即死伤害",
+                  "damage_part": {"amount": "(能源值-1)", "grade": "lightcore"},
+                  "description": "【命中时】若造成光点形态群崩塌，则额外使目标光点形态群完整度上限-4；若造成形态群崩塌时目标生命值不高于50%（向上取整），则追加3次即死伤害",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1274,7 +1278,8 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】群1光点",
+                  "damage_part": {"amount": 1, "grade": "lightcore", "aoe": true},
+                  "description": "群体 1 光点",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",

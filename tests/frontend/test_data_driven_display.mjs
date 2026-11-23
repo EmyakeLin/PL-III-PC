@@ -12,6 +12,7 @@ const {
   classifyTriggerSeries,
   parseTriggerSegments,
   formatDieRange,
+  formatDamagePart,
   resolveDieDamageParts,
   buildRichVerbatimText,
   buildUnifiedDieRow,
@@ -95,7 +96,13 @@ test('buildRichVerbatimText colors each trigger series distinctly and mutes when
   }
 });
 
-test('die row reads type, numeric range, and structured damage_parts only (never regex-guesses text)', () => {
+test('die row reads type, numeric range, and structured damage_parts with normal first and concise labels', () => {
+  assert.equal(formatDamagePart({ amount: 1, grade: 'normal' }), '1');
+  assert.equal(formatDamagePart({ amount: 1, grade: 'real' }), '1 真实');
+  assert.equal(formatDamagePart({ amount: 1, grade: 'normal', aoe: true }), '群体 1');
+  assert.equal(formatDamagePart({ amount: 1, grade: 'pierce', aoe: true }), '群体 1 穿甲');
+  assert.equal(formatDamagePart({ amount: '(能源值-1)', grade: 'lightcore' }), '(能源值-1) 光点');
+
   const structuredDie = {
     type: 'pierce',
     printed_level: 4,
@@ -104,33 +111,37 @@ test('die row reads type, numeric range, and structured damage_parts only (never
     multiplier: 2,
     final_bonus: 1,
     damage_parts: [
-      { amount: 2, grade: 'pierce', text: '2点穿甲伤害' },
-      { amount: 1, grade: 'lightcore', text: '1点光点伤害' },
+      { amount: 2, grade: 'pierce' },
+      { amount: 1, grade: 'normal' },
+      { amount: '(能源值-1)', grade: 'lightcore' },
     ],
     entries: ['【命中时】获得1能源。'],
   };
   assert.equal(formatDieRange(structuredDie), '(2+1~12)×2+1');
   assert.equal(formatDieRange({ type: 'skip' }), 'SKIP');
-  assert.equal(resolveDieDamageParts(structuredDie).length, 2);
+  const resolved = resolveDieDamageParts(structuredDie);
+  assert.deepEqual(resolved.map((p) => p.text), ['1', '2 穿甲', '(能源值-1) 光点']);
 
-  // Both narrow (slim hand card) and wide (codex/hover) widths MUST use the single canonical wording, never "2穿甲"/"1光点"
+  // Both narrow (slim hand card) and wide (codex/hover) widths MUST use the same concise labels with normal first
   for (const w of [160, 260]) {
     const row = buildUnifiedDieRow(structuredDie, { width: w, dense: w < 194 });
     const texts = collectTexts(row);
     assert.ok(texts.some((t) => t.text === '(2+1~12)×2+1' && t.fill === DIE_STYLE.pierce.color));
-    assert.ok(texts.some((t) => t.text === '2点穿甲伤害' && t.fill === DAMAGE_GRADE_STYLE.pierce.color));
-    assert.ok(texts.some((t) => t.text === '1点光点伤害' && t.fill === DAMAGE_GRADE_STYLE.lightcore.color));
-    assert.ok(!texts.some((t) => t.text === '2穿甲' || t.text === '1光点'));
+    const normalIdx = texts.findIndex((t) => t.text === '1' && t.fill === DAMAGE_GRADE_STYLE.normal.color);
+    const pierceIdx = texts.findIndex((t) => t.text === '2 穿甲' && t.fill === DAMAGE_GRADE_STYLE.pierce.color);
+    const lightIdx = texts.findIndex((t) => t.text === '(能源值-1) 光点' && t.fill === DAMAGE_GRADE_STYLE.lightcore.color);
+    assert.ok(normalIdx >= 0 && pierceIdx > normalIdx && lightIdx > pierceIdx);
+    assert.ok(!texts.some((t) => t.text.includes('点普通伤害') || t.text.includes('点穿甲伤害')));
     assert.ok(texts.some((t) => t.text === '[ 命中时 ]' && t.fill === TRIGGER_STYLE.hit.color));
   }
 
-  // Pairwise contrast: raw "2穿甲" inside entries with empty damage_parts MUST NOT become a damage badge!
+  // Pairwise contrast: raw "2 穿甲" inside entries with empty damage_parts MUST NOT become a damage badge!
   const textOnlyDie = {
     type: 'slash',
     printed_level: 3,
     roll_max: 8,
     damage_parts: [],
-    entries: ['2穿甲'],
+    entries: ['2 穿甲'],
   };
   assert.equal(resolveDieDamageParts(textOnlyDie).length, 0);
   const row2 = buildUnifiedDieRow(textOnlyDie, { width: 260 });
@@ -158,7 +169,7 @@ test('buildFullCard and buildBoardCardTag read card.name, card.cost, and dice da
         type: 'slash',
         printed_level: 2,
         roll_max: 6,
-        damage_parts: [{ amount: 3, grade: 'concept', text: '3点超穿甲伤害' }],
+        damage_parts: [{ amount: 3, grade: 'concept', text: '3 超穿甲' }],
         entries: ['【拼点失败】驻留。'],
       },
     ],
@@ -178,5 +189,5 @@ test('buildFullCard and buildBoardCardTag read card.name, card.cost, and dice da
   assert.ok(fullTexts.some((t) => t.text === '[ 使用时 ]' && t.fill === TRIGGER_STYLE.use.color));
   assert.ok(fullTexts.some((t) => t.text === '[ 拼点胜利 ]' && t.fill === TRIGGER_STYLE.clash_win.color));
   assert.ok(fullTexts.some((t) => t.text === '[ 拼点失败 ]' && t.fill === TRIGGER_STYLE.clash_lose.color));
-  assert.ok(fullTexts.some((t) => t.text === '3点超穿甲伤害' && t.fill === DAMAGE_GRADE_STYLE.concept.color));
+  assert.ok(fullTexts.some((t) => t.text === '3 超穿甲' && t.fill === DAMAGE_GRADE_STYLE.concept.color));
 });

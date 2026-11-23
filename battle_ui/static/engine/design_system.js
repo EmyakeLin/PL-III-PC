@@ -115,11 +115,11 @@ export const DIE_STYLE = {
 };
 
 export const DAMAGE_GRADE_STYLE = {
-  normal:    { label: '普通伤害', color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
-  pierce:    { label: '穿甲伤害', color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
-  concept:   { label: '超穿甲伤害', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
-  lightcore: { label: '光点伤害', color: 0x1b7fa8, bg: 0xeaf6fb, border: 0x82c4df },
-  real:      { label: '真实伤害', color: 0x8f2447, bg: 0xfaebf0, border: 0xd48aa2 },
+  normal:    { label: '',      color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
+  pierce:    { label: '穿甲',   color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
+  concept:   { label: '超穿甲', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
+  lightcore: { label: '光点',   color: 0x1b7fa8, bg: 0xeaf6fb, border: 0x82c4df },
+  real:      { label: '真实',   color: 0x8f2447, bg: 0xfaebf0, border: 0xd48aa2 },
 };
 
 export const SHIELD_STYLE = {
@@ -503,21 +503,45 @@ export function exactSkillTraitSpecs(card) {
 }
 
 /**
+ * Canonical concise damage label: '1', '1 真实', '群体 1', '群体 1 穿甲', '(能源值-1) 光点'.
+ */
+export function formatDamagePart(part) {
+  const grade = part?.grade || 'normal';
+  const style = DAMAGE_GRADE_STYLE[grade] || DAMAGE_GRADE_STYLE.normal;
+  const amount = part?.amount ?? 0;
+  const tokens = [];
+  if (part?.aoe) tokens.push('群体');
+  tokens.push(String(amount));
+  if (style.label) tokens.push(style.label);
+  return tokens.join(' ');
+}
+
+/**
  * Direct structured reader for `die.damage_parts` (ZERO regex parsing!).
+ * Normal damage parts are stably sorted to the first position.
  */
 export function resolveDieDamageParts(die) {
   const raw = Array.isArray(die?.damage_parts) ? die.damage_parts : [];
-  return raw.map((part) => {
+  const mapped = raw.map((part, idx) => {
     const grade = part.grade || 'normal';
+    const aoe = Boolean(part.aoe);
     const style = DAMAGE_GRADE_STYLE[grade] || DAMAGE_GRADE_STYLE.normal;
     const amount = part.amount ?? 0;
     return {
       amount,
       grade,
-      text: part.text || `${amount}点${style.label}`,
+      aoe,
+      text: part.text || formatDamagePart({ amount, grade, aoe }),
       style,
+      _idx: idx,
     };
   });
+  mapped.sort((a, b) => {
+    const ra = a.grade === 'normal' ? (a.aoe ? 1 : 0) : 2;
+    const rb = b.grade === 'normal' ? (b.aoe ? 1 : 0) : 2;
+    return ra - rb || a._idx - b._idx;
+  });
+  return mapped.map(({ _idx, ...rest }) => rest);
 }
 
 // ── Clean Architectural Vector Iconography ──
@@ -1046,15 +1070,18 @@ export function buildTraitPills(card, maxWidth, { compact = false } = {}) {
 }
 
 /**
- * Canonical Damage Part Badge ("1点普通伤害" / "2点穿甲伤害" / "3点超穿甲伤害" / "1点光点伤害" / "2点真实伤害").
- * Always uses the single canonical wording — compact mode only adjusts typography size, never shortens words.
+ * Canonical Damage Part Badge ("1" / "2 穿甲" / "3 超穿甲" / "1 光点" / "1 真实" / "群体 1" / "(能源值-1) 光点").
+ * Normal damage is always rendered first as a bare number.
  */
-export function buildDamageBadge(badge, { compact = false, muted = false } = {}) {
+export function buildDamageBadge(badge, { compact = false, muted = false, maxWidth = null } = {}) {
   const c = new PIXI.Container();
   const st = badge.style;
-  const label = badge.text || `${badge.amount ?? 0}点${st.label}`;
+  const label = badge.text || formatDamagePart(badge);
   const fontSize = compact ? 9.4 : 10.6;
-  const pillH = compact ? 15 : 18;
+  const basePillH = compact ? 15 : 18;
+  const iconSpace = compact ? 0 : 10;
+  const padX = compact ? 6 : 10;
+  const wrapWidth = maxWidth ? Math.max(24, maxWidth - padX - iconSpace) : null;
 
   const txt = new PIXI.Text({
     text: label,
@@ -1063,10 +1090,11 @@ export function buildDamageBadge(badge, { compact = false, muted = false } = {})
       fontSize,
       fontWeight: '800',
       fill: muted ? INK.muted : st.color,
+      ...(wrapWidth ? { wordWrap: true, breakWords: true, wordWrapWidth: wrapWidth, lineHeight: fontSize + 3 } : {}),
     },
   });
-  const iconSpace = compact ? 0 : 10;
-  const pw = Math.ceil(txt.width) + (compact ? 6 : 10) + iconSpace;
+  const pw = Math.min(maxWidth || Infinity, Math.ceil(txt.width) + padX + iconSpace);
+  const pillH = Math.max(basePillH, Math.ceil(txt.height) + 4);
 
   const g = new PIXI.Graphics();
   g.roundRect(0, 0, pw, pillH, 3).fill({ color: muted ? INK.paperSoft : st.bg, alpha: 0.95 });
@@ -1107,6 +1135,38 @@ export function buildDamageBadge(badge, { compact = false, muted = false } = {})
  *  - Left: Framed Die Emblem + Bold Exact Roll Range
  *  - Right: Inline Damage Spec + Rich Verbatim Trigger Entries
  */
+export function formatLiveDieOutcome(liveDie, { concealScore = false, concealOutcome = false } = {}) {
+  if (!liveDie) return null;
+  if (liveDie.destroyed) return { text: '碎裂', color: 0xb83a2a, bg: 0xfdece9 };
+  if (liveDie.result === 'skip') return { text: '跳过', color: INK.muted, bg: INK.paperSoft };
+  if (concealScore) return null;
+  const rawScore = liveDie.clash_score ?? liveDie.final_score ?? liveDie.rolled_value;
+  if (rawScore === null || rawScore === undefined) return null;
+  const scorePart = String(rawScore);
+  if (concealOutcome) {
+    return { text: `=${scorePart}`, color: INK.primary, bg: INK.paperSoft };
+  }
+  const resMap = { win: '胜', lose: '负', draw: '平' };
+  const resTxt = resMap[liveDie.result] || (liveDie.landed_hits > 0 ? '命中' : '');
+  const crit = liveDie.critical ? '暴' : '';
+  const text = [scorePart, resTxt, crit].filter(Boolean).join('');
+  const color = liveDie.result === 'win'
+    ? INK.goldDeep
+    : liveDie.result === 'lose'
+      ? 0xb83a2a
+      : liveDie.result === 'draw'
+        ? INK.secondary
+        : liveDie.landed_hits > 0
+          ? 0x2c6e49
+          : INK.primary;
+  const bg = liveDie.result === 'win'
+    ? 0xfef0c4
+    : liveDie.result === 'lose'
+      ? 0xfdece9
+      : INK.paperSoft;
+  return { text, color, bg };
+}
+
 export function buildUnifiedDieRow(die, {
   width = 240,
   active = false,
@@ -1116,6 +1176,9 @@ export function buildUnifiedDieRow(die, {
   compact = false,
   showDivider = true,
   isBlanked = false,
+  liveDie = null,
+  concealScore = false,
+  concealOutcome = false,
 } = {}) {
   const root = new PIXI.Container();
   const dType = isBlanked ? 'blank' : die.type;
@@ -1129,6 +1192,7 @@ export function buildUnifiedDieRow(die, {
   const leftColW = slim ? 66 : dense ? 76 : compact ? 82 : 92;
   const rightX = leftColW + 5;
   const rightW = Math.max(76, width - rightX - 3);
+  const liveBadge = formatLiveDieOutcome(liveDie, { concealScore, concealOutcome });
 
   let dmgNode = null;
   if (damageParts.length) {
@@ -1137,7 +1201,7 @@ export function buildUnifiedDieRow(die, {
     let dy = 0;
     let maxRowH = 0;
     for (const part of damageParts) {
-      const b = buildDamageBadge(part, { compact: slim, muted: spent });
+      const b = buildDamageBadge(part, { compact: slim, muted: spent, maxWidth: rightW });
       if (dx > 0 && dx + b._width > rightW) {
         dx = 0;
         dy += maxRowH + 3;
@@ -1153,7 +1217,7 @@ export function buildUnifiedDieRow(die, {
 
   const dieRules = isBlanked ? [] : [...(die.range_traits || [])];
   if (!isBlanked && die.resource_cost) {
-    dieRules.push(`【用骰前】消耗${die.resource_cost.amount}${die.resource_cost.status}。`);
+    dieRules.push(`消耗${die.resource_cost.amount}${die.resource_cost.status}。`);
   }
   if (destroyed) dieRules.unshift('已摧毁');
   dieRules.push(...restEntries);
@@ -1173,7 +1237,7 @@ export function buildUnifiedDieRow(die, {
   else if (dmgNode) rightContentH = dmgNode._height;
   else if (richNode) rightContentH = richNode._height;
 
-  const baseMinH = tight ? 26 : 32;
+  const baseMinH = liveBadge ? (tight ? 34 : 40) : (tight ? 26 : 32);
   const rowH = Math.max(baseMinH, rightContentH + (tight ? 8 : 10));
 
   const g = new PIXI.Graphics();
@@ -1190,7 +1254,9 @@ export function buildUnifiedDieRow(die, {
     g.moveTo(6, rowH).lineTo(width - 2, rowH).stroke({ width: 0.9, color: INK.hairline });
   }
 
-  const leftMidY = rightContentH > baseMinH ? Math.min(rowH / 2, baseMinH / 2 + 2) : rowH / 2;
+  const leftMidY = liveBadge
+    ? (tight ? 11 : 13)
+    : (rightContentH > baseMinH ? Math.min(rowH / 2, baseMinH / 2 + 2) : rowH / 2);
   drawUnifiedDieFrame(g, dType, slim ? 14 : 16, leftMidY, slim ? 5.6 : tight ? 6.2 : 7.2, { muted: spent, active });
 
   const rngX = slim ? 24 : 28;
@@ -1210,6 +1276,27 @@ export function buildUnifiedDieRow(die, {
   rngTxt.anchor.set(0, 0.5);
   rngTxt.position.set(rngX, leftMidY);
   root.addChild(g, rngTxt);
+
+  if (liveBadge) {
+    const bt = new PIXI.Text({
+      text: liveBadge.text,
+      style: {
+        fontFamily: FONT_NUM,
+        fontSize: slim ? 9.5 : 10.2,
+        fontWeight: '900',
+        fill: liveBadge.color,
+      },
+    });
+    const bw = Math.min(leftColW - 8, Math.ceil(bt.width) + 8);
+    if (bt.width > bw - 6) bt.scale.set((bw - 6) / bt.width);
+    const by = leftMidY + (tight ? 9 : 11);
+    g.roundRect(7, by, bw, 14, 3)
+      .fill({ color: liveBadge.bg, alpha: 0.96 })
+      .stroke({ width: 0.9, color: liveBadge.color, alpha: 0.65 });
+    bt.anchor.set(0.5);
+    bt.position.set(7 + bw / 2, by + 7);
+    root.addChild(bt);
+  }
 
   let ry = Math.max(4, (rowH - rightContentH) / 2);
   if (dmgNode) {
