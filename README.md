@@ -20,11 +20,13 @@ python -m battle_mcp --lobby
 | 挑战模式 | 选择结构化载体或幽兰残雪·澜清，再选择自己的阵容。每场挑战固定对手阵容和专用 bot 脚本。 |
 | 界限战斗、砺战合约 | 已预留接口，暂未开放对局。 |
 
-每次点 **创建房间** 都会打开独立的战桌。用浏览器返回大厅可以继续建房，也可以在 **本页创建的房间** 中重进或关闭其中一桌。直接打开原来的私人链接也能继续游戏。房间在当前服务进程内保存，停止服务会结束全部房间。
+在游戏主菜单选模式，再选玩法或挑战对手。编队时可以先看角色、被动和完整技能牌面，再点击 **编入**。热座双方各选 1～3 人，普通单人可以编排双方，挑战的对手固定。点 **返回玩法** 可以改选，本次菜单里已选的阵容会保留。双方阵容齐备后点 **开战**，服务端才会创建并启动这一桌。
+
+正在对战时，战桌底边的 **返回大厅** 会保留当前局面。选 **继续对局** 可回到本标签页保存的战桌，或选择 **结束** 并确认关闭某一局。私人邀请也能直接回到原局。房间在当前服务进程内保存，停止服务会结束全部房间。
 
 默认在本机的 8766 端口监听。`--lobby --port 0` 自动选用空闲端口，`--lobby --lan` 允许同一局域网的设备访问大厅。原有的本机 `--bot` 和 `--challenge` 命令也会打印大厅入口。
 
-接入其他客户端时，`GET /api/modes` 返回四种模式及当前可选玩法。`POST /api/rooms` 接收例如 `{"mode":"regular","variant":"hotseat"}` 或 `{"mode":"challenge","variant":"carrier"}`，以 HTTP 201 返回房间 ID 和带私人凭据的相对地址 `play_url`。常规人机使用 `solo`，澜清挑战使用 `lan_qing`。房间 API 挂在 `/rooms/<id>/api/` 下。以创建时的 Bearer 凭据调用 `DELETE /api/rooms/<id>` 会关闭该房间。预留的 `limit_battle` 和 `combat_contract` 建房时返回 HTTP 501。
+接入其他客户端时，`GET /api/modes` 返回模式目录。`GET /api/lineup?mode=challenge&variant=carrier` 返回该挑战的角色图鉴与固定对手，只读取编队资料。确定开战后，向 `POST /api/rooms` 提交例如 `{"mode":"challenge","variant":"carrier","roster":[["plan_b_annolin"],["structured_carrier"]]}`，以 HTTP 201 取得房间 ID 和私人邀请 `play_url`。省略 `roster` 会沿用旧客户端的建房流程。房间 API 挂在 `/rooms/<id>/api/` 下。以创建时的 Bearer 凭据调用 `DELETE /api/rooms/<id>` 会关闭该房间。预留的 `limit_battle` 和 `combat_contract` 建房时返回 HTTP 501。
 
 ### 单人挑战
 

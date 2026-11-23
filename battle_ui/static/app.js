@@ -13,6 +13,9 @@ import { TabletopAudio } from './engine/audio.js';
 import { TabletopPhysics } from './engine/physics.js';
 import { ThreeWorld } from './engine/three_world.js';
 import { GameDirector } from './engine/game_director.js';
+import { makeSealButton } from './engine/table_overlays.js';
+import { FONT_UI, INK } from './engine/design_system.js';
+import { savedRooms, saveRoom } from './engine/lobby_rooms.js';
 
 async function boot() {
   const threeCanvas = document.getElementById('three-canvas');
@@ -51,20 +54,53 @@ async function boot() {
   const token = new URLSearchParams(location.hash.slice(1)).get('token');
   const transport = isRoom ? new RoomSeatTransport(token, baseUrl) : new LocalBattleTransport(baseUrl, token);
   const openBattleRecord = isRoom ? bindBattleRecord(transport) : null;
-  const director = new GameDirector(app, physics, threeWorld, audio, transport, openBattleRecord);
+  const hosted = baseUrl.startsWith('/rooms/');
+  const returnToLobby = hosted ? () => {
+    const id = baseUrl.split('/').pop();
+    if (token && director.state && !savedRooms().some(r => r.id === id)) {
+      saveRoom({ id, label: roomName.text, play_url: location.pathname + location.hash });
+    }
+    location.assign('/lobby/');
+  } : null;
+  const director = new GameDirector(app, physics, threeWorld, audio, transport, openBattleRecord, returnToLobby);
+  const footerHeight = hosted ? 38 : 0;
+  let footer, footerPaper, roomName;
+  if (hosted) {
+    footer = new PIXI.Container();
+    footerPaper = new PIXI.Graphics();
+    roomName = new PIXI.Text({ text: '', style: { fontFamily: FONT_UI, fontSize: 14, fill: INK.secondary } });
+    roomName.position.set(128, 9);
+    const leave = makeSealButton('返回大厅', { width: 98, height: 27, fontSize: 13, accent: INK.goldDeep,
+      onClick: returnToLobby });
+    leave.position.set(16, 4);
+    footer.addChild(footerPaper, roomName, leave);
+    app.stage.addChild(footer);
+  }
 
   const handleResize = () => {
     const w = window.innerWidth;
-    const h = window.innerHeight;
+    const h = window.innerHeight - footerHeight;
     threeWorld.resize(w, h);
     physics.resize(w, h);
-    app.renderer.resize(w, h);
+    app.renderer.resize(w, window.innerHeight);
     director.resize(w, h);
+    if (hosted) {
+      threeCanvas.style.height = h + 'px';
+      footer.y = h;
+      footerPaper.clear().rect(0, 0, w, footerHeight).fill(INK.paperSoft)
+        .moveTo(0, 0).lineTo(w, 0).stroke({ color: INK.line, width: 1 });
+    }
   };
   window.addEventListener('resize', handleResize);
+  if (hosted) handleResize();
+
+  const applyFrame = state => {
+    director.applyState(state, { isInitial: !director.state });
+    if (roomName) roomName.text = state.challenge || (isRoom ? '单人对战' : '热座对战');
+  };
 
   if (isRoom) {
-    transport.follow(state => director.applyState(state, { isInitial: !director.state }), error => {
+    transport.follow(applyFrame, error => {
       const message = error?.status === 404 ? '房间已关闭，请返回大厅。'
         : error?.status === 403 ? '邀请已失效，请用本局的私人邀请。'
         : error ? '房间连接中断，正在重连。' : '已重新连接房间。';
@@ -73,7 +109,7 @@ async function boot() {
   } else {
     try {
       const initial = await transport.fetchState();
-      director.applyState(initial, { isInitial: true });
+      applyFrame(initial);
     } catch (err) {
       director.showToast(`连接战局失败：${err.message || err}`, 0xcf4932, 6);
     }

@@ -10,9 +10,9 @@ from .match import BattleMatch
 class BattleSession:
     """A single table shared by the browsers connected to this local process."""
 
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, *, roster=None):
         self.seed = seed
-        self.match = BattleMatch(seed=seed)
+        self.match = BattleMatch(roster, seed=seed, initial_handoff=roster is not None)
         self.revision = secrets.randbits(40)
         self.lock = Lock()
 

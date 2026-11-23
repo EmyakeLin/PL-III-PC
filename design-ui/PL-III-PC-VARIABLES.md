@@ -195,3 +195,15 @@
 | `human_seats`, `can_pause`, `paused_by`, `ownPause` | 真人席位、当前席能否暂停、持有暂停的席位和本席的继续权限。 |
 | `_beat_timer`, `playback`, `pausedText` | 真人房间下一拍的计时器、暂停按钮及对应的行动提示。 |
 | `pendingFieldAction` | 同机玩家在上一拍请求返回前点了场内行动，收到新局面后在仍可响应的公开时点打开面板。 |
+
+### 大厅、编队与离桌
+
+| 所属位置 | 变量或事件 | 含义 |
+| --- | --- | --- |
+| 大厅导航 | `page`, `mode`, `variant`, `pageNumber`, `closing` | 当前菜单页、所选模式和玩法、从零起的列表页码，以及正在确认结束的那一桌。 |
+| 房间请求 | `pending`, `previewRequest` | 挂起时防止重复开战或结束对局。读取编队资料的请求另存取消句柄，返回后忽略迟到的响应。 |
+| 编队 | `lineup`, `drafts`, `draft.teams`, `draft.side`, `hero` | 该玩法的角色资料、按玩法保存的本次菜单草稿、双方按出战顺序排列的名单、当前编辑的一方、正在阅读的角色。 |
+| 图鉴 | `faction`, `gallery`, `inspect`, `quantity`, `quantityInput` | 阵营筛选、角色栏与详情栏的纵向滚动距离（场景像素）、每次编入人数以及仍在输入的数量文本。 |
+| 编队交互 | `onInspectChar`, `onToggleChar`, `onRemoveFromSide`, `lockedIds`, `title` | 点头像查看、按编入按钮修改当前队伍、点移出标记减少一名、固定对手的角色编号，以及当前玩法的名称。 |
+| 继续对局 | `rooms`, `id`, `play_url`, `label`, `matchup` | 当前标签页保存的私人邀请。用房间编号去重，玩法名和对阵双方帮助辨认同一玩法下的不同战桌。 |
+| 战桌 | `footerHeight`, `footer`, `roomName` | 大厅所开战桌底部留给导航的高度（38 屏幕像素）、导航容器和本局玩法名。其余高度供战场、物理和交互布局使用。 |

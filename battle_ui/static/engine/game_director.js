@@ -121,13 +121,14 @@ function clearContainer(c) {
 }
 
 export class GameDirector {
-  constructor(app, physics, threeWorld, audio, transport, openBattleRecord = null) {
+  constructor(app, physics, threeWorld, audio, transport, openBattleRecord = null, returnToLobby = null) {
     this.app = app;
     this.physics = physics;
     this.three = threeWorld;
     this.audio = audio;
     this.transport = transport;
     this.openBattleRecord = openBattleRecord;
+    this.returnToLobby = returnToLobby;
 
     this.w = app.screen.width;
     this.h = app.screen.height;
@@ -3637,14 +3638,26 @@ export class GameDirector {
     if (this.rosterModal) {
       const m = this.rosterModal;
       const cap = m.maxPerSide ?? 10;
+      const leaveSetup = !this.state.started && this.returnToLobby;
       const roomLobby = this.transport.isRoom ? {
         editableSides: this.state.editable_sides,
+        title: this.state.challenge || (this.state.bot_side ? '单人对战' : null),
+        lockedIds: this.state.challenge ? m.team2 : [],
+        returnLabel: leaveSetup ? '返回大厅' : null,
         sideNames: this.state.bot_side ? { 1: '我的角色', 2: this.state.challenge ? '挑战对手' : '电脑对手' } : null,
         openTeams: Boolean(this.state.bot_side),
         quantity: m.quantity,
         quantityInput: m.quantityInput,
       } : null;
       const canEdit = side => !roomLobby || roomLobby.editableSides.includes(side);
+      const inspectCharacter = ch => {
+        if (m.hoveredChar?.id === ch.id) return;
+        m.hoveredChar = ch;
+        m.inspectScrollY = 0;
+        this.hoveredCard = null;
+        this._renderInspection();
+        this._rebuildOverlay();
+      };
       const ov = buildRosterOverlay(w, h, {
         catalog: this.state.roster_catalog || [],
         team1: m.team1,
@@ -3746,15 +3759,8 @@ export class GameDirector {
           this.audio.coinClink(0.95);
           this._rebuildOverlay();
         },
-        onHoverChar: (ch) => {
-          if (m.hoveredChar?.id !== ch.id) {
-            m.hoveredChar = ch;
-            m.inspectScrollY = 0;
-            this.hoveredCard = null;
-            this._renderInspection();
-            this._rebuildOverlay();
-          }
-        },
+        onInspectChar: roomLobby?.openTeams ? inspectCharacter : null,
+        onHoverChar: roomLobby?.openTeams ? null : inspectCharacter,
         onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
           const cid = card?.character_id || m.hoveredChar?.id || null;
           this.hoveredCard = card
@@ -3780,6 +3786,7 @@ export class GameDirector {
           await this._sendAction('new', { roster: teams });
         },
         onCancel: () => {
+          if (roomLobby && leaveSetup) return leaveSetup();
           this.rosterModal = null;
           this.hoveredCard = null;
           this._renderInspection();
@@ -3955,8 +3962,10 @@ export class GameDirector {
     const room = this.transport.isRoom ? this.state : null;
     if (room && (!room.side || (!room.can_rematch && !room.can_restart && (room.started || room.ready)))) return;
     const players = this.state?.frame?.players || [];
-    const t1 = players[0]?.characters?.map((c) => c.printed_id || c.id) || ['plan_b_annolin'];
-    const t2 = players[1]?.characters?.map((c) => c.printed_id || c.id) || ['waa_lake'];
+    const awaitingLineup = this.returnToLobby && room?.bot_side && !room.started;
+    const team = index => awaitingLineup && room.editable_sides.includes(index + 1)
+      ? [] : (players[index]?.characters || []).map(c => c.printed_id || c.id);
+    const t1 = team(0), t2 = team(1);
     const catalog = this.state?.roster_catalog || [];
     this.activeHeroPanel = null;
     this.passiveDrawer = null;

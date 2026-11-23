@@ -23,6 +23,18 @@ html, body {
   pointer-events: none;
 }
 
+#menu-status {
+  position: fixed;
+  inset: auto 1rem 1rem;
+  z-index: 3;
+  margin: 0 auto;
+  width: fit-content;
+  font: 16px/1.5 "Microsoft YaHei", sans-serif;
+  color: #3b322a;
+  background: #fffdf8;
+  padding: .5em 1em;
+}
+
 #pixi-canvas {
   z-index: 2;
   touch-action: none;

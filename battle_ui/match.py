@@ -145,14 +145,20 @@ def _roster_preview(spec, color=None, sprite_url=None):
     }
 
 
+def roster_art(pool):
+    colors = _assign_character_colors(pool)
+    sprites = _discover_character_sprites(pool)
+    catalog = [_roster_preview(spec, colors.get(cid), sprites.get(cid)) for cid, spec in pool.items()]
+    return colors, sprites, catalog
+
+
 class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
     def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False, extra_packs=()):
         pool = {spec["id"]: spec for spec in load_characters_from_packs(extra_packs=extra_packs)}
         teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
-        self._character_colors = _assign_character_colors(pool)
-        self._character_sprites = _discover_character_sprites(pool)
+        self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
         self._character_fx = discover_character_fx(pool, self._character_colors)
         self._fx_scripts = discover_fx_scripts()
         self._status_visuals = discover_status_visuals(pool)
@@ -163,10 +169,6 @@ class BattleMatch:
                 "color": self._character_colors.get(spec["id"]),
                 "sprite_url": self._character_sprites.get(spec["id"]),
             }
-            for spec in pool.values()
-        ]
-        self._roster_catalog = [
-            _roster_preview(spec, self._character_colors.get(spec["id"]), self._character_sprites.get(spec["id"]))
             for spec in pool.values()
         ]
         players = [Player(1, "玩家一"), Player(2, "玩家二")]

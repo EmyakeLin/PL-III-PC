@@ -1,8 +1,9 @@
 """Mode selection, private invitations and simultaneous tables on one listener."""
+import http.client
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from unittest.mock import patch
 
 from battle_mcp.bot import choose_move
@@ -22,14 +23,66 @@ class LobbyTests(PlaysChallenge, WireClient, unittest.TestCase):
         cls.addClassCleanup(worker.join)
         cls.addClassCleanup(cls.server.shutdown)
 
-    def create(self, mode, variant):
-        status, created = self.request("/api/rooms", {"mode": mode, "variant": variant})
+    def create(self, mode, variant, **setup):
+        status, created = self.request("/api/rooms", {"mode": mode, "variant": variant, **setup})
         self.assertEqual(status, 201, created)
         invite = urlsplit(created["play_url"])
         prefix = "/rooms/" + created["id"]
         self.assertEqual(invite.path, prefix + ("/table/" if variant == "hotseat" else "/canvas/"))
         token, = parse_qs(invite.fragment)["token"]
         return prefix, {"Authorization": "Bearer " + token}
+
+    def test_lobby_entry_serves_game_canvas_and_shared_picker(self):
+        def asset(path, content_type):
+            connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+            try:
+                connection.request("GET", path)
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200, path)
+                self.assertEqual(response.getheader("Content-Type").split(";")[0], content_type, path)
+                return response.read()
+            finally:
+                connection.close()
+
+        root = asset("/", "text/html")
+        self.assertEqual(root, asset("/lobby/", "text/html"))
+        self.assertIn(b'<canvas id="pixi-canvas"', root)
+        self.assertIn(b'src="/lobby/engine/lobby.js"', root)
+        menu = asset("/lobby/engine/lobby.js", "text/javascript")
+        for module in ("./table_overlays.js", "./card_print.js", "./stage_actors.js",
+                       "./lobby_rooms.js", "../vendor/pixi.min.mjs"):
+            self.assertIn(module.encode(), menu)
+            self.assertTrue(asset(urljoin("/lobby/engine/lobby.js", module), "text/javascript"))
+
+    def test_lineup_preview_has_printed_skills_and_never_opens_a_room(self):
+        with patch("battle_mcp.hosting.HostedRoom") as open_room:
+            for mode, variant in (("regular", "hotseat"), ("regular", "solo"), ("challenge", "carrier")):
+                status, data = self.request(f"/api/lineup?mode={mode}&variant={variant}", method="GET")
+                self.assertEqual(status, 200)
+                by_id = {c["id"]: c for c in data["catalog"]}
+                self.assertTrue(by_id["plan_b_annolin"]["skills"])
+                self.assertEqual("structured_carrier" in by_id, variant == "carrier")
+                self.assertEqual(data["fixed_opponents"], ["structured_carrier"] if variant == "carrier" else [])
+                self.assertEqual(data["hotseat"], variant == "hotseat")
+            self.assertEqual(self.request("/api/lineup?mode=limit_battle", method="GET")[0], 501)
+            open_room.assert_not_called()
+
+    def test_confirming_a_lineup_starts_exactly_the_selected_teams(self):
+        for mode, variant, teams in (
+                ("regular", "hotseat", [["plan_b_heck"], ["plan_b_annolin", "plan_b_heris"]]),
+                ("regular", "solo", [["plan_b_heris", "plan_b_heris"], ["plan_b_heck"]]),
+                ("challenge", "carrier", [["plan_b_annolin", "plan_b_heck"], ["structured_carrier"]])):
+            path, key = self.create(mode, variant, roster=teams)
+            if variant == "hotseat":
+                _, state = self.request(path + "/api/state", method="GET", **key)
+            else:
+                _, state = self.request(path + "/api/canvas/state", {}, **key)
+                self.assertTrue(state["started"])
+            self.assertEqual([[c["printed_id"] for c in p["characters"]] for p in state["frame"]["players"]], teams)
+        for teams in (([], ["structured_carrier"]), (["structured_carrier"], ["structured_carrier"]),
+                      (["plan_b_annolin"], ["lan_qing"])):
+            self.assertEqual(self.request("/api/rooms", {"mode": "challenge", "variant": "carrier",
+                                                         "roster": teams})[0], 400)
 
     def test_catalog_reserved_modes_and_invalid_variants(self):
         status, modes = self.request("/api/modes", method="GET")

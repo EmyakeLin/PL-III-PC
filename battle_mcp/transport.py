@@ -4,7 +4,7 @@ import json
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from battle_ui.assets import resolve_static
 
@@ -19,8 +19,6 @@ STATIC_DIR = Path(__file__).with_name("static")
 ASSETS = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
           "/style.css": ("style.css", "text/css"), "/desk": ("desk.html", "text/html"),
           "/desk.js": ("desk.js", "text/javascript"), "/desk.css": ("desk.css", "text/css")}
-LOBBY_ASSETS = {"/lobby/": ("lobby.html", "text/html"), "/lobby/lobby.js": ("lobby.js", "text/javascript"),
-                "/lobby/base.css": ("style.css", "text/css"), "/lobby/lobby.css": ("lobby.css", "text/css")}
 REVISION = {"type": "integer", "minimum": 0, "description": "当前己方 observe 返回的 revision。"}
 REQUEST_ID = {"type": "string", "minLength": 1, "maxLength": 128,
               "description": "每次新操作使用唯一 ID，重试发送相同 ID 和参数。"}
@@ -260,11 +258,17 @@ class ArenaHandler(BaseHTTPRequestHandler):
             if lobby is not None:
                 if path == "/api/modes":
                     return self._send(200, mode_catalog())
+                if path == "/api/lineup":
+                    query = parse_qs(urlsplit(self.path).query)
+                    return self._send(200, lobby.lineup(query.get("mode", [None])[0], query.get("variant", [None])[0]))
                 if path == "/" and self.server.default_room is None:
                     path = "/lobby/"
-                if path in LOBBY_ASSETS:
-                    filename, mime = LOBBY_ASSETS[path]
-                    return self._send(200, (STATIC_DIR / filename).read_bytes(), mime)
+                if path.startswith("/lobby/"):
+                    asset = resolve_static("/lobby.html" if path == "/lobby/" else path.removeprefix("/lobby"))
+                    if asset is None:
+                        raise RequestError(404, "大厅资源不存在。")
+                    filename, mime = asset
+                    return self._send(200, filename.read_bytes(), mime)
             hosted, path = self._route(path)
             if hosted is not None and hosted.hotseat and path == "/api/state":
                 if hosted.side_for(self.headers.get("Authorization")) is None:

@@ -267,6 +267,8 @@ export function makeSealButton(label, {
   c.addChild(txt);
 
   if (!disabled && onClick) {
+    c.accessible = true;
+    c.accessibleTitle = label;
     c.eventMode = 'static';
     c.cursor = 'pointer';
     c.on('pointerover', () => draw(true, false));
@@ -2006,6 +2008,7 @@ export function buildRosterOverlay(w, h, {
   onQuantity = null,
   onClearSide = null,
   onToggleChar,
+  onInspectChar = null,
   onRemoveFromSide,
   onHoverChar,
   onHoverCard = null,
@@ -2058,6 +2061,28 @@ export function buildRosterOverlay(w, h, {
   root.addChild(wingsHost);
   const presetHost = new PIXI.Container();
   root.addChild(presetHost);
+
+  function bindOccupiedSlot(slot, removeIcon, iconX, iconY, side, ch, editable) {
+    const remove = () => onRemoveFromSide ? onRemoveFromSide(side, ch.id) : onToggleChar(ch.id);
+    slot.eventMode = 'static';
+    slot.cursor = 'pointer';
+    slot.on('pointerover', () => onHoverChar?.(ch));
+    slot.on('pointertap', event => {
+      event.stopPropagation();
+      if (onInspectChar) onInspectChar(ch);
+      else if (editable) remove();
+    });
+    if (!editable) { removeIcon.destroy(); return; }
+    slot.addChild(removeIcon);
+    if (onInspectChar) {
+      removeIcon.eventMode = 'static';
+      removeIcon.cursor = 'pointer';
+      removeIcon.accessible = true;
+      removeIcon.accessibleTitle = '移出' + ch.name;
+      removeIcon.hitArea = new PIXI.Circle(iconX, iconY, 11);
+      removeIcon.on('pointertap', event => { event.stopPropagation(); remove(); });
+    }
+  }
 
   const renderWingRacks = () => {
     const oldWings = wingsHost.removeChildren();
@@ -2176,18 +2201,7 @@ export function buildRosterOverlay(w, h, {
             rmBg.circle(rx, 11, 7).fill({ color: INK.paper, alpha: 0.94 }).stroke({ width: 1.1, color: INK.secondary, alpha: 0.65 });
             rmBg.moveTo(rx - 2.8, 8.2).lineTo(rx + 2.8, 13.8).stroke({ width: 1.4, color: 0xcf4932 });
             rmBg.moveTo(rx + 2.8, 8.2).lineTo(rx - 2.8, 13.8).stroke({ width: 1.4, color: 0xcf4932 });
-            if (editable) slot.addChild(rmBg);
-            else rmBg.destroy();
-
-            slot.eventMode = 'static';
-            slot.cursor = 'pointer';
-            slot.on('pointerover', () => onHoverChar && onHoverChar(ch));
-            slot.on('pointertap', (e) => {
-              e.stopPropagation();
-              if (!editable) return;
-              if (onRemoveFromSide) onRemoveFromSide(side, ch.id);
-              else onToggleChar(ch.id);
-            });
+            bindOccupiedSlot(slot, rmBg, rx, 11, side, ch, editable);
           } else {
             sg.roundRect(0, 0, slotW, slotH, 9)
               .fill({ color: INK.paperSoft, alpha: 0.78 })
@@ -2199,7 +2213,7 @@ export function buildRosterOverlay(w, h, {
             slot.addChild(sg);
 
             const idxTxt = new PIXI.Text({
-              text: `${i + 1}号位`,
+              text: roomLobby?.title && !list.length && i === 0 ? '选角色后点编入' : `${i + 1}号位`,
               style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '700', fill: INK.muted },
             });
             idxTxt.anchor.set(0.5);
@@ -2276,18 +2290,7 @@ export function buildRosterOverlay(w, h, {
             rmBg.circle(cellW - 9, 9, 5.5).fill({ color: INK.paper, alpha: 0.92 }).stroke({ width: 0.9, color: INK.secondary, alpha: 0.6 });
             rmBg.moveTo(cellW - 11.2, 6.8).lineTo(cellW - 6.8, 11.2).stroke({ width: 1.2, color: 0xcf4932 });
             rmBg.moveTo(cellW - 6.8, 6.8).lineTo(cellW - 11.2, 11.2).stroke({ width: 1.2, color: 0xcf4932 });
-            if (editable) slot.addChild(rmBg);
-            else rmBg.destroy();
-
-            slot.eventMode = 'static';
-            slot.cursor = 'pointer';
-            slot.on('pointerover', () => onHoverChar && onHoverChar(ch));
-            slot.on('pointertap', (e) => {
-              e.stopPropagation();
-              if (!editable) return;
-              if (onRemoveFromSide) onRemoveFromSide(side, ch.id);
-              else onToggleChar(ch.id);
-            });
+            bindOccupiedSlot(slot, rmBg, cellW - 9, 9, side, ch, editable);
           } else {
             sg.roundRect(0, 0, cellW, cellH, 7)
               .fill({ color: INK.paperSoft, alpha: 0.72 })
@@ -2331,12 +2334,15 @@ export function buildRosterOverlay(w, h, {
   // Center VS Crest + Preset Scale Pills (1v1 / 3v3 / 5v5 / 10v10) + Start / Cancel Seals
   const cx = w / 2;
   const vsG = new PIXI.Graphics();
-  drawHeraldicCompass(vsG, cx, topY + 20, 20, INK.gold, INK.line);
-  drawLightStar(vsG, cx, topY + 20, 15, INK.gold, 0.92);
+  if (!roomLobby?.title) {
+    drawHeraldicCompass(vsG, cx, topY + 20, 20, INK.gold, INK.line);
+    drawLightStar(vsG, cx, topY + 20, 15, INK.gold, 0.92);
+  }
   root.addChild(vsG);
   const vsTxt = new PIXI.Text({
-    text: 'VS',
-    style: { fontFamily: FONT_NUM, fontSize: 13.5, fontWeight: '900', fill: INK.strong, letterSpacing: 1 },
+    text: roomLobby?.title || 'VS',
+    style: { fontFamily: roomLobby?.title ? FONT_UI : FONT_NUM, fontSize: roomLobby?.title ? 18 : 13.5,
+      fontWeight: '900', fill: INK.strong, letterSpacing: 1 },
   });
   vsTxt.anchor.set(0.5);
   vsTxt.position.set(cx, topY + 20);
@@ -2409,7 +2415,7 @@ export function buildRosterOverlay(w, h, {
   startBtn.position.set(cx - 82, topY + 69);
   root.addChild(startBtn);
 
-  const cancelBtn = makeSealButton('返回', {
+  const cancelBtn = makeSealButton(roomLobby?.returnLabel || '返回', {
     width: 106, height: 24, accent: INK.secondary, fontSize: 11.2, radius: 12, onClick: onCancel,
   });
   cancelBtn.position.set(cx - 53, topY + 109);
@@ -2629,7 +2635,7 @@ export function buildRosterOverlay(w, h, {
     const duelCount = char.base_duels || 1;
     const pipStart = cellW - 10;
     for (let d = 0; d < Math.min(4, duelCount); d++) {
-      const duelPipCol = parseHexColor(target.color, pal.primary);
+      const duelPipCol = parseHexColor(char.color, pal.primary);
       drawDuelPip(statG, pipStart - d * 11, sy, 4.5, duelPipCol);
     }
     card.addChild(statG, hpTxt);
@@ -2646,8 +2652,13 @@ export function buildRosterOverlay(w, h, {
     card.on('pointertap', (e) => {
       if (!pointerInsideLocalRect(root, e.global, gx, gy, gw, gh)) return;
       e.stopPropagation();
-      onToggleChar(char.id);
+      if (onInspectChar) onInspectChar(char);
+      else onToggleChar(char.id);
     });
+    if (onInspectChar) {
+      card.accessible = true;
+      card.accessibleTitle = '查看' + char.name;
+    }
     gBody.addChild(card);
   });
 
@@ -2774,10 +2785,10 @@ export function buildRosterOverlay(w, h, {
     const inOther = (assignSide === 1 ? in2 : in1) >= 0;
     const actLabel = openTeams ? `编入 ×${roomLobby.quantity}` : inActive
       ? `移出${activeName}`
-      : inOther
+      : inOther && !(onInspectChar && target.mirror_allowed)
         ? `调入${activeName}`
         : `+ 编入${activeName}`;
-    if (!roomLobby || roomLobby.editableSides.includes(assignSide)) {
+    if ((!roomLobby || roomLobby.editableSides.includes(assignSide)) && !roomLobby?.lockedIds?.includes(target.id)) {
       const actBtn = makeSealButton(actLabel, {
         width: 118,
         height: 32,

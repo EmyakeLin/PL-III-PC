@@ -5,6 +5,8 @@ from functools import partial
 from threading import Lock
 
 from battle_ui.session import BattleSession
+from battle_ui.match import roster_art
+from loader import load_characters_from_packs
 from .challenges import CHALLENGES
 from .manual import ManualDesk
 from .room import Room
@@ -87,10 +89,8 @@ class Lobby:
         self._lock = Lock()
         self._closed = False
 
-    def create(self, spec):
-        if not isinstance(spec, dict) or spec.keys() - {"mode", "variant"}:
-            raise RequestError(400, "请指定对战模式及玩法。")
-        mode, variant = spec.get("mode"), spec.get("variant")
+    @staticmethod
+    def variant(mode, variant):
         modes = mode_definitions()
         if not isinstance(mode, str) or mode not in modes:
             raise RequestError(400, "未知对战模式。")
@@ -99,8 +99,36 @@ class Lobby:
             raise RequestError(501, f"{label}尚未开放。")
         if not isinstance(variant, str) or variant not in variants:
             raise RequestError(400, f"请选择{label}中已开放的玩法。")
-        _, factory = variants[variant]
-        hosted = HostedRoom(factory(seed=self.seed))
+        return variants[variant]
+
+    def lineup(self, mode, variant):
+        self.variant(mode, variant)
+        challenge = CHALLENGES[variant] if mode == "challenge" else None
+        pool = {c["id"]: c for c in load_characters_from_packs(extra_packs=challenge.packs if challenge else ())}
+        _, sprites, catalog = roster_art(pool)
+        return {"catalog": catalog, "character_sprites": sprites,
+                "fixed_opponents": list(challenge.opponents) if challenge else [],
+                "hotseat": mode == "regular" and variant == "hotseat"}
+
+    def create(self, spec):
+        if not isinstance(spec, dict) or spec.keys() - {"mode", "variant", "roster"}:
+            raise RequestError(400, "请指定对战模式及玩法。")
+        mode, variant = spec.get("mode"), spec.get("variant")
+        _, factory = self.variant(mode, variant)
+        args = {"seed": self.seed}
+        if "roster" in spec:
+            roster = spec["roster"]
+            if not isinstance(roster, list) or len(roster) != 2 or not all(
+                    isinstance(team, list) and team and all(isinstance(c, str) for c in team) for team in roster):
+                raise RequestError(400, "请为双方各选至少一名角色。")
+            args["roster"] = roster
+        hosted = HostedRoom(factory(**args))
+        if "roster" in spec and not hosted.hotseat:
+            try:
+                hosted.room.ready(1, 0, "lobby-start", human=True, canvas=True)
+            except Exception:
+                hosted.close()
+                raise
         room_id = secrets.token_hex(16)
         with self._lock:
             if self._closed:
