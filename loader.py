@@ -32,6 +32,8 @@ def _add_effects(definitions, pack):
         retired = {"restrict_highest_hand_cost", "overflow_batch"} & rule.keys()
         if retired:
             raise ValueError(f"{name} 含有已移除的状态字段 {sorted(retired)}，请在 skill_use 或 global_entries 中声明规则")
+        if rule.get("pool", "character") not in ("character", "team"):
+            raise ValueError(f"{name} 的层数归属须为 character 或 team")
         cap = rule.get("cap")
         if "cap" in rule and (type(cap) is not int or cap < 0):
             raise ValueError(f"{name} 的上限须为非负整数")

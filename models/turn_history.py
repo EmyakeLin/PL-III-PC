@@ -9,8 +9,11 @@ class TurnHistory:
         self.clashes = Counter()
         self.hand_plays = Counter()
         self.previous_hand_plays = Counter()
+        self.played_sides = set()
+        self.previous_played_sides = set()
 
     def clear(self):
+        self.previous_played_sides, self.played_sides = self.played_sides, set()
         self.previous_hand_plays, self.hand_plays = self.hand_plays, Counter()
         self.skill_uses.clear()
         self.clashes.clear()

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from entry.entry import Entry, TriggerType, character_of
 from entry.effects import run_effect
 from entry.predicates import compile_when
-from entry.play_conditions import record_hand_play
+from entry.play_conditions import record_card_play
 from models.card import Card, CardState
 from models.character import Character
 from models.opcode import OpCode
@@ -483,7 +483,7 @@ class SpecialActions:
                     or old not in slot.get_content(player.side) or self.is_locked(old)
                     or not self.game.pipeline.before_use(slot, old)):
                 return False
-        record_hand_play(card)
+        record_card_play(card)
         self.game.pipeline.withdraw_skill(slot, old)
         cards = slot.get_content(player.side)
         cards[cards.index(old)] = card

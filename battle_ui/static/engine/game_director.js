@@ -101,6 +101,11 @@ const GRADE_LABEL = {
 
 const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
 
+function wingHeaderText(seatName, player, isFirst, speed) {
+  const statuses = Object.entries(player.team_statuses || {}).map(([name, n]) => `${name} ${n}`);
+  return [seatName + (isFirst ? ' ★先手' : ''), `速${speed}`, `手牌${player.hand_count}`, ...statuses].join(' · ');
+}
+
 function pausedPlayLabel(play) {
   const duel = { regular: '常规交锋', instant: '即时交锋', pre_reveal: '开牌前交锋' }[play.kind];
   const location = play.duel_number ? `${duel} ${play.duel_number}` : PHASE_NAMES[play.kind];
@@ -607,7 +612,7 @@ export class GameDirector {
       if (!ref.headTxt || ref.headTxt.destroyed) continue;
       const isFirst = frame.first_side === side;
       const speedVal = Number(ref.player.speed || 0).toFixed(ref.player.speed % 1 ? 1 : 0);
-      ref.headTxt.text = `${ref.seatName}${isFirst ? ' ★先手' : ''} · 速${speedVal} · 手牌${ref.player.hand_count}`;
+      ref.headTxt.text = wingHeaderText(ref.seatName, ref.player, isFirst, speedVal);
     }
     if (this.passiveDrawer) this._rebuildSidePanels();
   }
@@ -1681,7 +1686,7 @@ export class GameDirector {
     const speedVal = this._pendingSpeedReveal ? '—' : Number(player.speed || 0).toFixed(player.speed % 1 ? 1 : 0);
     const seatName = this.state.bot_side === side ? '电脑对手' : player.name;
     const headTxt = new PIXI.Text({
-      text: `${seatName}${isFirst ? ' ★先手' : ''} · 速${speedVal} · 手牌${player.hand_count}`,
+      text: wingHeaderText(seatName, player, isFirst, speedVal),
       style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: theme.accent },
     });
     headTxt.anchor.set(isLeft ? 0 : 1, 0);

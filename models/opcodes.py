@@ -3,7 +3,7 @@ import random
 
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.effects import GRADE_RANK
-from entry.play_conditions import record_hand_play
+from entry.play_conditions import record_card_play
 from entry.program import adjusted_value
 from entry.scheduling import schedule_effect
 from models.card import Card, CardState
@@ -551,8 +551,7 @@ def handle_place(ctx):
                 or owner.used_duels >= owner.max_duels or game.special.first_open_slot(side) != idx):
             return False
     zones = card.player.cardspace
-    if card in zones.hand.content:
-        record_hand_play(card)
+    record_card_play(card, from_hand=card in zones.hand.content)
     while idx >= len(space.space):
         space.append_new_duel(DuelSlot(game))
     slot = space.space[idx]
@@ -646,7 +645,7 @@ def handle_move_card(ctx):
     for pile in zones.piles():
         if card in pile.content:
             if pile is zones.hand and ctx.event["play_from_hand"]:
-                record_hand_play(card)
+                record_card_play(card)
             pile.move_card_to(card, destination)
             return True
     return False
@@ -957,9 +956,9 @@ def handle_status(ctx):
     ctx.event.update(previous_stacks=old, current_stacks=total, actual_delta=total-old,
                      status_overflow=overflow)
     if amount == 0 and isinstance(proposed, (int, float)) and proposed > 0:
-        ctx.record("status_blocked", target=target.combat_name, name=name)
+        ctx.record("status_blocked", target=target.status_holder_name(name), name=name)
     else:
-        ctx.record("status_changed", target=target.combat_name, name=name, previous=old, total=total)
+        ctx.record("status_changed", target=target.status_holder_name(name), name=name, previous=old, total=total)
     target.notify_status_change(name, old, total)
     return total
 
@@ -973,7 +972,7 @@ def handle_spend_status(ctx):
     if requested == "all" and balance and not target.is_alive and not require_full:
         target.clear_status(name)
         ctx.event["paid_in_full"] = True
-        ctx.record("status_cleared", target=target.combat_name, name=name, amount=balance)
+        ctx.record("status_cleared", target=target.status_holder_name(name), name=name, amount=balance)
         return balance
     cost = balance if requested == "all" else requested
     if (not target.is_alive or not balance or not isinstance(cost, int) or cost <= 0
@@ -986,7 +985,7 @@ def handle_spend_status(ctx):
     deferred = ctx.event["defer_spend_effects"]
     remaining = target.apply_status_delta(name, -paid, notify=False, defer_effects=deferred)
     ctx.event.update(paid_in_full=paid == cost, previous_stacks=previous, current_stacks=remaining)
-    ctx.record("status_spent", target=target.combat_name, name=name, amount=paid, cost=cost, total=remaining)
+    ctx.record("status_spent", target=target.status_holder_name(name), name=name, amount=paid, cost=cost, total=remaining)
     if not deferred:
         target.notify_status_change(name, previous, remaining)
     return paid
@@ -1051,6 +1050,7 @@ def handle_join_duel(ctx):
     if (card is None or card.destroyed or card not in card.home_deck.content
             or slot is None or slot is not ctx.game.resolving_duel or slot.next_combat_card(card.player.side, advance=False)):
         return False
+    record_card_play(card, from_hand=False)
     card.home_deck.remove_card(card.home_deck.content.index(card))
     slot.add_content(card.player.side, card)
     card.state = CardState.PLACED_FACE_UP

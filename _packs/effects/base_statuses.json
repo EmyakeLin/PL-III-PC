@@ -1,7 +1,7 @@
 {
   "name": "基础状态效果包",
   "pack_type": "status_effects",
-  "turn_end_statuses": ["强壮", "虚弱", "迅捷", "束缚", "骰子等级提升", "骰子等级降低", "限制"],
+  "turn_end_statuses": ["强壮", "虚弱", "迅捷", "束缚", "骰子等级提升", "骰子等级降低"],
   "status_rules": {
     "强壮": {"per_stack": {"final_score": 1}, "description": "每层使自身非空白骰最终点数+1。"},
     "虚弱": {"per_stack": {"final_score": -1}, "description": "每层使自身非空白骰最终点数−1。"},
@@ -10,15 +10,48 @@
     "骰子等级提升": {},
     "骰子等级降低": {},
     "限制": {
-      "description": "本回合无法使用自己手牌中费用最高的X张技能，同费按手牌顺序。",
+      "pool": "team",
+      "description": "全队共享X层，无法使用手牌中费用最高的X张，同费按手牌顺序。X严格超过全队手牌数时，可任选一张全队最低费技能。任一队员用完一张技能减少1层。回合末保留。整队空过时，下回合开始先施加预约的限制，再清空一次。",
       "skill_use": [{
-        "capture": {"position": {
-          "rank_of": "$event.card", "in": "$self.player.cardspace.hand.content",
-          "where": [{"left": "$event.item.character", "op": "eq", "right": "$self"}],
-          "by": "$event.item.cost", "descending": true
-        }},
-        "deny_when": [{"left": "$event.observed.position", "op": "le", "right": "$event.stacks"}]
-      }]
+        "capture": {
+          "position": {
+            "rank_of": "$event.card", "in": "$self.player.cardspace.hand.content",
+            "by": "$event.item.cost", "descending": true
+          },
+          "hand_size": {"field": "$self.player.cardspace.hand.content", "size": true},
+          "cheaper": {
+            "count_in": "$self.player.cardspace.hand.content",
+            "where": [
+              {"left": "$event.item.cost", "op": "lt", "right": "$event.card.cost"}
+            ]
+          }
+        },
+        "deny_when": [{"left": "$event.observed.position", "op": "le", "right": "$event.stacks"}],
+        "except_when": [
+          {"left": "$event.stacks", "op": "gt", "right": "$event.observed.hand_size"},
+          {"left": "$event.observed.cheaper", "op": "eq", "right": 0}
+        ]
+      }],
+      "global_entries": [
+        {
+          "trigger": "after_skill_use",
+          "when": [{"left": {"field": "$event.source.player.team_statuses", "key": "限制", "default": 0}, "op": "gt", "right": 0}],
+          "description": "任一队员每使用完一张技能，该队减少1层限制。",
+          "operation": {"op": "program", "code": ["$event.source", "限制", 1, "SPEND_STATUS"]}
+        },
+        {
+          "trigger": "on_turn_prepared",
+          "when": [{"left": "$event.turn_number", "op": "gt", "right": 1}],
+          "description": "上回合全队未打出手牌，在本回合预约效果生效后一次清空剩余限制。",
+          "operation": {"op": "program", "code": [
+            "$game.players",
+            ["$event.item.team_statuses", "限制", 0, "LOOKUP", 0, "GT"], "FILTER",
+            ["$game.turn_history.previous_played_sides", "$event.item.side", "CONTAINS", "NOT"], "FILTER",
+            ["$event.item.characters", ["$event.item.is_alive"], "FILTER", "FIRST", "member", "STORE",
+             "$local.member", ["$local.member", "限制", "all", "SPEND_STATUS"], "WHEN"], "EACH"
+          ]}
+        }
+      ]
     },
     "凝聚": {"description": "自身能源低于凝聚层数时，获得1能源，每回合至多触发1次。"}
   },

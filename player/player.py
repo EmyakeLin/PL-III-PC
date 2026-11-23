@@ -9,6 +9,7 @@ class Player:
         self.side = side
         self.name = name
         self.characters = []
+        self.team_statuses = {}
         self.max_cost = 0
         self.used_cost = 0
         self.turn_cost_adjustment = 0

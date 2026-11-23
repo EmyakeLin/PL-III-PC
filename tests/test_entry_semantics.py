@@ -1345,7 +1345,12 @@ class PlayObservationTests(unittest.TestCase):
                     context=vm, card_serial=0, status_entries={}, turn_end_statuses=set(), ability_rules={},
                     active_duelspace=space, duelspace=space, cards_revealed=False, players=[seat],
                     special=SimpleNamespace(is_locked=lambda _: False), board_slots=lambda: space.space,
-                    status_rules={"费用": {"restrict_highest_hand_cost": True}, "名字": {"skill_use": [{
+                    status_rules={"费用": {"skill_use": [{
+                        "capture": {"position": {"rank_of": "$event.card", "in": "$self.player.cardspace.hand.content",
+                                                "by": "$event.item.cost", "descending": True,
+                                                "where": [{"left": "$event.item.character", "op": "eq", "right": "$self"}]}},
+                        "deny_when": [{"left": "$event.observed.position", "op": "le", "right": "$event.stacks"}]}]},
+                                  "名字": {"skill_use": [{
                         "capture": {"n": {"rank_of": "$event.card", "in": "$self.player.cardspace.hand.content",
                                           "by": "$event.item.name"}, "paid": "$event.card.cost"},
                         "deny_when": [{"left": "$event.observed.n", "op": "eq", "right": "$event.stacks"}]}]}})
@@ -1390,7 +1395,7 @@ class PlayObservationTests(unittest.TestCase):
                     self.assertEqual(card.play_observations, {})
                     hand.content.remove(card)
                     hand.content.insert(0, card)
-                    self.assertEqual(vm.eval_block([seat, 1, OpCode.DISCARD]), [card])
+                    self.assertIs(vm.eval_block([seat, card, OpCode.DISCARD]), card)
                 else:
                     card.reset_for_draw()
                 self.assertEqual(card.play_observations, {})

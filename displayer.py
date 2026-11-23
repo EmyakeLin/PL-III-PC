@@ -431,6 +431,7 @@ class Displayer:
         zones = player.cardspace
         return {
             "side": player.side, "name": player.name, "speed": player.speed,
+            "team_statuses": dict(player.team_statuses),
             "cost": {"available": player.available_cost, "refill": player.max_cost, "spent": player.used_cost},
             "placement_ended": player in self._game.ended_player,
             "characters": [self._character(c, own) for c in player.characters],
@@ -451,7 +452,8 @@ class Displayer:
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
-            "statuses": dict(c.statuses), "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
+            "statuses": {k: n for k, n in c.statuses.items() if k not in c.team_statuses},
+            "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
             "ability_effects": dict(c.ability_effects),
             "reserved_dice": [{"skill": reserve.template.card.name, "position": reserve.template.position,
                                "remaining": reserve.remaining}

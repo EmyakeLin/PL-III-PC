@@ -1,6 +1,6 @@
 """开牌前的公开声明和延迟牵制。牌进入同一套双方交锋管线结算。"""
 
-from entry.play_conditions import record_hand_play
+from entry.play_conditions import record_card_play
 from models.card import CardState, allows_interception
 from models.duel import DuelSlot, DuelSpace
 
@@ -243,8 +243,7 @@ class PreRevealPhase:
         hand = card.player.cardspace.hand
         if origin is None:
             origin = hand
-        if not card.temporary and origin is hand:
-            record_hand_play(card)
+        record_card_play(card, from_hand=origin is hand)
         slot.add_content(card.player.side, card)
         card.state = CardState.PLACED_FACE_UP
         if not card.temporary:

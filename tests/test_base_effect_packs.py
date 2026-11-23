@@ -75,14 +75,24 @@ class SharedEffectPackTests(unittest.TestCase):
                 die.value = 2
                 self.assertEqual((die.base_value, die.value, die.get_value()), (1, 2, expected))
 
-    def test_restriction_without_lin_qiu_uses_hand_order_and_expires(self):
-        sa = self.recruit()
-        self.game.start_turn()
-        self.left.draw_card(7)
-        hand = self.left.cardspace.hand.content
-        highest = sorted(hand, key=lambda card: -card.cost)
-        sa.add_status("限制", 4)
-        self.assertEqual({card for card in hand if sa.skill_restricted(card)}, set(highest[:4]))
-        self.assertEqual(highest[3].cost, highest[4].cost)
-        self.game.finish_turn()
-        self.assertFalse(any(sa.skill_restricted(card) for card in hand))
+
+class SharedRestrictionPackTests(unittest.TestCase):
+    def test_restriction_without_lin_qiu_uses_hand_order_and_clears_after_passing(self):
+        with TemporaryDirectory() as directory:
+            shutil.copy(PACKS / "plan_b_heris.json", directory)
+            heris, = load_characters_from_packs(directory)
+        team, enemy = Player(1, "甲"), Player(2, "乙")
+        game = Game([team, enemy], rng=random.Random(31))
+        game.deploy_rosters([[heris, heris], [heris]])
+        game.first_player = team
+        game.start_turn()
+        team.draw_card(6)
+        hand = team.cardspace.hand.content
+        ranked = sorted(hand, key=lambda card: -card.cost)
+        team.characters[0].add_status("限制", 3)
+        self.assertEqual(ranked[2].cost, ranked[3].cost)
+        self.assertEqual({c for c in hand if c.character.skill_restricted(c)}, set(ranked[:3]))
+        game.finish_turn()
+        self.assertEqual(team.team_statuses, {"限制": 3})
+        game.prepare_turn()
+        self.assertFalse(any(c.character.skill_restricted(c) for c in hand))

@@ -241,7 +241,8 @@ class TerminalBridge:
         for seat in (player, opposing):
             status = "；".join(f"{c.combat_summary()}，交锋 {c.used_duels}/{c.max_duels}"
                               for c in seat.characters if c.is_alive)
-            print(f"{seat.name}（牌堆 {len(seat.cardspace.draw.content)}，手牌 {len(seat.cardspace.hand.content)}）：{status}")
+            shared = "".join(f"，{key} {n}" for key, n in seat.team_statuses.items())
+            print(f"{seat.name}（牌堆 {len(seat.cardspace.draw.content)}，手牌 {len(seat.cardspace.hand.content)}{shared}）：{status}")
         for number, slot in enumerate(game.duelspace.space, 1):
             own = "、".join(card.name for card in slot.content.get(player.side, ())) or "空"
             opposing_cards = slot.content.get(opposing.side, ())

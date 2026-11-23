@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import ChainMap, Counter
 from decimal import Decimal
 from enum import Enum, auto
 import random
@@ -74,7 +74,8 @@ class Character:
         self.independent_cost = 0
         self.used_independent_cost = 0
         self.turn_cost_adjustment = 0
-        self.statuses = {}
+        self.team_statuses = getattr(player, "team_statuses", {})
+        self.statuses = ChainMap({}, self.team_statuses)
         self.ability_effects = {}
         self.reserved_dice = []
         self.rule_state = {}
@@ -198,6 +199,8 @@ class Character:
             if value:
                 parts.append(f"{label} {value}")
         for label, value in self.statuses.items():
+            if label in self.team_statuses:
+                continue
             if label in self.active_statuses:
                 label = self.status_rules[label].get("active_label", label)
             parts.append(f"{label} {value}")
@@ -287,6 +290,9 @@ class Character:
             return personal
         return min(global_cap, personal) if personal is not None else global_cap
 
+    def status_holder_name(self, name):
+        return self.player.name if self.status_rules.get(name, {}).get("pool") == "team" else self.combat_name
+
     def _ordinary_status(self, name):
         return self._ordinary_stacks.get(name, self.statuses.get(name, 0))
 
@@ -320,6 +326,7 @@ class Character:
 
     def _set_status(self, name, ordinary, sustained, *, notify=True, defer_effects=False):
         previous = self.statuses.get(name, 0)
+        balances = self.team_statuses if self.status_rules.get(name, {}).get("pool") == "team" else self.statuses
         if sustained:
             self._ordinary_stacks[name] = ordinary
             self._sustained_stacks[name] = sustained
@@ -329,7 +336,7 @@ class Character:
         cap = self.status_cap(name)
         value = ordinary + sustained if cap is None else min(cap, ordinary + sustained)
         if value:
-            self.statuses[name] = value
+            balances[name] = value
             definitions = self.game.status_entries if self.game else self._standalone_status_entries
             if not previous and name in definitions:
                 listeners = self._effect_context.register_entries(self, definitions[name])
@@ -337,7 +344,7 @@ class Character:
                     listener.origin, listener.status_name = "status", name
                 self._status_listeners[name] = listeners
         else:
-            self.statuses.pop(name, None)
+            balances.pop(name, None)
             listeners = self._status_listeners.pop(name, ())
             if listeners:
                 entries = self._effect_context.entries

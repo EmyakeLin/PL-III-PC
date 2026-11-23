@@ -1,5 +1,6 @@
 """Read-only comparisons evaluated before ordering listeners and again before invocation."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import operator
 
@@ -19,10 +20,20 @@ class Reference:
         root, *fields = self.path
         value = read_path(owner if root == "self" else event, fields, missing=None)
         if self.key is not None:
-            value = value.get(self.key, self.default) if isinstance(value, dict) else self.default
+            value = value.get(self.key, self.default) if isinstance(value, Mapping) else self.default
         if value is None:
             return self.default
         return len(value) if self.size else value
+
+
+@dataclass(frozen=True)
+class Count:
+    collection: Reference
+    conditions: tuple
+
+    def read(self, owner, event):
+        items = (dict(event, item=item) for item in self.collection.read(owner, event))
+        return sum(all(condition.evaluate(owner, item) for condition in self.conditions) for item in items)
 
 
 @dataclass(frozen=True)
@@ -71,7 +82,7 @@ class Conditional:
 
 
 def read_value(value, owner, event):
-    return value.read(owner, event) if isinstance(value, (Reference, Rank, Calculation, Conditional)) else value
+    return value.read(owner, event) if isinstance(value, (Reference, Rank, Count, Calculation, Conditional)) else value
 
 
 _VALUE_OPERATIONS = {**COMPARISONS, "add": operator.add, "sub": operator.sub, "mul": operator.mul,
@@ -115,6 +126,11 @@ def compile_value(value, operands=()):
         if type(descending) is not bool or not all(isinstance(ref, Reference) for ref in fields):
             raise ValueError("排名需要对象、集合、排序字段和布尔方向")
         return Rank(*fields, compile_when(options.get("where", []), None, None), descending)
+    if "count_in" in options:
+        collection = compile_value(options["count_in"])
+        if set(options) - {"count_in", "where"} or not isinstance(collection, Reference):
+            raise ValueError("计数需要集合引用和可选的筛选条件")
+        return Count(collection, compile_when(options.get("where", []), None, None))
     if "literal" in options:
         return options["literal"]
     field = options.get("field", value)

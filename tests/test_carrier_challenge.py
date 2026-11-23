@@ -315,6 +315,11 @@ class CarrierTests(unittest.TestCase):
                 self.one.add_status("威压", initial)
                 card = self.cards["brand"]
                 self.place(card)
+                # A teammate commits a physical card, so the team keeps next turn's restriction.
+                played = self.dummy_card(dice=0)
+                played.set_controller(self.two)
+                self.human.cardspace.hand.add_card(played)
+                self.place(played, 1)
                 self.fight()
                 self.assertEqual(card.final_bonus, 3 if initial == 5 else 0)
                 self.assertEqual(self.one.statuses["威压"], min(initial + 6, 12))
@@ -322,7 +327,7 @@ class CarrierTests(unittest.TestCase):
                 self.game.finish_turn()
                 self.game.prepare_turn()
                 self.assertEqual(self.one.statuses["限制"], 2)
-                self.assertNotIn("限制", self.two.statuses)
+                self.assertEqual(self.two.statuses["限制"], 2)
 
     def test_oppression_hits_each_enemy_and_schedules_weakness_once_per_character(self):
         self.place(self.dummy_card(dice=3))
@@ -330,8 +335,8 @@ class CarrierTests(unittest.TestCase):
         self.fight()
         self.assertEqual((self.one.hp, self.two.hp), (16, 10))
         self.assertEqual([enemy.statuses["威压"] for enemy in (self.one, self.two)], [3, 3])
-        self.assertEqual(self.one.statuses["限制"], 2)
-        self.assertNotIn("限制", self.two.statuses)
+        # It gained two when the block won, then finished its own card and spent one.
+        self.assertEqual(self.human.team_statuses, {"限制": 1})
         self.game.finish_turn()
         self.game.prepare_turn()
         self.assertEqual([enemy.statuses["虚弱"] for enemy in (self.one, self.two)], [1, 1])
