@@ -29,17 +29,20 @@ def _printed_die(spec):
     die = Dice(spec)
     return {
         "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
+        **({"printed_line": spec["printed_line"]} if "printed_line" in spec else {}),
         "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
         "range_traits": [*describe_range_traits(spec), *die.score_traits(),
                          *(["被动激活"] if spec.get("passive_activation") else [])],
         "resource_cost": dict(spec["resource_cost"]) if spec.get("resource_cost") else None,
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
-        "entries": [describe_entry(entry) for entry in die.entries],
+        "entries": ([spec["printed_line"].partition("：")[2]] if "：" in spec.get("printed_line", "")
+                    else [describe_entry(entry) for entry in die.entries]),
     }
 
 
 def _printed_skill(data, *, include_forms=False):
     return {
+        **({"printed_text": data["printed_text"], "printed_cost": data["cost"]} if "printed_text" in data else {}),
         "id": data["id"], "name": data["name"], "cost": data["cost"],
         "pre_reveal": data.get("pre_reveal", False),
         "pre_reveal_requires_status": dict(data.get("pre_reveal_requires_status", {})),
@@ -57,7 +60,8 @@ def _printed_skill(data, *, include_forms=False):
         "range_traits": describe_range_traits(data),
         "starts_out_of_combat": bool(data.get("out_of_combat")),
         "dice": [_printed_die(spec) for spec in data.get("dice", ())],
-        "entries": [describe_entry(entry) for entry in data.get("entries", ())],
+        "entries": (data["printed_rules"].splitlines() if "printed_rules" in data else
+                    [describe_entry(entry) for entry in data.get("entries", ())]),
     }
 
 
@@ -65,14 +69,18 @@ def _passives(specs):
     result = []
     for spec in specs:
         if isinstance(spec, dict) and "entries" in spec:
+            if spec.get("hidden"):
+                continue
             name = spec.get("name")
             description = spec.get("description")
-            entries = [describe_entry(entry) for entry in spec["entries"]]
+            entries = (description.splitlines() if spec.get("printed_heading") else
+                       [describe_entry(entry) for entry in spec["entries"]])
         else:
             name = description = None
             entries = [describe_entry(spec)]
         result.append({
             "name": name, "description": description, "entries": entries,
+            **({"printed_heading": spec["printed_heading"]} if isinstance(spec, dict) and "printed_heading" in spec else {}),
             "display_lines": [description] if description and description.strip() else entries,
         })
     return result
@@ -411,13 +419,16 @@ class Displayer:
         statuses = {name: [describe_entry(e) for e in entries]
                     for name, entries in self._game.status_entries.items()}
         for name, rule in self._game.status_rules.items():
-            if rule.get("description"):
+            if rule.get("printed_text"):
+                statuses[name] = [rule["printed_text"]]
+            elif rule.get("description"):
                 statuses.setdefault(name, []).insert(0, rule["description"])
         return {
             "players": [{
                 "side": p.side,
                 "characters": [{
                     "id": c.id, "name": c.name,
+                    **({"printed_text": c.data["printed_text"]} if "printed_text" in c.data else {}),
                     "passives": _passives(c.passive_skill_data),
                     "faction_passives": _passives(c.data.get("faction_passives", ())),
                     "skills": [_printed_skill(skill, include_forms=True) for skill in c.skill_data],

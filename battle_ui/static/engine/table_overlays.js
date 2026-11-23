@@ -25,6 +25,7 @@ import {
   drawLightStar,
   buildCardBack,
   buildFullCard,
+  buildRichVerbatimText,
   buildVerbatimCardPanel,
   buildUnifiedEntryPlate,
   buildUnifiedSkillRow,
@@ -700,8 +701,8 @@ export function buildHeroSidePanel({
     for (const fp of factionPassives) {
       const plate = buildUnifiedEntryPlate({
         variant: 'passive',
-        title: fp.name || '阵营被动',
-        tagLabel: '阵营被动',
+        title: fp.printed_heading || fp.name || '阵营被动',
+        tagLabel: fp.printed_heading ? '' : '阵营被动',
         entries: fp.display_lines,
         width: innerW,
         accentColor: theme.accent,
@@ -718,7 +719,7 @@ export function buildHeroSidePanel({
     for (const p of rolePassives) {
       const plate = buildUnifiedEntryPlate({
         variant: 'passive',
-        title: p.name || '角色被动',
+        title: p.printed_heading || p.name || '角色被动',
         tagLabel: String(character.passive_values?.[p.name] ?? ''),
         entries: p.display_lines,
         width: innerW,
@@ -887,8 +888,8 @@ export function buildPassiveDrawer({
           seenFaction.add(key);
           const plate = buildUnifiedEntryPlate({
             variant: 'passive',
-            title: fp.name || '阵营被动',
-            tagLabel: '阵营被动',
+            title: fp.printed_heading || fp.name || '阵营被动',
+            tagLabel: fp.printed_heading ? '' : '阵营被动',
             entries: fp.display_lines,
             width: innerColW,
             accentColor: theme.accent,
@@ -960,7 +961,7 @@ export function buildPassiveDrawer({
         for (const p of rolePassives) {
           const plate = buildUnifiedEntryPlate({
             variant: 'passive',
-            title: p.name || '角色被动',
+            title: p.printed_heading || p.name || '角色被动',
             tagLabel: String(ch.passive_values?.[p.name] ?? ''),
             entries: p.display_lines,
             width: innerColW - 6,
@@ -2733,14 +2734,15 @@ export function buildRosterOverlay(w, h, {
     heroBannerActorEntry = { actor: heroActor, ch: target };
 
     const infoX = inspX + 124;
+    const profile = target.printed_profile?.split('\n');
     const nameTxt = new PIXI.Text({
-      text: target.name,
+      text: profile?.[0] || target.name,
       style: { fontFamily: FONT_UI, fontSize: 21, fontWeight: '900', fill: INK.strong },
     });
     nameTxt.position.set(infoX, inspY + 15);
     root.addChild(nameTxt);
 
-    if (target.title) {
+    if (target.title && !profile) {
       const tt = new PIXI.Text({
         text: target.title,
         style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: pal.primary },
@@ -2750,7 +2752,7 @@ export function buildRosterOverlay(w, h, {
     }
 
     const subTxt = new PIXI.Text({
-      text: `${target.faction || '独立'} · ${RANK_LABEL[target.rank] || ''}`,
+      text: profile?.[1] || `${target.faction || '独立'} · ${RANK_LABEL[target.rank] || ''}`,
       style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: INK.secondary },
     });
     subTxt.position.set(infoX, inspY + 45);
@@ -2758,7 +2760,7 @@ export function buildRosterOverlay(w, h, {
 
     // Visual Stat Badges Row
     const badgeY = inspY + 73;
-    const pills = [
+    const pills = profile ? profile.slice(2).map(label => ({label, col: pal.primary, bg: INK.paper})) : [
       { label: `生命 ${target.max_hp}`, col: 0xcf4330, bg: 0xfdece9 },
       { label: `交锋 ${target.base_duels || 1}`, col: INK.gold, bg: INK.goldBg },
       { label: `${(target.skills || []).length} 张技能`, col: pal.primary, bg: INK.paper },
@@ -2825,7 +2827,14 @@ export function buildRosterOverlay(w, h, {
       ...(target.passives || []).map((p) => ({ ...p, tag: '角色被动' })),
     ];
 
-    if (allPassives.length) {
+    const sheetSections = target.printed_text?.slice(target.printed_profile.length).split('\n技能组\n');
+    if (sheetSections) {
+      const intro = buildRichVerbatimText(sheetSections[0].trim(), { maxWidth: innerW, fontSize: 12.4, lineHeight: 19.2 });
+      intro._itemTop = 0;
+      intro._itemBottom = intro._height;
+      sBody.addChild(intro);
+      cy += intro._height + 12;
+    } else if (allPassives.length) {
       const pHead = new PIXI.Text({
         text: '被动技能',
         style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '900', fill: INK.secondary },
@@ -2839,8 +2848,8 @@ export function buildRosterOverlay(w, h, {
       for (const p of allPassives) {
         const plate = buildUnifiedEntryPlate({
           variant: 'passive',
-          title: p.name || p.tag,
-          tagLabel: p.tag === '阵营被动' ? '阵营被动' : '',
+          title: p.printed_heading || p.name || p.tag,
+          tagLabel: !p.printed_heading && p.tag === '阵营被动' ? '阵营被动' : '',
           entries: p.display_lines,
           width: innerW,
           accentColor: p.tag === '阵营被动' ? SIDE_THEME[previewSide].accent : INK.gold,
@@ -2857,10 +2866,13 @@ export function buildRosterOverlay(w, h, {
     }
 
     // Zero-Hover Vertical 1 : 1.40 Skill Cards
-    const skills = target.skills || [];
+    const skills = sheetSections
+      ? (target.skills || []).filter(sk => sheetSections[1].includes(sk.printed_text))
+        .sort((a, b) => sheetSections[1].indexOf(a.printed_text) - sheetSections[1].indexOf(b.printed_text))
+      : target.skills || [];
     if (skills.length) {
       const skHead = new PIXI.Text({
-        text: '技能牌组',
+        text: sheetSections ? '技能组' : '技能牌组',
         style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '900', fill: INK.secondary },
       });
       skHead.position.set(0, cy);
@@ -3110,6 +3122,17 @@ export function buildCodexOverlay(w, h, {
       const theme = SIDE_THEME[pl.side] || SIDE_THEME[1];
       addLine(`◆ ${theme.name}`, { size: 15, color: theme.accent, bold: true, gapAfter: 8 });
       for (const ch of pl.characters || []) {
+        if (ch.printed_text) {
+          const sheet = buildRichVerbatimText(ch.printed_text, {
+            maxWidth: contentW - 8, fontSize: 12.6, lineHeight: 19,
+          });
+          sheet.position.set(4, y);
+          sheet._itemTop = y;
+          sheet._itemBottom = y + sheet._height;
+          body.addChild(sheet);
+          y += sheet._height + 10;
+          continue;
+        }
         addLine(ch.name, { size: 14.5, color: INK.strong, bold: true, gapAfter: 8, indent: 2 });
         for (const p of [...(ch.faction_passives || []).map((x) => ({ ...x, _tag: '阵营被动' })), ...(ch.passives || []).map((x) => ({ ...x, _tag: '' }))]) {
           const plate = buildUnifiedEntryPlate({

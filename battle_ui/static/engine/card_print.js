@@ -142,6 +142,17 @@ export function buildBoardCardTag(card, {
   const W = Math.max(96, Math.round(width));
   const H = height ? Math.max(Math.round(W * 1.34), Math.round(height)) : Math.round(W * 1.40);
   const isBlanked = rangeDeficit >= 3;
+  if (card.printed_text && !isBlanked) {
+    const printW = Math.max(200, W);
+    const face = buildFullCard(card, { side, accentColor, width: printW, fixedHeight: H * printW / W,
+      dense: true, centered: true, playMode, rangeDeficit });
+    const root = new PIXI.Container();
+    face.scale.set(W / printW);
+    root.addChild(face);
+    root._boxWidth = W;
+    root._boxHeight = H;
+    return root;
+  }
   const padX = 6;
   const headerH = 26;
 
@@ -317,9 +328,41 @@ export function buildFullCard(card, {
   const bodyTop = headerH + (tight ? 5 : 7);
   const dice = card.dice || [];
 
+  const printedLines = !isBlanked && card.printed_text ? card.printed_text.split('\n') : null;
   const layoutBody = (targetInnerW) => {
     const box = new PIXI.Container();
     let y = 0;
+    const addDie = (die, idx) => {
+      const position = idx + 1;
+      const active = activeDieNumber === position;
+      const destroyed = !active && (card.destroyed_die_positions || []).includes(position);
+      const row = buildUnifiedDieRow(die, {width: targetInnerW, active, destroyed,
+        spent: destroyed || (activeDieNumber !== null && position < activeDieNumber),
+        dense, compact, showDivider: idx < dice.length - 1, isBlanked});
+      row.position.set(0, y);
+      box.addChild(row);
+      y += row._height + (idx < dice.length - 1 ? 1 : 0);
+    };
+
+    if (printedLines) {
+      let idx = 0;
+      for (const line of printedLines.slice(1)) {
+        if (line === dice[idx]?.printed_line) {
+          addDie(dice[idx], idx);
+          idx++;
+        } else if (line) {
+          const text = buildRichVerbatimText(line, {maxWidth: targetInnerW,
+            fontSize: dense ? 10.6 : compact ? 11 : 11.8, lineHeight: tight ? 15 : 17.5});
+          text.y = y;
+          box.addChild(text);
+          y += text._height;
+        } else {
+          y += 7;
+        }
+      }
+      for (; idx < dice.length; idx++) addDie(dice[idx], idx);
+      return { box, bodyH: y };
+    }
 
     // 1. Exact Printed Trait Strip (ONLY if present)
     const traitNode = isBlanked ? null : buildTraitPills(card, targetInnerW, { compact: tight });
@@ -346,25 +389,7 @@ export function buildFullCard(card, {
     }
 
     // 3. Hairline-Separated Unified Die Rows (ZERO nested boxes!)
-    dice.forEach((die, idx) => {
-      const position = idx + 1;
-      const isActive = activeDieNumber === position;
-      const destroyed = !isActive && (card.destroyed_die_positions || []).includes(position);
-      const isSpent = destroyed || (activeDieNumber !== null && position < activeDieNumber);
-      const rowNode = buildUnifiedDieRow(die, {
-        width: targetInnerW,
-        active: isActive,
-        spent: isSpent,
-        destroyed,
-        dense,
-        compact,
-        showDivider: idx < dice.length - 1,
-        isBlanked,
-      });
-      rowNode.position.set(0, y);
-      box.addChild(rowNode);
-      y += rowNode._height + (idx < dice.length - 1 ? 1 : 0);
-    });
+    dice.forEach(addDie);
 
     return { box, bodyH: y };
   };
@@ -385,7 +410,7 @@ export function buildFullCard(card, {
       const reLayout = layoutBody(Math.floor(innerW / fit));
       content = reLayout.box;
       if (reLayout.bodyH * fit > availBodyH) {
-        fit = Math.max(0.64, availBodyH / reLayout.bodyH);
+        fit = printedLines ? availBodyH / reLayout.bodyH : Math.max(0.64, availBodyH / reLayout.bodyH);
       }
       content.scale.set(fit);
       renderedBodyH = reLayout.bodyH * fit;
@@ -431,19 +456,22 @@ export function buildFullCard(card, {
   // Cost Crystal (top-left) in character's own color (ZERO gold ultimate override!)
   const cx = padX + 12;
   const cy = 3 + (headerH - 3) / 2;
-  drawCostCrystal(bg, cx, cy, tight ? 11.2 : 12.8, isBlanked ? INK.muted : pal.accent);
+  const showCost = !printedLines || card.cost !== card.printed_cost;
+  if (showCost) drawCostCrystal(bg, cx, cy, tight ? 11.2 : 12.8, isBlanked ? INK.muted : pal.accent);
   sheet.addChild(bg);
 
-  const cTxt = new PIXI.Text({
-    text: String(card.cost ?? 0),
-    style: { fontFamily: FONT_NUM, fontSize: tight ? 13 : 14.8, fontWeight: '900', fill: INK.paper },
-  });
-  cTxt.anchor.set(0.5);
-  cTxt.position.set(cx, cy + 0.5);
-  sheet.addChild(cTxt);
+  if (showCost) {
+    const cTxt = new PIXI.Text({
+      text: String(card.cost ?? 0),
+      style: { fontFamily: FONT_NUM, fontSize: tight ? 13 : 14.8, fontWeight: '900', fill: INK.paper },
+    });
+    cTxt.anchor.set(0.5);
+    cTxt.position.set(cx, cy + 0.5);
+    sheet.addChild(cTxt);
+  }
 
   const titleTxt = new PIXI.Text({
-    text: card.name || '',
+    text: printedLines ? printedLines[0] : card.name || '',
     style: {
       fontFamily: FONT_UI,
       fontSize: dense ? 13.2 : compact ? 13.8 : 15,
@@ -452,7 +480,7 @@ export function buildFullCard(card, {
     },
   });
   titleTxt.anchor.set(0, 0.5);
-  titleTxt.position.set(padX + 29, cy);
+  titleTxt.position.set(padX + (showCost ? 29 : 0), cy);
   sheet.addChild(titleTxt);
 
   // Subtle right-aligned owner or play-mode / suppression stamp in header
@@ -473,7 +501,10 @@ export function buildFullCard(card, {
     rightCursor -= tw + 6;
   }
 
-  if ((showOwner || !dense) && ownerName) {
+  if (printedLines && titleTxt.width > rightCursor - titleTxt.x) {
+    titleTxt.scale.set((rightCursor - titleTxt.x) / titleTxt.width);
+  }
+  if (!printedLines && (showOwner || !dense) && ownerName) {
     const owTxt = new PIXI.Text({
       text: ownerName,
       style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '800', fill: pal.accent },

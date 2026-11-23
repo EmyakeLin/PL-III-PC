@@ -1,8 +1,13 @@
 """流阴及其引入的拼点规则，经真实卡面、词条和执行器结算。"""
+import io
 import random
 import unittest
+from contextlib import redirect_stdout
+from hashlib import sha256
+from pathlib import Path
 from unittest.mock import Mock, patch
 
+from displayer import Displayer, _visible_card
 from game import Game
 from loader import load_characters_from_packs
 from models.card import Card
@@ -10,6 +15,7 @@ from models.character import Character
 from models.duel import ClashPair
 from models.opcode import OpCode
 from player.player import Player
+from terminal_bridge import TerminalBridge
 
 
 class LiuYinTests(unittest.TestCase):
@@ -152,6 +158,74 @@ class LiuYinTests(unittest.TestCase):
             first.value, other.value = a, b
             self.assertEqual(pair.clash_check()[1], result)
             self.assertEqual((first.clash_score, other.clash_score), (a, b))
+        first.make_blank()
+        first.value, other.value = 3, 7
+        self.assertNotIn("拼点逆转", first.score_traits())
+        self.assertEqual(pair.clash_check(), {1: "lose", 2: "win"})
+
+    def test_reversal_is_printed_once_on_the_invisible_slash(self):
+        self.deploy()
+        card = self.cards["liu_invisible"]
+        catalog = Displayer(self.game).catalog()
+        liu = next(c for c in catalog["players"][0]["characters"] if c["id"] == self.liu.id)
+        printed = next(skill for skill in liu["skills"] if skill["id"] == card.id)
+        for face in (printed, _visible_card(card)):
+            self.assertNotIn("拼点逆转", face["range_traits"])
+            self.assertEqual(face["dice"][0]["range_traits"].count("拼点逆转"), 1)
+        self.assertEqual(card.describe().count("拼点逆转"), 1)
+        self.assertTrue(all("拼点逆转" not in die["range_traits"]
+                            for die in _visible_card(self.cards["liu_blade"])["dice"]))
+
+    def test_author_sheet_matches_catalog_terminal_and_both_armor_faces(self):
+        self.deploy()
+        path = Path(__file__).resolve().parents[1] / "_packs" / "printed" / "流阴.txt"
+        source = path.read_text(encoding="utf-8").removesuffix("\n")
+        self.assertEqual(sha256(source.encode()).hexdigest(),
+                         "9bad708054f2e0e884ab80ed4762c861fa17376fd4737658231d5ba7fcb96409")
+        catalog = Displayer(self.game).catalog()
+        actor = next(c for c in catalog["players"][0]["characters"] if c["id"] == self.liu.id)
+        self.assertEqual(actor["printed_text"], source)
+        with redirect_stdout(io.StringIO()) as out:
+            TerminalBridge.show_character(self.liu.data)
+        self.assertEqual(out.getvalue(), source + "\n")
+        passives = actor["faction_passives"] + actor["passives"]
+        self.assertEqual(len(passives), 5)
+        for passive in passives:
+            self.assertIn(passive["printed_heading"] + "\n" + "\n".join(passive["display_lines"]) + "\n\n", source)
+        for name in ("领域洞悉", "环境同调", "环境压制"):
+            line, = catalog["statuses"][name]
+            self.assertTrue(line.startswith(name + "X："))
+            self.assertIn("\n" + line + "\n", source)
+        self.assertEqual(len(actor["skills"]), 12)
+        for spec in actor["skills"]:
+            card = self.cards[spec["id"]]
+            for form in [None, *card.data.get("forms", {})]:
+                card.set_form(form)
+                face = _visible_card(card)
+                with self.subTest(card=card.name, form=form):
+                    self.assertEqual(spec["printed_text"], face["printed_text"])
+                    self.assertIn("\n" + face["printed_text"] + "\n", source + "\n")
+                    self.assertEqual(card.describe(), face["printed_text"])
+                    for die in face["dice"]:
+                        self.assertIn(die["printed_line"], face["printed_text"].splitlines())
+        rewind = self.cards["liu_rewind"].describe().splitlines()
+        self.assertEqual(rewind[-1], "打击 1～8：1；减少1环境压制；拼点失败：增加3环境压制")
+
+    def test_invisible_hit_follows_low_score_and_ties_produce_no_hit(self):
+        for against, result, hits in ((7, "win", ["无形杀"]), (1, "lose", ["对手斩击"]), (3, "draw", [])):
+            with self.subTest(against=against):
+                self.setUp()
+                self.deploy()
+                card = self.cards["liu_invisible"]
+                opponent = Card(self.right, dict(id="slash", name="对手斩击", cost=0, dice=[
+                    dict(type="slash", level=3, final_bonus=against - 3)]), self.enemy)
+                with patch.object(self.game.rng, "randint", return_value=3):
+                    facts = self.fight(card, opponent)
+                sides, = [event["sides"] for kind, event in facts if kind == "clash_scored"]
+                scores = {side[0]: side[2:5] for side in sides}
+                self.assertEqual(scores[self.liu.combat_name], (3, 3, result))
+                self.assertEqual(scores[self.enemy.combat_name][:2], (against, against))
+                self.assertEqual([event["card"] for kind, event in facts if kind == "hit"], hits)
 
     def test_percentage_uses_max_hp_concept_shield_and_separate_light_segment(self):
         self.deploy()
@@ -180,6 +254,30 @@ class LiuYinTests(unittest.TestCase):
     def emit_use(self, card, target=None):
         self.ctx.dispatch_pipeline("on_skill_use", side=self.left.side, source=self.liu,
                                    card=card, target=target or self.enemy)
+
+    def test_rewind_pressure_changes_on_use_hit_loss_and_after_use(self):
+        for target_score, die_delta in ((1, -1), (7, 3), (3, 0)):
+            for energy in (0, 1):
+                with self.subTest(target_score=target_score, energy=energy):
+                    self.setUp()
+                    self.deploy()
+                    self.liu.add_status("环境压制", -13)
+                    if energy:
+                        self.liu.add_status("能源", energy)
+                    opponent = Card(self.right, dict(id="other", name="对手斩击", cost=0, dice=[
+                        dict(type="slash", level=3, final_bonus=target_score - 3)]), self.enemy)
+                    with patch.object(self.game.rng, "randint", return_value=3):
+                        facts = self.fight(self.cards["liu_rewind"], opponent)
+                    changes = [e for k, e in facts if k == "status_balance" and e["status"] == "环境压制"]
+                    self.assertEqual(changes[0]["before"], 5)
+                    expected = [6]
+                    if die_delta:
+                        expected.append(die_delta)
+                    expected.append(-2)
+                    if energy:
+                        expected.append(-1)
+                    expected.append(-1)  # 行至阴处的首张技能
+                    self.assertEqual([e["after"] - e["before"] for e in changes], expected)
 
     def test_rewind_merges_actual_stacks_and_restores_life_without_heal(self):
         self.deploy()

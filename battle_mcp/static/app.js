@@ -415,11 +415,15 @@ async function showCatalog() {
         const sections = make("div");
         for (const player of book.players) for (const actor of player.characters) {
             const section = make("section");
-            section.append(make("h3", actor.name));
-            const passives = [...(actor.faction_passives || []), ...(actor.passives || [])];
-            for (const passive of passives) {
-                const description = passive.display_lines.join("\n");
-                section.append(make("p", [passive.name, description].filter(Boolean).join("　")));
+            if (actor.printed_text) {
+                section.append(make("p", actor.printed_text));
+            } else {
+                section.append(make("h3", actor.name));
+                const passives = [...(actor.faction_passives || []), ...(actor.passives || [])];
+                for (const passive of passives) {
+                    const description = passive.display_lines.join("\n");
+                    section.append(make("p", [passive.name, description].filter(Boolean).join("　")));
+                }
             }
             const links = make("div"); links.className = "toolbar";
             for (const skill of actor.skills) links.append(button(skill.name, () => showCard(skill.id)));
@@ -441,6 +445,17 @@ async function showCard(id, liveCard, preview) {
         if (version !== ruleVersion) return;
         const card = liveCard || printed.get(id);
         if (!card) throw new Error("图鉴中没有这张技能。");
+        navigation([["出战图鉴", showCatalog], ["规则目录", showIndex]]);
+        if (card.printed_text) {
+            const [heading, ...lines] = card.printed_text.split("\n");
+            const body = make("div");
+            body.append(make("p", lines.join("\n")));
+            if (preview && preview.cost !== card.printed_cost) {
+                body.append(make("p", "本次通常费用预计 " + preview.cost + " 费"));
+            }
+            page(heading, body);
+            return;
+        }
         const traits = [card.cost + " 费"];
         if (preview) traits.push("本次通常费用预计 " + preview.cost + " 费");
         if (card.resource_cost) {
@@ -473,7 +488,6 @@ async function showCard(id, liveCard, preview) {
             const range = die.roll_max != null ? " 1～" + die.roll_max : "";
             lines.push((dieNames[die.type] || die.type) + range + "　" + effects.join("；"));
         }
-        navigation([["出战图鉴", showCatalog], ["规则目录", showIndex]]);
         page(card.name, make("p", lines.join("\n\n")));
     } catch (error) { ruleError(version, error); }
 }

@@ -174,7 +174,6 @@ class ClashPair:
         va, vb = die_a.clash_score, die_b.clash_score
         if va == vb:
             return {a: "draw", b: "draw"}
-        lower_wins = any(die.type != "blank" and die.data.get("clash_order") == "lower"
-                         for die in (die_a, die_b))
+        lower_wins = die_a.reverses_clash or die_b.reverses_clash
         winner, loser = (a, b) if (va < vb if lower_wins else va > vb) else (b, a)
         return {winner: "win", loser: "lose"}

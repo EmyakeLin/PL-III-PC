@@ -1150,6 +1150,18 @@ export function buildUnifiedDieRow(die, {
   const slim = dense && width < 194;
   const fontSize = slim ? 10.2 : dense ? 10.6 : compact ? 11 : 11.8;
   const lineH = slim ? 14.2 : dense ? 14.8 : compact ? 16 : 17.5;
+  if (die.printed_line && !isBlanked) {
+    const line = buildRichVerbatimText(die.printed_line, {
+      maxWidth: width - 10, fontSize, lineHeight: lineH, muted: spent || destroyed,
+    });
+    root._height = line._height + 6;
+    const mark = new PIXI.Graphics();
+    if (active) mark.roundRect(0, 0, width, root._height, 3).fill({color: INK.goldBg});
+    mark.rect(0, 2, 2, root._height - 4).fill({color: spent || destroyed ? INK.muted : ds.color});
+    line.position.set(7, 3);
+    root.addChild(mark, line);
+    return root;
+  }
   const leftColW = slim ? 64 : dense ? 74 : compact ? 80 : 90;
   const rightX = leftColW + 5;
   const rightW = Math.max(76, width - rightX - 3);

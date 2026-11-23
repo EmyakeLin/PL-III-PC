@@ -25,7 +25,7 @@
     "领域洞悉": {"cap":30,"description":"每15层使骰子等级提升1。"},
     "环境压制": {"cap":18,"description":"生命不高于层数时，获得50%强化护甲减伤。"},
     "环境同调": {"cap":3,"description":"每层提高1费用上限，3层时再提高1。","sustain_from":2,"sustain":{"强壮":1,"迅捷":1}},
-    "战甲": {"cap":1,"description":"领域洞悉的实际增量同时转化为等量能源。"}
+    "战甲": {"cap":1,"description":"若处于战甲状态，则获得领域洞悉的同时获得等量的能源"}
   },
   "status_entries": {
     "领域洞悉": [
@@ -66,6 +66,7 @@
   "characters": [
     {
       "id": "liu_yin",
+      "printed_sheet": "流阴.txt",
       "name": "流阴",
       "title": "执政",
       "rank": "EMPOWERED_BOSS",
@@ -385,7 +386,8 @@
           ]
         },
         {
-          "name": "形态灭杀·回收",
+          "name": "形态灭杀",
+          "hidden": true,
           "entries": [
             {
               "trigger": "on_skill_disabled",
@@ -1287,7 +1289,7 @@
           ]
         }
       ],
-      "description": "塑造系权能掌控者。半人半光点生命，以自身为信物进行解析，担任光点生命联合会执政。"
+      "description": "塑造系权能掌控者"
     }
   ]
 }

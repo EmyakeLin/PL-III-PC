@@ -266,12 +266,17 @@ class Dice:
                 value += self.card.character.status_modifier("final_score")
         return value
 
+    @property
+    def reverses_clash(self):
+        return self.type != "blank" and self.data.get("clash_order") == "lower"
+
     def score_traits(self):
+        traits = ["拼点逆转"] if self.reverses_clash else []
         if self.fixed_scores:
-            return ["骰级与点数锁定，按取值结果和印刷算式结算"]
-        if self.data.get("fixed_level"):
-            return ["固定骰面范围，忽略骰级升降"]
-        return []
+            traits.append("骰级与点数锁定，按取值结果和印刷算式结算")
+        elif self.data.get("fixed_level"):
+            traits.append("固定骰面范围，忽略骰级升降")
+        return traits
 
     def roll(self, *, clash=False):
         self.final_score = self.clash_score = None
@@ -286,6 +291,8 @@ class Dice:
 
 
 def describe_die(data):
+    if "printed_line" in data:
+        return data["printed_line"]
     die = Dice(data)
     name = TYPE_NAMES[die.type]
     if die.type == "skip":
@@ -295,8 +302,6 @@ def describe_die(data):
     die.value = die.roll_max
     last = die.get_value()
     traits = describe_range_traits(data)
-    if data.get("clash_order") == "lower":
-        traits.append("拼点逆转")
     traits.extend(die.score_traits())
     if data.get("passive_activation"):
         traits.append("被动激活")

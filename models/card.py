@@ -438,6 +438,8 @@ class Card:
         return f"{prefix}{self.name}{suffix}"
 
     def describe(self):
+        if "printed_text" in self.data:
+            return self.data["printed_text"]
         from models.dice import describe_die
         actions = " → ".join(describe_die(die) for die in self.dice)
         effects = "；".join(describe_entry(entry) for entry in self.entries)

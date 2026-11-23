@@ -140,6 +140,45 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 self.assertEqual(lines[name], original, name)
 
     @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
+    def test_liu_yin_prints_each_authored_character_on_cards_and_in_the_catalog(self):
+        state = BattleMatch([["liu_yin"], ["lan_qing"]], seed=37).snapshot()
+        actor = state["catalog"]["players"][0]["characters"][0]
+        script = """
+            import assert from 'node:assert/strict';
+            import {readFileSync} from 'node:fs';
+            import * as PIXI from './vendor/pixi.min.mjs';
+            import {buildFullCard, buildBoardCardTag} from './engine/card_print.js';
+            import {buildCodexOverlay, buildRosterOverlay} from './engine/table_overlays.js';
+            const [actor, preview] = JSON.parse(readFileSync(0, 'utf8'));
+            const measure = {measureText: t => ({width: t.length * 10,
+                actualBoundingBoxAscent: 10, actualBoundingBoxDescent: 3})};
+            PIXI.DOMAdapter.set({...PIXI.DOMAdapter.get(), getCanvasRenderingContext2D: () => class {},
+                createCanvas: () => ({getContext: () => measure})});
+            function text(node) {
+                if (node instanceof PIXI.Text) return node.text;
+                return (node.children || []).map(text).join('');
+            }
+            for (const card of actor.skills.flatMap(skill => [skill, ...skill.forms])) {
+                const source = card.printed_text.replaceAll('\\n', '');
+                for (const width of [240, 345]) {
+                    assert.equal(text(buildFullCard(card, {width, ownerName: actor.name})), source);
+                }
+                assert.equal(text(buildBoardCardTag(card)), source);
+                assert.ok(!text(buildFullCard(card, {rangeDeficit: 3})).includes('拼点逆转'));
+            }
+            const overlay = buildCodexOverlay(1024, 768, {tab: 'catalog', onClose: () => {},
+                catalog: {players: [{side: 1, characters: [actor]}]}});
+            assert.ok(text(overlay).includes(actor.printed_text.replaceAll('\\n', '')));
+            const roster = buildRosterOverlay(1400, 900, {catalog: [preview]});
+            const body = actor.printed_text.slice(preview.printed_profile.length).replaceAll('\\n', '');
+            assert.ok(text(roster).includes(body));
+        """
+        preview = next(c for c in state["roster_catalog"] if c["id"] == actor["id"])
+        result = subprocess.run([shutil.which("node"), "--input-type=module", "-e", script],
+                                cwd=STATIC_DIR, input=json.dumps([actor, preview]), capture_output=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
     def test_webgl_pre_reveal_labels_and_burn_fallback_match_the_catalog(self):
         state = BattleSession(seed=37).state()
         cards = {card["name"]: card for actor in state["roster_catalog"] for card in actor["skills"]}
