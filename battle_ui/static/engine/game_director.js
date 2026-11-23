@@ -46,7 +46,7 @@ import { FxDirector } from './fx_director.js';
 import { TimelineSequencer, combatRollKey } from './timeline_sequencer.js';
 import { createPresentationFx } from './presentation_fx.js';
 import { createLightcoreBar } from './beat_caption.js';
-import { buildDuelGemTrack, buildActiveDuelStage } from './combat_timeline.js';
+import { CombatTabletop } from './combat_tabletop.js';
 import {
   analyzeFieldActions,
   resolveFieldHighlights,
@@ -181,10 +181,13 @@ export class GameDirector {
       getClashCenter: () => this._getActiveClashCenter(),
       getCombatCardRect: (side) => this.combatCardRects?.get(side) || null,
       getClashMedallionCenter: (side) => this.clashMedallionCenters?.get(side) || null,
+      onCardsReveal: () => this.tabletop?.triggerRevealFlip(),
     });
 
     this.sequencer = new TimelineSequencer({
       clearDice: () => this.three.clearDice(),
+      hasActiveDice: () => this.three.hasActiveDice(),
+      waitUntilDiceCleared: (cb) => this.three.waitUntilDiceCleared(cb),
       clearClashGroups: () => this.physics.clearClashGroups(),
       playSpeedRoll: (ev, opts) => this.fxRenderer.playSpeedRoll(ev, opts),
       playDiceRoll: (ev, opts) => this.fxRenderer.playDiceRoll(ev, opts),
@@ -223,6 +226,7 @@ export class GameDirector {
     this.pendingFieldAction = false;
     this.specialMenuOpen = false;
     this.activeFieldAbilityKey = null;
+    this.preRevealStaging = false;
     this._wingHeadRefs = new Map();
     this._fighterSpeedRefs = [];
     this._clashHeaderMeta = null;
@@ -253,6 +257,8 @@ export class GameDirector {
     this.combatScrollY = null;
     this._combatScrollOffsetY = 0;
     this._lastActiveCombatDuelKey = null;
+    this._activeCombatCardNodes = [];
+    this._combatCardScrollByKey = new Map();
     this._clashHeaderMeta = null;
     this.effectMarks = [];
     this.choiceSafeTop = 64;
@@ -307,6 +313,7 @@ export class GameDirector {
     this.wingsLayer = new PIXI.Container();
     this.actorsLayer = new PIXI.Container();
     this.boardLayer = new PIXI.Container();
+    this.tabletopLayer = new PIXI.Container();
     this.shardGraphic = new PIXI.Graphics();
     this.clashLayer = new PIXI.Container();
     this.duelPeekLayer = new PIXI.Container();
@@ -314,6 +321,8 @@ export class GameDirector {
     this.tetherLayer = new PIXI.Graphics();
     this.sidePanelsLayer = new PIXI.Container();
     this.handLayer = new PIXI.Container();
+    this.aimArrowLayer = new PIXI.Graphics();
+    this.aimArrowLayer.eventMode = 'none';
     this.controlsLayer = new PIXI.Container();
     this.cornerHudLayer = new PIXI.Container();
     this.fxTextLayer = new PIXI.Container();
@@ -325,6 +334,7 @@ export class GameDirector {
       this.wingsLayer,
       this.actorsLayer,
       this.boardLayer,
+      this.tabletopLayer,
       this.shardGraphic,
       this.clashLayer,
       this.duelPeekLayer,
@@ -332,11 +342,93 @@ export class GameDirector {
       this.tetherLayer,
       this.sidePanelsLayer,
       this.handLayer,
+      this.aimArrowLayer,
       this.controlsLayer,
       this.cornerHudLayer,
       this.fxTextLayer
     );
     app.stage.addChild(this.overlayLayer, this.inspectLayer, this.toastLayer);
+
+    this.tabletop = new CombatTabletop(this.tabletopLayer, {
+      resolveCharColor: (cid, s) => this._resolveCharColor(cid, s),
+      resolveCardOwner: (duelKind, duelNumber, side, cardIdx = 0) => {
+        const bucket = duelKind === 'pre_reveal' ? this.state?.card_owners?.pre_reveal : this.state?.card_owners?.duels;
+        const entry = bucket?.[`${duelNumber}:${side}`]?.[cardIdx];
+        if (!entry) return null;
+        return {
+          characterId: entry.character_id || null,
+          characterName: entry.character_name || this._charNameMap()[entry.character_id] || '',
+          color: entry.character_color != null
+            ? parseHexColor(entry.character_color, this._resolveCharColor(entry.character_id, side))
+            : this._resolveCharColor(entry.character_id, side),
+          cardBack: entry.card_back ?? this.state?.character_card_backs?.[entry.character_id] ?? this.state?.character_card_backs?.[entry.printed_id] ?? null,
+        };
+      },
+      resolveCardBack: (cid) => this.state?.character_card_backs?.[cid] ?? null,
+      getCharName: (cid) => this._charNameMap()[cid] || '',
+      onCardLand: ({ x, y, color }) => {
+        this.audio.cardPlace();
+        this.three.emitShockwave(x, y, color);
+      },
+      onHoverCard: (meta) => {
+        if (meta && !this.dragState && !this.selectedHandCardId) {
+          this.focusedCharId = meta.characterId;
+          this.focusedSide = meta.side;
+          this.focusedDuelNumber = meta.duelKind === 'regular' ? meta.duelNumber : { kind: meta.duelKind, number: meta.duelNumber };
+          if (meta.hidden && (meta.characterName || meta.characterId)) {
+            this.hoveredInfo = {
+              kind: 'card_owner',
+              title: meta.characterName || this._charNameMap()[meta.characterId] || '未知角色',
+              color: meta.color ?? this._resolveCharColor(meta.characterId, meta.side),
+              side: meta.side,
+              anchorX: meta.anchorX,
+              anchorY: meta.anchorY,
+            };
+            this._renderInspection();
+          } else if (this.hoveredInfo?.kind === 'card_owner') {
+            this.hoveredInfo = null;
+            this._renderInspection();
+          }
+        } else if (!this.dragState && !this.selectedHandCardId) {
+          this.focusedCharId = null;
+          this.focusedDuelNumber = null;
+          if (this.hoveredInfo?.kind === 'card_owner') {
+            this.hoveredInfo = null;
+            this._renderInspection();
+          }
+        }
+      },
+      onSlotTap: () => {
+        if (this.selectedHandCardId && this.state?.mode === 'placement') {
+          this._placeCard(this.selectedHandCardId);
+        }
+      },
+      onAttackDuel: (duelNumber) => {
+        const cid = this.selectedHandCardId;
+        if (!cid) return;
+        this.selectedHandCardId = null;
+        this.audio.cardPlace();
+        const act = this._isPreRevealStagingMode() ? 'stage_pre_reveal' : 'attack';
+        this._sendAction(act, { card_id: cid, target: { kind: 'duel', number: duelNumber } });
+      },
+      onInterceptDuel: (duelNumber) => {
+        const cid = this.selectedHandCardId;
+        if (!cid) return;
+        this.selectedHandCardId = null;
+        this.audio.cardPlace();
+        this._sendAction('intercept', { card_id: cid, duel_number: duelNumber });
+      },
+      onLetThrough: (duelNumber) => {
+        this._sendAction('let_through', { duel_number: duelNumber });
+      },
+      onUnstagePreReveal: (cardId) => {
+        this.audio.cardSlide();
+        this._sendAction('unstage_pre_reveal', { card_id: cardId });
+      },
+      markEffectTarget: (host, kind, number, side, pos, x, y, w, h) => {
+        this._markEffectTarget(host, kind, number, side, pos, x, y, w, h);
+      },
+    });
 
     // Persistent Diegetic Tabletop Top Bar (ZERO destroy/rebuild on updates or toggles!)
     this.topBar = createDiegeticTopBar({
@@ -572,6 +664,15 @@ export class GameDirector {
       || Boolean(this.transport.isRoom && this.state.is_paused_by_me && this.specialMenuOpen);
   }
 
+  _isPreRevealStagingMode() {
+    return Boolean(
+      this.state?.mode === 'placement'
+      && this.state?.pre_reveal_claimed
+      && this.preRevealStaging
+      && !this._isFieldActionMode()
+    );
+  }
+
   _getFieldActionContext() {
     const analysis = analyzeFieldActions(this.state?.special_options || []);
     const highlights = resolveFieldHighlights(analysis, {
@@ -731,9 +832,21 @@ export class GameDirector {
     }
   }
 
+  _nextAutoDelay(mode, hadFx = true, lastBeatKind = null) {
+    if (mode === 'timing') return hadFx ? 0.24 : 0.05;
+    if (mode === 'combat') {
+      // Keep Roll -> Clash -> Strike tightly chained with zero dead-air drag!
+      // Chain Roll -> Clash continuously with ZERO dead stop!
+      if (lastBeatKind === 'dice_roll') return 0.01;
+      if (lastBeatKind === 'dice_clash') return 0.10;
+      return 0.36;
+    }
+    if (mode === 'turn_end') return 0.56;
+    return 0.44;
+  }
+
   _onBeatSettled() {
-    const m = this.state?.mode;
-    this.autoTimer = m === 'combat' ? 0.52 : m === 'turn_end' ? 0.68 : 0.55;
+    this.autoTimer = this._nextAutoDelay(this.state?.mode, this._lastBeatHadFx, this._lastBeatKind);
     this._syncClashMedallionCenters();
   }
 
@@ -746,7 +859,11 @@ export class GameDirector {
       this.specialMenuOpen = false;
     }
     this.activeFieldAbilityKey = null;
-    this.autoTimer = nextState.mode === 'combat' ? 0.52 : nextState.mode === 'turn_end' ? 0.68 : 0.55;
+    if (nextState.mode !== 'placement' || !nextState.pre_reveal_claimed || !(nextState.pre_reveal_eligible_cards || []).length) {
+      this.preRevealStaging = false;
+    }
+    this._lastBeatHadFx = true;
+    this.autoTimer = this._nextAutoDelay(nextState.mode, true);
     // STRICT PRIVACY CLEAR on every state update
     this.hoveredCard = null;
     this.hoveredInfo = null;
@@ -773,6 +890,7 @@ export class GameDirector {
       this.duelScrollY = 0;
       this.preDuelPage = 0;
       this._duelSlotCountPrev = 0;
+      this.tabletop?.resetMatch(nextState.frame?.combat ? 1 : 0);
     }
     if (isInitial || matchChanged || prevRosterSig !== nextRosterSig) {
       this.activeHeroPanel = null;
@@ -825,6 +943,13 @@ export class GameDirector {
       matchChanged,
       characterKeyFn: (cid, side) => this._characterKey(cid, side),
     });
+    this._lastBeatHadFx = Boolean(beatPlan?.fresh?.length || beatPlan?.initialSpeed);
+    const freshKinds = (beatPlan?.fresh || []).map((e) => e.kind);
+    this._lastBeatKind = freshKinds.includes('combat_strike') ? 'combat_strike'
+      : freshKinds.includes('dice_clash') ? 'dice_clash'
+        : freshKinds.includes('dice_roll') ? 'dice_roll'
+          : null;
+    this.autoTimer = this._nextAutoDelay(nextState.mode, this._lastBeatHadFx, this._lastBeatKind);
 
     for (const p of nextState.frame?.players || []) {
       for (const c of p.characters || []) {
@@ -1096,6 +1221,9 @@ export class GameDirector {
       for (const c of se?.cards || []) {
         if (c && !c.hidden && c.state !== 'resolved' && c.state !== 'discarded') queuedCards.push(c);
       }
+    }
+    for (const draft of this.state.pre_reveal_plan || []) {
+      if (draft?.valid && draft?.card) queuedCards.push(draft.card);
     }
 
     let previewShared = realShared;
@@ -1506,7 +1634,7 @@ export class GameDirector {
       (fieldAttackIdx !== null && activeSide && side !== activeSide && ch.alive)
       || (
         this.selectedHandCardId
-        && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
+        && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept' || this._isPreRevealStagingMode())
         && activeSide && side !== activeSide && ch.alive
         && this._canAttackTarget(this.selectedHandCardId, 'character', ch.id)
       )
@@ -1573,7 +1701,8 @@ export class GameDirector {
         const cid = this.selectedHandCardId;
         this.selectedHandCardId = null;
         this.audio.cardPlace();
-        this._sendAction('attack', { card_id: cid, target: { kind: 'character', id: ch.id } });
+        const act = this._isPreRevealStagingMode() ? 'stage_pre_reveal' : 'attack';
+        this._sendAction(act, { card_id: cid, target: { kind: 'character', id: ch.id } });
         return;
       }
       this._openHeroSheet(ch.id, side);
@@ -1939,6 +2068,7 @@ export class GameDirector {
     this.clashLayer.y = 0;
     this.clashLayer.mask = null;
     this.combatCardRects.clear();
+    this._activeCombatCardNodes = [];
     this.clashMedallionCenters.clear();
     this._clashHeaderMeta = null;
     this.effectMarks = [];
@@ -1982,6 +2112,7 @@ export class GameDirector {
       const border = new PIXI.Graphics();
       const accent = SIDE_THEME[this.state.active_side].accent;
       const draw = (selected) => {
+        if (border.destroyed) return;
         border.clear().roundRect(0, 0, width, height, Math.min(7, width / 3))
           .fill({ color: accent, alpha: selected ? 0.2 : 0.045 }).stroke({ width: selected ? 3 : 1.5, color: accent });
       };
@@ -2029,6 +2160,7 @@ export class GameDirector {
     mark.position.set(x, y);
     const border = new PIXI.Graphics();
     const draw = (hov) => {
+      if (border.destroyed) return;
       border.clear().roundRect(0, 0, width, height, Math.min(8, width / 3))
         .fill({ color: accent, alpha: hov ? 0.24 : 0.09 })
         .stroke({ width: hov ? 2.8 : 1.8, color: accent });
@@ -2048,648 +2180,221 @@ export class GameDirector {
   }
 
   /**
-   * MODE A: Confrontational Horizontal Duel Bridge (Left P1 card faces Right P2 card directly!)
+   * MODE A: Persistent 2.5D Living Tabletop (Placement / Pre-Reveal / Reveal).
+   * Strictly Left = P1, Right = P2, Top->Bottom = Duel 1..N, zero pagination, zero popovers.
    */
   _rebuildConfrontationBridge() {
-    const { arenaX, arenaW, arenaTop, arenaH } = this.layout;
+    const { arenaX, arenaW, arenaTop, stageBottom, showdownBottom, hasHand } = this.layout;
     const frame = this.state.frame;
-    const charNames = this._charNameMap();
-    const multiChar = (frame.players || []).some((p) => (p.characters || []).length > 1);
+    const isPlacement = this.state.mode === 'placement';
+    const activeSide = this.state.active_side || 1;
+    const viewerSide = frame.viewer_side ?? null;
+    const stageTop = arenaTop + 10;
+    const bottomY = hasHand ? (stageBottom - 8) : (showdownBottom - 16);
+    const stageH = Math.max(260, bottomY - stageTop);
 
-    const preDuels = frame.pre_reveal?.duels || [];
-    const instantDuels = frame.special_duels || [];
-    const allTopDuels = [
-      ...preDuels.map((d) => ({ ...d, _kind: 'pre_reveal' })),
-      ...instantDuels.map((d) => ({ ...d, _kind: 'instant' })),
-    ];
-    const showPreLane = allTopDuels.length > 0 || this.state.mode === 'pre_attack' || this.state.mode === 'intercept';
-
-    let regTop = arenaTop;
-    let regH = arenaH;
-
-    // 1. Pre-Reveal / Instant Arch (ONLY visible when active — renders FULL readable cards directly!)
-    if (showPreLane) {
-      const perPage = Math.max(1, Math.floor((arenaW - 6) / 225));
-      const pageCount = Math.max(1, Math.ceil(allTopDuels.length / perPage));
-      this.preDuelPage = Math.min(this.preDuelPage, pageCount - 1);
-      const paged = pageCount > 1;
-      const visibleDuels = allTopDuels.slice(this.preDuelPage * perPage, (this.preDuelPage + 1) * perPage);
-      const preH = allTopDuels.length > 0
-        ? Math.min(206, Math.max(146, Math.round(arenaH * 0.48)))
-        : Math.min(82, Math.round(arenaH * 0.22));
-      regTop = arenaTop + preH + 10;
-      regH = Math.max(120, arenaH - preH - 10);
-
-      const pendingNumbers = new Set(this.state.pending_responses || []);
-      const archG = new PIXI.Graphics();
-      archG.roundRect(arenaX, arenaTop, arenaW, preH, 10)
-        .fill({ color: 0xfbf7ee, alpha: 0.9 })
-        .stroke({ width: 1.2, color: INK.gold, alpha: 0.55 });
-      this.boardLayer.addChild(archG);
-
-      if (!allTopDuels.length) {
-        const cue = new PIXI.Text({
-          text: '开牌前交锋',
-          style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.goldDeep },
+    const items = [];
+    for (const d of frame?.pre_reveal?.duels || []) {
+      items.push({
+        kind: 'pre_reveal',
+        number: d.number,
+        sides: d.sides,
+        target: d.target || null,
+        ready: Boolean(d.ready),
+        interceptable: d.interceptable !== false,
+        attackingSide: d.attacking_side || 1,
+        key: 'pre_reveal:' + d.number,
+        status: 'upcoming',
+      });
+    }
+    const stagedPlans = this.state.pre_reveal_plan || [];
+    stagedPlans.forEach((plan, idx) => {
+      if (!plan?.card) return;
+      const mySide = viewerSide || activeSide;
+      items.push({
+        kind: 'pre_reveal_draft',
+        number: idx + 1,
+        sides: [
+          { side: 1, cards: mySide === 1 ? [plan.card] : [] },
+          { side: 2, cards: mySide === 2 ? [plan.card] : [] },
+        ],
+        target: plan.target || null,
+        targetLabel: plan.target_label || '',
+        draftCardId: plan.card_id,
+        draftValid: plan.valid !== false,
+        draftAffordable: plan.affordable !== false,
+        draftReason: plan.reason || null,
+        attackingSide: mySide,
+        key: 'pre_reveal_draft:' + plan.card_id,
+        status: 'upcoming',
+      });
+    });
+    for (const d of frame?.special_duels || []) {
+      items.push({ kind: 'instant', number: d.number, sides: d.sides, key: 'instant:' + d.number, status: 'upcoming' });
+    }
+    const regDuels = frame?.duels || [];
+    for (const d of regDuels) {
+      items.push({ kind: 'regular', number: d.number, sides: d.sides, key: 'regular:' + d.number, status: 'upcoming' });
+    }
+    if (isPlacement) {
+      const hasEmpty = regDuels.some((d) => !(d.sides?.find((s) => s.side === activeSide)?.cards?.length));
+      if (!hasEmpty) {
+        const nextNum = regDuels.length + 1;
+        items.push({
+          kind: 'regular',
+          number: nextNum,
+          sides: [{ side: 1, cards: [] }, { side: 2, cards: [] }],
+          key: 'regular:' + nextNum,
+          status: 'upcoming',
         });
-        cue.anchor.set(0.5);
-        cue.position.set(arenaX + arenaW / 2, arenaTop + preH / 2);
-        this.boardLayer.addChild(cue);
-      } else {
-        const count = paged ? perPage : visibleDuels.length;
-        const slotGap = 10;
-        const slotW = Math.floor((arenaW - 16 - (count - 1) * slotGap) / count);
-        const slotH = preH - (paged ? 37 : 14);
-        const startX = arenaX + 8;
+      }
+    }
 
-        visibleDuels.forEach((slot, idx) => {
-          const sx = startX + idx * (slotW + slotGap);
-          const sy = arenaTop + 7;
-          const isPendingForMe = slot._kind === 'pre_reveal' && !slot.ready && pendingNumbers.has(slot.number);
-          if (slot._kind === 'pre_reveal') {
-            this.preRevealSlotRects.set(slot.number, { x: sx, y: sy, w: slotW, h: slotH, cx: sx + slotW / 2, cy: sy + slotH / 2 });
-          }
+    const pendingResponses = new Set(this.state.pending_responses || []);
+    let activeIndex = 0;
+    if (pendingResponses.size > 0) {
+      const firstPending = items.findIndex((it) => it.kind === 'pre_reveal' && pendingResponses.has(it.number));
+      if (firstPending >= 0) activeIndex = firstPending;
+    } else if (isPlacement) {
+      const firstEmpty = items.findIndex((it) => it.kind === 'regular' && !(it.sides.find((s) => s.side === activeSide)?.cards?.length));
+      activeIndex = firstEmpty >= 0 ? firstEmpty : Math.max(0, items.length - 1);
+    }
 
-          const canClickIntercept = Boolean(
-            isPendingForMe && this.selectedHandCardId
-            && (this.state.legal_intercept_cards || []).includes(this.selectedHandCardId)
-          );
-          const sg = new PIXI.Graphics();
-          sg.roundRect(sx, sy, slotW, slotH, 8)
-            .fill({ color: canClickIntercept ? 0xfceee8 : INK.paper })
-            .stroke({ width: canClickIntercept ? 2.4 : isPendingForMe ? 1.8 : 1.1, color: isPendingForMe ? 0xc8452e : slot.ready ? 0x1a825e : INK.line });
-          if (canClickIntercept) {
-            sg.eventMode = 'static';
-            sg.cursor = 'pointer';
-            sg.on('pointertap', (e) => {
-              e.stopPropagation();
-              const cid = this.selectedHandCardId;
-              this.selectedHandCardId = null;
-              this.audio.cardPlace();
-              this._sendAction('intercept', { card_id: cid, duel_number: slot.number });
-            });
-          }
-          this.boardLayer.addChild(sg);
-
-          const prefix = slot._kind === 'instant' ? '即时' : '开牌前';
-          const mark = CIRCLED[slot.number - 1] || String(slot.number);
-          const targetTxt = slot.target?.kind === 'duel'
-            ? `→ 常规${CIRCLED[slot.target.number - 1] || slot.target.number}`
-            : slot.target?.kind === 'intercept' ? `⇄ ${slot.target.name}` : `→ ${slot.target?.name || ''}`;
-          const timingRec = slot._kind === 'pre_reveal'
-            ? (this.state.response_times || []).find((t) => t.number === slot.number) : null;
-          let elapsed = '';
-          if (timingRec?.declared_at_ms) {
-            elapsed = ` ${(((timingRec.answered_at_ms || Date.now()) - timingRec.declared_at_ms) / 1000).toFixed(1)}s`;
-          }
-          const baseHeader = `${prefix}${mark} ${slot.ready ? '就绪' : '待迎击'}`;
-          const head = new PIXI.Text({
-            text: `${baseHeader}${elapsed}  ${targetTxt}`,
-            style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '800', fill: isPendingForMe ? 0xc8452e : INK.primary },
-          });
-          head.position.set(sx + 8, sy + 5);
-          this.boardLayer.addChild(head);
-          this._markEffectTarget(this.boardLayer, slot._kind, slot.number, null, null, sx, sy, slotW, 23);
-          if (timingRec?.declared_at_ms && !timingRec.answered_at_ms) {
-            this.preTimerTexts.push({ txt: head, baseHeader, declaredAt: timingRec.declared_at_ms });
-          }
-
-          const cards = [];
-          for (const sEntry of slot.sides || []) {
-            (sEntry.cards || []).forEach((card, index) => cards.push({ card, side: sEntry.side, position: index + 1 }));
-          }
-          const availCardW = Math.max(160, Math.floor((slotW - 14 - (cards.length - 1) * 6) / Math.max(1, cards.length)));
-          const availCardH = slotH - 28;
-          cards.forEach(({ card, side, position }, cIdx) => {
-            const ownerColor = this._resolveCharColor(card.character_id, side);
-            // Try 1:1 full card first; if space is tighter, use razor-sharp 1:1 buildBoardCardTag (ZERO blurry scaling!)
-            let spr = null;
-            let isTag = false;
-            if (availCardW >= 210 && availCardH >= 120) {
-              const fullTry = buildFullCard(card, {
-                side,
-                accentColor: ownerColor,
-                ownerName: charNames[card.character_id] || '',
-                showOwner: multiChar,
-                width: Math.min(254, availCardW),
-                dense: true,
-                centered: true,
-                legal: true,
-                playMode: card.play_mode,
-              });
-              if (fullTry._boxHeight <= availCardH + 6) {
-                spr = fullTry;
-              } else {
-                fullTry.destroy({ children: true });
-              }
-            }
-            if (!spr) {
-              isTag = true;
-              const tagW = Math.max(96, Math.min(132, availCardW - 4, Math.floor((availCardH - 4) / 1.40)));
-              spr = buildBoardCardTag(card, {
-                side,
-                accentColor: ownerColor,
-                ownerName: charNames[card.character_id] || '',
-                showOwner: multiChar,
-                width: tagW,
-                playMode: card.play_mode,
-              });
-            }
-            const drawW = spr._boxWidth;
-            const drawH = spr._boxHeight;
-            const cxCard = sx + 7 + drawW / 2 + cIdx * (drawW + 6);
-            const cyCard = sy + 23 + availCardH / 2;
-            spr.position.set(cxCard, cyCard);
-            if (isTag) {
-              spr.eventMode = 'static';
-              spr.cursor = 'pointer';
-              spr.on('pointerover', () => {
-                this.hoveredCard = {
-                  card, side, accentColor: ownerColor, ownerName: charNames[card.character_id] || '',
-                  anchorX: cxCard, anchorY: cyCard, cardH: drawH, source: 'board', sourceSprite: spr,
-                };
-                this.focusedCharId = card.character_id || null;
-                this.focusedSide = side;
-                this.focusedDuelNumber = slot._kind === 'pre_reveal' ? { kind: 'pre_reveal', number: slot.number } : null;
-                this._renderInspection();
-              });
-              spr.on('pointerout', () => {
-                this.hoveredCard = null;
-                this.focusedCharId = null;
-                this.focusedDuelNumber = null;
-                this._renderInspection();
-              });
-            } else if (!card.hidden) {
-              spr.eventMode = 'static';
-              spr.on('pointerover', () => {
-                this.focusedCharId = card.character_id || null;
-                this.focusedSide = side;
-                this.focusedDuelNumber = slot._kind === 'pre_reveal' ? { kind: 'pre_reveal', number: slot.number } : null;
-              });
-              spr.on('pointerout', () => {
-                this.focusedCharId = null;
-                this.focusedDuelNumber = null;
-              });
-            }
-            this.boardLayer.addChild(spr);
-            this._markEffectTarget(this.boardLayer, slot._kind, slot.number, side, position,
-              cxCard - drawW / 2, cyCard - drawH / 2, drawW, drawH);
-          });
-
-          if (isPendingForMe) {
-            const passBtn = makeSealButton('放行', {
-              width: 52, height: 22, accent: 0xc8452e, solid: true, fontSize: 10.5, radius: 5,
-              onClick: () => this._sendAction('let_through', { duel_number: slot.number }),
-            });
-            passBtn.position.set(sx + slotW - 58, sy + 3);
-            this.boardLayer.addChild(passBtn);
-          }
-        });
-        if (paged) {
-          const cx = arenaX + arenaW / 2;
-          const y = arenaTop + preH - 26;
-          const label = new PIXI.Text({ text: `${this.preDuelPage + 1} / ${pageCount}`,
-            style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: INK.goldDeep } });
-          label.anchor.set(0.5, 0);
-          label.position.set(cx, y + 3);
-          this.boardLayer.addChild(label);
-          for (const delta of [-1, 1]) {
-            const nextPage = this.preDuelPage + delta;
-            const button = makeSealButton(delta < 0 ? '‹' : '›', {
-              width: 30, height: 21, fontSize: 12, radius: 5, accent: INK.gold,
-              disabled: nextPage < 0 || nextPage >= pageCount,
-              onClick: () => {
-                this.preDuelPage = nextPage;
-                this._rebuildDynamicBoard();
-              },
-            });
-            button.position.set(cx + (delta < 0 ? -64 : 34), y);
-            this.boardLayer.addChild(button);
-          }
+    const isStaging = this._isPreRevealStagingMode();
+    const attackableDuels = new Set();
+    const activeAtkCardId = this.selectedHandCardId;
+    const canAtkWithSelected = Boolean(
+      activeAtkCardId && (
+        ((this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
+          && (this.state.legal_attack_cards || []).includes(activeAtkCardId))
+        || (isStaging && (this.state.pre_reveal_eligible_cards || []).includes(activeAtkCardId))
+      )
+    );
+    if (canAtkWithSelected) {
+      for (const d of regDuels) {
+        if (this._canAttackTarget(activeAtkCardId, 'duel', d.number)) {
+          attackableDuels.add(d.number);
         }
       }
     }
 
-    // 2. Scrollable Left (P1) vs Right (P2) Confrontational Duel Bridge in Strict 1D Top-to-Bottom Sequence (① ↓ ② ↓ ③):
-    //    - Tight face-to-face horizontal opposition centered around midX ± 24 (zero overlap with 400px Side Inspectors!)
-    //    - Vertical axis = Strict 1D sequence ① → ② → ③ with TRUE O(1) wheel scrolling (NEVER rebuilds hand cards!)
-    const duels = frame.duels || [];
-    const activeSide = this.state.active_side;
-    const nextEmptyNum = this._findFirstEmptyRegularDuel(activeSide);
-    const slotCount = Math.max(1, duels.length, this.state.mode === 'placement' ? nextEmptyNum : 0);
-
-    const laneW = arenaW - 8;
-    const midX = arenaX + laneW / 2;
-    const wellPadX = 8;
-    const maxAvailHalf = Math.floor(laneW / 2 - 24 - wellPadX);
-    // Keep duel card dimensions 100% invariant between placement and reveal (cards flip face-up IN PLACE, zero jump!)
-    const wellW = Math.min(152, maxAvailHalf);
-    const effectiveCardW = Math.max(106, Math.min(130, wellW - 10, slotCount === 1 ? 132 : 122));
-    const wantsFullReveal = false;
-    const laneH = Math.round(effectiveCardW * 1.40) + 12;
-    const laneGap = 10;
-    const stepY = laneH + laneGap;
-    const totalH = slotCount * laneH + Math.max(0, slotCount - 1) * laneGap;
-
-    this.duelMaxScroll = Math.max(0, totalH - regH + 6);
-    if (slotCount > this._duelSlotCountPrev && this.state.mode === 'placement' && this.duelMaxScroll > 0) {
-      this.duelScrollY = this.duelMaxScroll;
-    }
-    this._duelSlotCountPrev = slotCount;
-    this.duelScrollY = Math.max(0, Math.min(this.duelMaxScroll, this.duelScrollY));
-
-    const baseStartY = this.duelMaxScroll > 0
-      ? regTop + 2
-      : regTop + Math.max(0, Math.floor((regH - totalH) / 2));
-
-    this.duelViewport = { top: regTop, bottom: regTop + regH };
-    const duelMask = new PIXI.Graphics();
-    duelMask.rect(arenaX - 4, regTop, arenaW + 8, regH).fill({ color: 0xffffff });
-    this.boardLayer.addChild(duelMask);
-
-    const duelContent = new PIXI.Container();
-    duelContent.y = -this.duelScrollY;
-    duelContent.mask = duelMask;
-    this.boardLayer.addChild(duelContent);
-
-    if (slotCount > 1) {
-      const spineG = new PIXI.Graphics();
-      spineG.moveTo(midX, baseStartY + laneH / 2)
-        .lineTo(midX, baseStartY + (slotCount - 1) * stepY + laneH / 2)
-        .stroke({ width: 1.4, color: INK.line, alpha: 0.8 });
-      duelContent.addChild(spineG);
-    }
-
-    const leftWellX = Math.round(midX - 24 - wellW);
-    const rightWellX = Math.round(midX + 24);
-    const bridgeSpanX = leftWellX - 6;
-    const bridgeSpanW = (rightWellX + wellW + 6) - bridgeSpanX;
-    const isPreAttackSelected = Boolean(
+    const canTapEmptySlot = Boolean(isPlacement && !isStaging && this.selectedHandCardId);
+    const canClickIntercept = Boolean(
       this.selectedHandCardId
       && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
-      && (this.state.legal_attack_cards || []).includes(this.selectedHandCardId)
+      && (this.state.legal_intercept_cards || []).includes(this.selectedHandCardId)
     );
 
-    const laneMeta = [];
-    const windowed = slotCount > 24;
-    const firstSlot = windowed ? Math.max(0, Math.floor(this.duelScrollY / stepY) - 1) : 0;
-    const lastSlot = windowed ? Math.min(slotCount, Math.ceil((this.duelScrollY + regH) / stepY) + 1) : slotCount;
-    for (let i = firstSlot; i < lastSlot; i++) {
-      const number = i + 1;
-      const baseLy = baseStartY + i * stepY;
-      const baseMidY = baseLy + laneH / 2;
-      const ly = baseLy - this.duelScrollY;
-      const isVisible = ly + laneH > regTop && ly < regTop + regH;
-      const slotData = duels[i] || { number, sides: [{ side: 1, cards: [] }, { side: 2, cards: [] }] };
-      const isNextDropSlot = this.state.mode === 'placement' && number === nextEmptyNum;
+    this.tabletop.setLayout({ arenaX, arenaW, stageTop, stageH });
+    this.tabletop.setState({
+      duels: items,
+      activeIndex,
+      combat: null,
+      concealBySide: new Map(),
+      isPlacement,
+      overview: true,
+      activeSide,
+      viewerSide,
+      cardsRevealed: Boolean(frame.cards_revealed),
+      pendingResponses,
+      attackableDuels,
+      canTapEmptySlot,
+      canClickIntercept,
+    });
+    this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
 
-      const laneRect = { x: bridgeSpanX, y: ly, w: bridgeSpanW, h: laneH, cx: midX, cy: ly + laneH / 2, visible: isVisible };
-      this.regularLaneRects.set(number, laneRect);
-
-      const bridgeG = new PIXI.Graphics();
-      if (isPreAttackSelected && i < duels.length && this._canAttackTarget(this.selectedHandCardId, 'duel', number)) {
-        bridgeG.roundRect(bridgeSpanX, baseLy + 1, bridgeSpanW, laneH - 2, 10)
-          .fill({ color: 0xfce6df, alpha: 0.35 })
-          .stroke({ width: 1.6, color: 0xcf4932, alpha: 0.8 });
-        bridgeG.eventMode = 'static';
-        bridgeG.cursor = 'pointer';
-        bridgeG.on('pointertap', (e) => {
-          e.stopPropagation();
-          const cid = this.selectedHandCardId;
-          this.selectedHandCardId = null;
-          this.audio.cardPlace();
-          this._sendAction('attack', { card_id: cid, target: { kind: 'duel', number } });
-        });
-      }
-      bridgeG.moveTo(leftWellX + wellW, baseMidY).lineTo(midX - 15, baseMidY)
-        .stroke({ width: 1.2, color: SIDE_THEME[1].border, alpha: 0.65 });
-      bridgeG.moveTo(midX + 15, baseMidY).lineTo(rightWellX, baseMidY)
-        .stroke({ width: 1.2, color: SIDE_THEME[2].border, alpha: 0.65 });
-      bridgeG.poly([midX - 20, baseMidY - 3.5, midX - 14, baseMidY, midX - 20, baseMidY + 3.5]).fill({ color: SIDE_THEME[1].accent, alpha: 0.78 });
-      bridgeG.poly([midX + 20, baseMidY - 3.5, midX + 14, baseMidY, midX + 20, baseMidY + 3.5]).fill({ color: SIDE_THEME[2].accent, alpha: 0.78 });
-      bridgeG.circle(midX, baseMidY, 13.5)
-        .fill({ color: isNextDropSlot ? INK.goldBg : INK.paper })
-        .stroke({ width: 1.6, color: isNextDropSlot ? INK.gold : INK.line });
-      duelContent.addChild(bridgeG);
-
-      const numTxt = new PIXI.Text({
-        text: CIRCLED[i] || String(number),
-        style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '900', fill: isNextDropSlot ? INK.goldDeep : INK.secondary },
-      });
-      numTxt.anchor.set(0.5);
-      numTxt.position.set(midX, baseMidY);
-      duelContent.addChild(numTxt);
-      this._markEffectTarget(duelContent, 'regular', number, null, null, midX - 19, baseMidY - 19, 38, 38);
-
-      const wellH = laneH - 8;
-      const slotRefs = [];
-      for (const s of [1, 2]) {
-        const wx = s === 1 ? leftWellX : rightWellX;
-        const baseWy = baseLy + 4;
-        const wy = baseWy - this.duelScrollY;
-        const wellRect = { x: wx, y: wy, w: wellW, h: wellH, cx: wx + wellW / 2, cy: wy + wellH / 2, visible: isVisible };
-        this.regularSlotRects.set(`${number}:${s}`, wellRect);
-        slotRefs.push({ wellRect, baseWy });
-
-        const sideEntry = (slotData.sides || []).find((x) => x.side === s);
-        const cards = sideEntry ? sideEntry.cards : [];
-        const isTargetWell = isNextDropSlot && s === activeSide;
-
-        if (!cards.length || isTargetWell) {
-          const slotCardW = Math.min(effectiveCardW, wellW - 4);
-          const slotCardH = Math.min(wellH, Math.round(slotCardW * 1.40));
-          const sx0 = (wx + wellW / 2) - slotCardW / 2;
-          const sy0 = (baseWy + wellH / 2) - slotCardH / 2;
-          const wellG = new PIXI.Graphics();
-          wellG.roundRect(sx0, sy0, slotCardW, slotCardH, 8)
-            .fill({ color: isTargetWell ? SIDE_THEME[s].warmTint : INK.paperSoft, alpha: isTargetWell ? 0.92 : 0.42 })
-            .stroke({
-              width: isTargetWell ? 1.8 : 0.9,
-              color: isTargetWell ? SIDE_THEME[s].accent : SIDE_THEME[s].border,
-              alpha: isTargetWell ? 0.95 : 0.42,
-            });
-          duelContent.addChild(wellG);
-
-          if (isTargetWell) {
-            wellG.eventMode = 'static';
-            wellG.cursor = 'pointer';
-            wellG.on('pointertap', (e) => {
-              if (!wellRect.visible) return;
-              if (this.selectedHandCardId) {
-                e.stopPropagation();
-                this._placeCard(this.selectedHandCardId);
-              }
-            });
-          }
-        }
-
-        const ownerList = this.state.card_owners?.duels?.[`${number}:${s}`] || [];
-        cards.forEach((card, cIdx) => {
-          const ox = (cIdx - (cards.length - 1) / 2) * 18;
-          const isFaceDown = card.hidden || (!frame.cards_revealed && card.state === 'placed_face_down');
-          const ownerMeta = ownerList[cIdx] || null;
-          const ownerId = ownerMeta?.character_id || card.character_id || null;
-          const ownerName = ownerMeta?.character_name || charNames[ownerId] || '';
-          const ownerColor = this._resolveCharColor(ownerId, s);
-          let spr = null;
-          let needsHoverFull = false;
-
-          if (isFaceDown) {
-            const bw = Math.min(effectiveCardW, wellW - 6);
-            const bh = Math.round(bw * 1.40);
-            spr = buildCardBack(s, { width: bw, height: bh, accentColor: ownerColor });
-          } else if (wantsFullReveal && effectiveCardW >= 164) {
-            spr = buildFullCard(card, {
-              side: s,
-              accentColor: ownerColor,
-              ownerName,
-              showOwner: multiChar,
-              width: effectiveCardW,
-              fixedHeight: Math.round(effectiveCardW * 1.40),
-              dense: true,
-              centered: true,
-              legal: true,
-            });
-          } else {
-            needsHoverFull = true;
-            spr = buildBoardCardTag(card, {
-              side: s,
-              accentColor: ownerColor,
-              ownerName,
-              showOwner: multiChar,
-              width: Math.min(effectiveCardW, wellW - 6),
-            });
-          }
-
-          spr.position.set(wx + wellW / 2 + ox, baseWy + wellH / 2);
-          if (isFaceDown) {
-            spr.eventMode = 'static';
-            spr.cursor = 'pointer';
-            spr.on('pointerover', () => {
-              const gp = spr.getGlobalPosition();
-              if (gp.y < regTop - 20 || gp.y > regTop + regH + 20) return;
-              this.focusedCharId = ownerId;
-              this.focusedSide = s;
-              this.focusedDuelNumber = number;
-              if (ownerId) {
-                const pos = this._actorPos(ownerId, s);
-                this.three.setIntentFocus({ active: true, x: pos.x, y: pos.y, colorHex: ownerColor });
-              }
-              if (card.hidden) {
-                // Opponent's hidden card: reveal ONLY public character ownership, ZERO card content!
-                this.hoveredCard = null;
-                this.hoveredInfo = ownerName
-                  ? {
-                      kind: 'card_owner',
-                      title: ownerName,
-                      color: ownerColor,
-                      side: s,
-                      anchorX: gp.x,
-                      anchorY: gp.y - (spr._boxHeight || 140) * 0.5 - 14,
-                    }
-                  : null;
-              } else {
-                // Player's own face-down card: allow inspecting own placed card in-place!
-                this.hoveredInfo = null;
-                this.hoveredCard = {
-                  card, side: s, accentColor: ownerColor, ownerName,
-                  anchorX: gp.x, anchorY: gp.y, cardH: spr._boxHeight, source: 'board', sourceSprite: spr,
-                };
-              }
-              this._renderInspection();
-            });
-            spr.on('pointerout', () => {
-              this.hoveredCard = null;
-              this.hoveredInfo = null;
-              this.focusedCharId = null;
-              this.focusedDuelNumber = null;
-              this.three.setIntentFocus({ active: false });
-              this._renderInspection();
-            });
-          } else if (!card.hidden && needsHoverFull) {
-            spr.eventMode = 'static';
-            spr.cursor = 'pointer';
-            spr.on('pointerover', () => {
-              const gp = spr.getGlobalPosition();
-              if (gp.y < regTop - 20 || gp.y > regTop + regH + 20) return;
-              this.hoveredCard = {
-                card, side: s, accentColor: ownerColor, ownerName,
-                anchorX: gp.x, anchorY: gp.y, cardH: spr._boxHeight, source: 'board', sourceSprite: spr,
-              };
-              this.focusedCharId = ownerId;
-              this.focusedSide = s;
-              this.focusedDuelNumber = number;
-              this._renderInspection();
-            });
-            spr.on('pointerout', () => {
-              this.hoveredCard = null;
-              this.focusedCharId = null;
-              this.focusedDuelNumber = null;
-              this._renderInspection();
-            });
-          }
-          duelContent.addChild(spr);
-          this._markEffectTarget(duelContent, 'regular', number, s, cIdx + 1,
-            spr.x - spr._boxWidth / 2, spr.y - spr._boxHeight / 2, spr._boxWidth, spr._boxHeight);
-        });
-      }
-      laneMeta.push({ laneRect, baseLy, slotRefs });
+    this.regularSlotRects.clear();
+    for (const [k, rect] of this.tabletop.placementSlotRects.entries()) {
+      this.regularSlotRects.set(k, rect);
     }
-
-    // Subtle scrollbar thumb + true O(1) scroll controller (NEVER rebuilds hand cards on wheel!)
-    let thumbG = null;
-    let thumbTravel = 0;
-    const trackTop = regTop + 2;
-    if (this.duelMaxScroll > 0) {
-      const sbX = rightWellX + wellW + 10;
-      const trackH = regH - 4;
-      const thumbH = Math.max(28, Math.round(trackH * (regH / Math.max(regH + 1, totalH))));
-      thumbTravel = Math.max(1, trackH - thumbH);
-      const trackG = new PIXI.Graphics();
-      trackG.roundRect(sbX, trackTop, 3.5, trackH, 1.8).fill({ color: INK.hairline, alpha: 0.9 });
-      this.boardLayer.addChild(trackG);
-
-      thumbG = new PIXI.Graphics();
-      thumbG.roundRect(sbX, 0, 3.5, thumbH, 1.8).fill({ color: INK.secondary, alpha: 0.65 });
-      thumbG.y = trackTop + (this.duelScrollY / this.duelMaxScroll) * thumbTravel;
-      this.boardLayer.addChild(thumbG);
+    this.regularLaneRects.clear();
+    for (const [num, rect] of this.tabletop.regularLaneRects.entries()) {
+      this.regularLaneRects.set(num, rect);
     }
-
-    this._duelScrollCtl = {
-      setScroll: (nextY) => {
-        const clamped = Math.max(0, Math.min(this.duelMaxScroll, nextY));
-        if (this.duelScrollY === clamped) return;
-        this.duelScrollY = clamped;
-        if (windowed) {
-          this._rebuildDynamicBoard();
-          return;
-        }
-        duelContent.y = -this.duelScrollY;
-        for (const lm of laneMeta) {
-          const ly = lm.baseLy - this.duelScrollY;
-          const vis = ly + laneH > regTop && ly < regTop + regH;
-          lm.laneRect.y = ly;
-          lm.laneRect.cy = ly + laneH / 2;
-          lm.laneRect.visible = vis;
-          for (const sr of lm.slotRefs) {
-            sr.wellRect.y = sr.baseWy - this.duelScrollY;
-            sr.wellRect.cy = sr.wellRect.y + sr.wellRect.h / 2;
-            sr.wellRect.visible = vis;
-          }
-        }
-        if (thumbG && this.duelMaxScroll > 0) {
-          thumbG.y = trackTop + (this.duelScrollY / this.duelMaxScroll) * thumbTravel;
-        }
-      },
-    };
+    this.preRevealSlotRects.clear();
+    for (const [num, rect] of this.tabletop.preRevealSlotRects.entries()) {
+      this.preRevealSlotRects.set(num, rect);
+    }
+    this.duelViewport = { top: stageTop, bottom: stageTop + stageH, left: arenaX, right: arenaX + arenaW };
+    this._duelScrollCtl = null;
   }
 
   /**
-   * MODE B: Combat stage.
-   *  - Gem thread along the top: one gem per duel (spent / live / queued); hover a gem to lift
-   *    that duel's cards out, click to pin them (board targets in other duels are picked there).
-   *  - Live duel only: clash zone (medallions + 3D dice) and the two cards standing face to face.
+   * MODE B: Combat Showdown Stage on the EXACT SAME Persistent 2.5D Tabletop.
+   * Preserves the full-width 148px 3D dice clash arena at the top, with analytical
+   * Lorentzian-arctan focal geometry smoothly focusing the active duel below.
    */
   _rebuildCombatShowdownStage() {
     const { arenaX, arenaW, arenaTop, showdownBottom, stageBottom, hasHand } = this.layout;
     const frame = this.state.frame;
     const combat = frame.combat;
-    const charNames = this._charNameMap();
-
-    const activeDuelKey = `${combat.kind}:${combat.duel_number}`;
-    if (this._lastActiveCombatDuelKey !== activeDuelKey) {
-      this._lastActiveCombatDuelKey = activeDuelKey;
-      this.combatPeekKey = null;
-    }
-
-    // Board targets that live in duels other than the live one -> their gems glow and can be pinned open.
-    const choiceTargets = new Map();
-    const addTarget = (kind, number, idx) => {
-      const key = `${kind}:${number}`;
-      if (key === activeDuelKey) return;
-      if (!choiceTargets.has(key)) choiceTargets.set(key, new Set());
-      choiceTargets.get(key).add(idx);
-    };
-    if (this.state.effect_choice && this.state.effect_choice.selection !== 'hand') {
-      (this.state.special_options || []).forEach(({ effect_target: t }, idx) => {
-        if (t?.zone === 'board') addTarget(t.kind, t.number, idx);
-      });
-    } else if (this._isFieldActionMode()) {
-      const { highlights } = this._getFieldActionContext();
-      for (const [k, idx] of highlights.boardCardTargets) {
-        const [kind, number] = k.split(':');
-        addTarget(kind, Number(number), idx);
-      }
-    }
-    if (this.combatPeekKey && !choiceTargets.has(this.combatPeekKey) && this.state.effect_choice) {
-      this.combatPeekKey = null;
-    }
-    if (!this.combatPeekKey && this.state.effect_choice && choiceTargets.size === 1) {
-      this.combatPeekKey = choiceTargets.keys().next().value;
-    }
-
-    const onHoverCard = (info) => {
-      this.hoveredCard = info ? { ...info, source: 'board' } : null;
-      this._renderInspection();
-    };
-
-    const track = buildDuelGemTrack({
-      layer: this.boardLayer,
-      peekLayer: this.duelPeekLayer,
-      frame,
-      combat,
-      arenaX,
-      arenaW,
-      y: arenaTop,
-      charNames,
-      resolveCharColor: (cid, s) => this._resolveCharColor(cid, s),
-      onHoverCard,
-      choiceTargets,
-      pinnedKey: this.combatPeekKey,
-      onPinChange: (key) => {
-        this.combatPeekKey = key;
-        this._rebuildDynamicBoard();
-      },
-      onPeekTargets: (host, rects, item) => {
-        for (const r of rects) {
-          this._markEffectTarget(host, item.kind, item.number, r.side, r.position, r.x, r.y, r.w, r.h);
-        }
-      },
-    });
-    this._combatRail = track;
-
-    const stageTop = arenaTop + track._boxHeight + 8;
+    const clashTop = arenaTop + 4;
+    const clashH = 148;
+    const stageTop = clashTop + clashH + 10;
     const stageBottomY = hasHand ? Math.min(showdownBottom, stageBottom - 6) : (showdownBottom - 16);
-    const stage = buildActiveDuelStage({
-      layer: this.boardLayer,
+    const stageH = Math.max(260, stageBottomY - stageTop);
+
+    const items = [];
+    for (const d of frame?.pre_reveal?.duels || []) items.push({ kind: 'pre_reveal', number: d.number, sides: d.sides, key: 'pre_reveal:' + d.number });
+    for (const d of frame?.special_duels || []) items.push({ kind: 'instant', number: d.number, sides: d.sides, key: 'instant:' + d.number });
+    for (const d of frame?.duels || []) items.push({ kind: 'regular', number: d.number, sides: d.sides, key: 'regular:' + d.number });
+
+    let activeIndex = items.findIndex((it) => it.kind === combat?.kind && it.number === combat?.duel_number);
+    if (activeIndex < 0 && items.length) activeIndex = 0;
+    const duels = items.map((it, i) => ({
+      ...it,
+      status: i < activeIndex ? 'completed' : i === activeIndex ? 'active' : 'upcoming',
+    }));
+
+    const concealBySide = new Map();
+    for (const s of combat?.sides || []) {
+      const die = s.die;
+      if (!die) continue;
+      const rk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position);
+      concealBySide.set(s.side, {
+        score: this.sequencer.isDieScoreConcealed(rk, die),
+        outcome: this.sequencer.isDieOutcomeConcealed(rk, die),
+      });
+    }
+
+    this.tabletop.setLayout({ arenaX, arenaW, stageTop, stageH });
+    this.tabletop.setState({
+      duels,
+      activeIndex,
       combat,
-      arenaX,
-      arenaW,
-      top: stageTop,
-      bottom: stageBottomY,
-      activeCardsBySide: this._findActiveCombatCards(),
-      charNames,
-      resolveCharColor: (cid, s) => this._resolveCharColor(cid, s),
-      specialOptions: this.state.special_options || [],
-      pausedLabelFn: pausedPlayLabel,
-      onMarkEffectTarget: (host, kind, number, side, pos, x, y, w, h) =>
-        this._markEffectTarget(host, kind, number, side, pos, x, y, w, h),
-      onHoverCard,
+      concealBySide,
+      isPlacement: false,
+      overview: false,
+      activeSide: this.state.active_side || 1,
+      viewerSide: frame.viewer_side ?? null,
+      cardsRevealed: Boolean(frame.cards_revealed),
     });
+    this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
+
+    this.regularLaneRects.clear();
+    for (const [num, rect] of this.tabletop.regularLaneRects.entries()) {
+      this.regularLaneRects.set(num, rect);
+    }
+    this.preRevealSlotRects.clear();
+    for (const [num, rect] of this.tabletop.preRevealSlotRects.entries()) {
+      this.preRevealSlotRects.set(num, rect);
+    }
+    this.duelViewport = { top: stageTop, bottom: stageTop + stageH, left: arenaX, right: arenaX + arenaW };
 
     this._combatScrollCtl = null;
     this.combatScrollY = 0;
     this._combatScrollOffsetY = 0;
-    this.combatCardRects = stage.combatCardRects;
-    this.choiceSafeTop = stage.choiceSafeTop;
+    this.combatCardRects = this.tabletop.combatCardRects;
+    this._activeCombatCardNodes = [];
+    this.choiceSafeTop = clashTop + clashH + 6;
     this._clashHeaderMeta = {
       combat,
-      clashTop: stage.clashTop,
-      clashH: stage.clashH,
+      clashTop,
+      clashH,
       arenaX,
       arenaW,
     };
-    this._renderClashMedallions();
+    this._renderClashMedallions({ syncTabletop: false });
   }
 
   _syncClashMedallionCenters() {
@@ -2702,7 +2407,7 @@ export class GameDirector {
     this.clashMedallionCenters.set(2, { x: arenaX + arenaW - medW - 10 + medW * 0.5, y: my + mh * 0.5 });
   }
 
-  _renderClashMedallions() {
+  _renderClashMedallions({ syncTabletop = true } = {}) {
     if (!this._clashHeaderMeta || !this.state?.frame?.combat) return;
     clearContainer(this.clashLayer);
     const { combat, clashTop, clashH, arenaX, arenaW } = this._clashHeaderMeta;
@@ -2711,14 +2416,10 @@ export class GameDirector {
 
     const arenaG = new PIXI.Graphics();
     arenaG.roundRect(arenaX, clashTop, arenaW, clashH, 16)
-      .fill({ color: INK.paper, alpha: 0.72 })
-      .stroke({ width: 1.6, color: INK.gold, alpha: 0.72 });
-    // Center confrontation axis & luminous clash ring (where the Matter.js 3D dice physically smash!)
+      .fill({ color: INK.paper, alpha: 0.28 })
+      .stroke({ width: 1.4, color: INK.gold, alpha: 0.65 });
     arenaG.moveTo(arenaX + 18, clashTop + clashH / 2).lineTo(arenaX + arenaW - 18, clashTop + clashH / 2)
-      .stroke({ width: 1.2, color: INK.line, alpha: 0.65 });
-    arenaG.circle(cx, clashTop + clashH / 2, 42)
-      .fill({ color: INK.goldBg, alpha: 0.55 })
-      .stroke({ width: 1.8, color: INK.gold, alpha: 0.75 });
+      .stroke({ width: 1, color: INK.line, alpha: 0.45 });
     this.clashLayer.addChild(arenaG);
 
     const kindName = { pre_reveal: '开牌前', regular: '常规', instant: '即时' }[combat.kind] || '交锋';
@@ -2729,14 +2430,6 @@ export class GameDirector {
     roundBadge.anchor.set(0.5, 0);
     roundBadge.position.set(cx, clashTop + 6);
     this.clashLayer.addChild(roundBadge);
-
-    const vsTxt = new PIXI.Text({
-      text: 'VS',
-      style: { fontFamily: FONT_NUM, fontSize: 16, fontWeight: '900', fill: INK.gold },
-    });
-    vsTxt.anchor.set(0.5);
-    vsTxt.position.set(cx, clashTop + clashH / 2);
-    this.clashLayer.addChild(vsTxt);
 
     // Draw Left (P1) & Right (P2) Sculpted Live Die Score Medallions.
     // Any die whose 3D roll has not yet landed & revealed its value conceals rolled/final/clash scores & outcome.
@@ -2828,6 +2521,54 @@ export class GameDirector {
       }
     }
     this._syncClashMedallionCenters();
+
+    // Sync revealed die scores & outcomes directly onto the live tabletop cards
+    if (syncTabletop && this.tabletop && this.tabletop.duels.length && this.state?.frame?.combat) {
+      this.effectMarks = [];
+      const frame = this.state.frame;
+      const concealBySide = new Map();
+      for (const s of combat.sides || []) {
+        const die = s.die;
+        if (!die) continue;
+        const rk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position);
+        concealBySide.set(s.side, {
+          score: this.sequencer.isDieScoreConcealed(rk, die),
+          outcome: this.sequencer.isDieOutcomeConcealed(rk, die),
+        });
+      }
+      this.tabletop.setState({
+        duels: this.tabletop.duels,
+        activeIndex: this.tabletop.activeIndex,
+        combat,
+        concealBySide,
+        isPlacement: false,
+        overview: false,
+        activeSide: this.state.active_side || 1,
+        viewerSide: frame.viewer_side ?? null,
+        cardsRevealed: Boolean(frame.cards_revealed),
+      });
+    }
+  }
+
+  _findActiveDuelSlotCards() {
+    const out = new Map();
+    const frame = this.state?.frame;
+    const combat = frame?.combat;
+    if (!combat) return out;
+    let slot = null;
+    if (combat.kind === 'regular') {
+      slot = (frame.duels || []).find((d) => d.number === combat.duel_number);
+    } else if (combat.kind === 'pre_reveal') {
+      slot = (frame.pre_reveal?.duels || []).find((d) => d.number === combat.duel_number);
+    } else if (combat.kind === 'instant') {
+      slot = (frame.special_duels || []).find((d) => d.number === combat.duel_number);
+    }
+    if (!slot) return out;
+    for (const se of slot.sides || []) {
+      const visible = (se.cards || []).filter((c) => c && !c.hidden);
+      if (visible.length) out.set(se.side, visible);
+    }
+    return out;
   }
 
   _findActiveCombatCards() {
@@ -2937,6 +2678,7 @@ export class GameDirector {
     }
 
     const fieldMode = this._isFieldActionMode();
+    const stagingPre = this._isPreRevealStagingMode();
     let legalSet;
     let attackSet;
     let interceptSet;
@@ -2949,6 +2691,11 @@ export class GameDirector {
         if (entries.some((e) => e.kind === 'attack')) attackSet.add(cid);
         if (entries.some((e) => e.kind === 'intercept')) interceptSet.add(cid);
       }
+    } else if (stagingPre) {
+      const preElig = this.state.pre_reveal_eligible_cards || [];
+      legalSet = new Set(preElig);
+      attackSet = new Set(preElig);
+      interceptSet = new Set();
     } else {
       legalSet = new Set(
         this.state.mode === 'placement'
@@ -3127,6 +2874,12 @@ export class GameDirector {
 
     // Order bottom-to-top so the primary phase-end/advance action always anchors cleanly at the bottom-right corner!
     if (mode === 'placement') {
+      const stagedCount = (this.state.pre_reveal_plan || []).length;
+      const canClaimPre = Boolean(
+        this.state.pre_reveal_claimed
+        || stagedCount > 0
+        || (this.state.pre_reveal_eligible_cards || []).length > 0
+      );
       buttons.push({
         label: `结束置卡（余${this.state.window_remaining}）`,
         h: 40,
@@ -3137,14 +2890,65 @@ export class GameDirector {
       if (this.state.can_pass) {
         buttons.push({ label: '交权', h: 36, accent: INK.gold, solid: true, fn: () => this._sendAction('pass') });
       }
-      if (this.selectedHandCardId) {
+      if (canClaimPre) {
+        const claimed = Boolean(this.state.pre_reveal_claimed);
+        buttons.push({
+          label: claimed
+            ? (stagedCount > 0 ? `✓ 已声称开牌前(${stagedCount})` : '✓ 已声称开牌前')
+            : '⚔ 声称开牌前交锋',
+          h: 34,
+          accent: claimed ? 0x1a825e : 0x9b5a1e,
+          solid: false,
+          fn: () => {
+            this.selectedHandCardId = null;
+            if (claimed) this.preRevealStaging = false;
+            this._sendAction('claim_pre_reveal');
+          },
+        });
+        if (claimed && ((this.state.pre_reveal_eligible_cards || []).length > 0 || this.preRevealStaging)) {
+          buttons.push({
+            label: this.preRevealStaging ? '← 返回常规置卡' : '⚔ 预置开牌前',
+            h: 34,
+            accent: 0xcf4932,
+            solid: Boolean(this.preRevealStaging),
+            fn: () => {
+              this.preRevealStaging = !this.preRevealStaging;
+              this.selectedHandCardId = null;
+              this._rebuildConfrontationWings();
+              this._rebuildDynamicBoard();
+              this._syncSelectedCardIntent();
+            },
+          });
+        }
+      }
+      if (this.selectedHandCardId && !this._isPreRevealStagingMode()) {
         buttons.push({ label: '扣置选中牌', h: 36, accent: 0x1a825e, solid: true, fn: () => this._placeCard(this.selectedHandCardId) });
       }
     } else if (mode === 'pre_attack' || mode === 'intercept') {
+      const plans = this.state.pre_reveal_plan || [];
+      const validPlans = plans.filter((p) => p.valid && p.affordable);
       if (this.state.can_end_attack) {
-        buttons.push({ label: '结束主动进攻', h: 40, accent: INK.gold, solid: true, fn: () => this._sendAction('end_attack') });
+        buttons.push({ label: '结束主动进攻', h: 40, accent: INK.gold, solid: validPlans.length === 0, fn: () => this._sendAction('end_attack') });
       }
-      if ((this.state.eligible_sides || []).length > 1) {
+      if (mode === 'pre_attack' && plans.length > 0) {
+        buttons.push({
+          label: '清空预排',
+          h: 32,
+          accent: 0x8a7d6d,
+          solid: false,
+          fn: () => this._sendAction('unstage_pre_reveal'),
+        });
+        if (validPlans.length > 0) {
+          buttons.push({
+            label: `⚔ 发出预排(${validPlans.length})`,
+            h: 40,
+            accent: 0xcf4932,
+            solid: true,
+            fn: () => this._sendAction('commit_pre_reveal_plan'),
+          });
+        }
+      }
+      if ((this.state.eligible_sides || []).length > 1 && this.state.ai_side == null && !this.transport.isRoom) {
         buttons.push({ label: '切换席位', h: 34, accent: 0x177d6b, solid: false, fn: () => this._sendAction('switch_side') });
       }
     } else if ((!this.transport.isRoom || this.state.can_advance) && ['reveal', 'combat', 'turn_end', 'timing'].includes(mode)
@@ -3462,6 +3266,7 @@ export class GameDirector {
         options: this.state.special_options || [],
         hand: this.state.frame.players.find((player) => player.side === side)?.hand || [],
         colors: this.state.character_colors,
+        cardBacks: this.state.character_card_backs || {},
         owners: this._charNameMap(),
         safeTop: this.choiceSafeTop,
         onReady: handoff ? () => this._sendAction('ready', { side }) : null,
@@ -3804,7 +3609,10 @@ export class GameDirector {
   }
 
   _canAttackTarget(cardId, kind, target) {
-    return (this.state.attack_targets?.[cardId] || []).some(entry =>
+    const map = this._isPreRevealStagingMode()
+      ? this.state.pre_reveal_stage_targets
+      : this.state.attack_targets;
+    return (map?.[cardId] || []).some(entry =>
       entry.kind === kind && (kind === 'character' ? entry.id === target : entry.number === target));
   }
 
@@ -3889,6 +3697,13 @@ export class GameDirector {
 
     if (!d.moved && this.state.mode === 'placement') {
       this._ignoreNextStageTapUntil = performance.now() + 90;
+      if (this._isPreRevealStagingMode()) {
+        this.selectedHandCardId = this.selectedHandCardId === actKey ? null : actKey;
+        this._rebuildConfrontationWings();
+        this._rebuildDynamicBoard();
+        this._syncSelectedCardIntent();
+        return;
+      }
       if (this.selectedHandCardId === actKey) this._placeCard(actKey);
       else {
         this.selectedHandCardId = actKey;
@@ -3904,6 +3719,35 @@ export class GameDirector {
       this._rebuildConfrontationWings();
       this._rebuildDynamicBoard();
       this._syncSelectedCardIntent();
+      return;
+    }
+
+    if (this.state.mode === 'placement' && this._isPreRevealStagingMode()) {
+      if (d.canAttack) {
+        for (const r of this.charRects.values()) {
+          const charId = r.characterId;
+          if (r.side !== d.side && this._canAttackTarget(actKey, 'character', charId)
+              && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+            this.audio.cardPlace();
+            this._sendAction('stage_pre_reveal', { card_id: actKey, target: { kind: 'character', id: charId } });
+            return;
+          }
+        }
+        const duels = this.state.frame.duels || [];
+        const vp = this.duelViewport;
+        const inDuelVp = !vp || (y >= vp.top - 6 && y <= vp.bottom + 6);
+        if (inDuelVp) {
+          for (let i = 1; i <= duels.length; i++) {
+            const lane = this.regularLaneRects.get(i);
+            if (lane && lane.visible !== false && this._canAttackTarget(actKey, 'duel', i)
+                && x >= lane.x - 8 && x <= lane.x + lane.w + 8 && y >= lane.y - 8 && y <= lane.y + lane.h + 8) {
+              this.audio.cardPlace();
+              this._sendAction('stage_pre_reveal', { card_id: actKey, target: { kind: 'duel', number: i } });
+              return;
+            }
+          }
+        }
+      }
       return;
     }
 
@@ -4085,7 +3929,26 @@ export class GameDirector {
       }
     }
 
-    // 8. Combat stage has no scrolling: the gem thread shows every duel at once.
+    // 8. Persistent 2.5D Tabletop wheel routing (overflowing cards first, then ±1 duel stepping)
+    if (this.tabletop) {
+      this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
+      if (this.tabletop.handleWheel(e.deltaY)) return;
+    }
+
+    // 9. Smooth wheel scrolling inside overflowing active combat cards (30 dice / 1000 chars)
+    if (this.state.frame?.combat && this._activeCombatCardNodes?.length) {
+      for (const item of this._activeCombatCardNodes) {
+        if (
+          item.node && !item.node.destroyed && item.node.maxScroll > 0
+          && this.lastPointerX >= item.x && this.lastPointerX <= item.x + item.w
+          && this.lastPointerY >= item.y && this.lastPointerY <= item.y + item.h
+        ) {
+          item.node.scrollBy(e.deltaY * 0.65);
+          this._combatCardScrollByKey.set(item.cardKey, item.node.scrollY);
+          return;
+        }
+      }
+    }
     const { stageBottom } = this.layout;
 
     // 10. O(1) Smooth Scroll for Center Duel Bridge (① ↓ ② ↓ ③ — NEVER rebuilds hand cards!)
@@ -4186,6 +4049,10 @@ export class GameDirector {
       this._rebuildOverlay();
       return;
     }
+    if ((e.key === 'h' || e.key === 'H' || e.key === 'Home') && !this.passiveDrawer && !this.rosterModal && !this.codexModal && !this.pileModal) {
+      this.tabletop?.snapToActive();
+      return;
+    }
     if ((e.key === ' ' || e.key === 'Enter') && !this.passiveDrawer && !this.rosterModal && !this.codexModal && !this.pileModal) {
       e.preventDefault();
       const mode = this.state?.mode;
@@ -4199,29 +4066,20 @@ export class GameDirector {
 
   async _placeCard(cardId) {
     const side = this.state?.active_side;
-    const nextNum = this._findFirstEmptyRegularDuel(side);
-    const dest = this.regularSlotRects.get(`${nextNum}:${side}`);
     const view = this.handCardViews.get(`hand_${side}_${cardId}`);
-    this.audio.cardPlace();
-    if (dest && view) {
-      const vp = this.duelViewport;
-      const clampedY = vp ? Math.max(vp.top + 24, Math.min(vp.bottom - 24, dest.cy)) : dest.cy;
-      this.three.emitShockwave(dest.cx, clampedY, this._resolveCharColor(view.card.character_id, side));
-      this.three.spawnCardFlipArc({
-        fromX: view.bodyEntry.body.position.x,
-        fromY: view.bodyEntry.body.position.y,
-        toX: dest.cx,
-        toY: clampedY,
-        width: 96,
-        height: 132,
-        title: view.card.name,
-        cost: view.card.cost,
-        accentHex: this._resolveCharColorHex(view.card.character_id, side),
-        flipFromBack: false,
-        duration: 0.42,
-        peakZ: 115,
+    if (view?.bodyEntry?.body && this.tabletop) {
+      const b = view.bodyEntry.body;
+      this.tabletop.registerPlacementLaunch(cardId, {
+        fromX: b.position.x,
+        fromY: b.position.y,
+        vx: (b.velocity?.x || 0) * 55,
+        vy: Math.min(-260, (b.velocity?.y || 0) * 55 - 180),
+        rot0: b.angle || 0,
+        scale0: view.bodyEntry.scale || 0.85,
+        color: this._resolveCharColor(view.card?.character_id, side),
       });
     }
+    this.audio.cardSlide();
     this.selectedHandCardId = null;
     await this._sendAction('place', { card_id: cardId });
   }
@@ -4268,11 +4126,33 @@ export class GameDirector {
       this.worldRoot.position.set(0, 0);
     }
 
-    // 1b. Tick Persistent Spring-Physical Cost HUDs & 2.5D Diegetic Deck Piles at 60fps!
+    // 1b. Tick Persistent Spring-Physical Cost HUDs, 2.5D Deck Piles & Living Tabletop at 60fps!
     this.costHuds[1]?.tick(dtSec);
     this.costHuds[2]?.tick(dtSec);
     this.deckPiles[1]?.tick(dtSec);
     this.deckPiles[2]?.tick(dtSec);
+    if (this.tabletop) {
+      this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
+      this.tabletop.tick(dtSec);
+      // Keep live tabletop slot/lane rects continuously synced (tracks combat->overview flatten & wheel scroll!)
+      this.regularSlotRects.clear();
+      for (const [k, rect] of this.tabletop.placementSlotRects.entries()) {
+        this.regularSlotRects.set(k, rect);
+      }
+      this.regularLaneRects.clear();
+      for (const [num, rect] of this.tabletop.regularLaneRects.entries()) {
+        this.regularLaneRects.set(num, rect);
+      }
+      this.preRevealSlotRects.clear();
+      for (const [num, rect] of this.tabletop.preRevealSlotRects.entries()) {
+        this.preRevealSlotRects.set(num, rect);
+      }
+    }
+    if (this._activeCombatCardNodes?.length) {
+      for (const item of this._activeCombatCardNodes) {
+        if (item.node && !item.node.destroyed) item.node.tick(dtSec);
+      }
+    }
 
     // 2. Tick all Living Character Actors + Status Auras + Shield Domes + Combat Motions at 60fps!
     const decayRate = Math.pow(0.012, dtSec);
@@ -4469,6 +4349,8 @@ export class GameDirector {
       themeMap: SIDE_THEME,
     });
 
+    this._renderAimArrow();
+
     // 8. 60fps Delayed White-Trail HP Bar & Lightcore Integrity Bar ticking
     for (const [charId, hw] of this.hpWidgets.entries()) {
       if (!hw.bar || hw.bar.destroyed) continue;
@@ -4545,10 +4427,127 @@ export class GameDirector {
       if (autoModes.includes(m) && roomReady) {
         this.autoTimer -= dtSec;
         if (this.autoTimer <= 0) {
-          this.autoTimer = m === 'combat' ? 0.55 : m === 'turn_end' ? 0.68 : 0.55;
+          this.autoTimer = this._nextAutoDelay(m, this._lastBeatHadFx, this._lastBeatKind);
           this._sendAction('next');
         }
       }
+    }
+  }
+
+  _renderAimArrow() {
+    const g = this.aimArrowLayer;
+    if (!g || g.destroyed) return;
+    g.clear();
+    if (!this.state || this.state.frame?.combat) return;
+
+    const mode = this.state.mode;
+    const staging = this._isPreRevealStagingMode();
+    const isPreMode = mode === 'pre_attack' || mode === 'intercept' || staging;
+    if (!isPreMode) return;
+
+    let actKey = null;
+    let cardKey = null;
+    let side = this.state.frame?.viewer_side ?? this.state.active_side;
+    let isInterceptDrag = false;
+
+    if (this.dragState && this.dragState.moved && (this.dragState.canAttack || this.dragState.canIntercept)) {
+      actKey = this.dragState.actKey;
+      cardKey = this.dragState.cardKey;
+      side = this.dragState.side;
+      isInterceptDrag = Boolean(this.dragState.canIntercept && !this.dragState.canAttack);
+    } else if (this.selectedHandCardId) {
+      const canAtk = staging
+        ? (this.state.pre_reveal_eligible_cards || []).includes(this.selectedHandCardId)
+        : (this.state.legal_attack_cards || []).includes(this.selectedHandCardId);
+      const canInt = mode === 'intercept' && (this.state.legal_intercept_cards || []).includes(this.selectedHandCardId);
+      if (canAtk || canInt) {
+        actKey = this.selectedHandCardId;
+        cardKey = `hand_${side}_${actKey}`;
+        isInterceptDrag = Boolean(canInt && !canAtk);
+      }
+    }
+    if (!actKey || !cardKey) return;
+
+    const view = this.handCardViews.get(cardKey);
+    if (!view?.bodyEntry?.body) return;
+    const sx = view.bodyEntry.body.position.x;
+    const sy = view.bodyEntry.body.position.y - 36;
+
+    let tx = this.lastPointerX;
+    let ty = this.lastPointerY;
+    let locked = false;
+
+    if (isInterceptDrag) {
+      const pending = new Set(this.state.pending_responses || []);
+      for (const [num, r] of this.preRevealSlotRects.entries()) {
+        if (pending.has(num) && tx >= r.x - 14 && tx <= r.x + r.w + 14 && ty >= r.y - 14 && ty <= r.y + r.h + 14) {
+          tx = r.x + r.w * 0.5;
+          ty = r.y + r.h * 0.5;
+          locked = true;
+          break;
+        }
+      }
+    } else {
+      for (const r of this.charRects.values()) {
+        if (r.side !== side && this._canAttackTarget(actKey, 'character', r.characterId)
+            && tx >= r.x && tx <= r.x + r.w && ty >= r.y && ty <= r.y + r.h) {
+          tx = r.x + r.w * 0.5;
+          ty = r.y + r.h * 0.44;
+          locked = true;
+          break;
+        }
+      }
+      if (!locked) {
+        const duels = this.state.frame?.duels || [];
+        for (let i = 1; i <= duels.length; i++) {
+          const lane = this.regularLaneRects.get(i);
+          if (lane && lane.visible !== false && this._canAttackTarget(actKey, 'duel', i)
+              && tx >= lane.x - 10 && tx <= lane.x + lane.w + 10 && ty >= lane.y - 10 && ty <= lane.y + lane.h + 10) {
+            tx = lane.x + lane.w * 0.5;
+            ty = lane.y + lane.h * 0.5;
+            locked = true;
+            break;
+          }
+        }
+      }
+    }
+
+    const dist = Math.hypot(tx - sx, ty - sy);
+    if (dist < 24) return;
+
+    const color = locked ? 0x1a825e : 0xcf4932;
+    const cx = (sx + tx) * 0.5;
+    const cy = Math.min(sy, ty) - Math.min(130, Math.max(48, dist * 0.28));
+
+    // Soft outer glow + crisp curved Bezier shaft
+    g.moveTo(sx, sy).quadraticCurveTo(cx, cy, tx, ty)
+      .stroke({ width: locked ? 9 : 7, color, alpha: locked ? 0.22 : 0.16 });
+    g.moveTo(sx, sy).quadraticCurveTo(cx, cy, tx, ty)
+      .stroke({ width: locked ? 3.2 : 2.6, color, alpha: 0.92 });
+
+    // Moving energy beads along curve
+    const phase = (this.time * 1.9) % 1;
+    for (let k = 0; k < 5; k++) {
+      const u = (k / 5 + phase) % 1;
+      const inv = 1 - u;
+      const bx = inv * inv * sx + 2 * inv * u * cx + u * u * tx;
+      const by = inv * inv * sy + 2 * inv * u * cy + u * u * ty;
+      g.circle(bx, by, locked ? 3.6 : 3.0).fill({ color: 0xfff6e5, alpha: 0.92 });
+    }
+
+    // Directional arrowhead aligned to analytical tangent at t = 1
+    const ang = Math.atan2(ty - cy, tx - cx);
+    const headLen = locked ? 15 : 13;
+    const spread = 0.46;
+    g.poly([
+      tx, ty,
+      tx - Math.cos(ang - spread) * headLen, ty - Math.sin(ang - spread) * headLen,
+      tx - Math.cos(ang + spread) * headLen, ty - Math.sin(ang + spread) * headLen,
+    ]).fill({ color, alpha: 0.98 });
+
+    if (locked) {
+      const pulse = 18 + Math.sin(this.time * 8) * 3.5;
+      g.circle(tx, ty, pulse).stroke({ width: 2.2, color, alpha: 0.85 });
     }
   }
 }

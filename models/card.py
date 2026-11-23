@@ -180,7 +180,7 @@ class Card:
 
     @property
     def can_open_pre_reveal(self):
-        if self.data.get("pre_reveal"):
+        if self.effective_range > 0 or self.data.get("pre_reveal"):
             return True
         required = self.data.get("pre_reveal_requires_status", {})
         return bool(required) and self.character is not None and all(

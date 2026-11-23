@@ -239,9 +239,9 @@ export class TimelineSequencer {
           || prevCombat.duel_number !== nextCombat.duel_number
           || prevCombat.round_id !== nextCombat.round_id)
       );
-      const hasNewDice = fresh.some((e) => e.kind === 'speed_roll' || e.kind === 'dice_roll' || e.kind === 'dice_clash');
-      if (combatRoundChanged || hasNewDice || (!isCombat && prevState?.frame?.combat)) {
-        this.hooks.clearDice?.();
+      // Never forcibly delete live 3D dice before they finish fading out naturally!
+      // Only clear Matter.js clash physics groups when transitioning rounds.
+      if (combatRoundChanged || (!isCombat && prevState?.frame?.combat)) {
         this.hooks.clearClashGroups?.();
       }
 
@@ -364,11 +364,17 @@ export class TimelineSequencer {
 
     const ev = queue[index];
 
-    // 1. Speed roll (sequential attempts; clears stale speed dice before re-roll!)
+    // 1. Speed roll (strictly block queue until any previous die naturally fades out!)
     if (ev.kind === 'speed_roll') {
+      if (this.hooks.hasActiveDice?.()) {
+        this._setActiveRollKind('speed_roll');
+        this.hooks.waitUntilDiceCleared?.(() => {
+          if (this.beatGen === gen) this._runQueue(gen, queue, index, nextTurn);
+        });
+        return;
+      }
       const hasMoreSpeed = queue.slice(index + 1).some((x) => x.kind === 'speed_roll');
       this._setActiveRollKind('speed_roll');
-      this.hooks.clearDice?.();
       this.hooks.playSpeedRoll?.(ev, {
         silent: false,
         onReveal: () => {
@@ -397,6 +403,14 @@ export class TimelineSequencer {
           ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position
         ));
       const needsNumberReveal = rollKeys.some((k) => this.pendingCombatRollKeys.has(k));
+      // If launching a brand-new clash while earlier dice are still fading out, block queue until they clear!
+      if (needsNumberReveal && this.hooks.hasActiveDice?.()) {
+        this._setActiveRollKind('dice_clash');
+        this.hooks.waitUntilDiceCleared?.(() => {
+          if (this.beatGen === gen) this._runQueue(gen, queue, index, nextTurn);
+        });
+        return;
+      }
       this._setActiveRollKind('dice_clash');
       const revealNumbers = () => {
         if (this.beatGen !== gen) return;
@@ -418,7 +432,6 @@ export class TimelineSequencer {
         this._later(gen, 120, () => this._runQueue(gen, queue, index + 1, nextTurn));
       };
 
-      this.hooks.clearDice?.();
       this.hooks.clearClashGroups?.();
       this.hooks.playDiceClash?.(ev, {
         needsNumberReveal,
@@ -432,13 +445,20 @@ export class TimelineSequencer {
     //    Step A: Launch 3D die -> 0.26s reveal rolled value on medallion (blocks backend until done!)
     //    Step B: Continue to remaining beat effects or settle cleanly!
     if (ev.kind === 'dice_roll') {
+      // Strictly block queue until any previous round's dice finish fading out naturally!
+      if (this.hooks.hasActiveDice?.()) {
+        this._setActiveRollKind('dice_roll');
+        this.hooks.waitUntilDiceCleared?.(() => {
+          if (this.beatGen === gen) this._runQueue(gen, queue, index, nextTurn);
+        });
+        return;
+      }
       const rollKeys = (ev.sides || [])
         .filter((sd) => !sd.skipped && sd.rolled_value != null)
         .map((sd) => combatRollKey(
           ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position
         ));
       this._setActiveRollKind('dice_roll');
-      this.hooks.clearDice?.();
       this.hooks.clearClashGroups?.();
       this.hooks.playDiceRoll?.(ev, {
         onNumbersRevealed: () => {
@@ -449,7 +469,7 @@ export class TimelineSequencer {
           }
           this._setActiveRollKind(null);
           this.hooks.onCombatMedallionsChanged?.();
-          this._later(gen, 70, () => this._runQueue(gen, queue, index + 1, nextTurn));
+          this._runQueue(gen, queue, index + 1, nextTurn);
         },
       });
       return;

@@ -12,7 +12,7 @@
 
 import * as PIXI from '../vendor/pixi.min.mjs';
 import { FONT_NUM, FONT_UI, INK } from './design_system.js';
-import { buildBoardCardTag, buildCardBack } from './card_print.js';
+import { buildBoardCardTag, buildCardBack, buildUniformCard } from './card_print.js';
 
 const JADE = 0x1f9a78;
 
@@ -107,7 +107,7 @@ function buildDuelPeek(item, { cardW, charNames, resolveCharColor, onHoverCard }
     sideNodes[side].forEach(({ node, card, accent, position }, i) => {
       const x = startX + i * (cardW + gap);
       node.position.set(x + cardW / 2, cardH / 2);
-      node.rotation = side === 1 ? -0.035 : 0.035;
+      node.rotation = 0;
       root.addChild(node);
       rects.push({ side, position, card, x, y: 0, w: cardW, h: cardH });
       if (!card.hidden && onHoverCard) {
@@ -323,6 +323,9 @@ export function buildActiveDuelStage({
   top,
   bottom,
   activeCardsBySide,
+  duelCardsBySide = new Map(),
+  concealBySide = new Map(),
+  savedScrollByCardKey = new Map(),
   charNames,
   resolveCharColor,
   specialOptions = [],
@@ -351,63 +354,70 @@ export function buildActiveDuelStage({
 
   const clashH = 148;
   const clashTop = cursorY;
-  cursorY += clashH + 12;
+  cursorY += clashH + 10;
 
   const cardsTop = cursorY;
-  const availH = Math.max(120, bottom - cardsTop - 8);
-  const cardW = Math.round(Math.max(96, Math.min(176, availH / 1.42, (arenaW - 60) / 2)));
+  const availH = Math.max(160, bottom - cardsTop - 6);
+  const cardW = Math.round(Math.max(176, Math.min(256, availH / 1.40, (arenaW - 36) / 2)));
+  const cardH = Math.round(Math.min(availH, cardW * 1.40));
   const centerX = arenaX + arenaW / 2;
-  const spread = cardW / 2 + Math.max(18, Math.min(46, arenaW * 0.05));
+  const spread = cardW / 2 + Math.max(12, Math.min(34, (arenaW - cardW * 2) * 0.25));
   const combatCardRects = new Map();
+  const cardNodes = [];
 
   for (const side of [1, 2]) {
     const combatSide = (combat.sides || []).find((cs) => cs.side === side);
-    const card = activeCardsBySide.get(side);
+    const activeCard = activeCardsBySide.get(side) || null;
+    const slotCards = duelCardsBySide.get(side) || [];
+    const card = activeCard || (slotCards.length ? slotCards[slotCards.length - 1] : null);
+    const isSettledFallback = !activeCard && Boolean(card);
     const cx = side === 1 ? centerX - spread : centerX + spread;
-    const tilt = side === 1 ? -0.045 : 0.045;
 
     if (!card) {
-      // empty seat: a faint card silhouette, nothing written
-      const ghostH = Math.round(cardW * 1.4);
+      // empty seat: a faint upright card silhouette, nothing written
       const ghost = new PIXI.Graphics();
-      ghost.roundRect(-cardW / 2, -ghostH / 2, cardW, ghostH, 8)
+      ghost.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 8)
         .fill({ color: INK.paperSoft, alpha: 0.35 })
         .stroke({ width: 1.2, color: INK.line, alpha: 0.8 });
-      ghost.position.set(cx, cardsTop + ghostH / 2);
-      ghost.rotation = tilt;
+      ghost.position.set(cx, cardsTop + cardH / 2);
+      ghost.rotation = 0;
       layer.addChild(ghost);
       continue;
     }
 
     const accent = resolveCharColor(card.character_id, side);
-    const node = buildBoardCardTag(card, {
+    const conceal = concealBySide.get(side) || {};
+    const cardKey = `${side}:${card.instance_id ?? card.id}`;
+    const savedScroll = savedScrollByCardKey.has(cardKey) ? savedScrollByCardKey.get(cardKey) : null;
+    const node = buildUniformCard(card, {
       side,
       accentColor: accent,
+      ownerName: charNames[card.character_id] || '',
+      showOwner: true,
       width: cardW,
-      rangeDeficit: combatSide?.range_deficit || 0,
-      activeDieNumber: combatSide?.die?.position ?? null,
+      height: cardH,
+      centered: true,
+      activeCard: Boolean(activeCard),
+      activeDieNumber: activeCard ? (combatSide?.die?.position ?? combatSide?.die_number ?? null) : null,
+      concealActiveScore: Boolean(conceal.score),
+      concealActiveOutcome: Boolean(conceal.outcome),
+      rangeDeficit: combatSide?.range_deficit || card.range_deficit || 0,
+      playMode: combatSide?.play_mode || card.play_mode || null,
+      statusBadge: isSettledFallback ? 'settled' : null,
+      initialScrollY: savedScroll,
     });
     const h = node._boxHeight;
     node.position.set(cx, cardsTop + h / 2);
-    node.rotation = tilt;
+    node.rotation = 0;
     layer.addChild(node);
 
-    node.eventMode = 'static';
-    node.cursor = 'pointer';
-    node.on('pointerover', () => {
-      onHoverCard?.({
-        card, side, accentColor: accent,
-        ownerName: charNames[card.character_id] || '',
-        anchorX: cx, anchorY: cardsTop,
-      });
-    });
-    node.on('pointerout', () => onHoverCard?.(null));
-
     const x = cx - cardW / 2;
-    combatCardRects.set(side, {
+    const rect = {
       x, y: cardsTop, w: cardW, h, cx, cy: cardsTop + h / 2,
-      cardId: card.id, instanceId: card.instance_id,
-    });
+      cardId: card.id, instanceId: card.instance_id, cardKey, node,
+    };
+    combatCardRects.set(side, rect);
+    cardNodes.push(rect);
 
     const option = specialOptions.find(({ effect_target: target }) => target?.zone === 'board'
       && target.card?.instance_id != null && target.card.instance_id === card.instance_id);
@@ -422,5 +432,6 @@ export function buildActiveDuelStage({
     clashH,
     choiceSafeTop: clashTop + clashH + 6,
     combatCardRects,
+    cardNodes,
   };
 }

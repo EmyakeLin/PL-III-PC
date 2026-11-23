@@ -1487,7 +1487,7 @@ function choiceText(value, size, color, width, bold = false) {
 // A public handoff has no options. Once the seat takes control, board targets
 // and the tray use the same option index and the same confirmation button.
 export function buildEffectChoice(w, h, {
-  side, choice, options, hand = [], colors = {}, owners = {}, safeTop = 64, onReady, onPick, onInspect, onSelectionChange,
+  side, choice, options, hand = [], colors = {}, cardBacks = {}, owners = {}, safeTop = 64, onReady, onPick, onInspect, onSelectionChange,
 }) {
   const root = new PIXI.Container();
   const chooseOnBoard = !onReady && choice.selection !== 'hand';
@@ -1614,8 +1614,10 @@ export function buildEffectChoice(w, h, {
         targetLabel.position.set(cardW / 2, faceH / 2);
         item.addChild(slot, targetLabel);
       } else {
+        const hiddenOwnerId = target.character_id || card?.character_id || null;
+        const hiddenOwnerName = target.character_name || (hiddenOwnerId ? owners[hiddenOwnerId] : '') || '';
         const label = target.zone === 'board'
-          ? `${targetSide === side ? '己方' : '对方'} · ${DUEL_LABEL[target.kind]} ${target.number} · 第 ${target.position} 张`
+          ? `${hiddenOwnerName ? `${hiddenOwnerName} · ` : (targetSide === side ? '己方 · ' : '对方 · ')}${DUEL_LABEL[target.kind]} ${target.number} · 第 ${target.position} 张`
           : known ? owners[card.character_id] || '' : option.label;
         const price = option.use_preview;
         const cost = price ? [`预计 ${price.cost} 费`] : [];
@@ -1625,7 +1627,7 @@ export function buildEffectChoice(w, h, {
         if (compact) {
           const surface = new PIXI.Graphics().roundRect(0, 0, cardW, faceH, 6)
             .fill(INK.paperSoft).stroke({ width: 1, color: theme.border });
-          const title = known ? card.name : '扣置技能';
+          const title = known ? card.name : (hiddenOwnerName ? `${hiddenOwnerName} · 扣置技能` : '扣置技能');
           const caption = choiceText([title, ...priceLines].join('\n'), 12, INK.strong, cardW - 12, true);
           caption.anchor.set(0.5);
           caption.position.set(cardW / 2, faceH / 2);
@@ -1636,7 +1638,12 @@ export function buildEffectChoice(w, h, {
                 side: targetSide, width: cardW, fixedHeight: faceH, dense: true, centered: true,
                 accentColor: colors[card.character_id],
               })
-            : buildCardBack(targetSide, { width: Math.min(cardW, faceH / 1.40), height: faceH });
+            : buildCardBack(targetSide, {
+                width: Math.min(cardW, faceH / 1.40),
+                height: faceH,
+                accentColor: hiddenOwnerId ? colors[hiddenOwnerId] : null,
+                pattern: hiddenOwnerId ? cardBacks[hiddenOwnerId] : null,
+              });
           art.position.set(cardW / 2, faceH / 2);
           item.addChild(art);
           const clip = new PIXI.Graphics().rect(-2, -2, cardW + 6, faceH + 5).fill(0xffffff);

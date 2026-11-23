@@ -815,8 +815,7 @@
                       "BOARD_SLOTS", ["$event.item","$event.target.player.side","SLOT_CARDS"], "MAP",
                       "FLATTEN",
                       [
-                        "$event.item.character", "$event.target", "IS", "$event.item.destroyed", "NOT",
-                        "AND", "$event.item.character.is_alive", "AND"
+                        "$event.item.destroyed", "NOT", "$event.item.character.is_alive", "AND"
                       ],
                       "FILTER", "candidates", "STORE", "$event.card.use_state", "destroy_chosen", false,
                       "LOOKUP", "NOT", "$local.candidates", "AND",
@@ -830,7 +829,7 @@
                       "WHEN"
                     ]
                   },
-                  "description": "【命中时】本次技能至多一次，以较高话语权指定并摧毁目标本回合仍在场的一张技能。"
+                  "description": "【命中时】本次技能至多一次，以较高话语权指定并摧毁敌方本回合仍在场的任意一张技能。"
                 }
               ]
             }

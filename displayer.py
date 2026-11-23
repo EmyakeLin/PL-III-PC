@@ -164,19 +164,29 @@ def _passives(specs):
     return result
 
 
-def _visible_card(card, *, used=False):
+def _visible_card(card):
     details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
-    live_dice = [_live_die(die) for die in (card.instantiated_dice or ()) if die is not None]
-    destroyed = sorted({die.position for die in card.instantiated_dice or () if die and die.destroyed})
-    return {**details, "pre_reveal": card.can_open_pre_reveal,
-            "character_id": card.character.id, "borrowed": card.printed_owner is not card.character,
-            "destroyed_die_positions": destroyed,
-            "destroyed": bool(card.destroyed),
-            "range_deficit": card.range_deficit,
-            "used": bool(used),
-            "current_dice_index": card.current_dice_index,
-            "live_dice": live_dice,
-            "instance_id": card.instance_id, "cost": card.cost, "state": card.state.name.lower()}
+    inst = [die for die in (card.instantiated_dice or ()) if die is not None]
+    destroyed = sorted({die.position for die in inst if die.destroyed})
+    live_dice = [_live_die(die) for die in inst]
+    used = bool(card.use_effects_resolved and not card.has_next_die())
+    return {
+        **details,
+        "pre_reveal": card.can_open_pre_reveal,
+        "character_id": card.character.id,
+        "borrowed": card.printed_owner is not card.character,
+        "destroyed_die_positions": destroyed,
+        "live_dice": live_dice,
+        "destroyed": bool(card.destroyed),
+        "temporary": bool(card.temporary),
+        "range_deficit": card.range_deficit,
+        "used": used,
+        "skipped": card.state == CardState.NEGATED,
+        "dissolved": bool(card.temporary and used),
+        "instance_id": card.instance_id,
+        "cost": card.cost,
+        "state": card.state.name.lower(),
+    }
 
 
 def hand_key(card):
@@ -195,11 +205,9 @@ def _live_die(die):
         "position": die.position, "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
         "level": die.level.value if resolved else None, "roll_max": die.roll_max if resolved else None,
         "base_value": die.base_value, "rolled_value": die.value or None,
-        "multiplier": die.multiplier, "final_bonus": die.final_bonus, "calc_formula": die.calc_formula,
         "final_score": die.final_score, "clash_score": die.clash_score,
         "result": die.clash_result, "win_branch_skipped": die.win_branch_skipped,
         "critical": die.critical, "destroyed": die.destroyed, "hit_index": die.hit_index,
-        "landed_hits": die.landed_hits, "is_repeat": die.is_repeat,
     }
 
 
@@ -313,7 +321,10 @@ def _board_card_target(card, viewer):
             cards = slot.get_content(card.player.side)
             if card in cards:
                 position = cards.index(card) + 1
-                target = {"zone": "board", "side": card.player.side, "kind": kind, "number": number, "position": position}
+                target = {
+                    "zone": "board", "side": card.player.side, "kind": kind, "number": number, "position": position,
+                    "character_id": card.character.id, "character_name": card.character.name,
+                }
                 visible = kind != "regular" or _board_visible_to(card, viewer)
                 if visible:
                     target["card"] = _visible_card(card)
@@ -461,7 +472,7 @@ class Displayer:
             "pulled_card_id": slot.pulled_card.id if slot.pulled_card else None,
             "resolved_target_id": slot.resolved_target.id if slot.resolved_target else None,
             "sides": [{"side": p.side, "cards": [
-                {**_visible_card(c, used=c in self._game.used_cards), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)]}
+                {**_visible_card(c), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)]}
                       for p in self._game.players],
         }
 
@@ -605,7 +616,7 @@ class Displayer:
         return _board_visible_to(card, self._viewer)
 
     def _board_card(self, card):
-        return _visible_card(card, used=card in self._game.used_cards) if self._board_visible(card) else {"hidden": True}
+        return _visible_card(card) if self._board_visible(card) else {"hidden": True}
 
     def _suspended(self):
         game = self._game
@@ -654,11 +665,7 @@ class Displayer:
                 "play_mode": space.space[index].play_mode(card) if (early or instant) and card is not None else None,
                 "range_deficit": card.range_deficit if card is not None else 0,
                 "character_id": card.character.id if card is not None else None,
-                "character_name": card.character.name if card is not None else None,
                 "target_id": target.id if target is not None and card is not None else None,
-                "target_name": target.name if target is not None and card is not None else None,
-                "paid": pipe.paid,
-                "payment": dict(pipe.payment) if isinstance(pipe.payment, dict) else None,
                 "die_number": card.current_dice_index + 1 if die is not None else None,
                 "die": _live_die(die),
             })

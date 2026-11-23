@@ -4,7 +4,7 @@ from collections import Counter, deque
 import random
 import time
 
-from displayer import Displayer, _passives, _printed_skill, hand_key, special_seats, timing_label
+from displayer import Displayer, _passives, _printed_skill, _visible_card, hand_key, special_seats, timing_label
 from game import Game
 from loader import PACKS, load_characters_from_packs
 from models.character import Character
@@ -159,6 +159,11 @@ class BattleMatch:
         pool = {spec["id"]: spec for spec in load_characters_from_packs(extra_packs=extra_packs)}
         teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
         self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
+        self._character_card_backs = {
+            cid: spec["card_back"]
+            for cid, spec in pool.items()
+            if spec.get("card_back") is not None
+        }
         self._character_fx = discover_character_fx(pool, self._character_colors)
         self._fx_scripts = discover_fx_scripts()
         self._status_visuals = discover_status_visuals(pool)
@@ -188,6 +193,8 @@ class BattleMatch:
         self._history = deque(maxlen=100)
         self._require_handoff = initial_handoff
         self._pre_seat = None
+        self._pre_reveal_claimed = {1: False, 2: False}
+        self._pre_reveal_plans = {1: [], 2: []}
         self._draw_seat = None
         self._response_times = []
         self._special_open = False
@@ -234,6 +241,7 @@ class BattleMatch:
         return {
             "character_colors": dict(self._character_colors),
             "character_sprites": dict(self._character_sprites),
+            "character_card_backs": dict(self._character_card_backs),
             "character_fx": dict(self._character_fx),
             "fx_scripts": dict(self._fx_scripts),
             "status_visuals": dict(self._status_visuals),
@@ -250,8 +258,23 @@ class BattleMatch:
         attacks = [hand_key(c) for c in attack_cards]
         intercepts = [hand_key(c) for c in early.intercept_cards(player)] if private_pre else []
         legal_cards = {"pre_attack": attacks, "intercept": intercepts}.get(self.mode, [])
+        staged_keys = {entry["card_id"] for entry in self._pre_reveal_plans.get(side, ())} if side in (1, 2) else set()
         if self.mode == "placement":
-            legal_cards = [hand_key(c) for c in self._legal_cards()]
+            legal_cards = [hand_key(c) for c in self._legal_cards() if hand_key(c) not in staged_keys]
+        pre_reveal_claimed = bool(self._pre_reveal_claimed.get(side, False)) if deciding and side in (1, 2) else False
+        pre_reveal_plan = self._validate_pre_reveal_plans(player) if deciding and player is not None and self.mode in ("placement", "pre_attack", "intercept") else []
+        pre_eligible_cards = []
+        pre_stage_targets = {}
+        if self.mode == "placement" and player is not None and not self._special_open:
+            for c in self._pre_reveal_eligible_hand(player):
+                k = hand_key(c)
+                if k in staged_keys:
+                    continue
+                pre_eligible_cards.append(k)
+                pre_stage_targets[k] = [
+                    {"kind": "character", "id": actor.id} if actor is not None else {"kind": "duel", "number": i + 1}
+                    for actor, i in early.attack_targets(c)
+                ]
         mode = self.mode
         seats = special_seats(self.game)
         special_options = []
@@ -269,8 +292,10 @@ class BattleMatch:
                 f"{num}:{p.side}": [
                     {
                         "character_id": c.character.id,
+                        "printed_id": c.character.data.get("id"),
                         "character_name": c.character.name,
-                        "character_color": self._character_colors.get(c.character.id),
+                        "character_color": self._character_colors.get(c.character.id) or self._character_colors.get(c.character.data.get("id")),
+                        "card_back": self._character_card_backs.get(c.character.id) or self._character_card_backs.get(c.character.data.get("id")),
                     }
                     for c in slot.get_content(p.side)
                 ]
@@ -281,8 +306,10 @@ class BattleMatch:
                 f"{num}:{p.side}": [
                     {
                         "character_id": c.character.id,
+                        "printed_id": c.character.data.get("id"),
                         "character_name": c.character.name,
-                        "character_color": self._character_colors.get(c.character.id),
+                        "character_color": self._character_colors.get(c.character.id) or self._character_colors.get(c.character.data.get("id")),
+                        "card_back": self._character_card_backs.get(c.character.id) or self._character_card_backs.get(c.character.data.get("id")),
                     }
                     for c in slot.get_content(p.side)
                 ]
@@ -313,6 +340,10 @@ class BattleMatch:
             "catalog": self._views[None].catalog(),
             "choices": [dict(c) for c in self.choices],
             "legal_cards": legal_cards, "legal_attack_cards": attacks, "legal_intercept_cards": intercepts,
+            "pre_reveal_claimed": pre_reveal_claimed,
+            "pre_reveal_plan": pre_reveal_plan,
+            "pre_reveal_eligible_cards": pre_eligible_cards,
+            "pre_reveal_stage_targets": pre_stage_targets,
             "attack_targets": {hand_key(c): [{"kind": "character", "id": actor.id} if actor is not None
                               else {"kind": "duel", "number": i + 1} for actor, i in early.attack_targets(c)]
                                for c in attack_cards} if private_pre else {},
@@ -369,6 +400,8 @@ class BattleMatch:
             self._advance()
         elif self.mode == "placement" and action in ("place", "pass", "end"):
             self._place_action(action, card_id)
+        elif self.mode == "placement" and action in ("claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal"):
+            self._pre_reveal_plan_action(action, self.game.placing, card_id, target)
         elif self.mode in ("pre_attack", "intercept"):
             if action == "switch_side":
                 others = [p for p in self.game.pre_reveal.eligible_players() if p is not self._pre_seat]
@@ -376,6 +409,8 @@ class BattleMatch:
                     raise ValueError("当前只有一方可以操作。")
                 self._pre_seat = self._choose_seat(side, others) if side is not None else others[0]
                 self.mode = "handoff"
+            elif action in ("unstage_pre_reveal", "commit_pre_reveal_plan"):
+                self._pre_reveal_plan_action(action, self._pre_seat, card_id, target)
             else:
                 self._pre_action(action, card_id, target, duel_number)
         else:
@@ -514,6 +549,222 @@ class BattleMatch:
                     return player
         raise ValueError("这一方当前无法接手。")
 
+    def _pre_reveal_eligible_hand(self, player):
+        early = self.game.pre_reveal
+        return [
+            c for c in early.playable_hand(player)
+            if (c.can_open_pre_reveal or "attack" in c.data.get("anytime_play", ()))
+            and early.attack_targets(c)
+        ]
+
+    def _remaining_cost_budget(self, player):
+        shared = int(player.available_cost)
+        char_budget = {c.id: int(c.available_cost) for c in player.characters}
+        char_statuses = {c.id: dict(c.statuses) for c in player.characters}
+        for slot in self.game.board_slots():
+            for card in slot.get_content(player.side):
+                if getattr(card, "used", False) or getattr(card, "destroyed", False) or getattr(card, "skipped", False):
+                    continue
+                c_cost = max(0, int(card.cost))
+                cid = card.character.id
+                personal = min(c_cost, char_budget.get(cid, 0))
+                if cid in char_budget:
+                    char_budget[cid] -= personal
+                shared = max(0, shared - (c_cost - personal))
+        return shared, char_budget, char_statuses
+
+    def _validate_pre_reveal_plans(self, player):
+        early = self.game.pre_reveal
+        enemy = early.opponent(player)
+        shared, char_budget, char_statuses = self._remaining_cost_budget(player)
+        hand_by_key = {hand_key(c): c for c in player.cardspace.hand.content}
+        result = []
+        for entry in self._pre_reveal_plans.get(player.side, ()):
+            key = entry["card_id"]
+            target = entry["target"]
+            card = hand_by_key.get(key)
+            valid = True
+            affordable = True
+            reason = None
+            target_label = "未知目标"
+            if target.get("kind") == "character":
+                actor = next((c for c in enemy.characters if c.id == target.get("id")), None)
+                target_label = f"目标 · {actor.name}" if actor else "目标角色不存在"
+            elif target.get("kind") == "duel":
+                target_label = f"牵制 · 常规交锋 {target.get('number')}"
+
+            if card is None:
+                valid = False
+                reason = "该牌已不在手牌中"
+            elif not card.character.is_alive or card.destroyed:
+                valid = False
+                reason = "所属角色已退场或技能已摧毁"
+            elif not card.meets_use_requirements():
+                valid = False
+                reason = "当前不满足技能使用条件"
+            elif not (card.can_open_pre_reveal or "attack" in card.data.get("anytime_play", ())):
+                valid = False
+                reason = "当前不可发起开牌前交锋"
+            else:
+                legal_targets = early.attack_targets(card)
+                if target.get("kind") == "character":
+                    actor = next((c for c in enemy.characters if c.id == target.get("id") and c.is_alive), None)
+                    if actor is None or (actor, None) not in legal_targets:
+                        valid = False
+                        reason = "目标角色已阵亡或不可指定"
+                elif target.get("kind") == "duel" and type(target.get("number")) is int:
+                    idx = target["number"] - 1
+                    if (None, idx) not in legal_targets:
+                        valid = False
+                        reason = "该常规交锋当前不可作为目标"
+                else:
+                    valid = False
+                    reason = "目标无效"
+
+            if card is not None:
+                c_cost = max(0, int(card.cost))
+                cid = card.character.id
+                res = card.data.get("resource_cost")
+                if c_cost > shared + char_budget.get(cid, 0):
+                    affordable = False
+                    if valid:
+                        reason = f"费用不足（需 {c_cost} 费）"
+                elif isinstance(res, dict) and res.get("status"):
+                    have = int((char_statuses.get(cid) or {}).get(res["status"], 0))
+                    need = int(res.get("amount") or 0)
+                    if have < need:
+                        affordable = False
+                        if valid:
+                            reason = f"{res['status']}不足（需 {need} 层）"
+                if valid and affordable:
+                    personal = min(c_cost, char_budget.get(cid, 0))
+                    if cid in char_budget:
+                        char_budget[cid] -= personal
+                    shared = max(0, shared - (c_cost - personal))
+                    if isinstance(res, dict) and res.get("status"):
+                        char_statuses.setdefault(cid, {})[res["status"]] = (
+                            int(char_statuses[cid].get(res["status"], 0)) - int(res.get("amount") or 0)
+                        )
+
+            result.append({
+                "card_id": key,
+                "card_name": card.name if card else entry.get("card_name", "未知技能"),
+                "character_id": card.character.id if card else entry.get("character_id"),
+                "character_name": card.character.name if card else entry.get("character_name", ""),
+                "cost": card.cost if card else entry.get("cost", 0),
+                "target": dict(target),
+                "target_label": target_label,
+                "valid": valid,
+                "affordable": affordable,
+                "reason": reason,
+                "card": _visible_card(card) if card else None,
+            })
+        return result
+
+    def _auto_skip_unclaimed_pre_attack(self):
+        phase = self.game.pre_reveal
+        while (phase.phase == "attack" and phase.actor is not None
+               and phase.can_attack(phase.actor)
+               and not self._pre_reveal_claimed.get(phase.actor.side)
+               and not self._pre_reveal_plans.get(phase.actor.side)):
+            phase.end_attack(phase.actor)
+
+    def _pre_reveal_plan_action(self, action, player, card_id, target):
+        if player is None:
+            raise ValueError("当前没有可操作席位。")
+        side = player.side
+        if action == "claim_pre_reveal":
+            next_claimed = not self._pre_reveal_claimed.get(side, False)
+            self._pre_reveal_claimed[side] = next_claimed
+            if not next_claimed:
+                self._pre_reveal_plans[side].clear()
+            return
+        if action == "unstage_pre_reveal":
+            if card_id is None:
+                self._pre_reveal_plans[side].clear()
+            else:
+                self._pre_reveal_plans[side] = [
+                    e for e in self._pre_reveal_plans[side] if e["card_id"] != card_id
+                ]
+            return
+        if action == "stage_pre_reveal":
+            early = self.game.pre_reveal
+            eligible = {hand_key(c): c for c in self._pre_reveal_eligible_hand(player)}
+            card = eligible.get(card_id)
+            if card is None:
+                raise ValueError("这张手牌当前不能预排为开牌前交锋。")
+            if any(e["card_id"] == card_id for e in self._pre_reveal_plans[side]):
+                raise ValueError("这张手牌已在开牌前交锋预排中。")
+            if not isinstance(target, dict):
+                raise ValueError("请指定敌方角色或常规交锋作为目标。")
+            legal_targets = early.attack_targets(card)
+            enemy = early.opponent(player)
+            if target.get("kind") == "character":
+                actor = next((c for c in enemy.characters if c.id == target.get("id") and c.is_alive), None)
+                if actor is None or (actor, None) not in legal_targets:
+                    raise ValueError("目标角色当前不可作为开牌前交锋目标。")
+                clean_target = {"kind": "character", "id": actor.id}
+            elif target.get("kind") == "duel" and type(target.get("number")) is int:
+                idx = target["number"] - 1
+                if (None, idx) not in legal_targets:
+                    raise ValueError("该常规交锋当前不可作为开牌前交锋目标。")
+                clean_target = {"kind": "duel", "number": target["number"]}
+            else:
+                raise ValueError("请指定存活的敌方角色或有效常规交锋。")
+            self._pre_reveal_claimed[side] = True
+            self._pre_reveal_plans[side].append({
+                "card_id": card_id,
+                "card_name": card.name,
+                "character_id": card.character.id,
+                "character_name": card.character.name,
+                "cost": card.cost,
+                "target": clean_target,
+            })
+            return
+        if action == "commit_pre_reveal_plan":
+            phase = self.game.pre_reveal
+            if not phase.can_attack(player):
+                raise ValueError("当前没有主动进攻权，无法发出预排交锋。")
+            validated = self._validate_pre_reveal_plans(player)
+            committed = 0
+            remaining = []
+            for idx, item in enumerate(validated):
+                if not item["valid"]:
+                    remaining.append(self._pre_reveal_plans[side][idx])
+                    continue
+                if phase.actor is not player or not phase.can_attack(player):
+                    remaining.extend(self._pre_reveal_plans[side][idx:])
+                    break
+                card = next((c for c in player.cardspace.hand.content if hand_key(c) == item["card_id"]), None)
+                if card is None:
+                    continue
+                tgt = item["target"]
+                if tgt.get("kind") == "character":
+                    enemy = phase.opponent(player)
+                    actor = next((c for c in enemy.characters if c.id == tgt.get("id") and c.is_alive), None)
+                    phase.declare_attack(card, character=actor)
+                    label = actor.name
+                else:
+                    phase.declare_attack(card, duel_index=tgt["number"] - 1)
+                    label = f"常规交锋 {tgt['number']}"
+                self._history.append(f"开牌前交锋 {len(phase.space.space)}　{card.name} → {label}。")
+                committed += 1
+                self._record_response_times()
+                if self.game.is_over or phase.actor is not player:
+                    remaining.extend(self._pre_reveal_plans[side][idx + 1:])
+                    break
+            self._pre_reveal_plans[side] = remaining
+            if committed == 0:
+                raise ValueError("预排中的开牌前交锋当前均不可发出，请先调整或移除失效项。")
+            self._auto_skip_unclaimed_pre_attack()
+            self._pre_seat = phase.actor
+            if self.game.is_over:
+                self._finish()
+            elif phase.actor is None:
+                self._advance()
+            else:
+                self.mode = self._pre_mode() if phase.actor is player else "handoff"
+
     def _pre_mode(self):
         phase = self.game.pre_reveal
         if phase.actor is self._pre_seat:
@@ -558,6 +809,7 @@ class BattleMatch:
         else:
             raise ValueError("当前开牌前交锋无法执行这个操作。")
         self._record_response_times()
+        self._auto_skip_unclaimed_pre_attack()
         self._pre_seat = phase.actor
         if self.game.is_over:
             self._finish()
@@ -649,20 +901,28 @@ class BattleMatch:
                 if game.placing is not None:
                     return
             elif node == "logic_before_reveal_declarations" and game.pre_reveal.actor is not None:
-                self._pre_seat = game.pre_reveal.actor
-                self.mode = "handoff"
-                return
+                self._auto_skip_unclaimed_pre_attack()
+                if game.pre_reveal.actor is not None:
+                    self._pre_seat = game.pre_reveal.actor
+                    self.mode = "handoff"
+                    return
             elif node == "logic_reveal":
+                self._pre_reveal_claimed = {1: False, 2: False}
+                self._pre_reveal_plans = {1: [], 2: []}
                 self.mode = "reveal"
                 count = len(game.duelspace.space)
                 message = f"双方开牌，共 {count} 个常规交锋。" if count else "双方没有常规扣牌。"
                 self._history.append(message)
                 return
-            elif node == "after_turn_end":
+            elif node == "before_turn_end":
+                # Pause BEFORE logic_turn_end (card recycling) so settled cards remain visible on the
+                # tabletop until the player clicks "下一回合", which then triggers turn_recycle!
                 self.mode = "turn_end"
+                self._pre_reveal_claimed = {1: False, 2: False}
+                self._pre_reveal_plans = {1: [], 2: []}
                 self._response_times.clear()
                 self._require_handoff = True
-                self._history.append(f"第 {game.turn_count} 回合结束。")
+                self._history.append(f"第 {game.turn_number} 回合结束。")
                 return
             elif isinstance(node, tuple) and self._combat_stop(node):
                 self.mode = "combat"

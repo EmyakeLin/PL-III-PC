@@ -178,26 +178,224 @@ const BG_FRAGMENT = /* glsl */ `
   }
 `;
 
-function createD16Geometry(radius) {
-  const sides = 8;
-  const top = [0, radius * 1.16, 0];
-  const bot = [0, -radius * 1.16, 0];
-  const ring = [];
-  for (let i = 0; i < sides; i++) {
-    const a = (i / sides) * Math.PI * 2;
-    ring.push([Math.cos(a) * radius, 0, Math.sin(a) * radius]);
+let _DCC_D16_CACHE = null;
+
+function _generateAntipodal16() {
+  const seeds = [
+    [0.05, 0.98, 0.18],
+    [0.85, 0.42, 0.31],
+    [-0.82, 0.45, 0.35],
+    [0.12, 0.48, -0.87],
+    [0.72, -0.15, -0.68],
+    [-0.74, -0.12, -0.66],
+    [0.45, -0.40, 0.79],
+    [-0.48, -0.36, 0.80],
+  ].map((v) => new THREE.Vector3(v[0], v[1], v[2]).normalize());
+
+  const pts = new Array(16);
+  for (let i = 0; i < 8; i++) {
+    pts[i] = seeds[i].clone();
+    pts[i + 8] = seeds[i].clone().negate();
   }
-  const positions = [];
-  for (let i = 0; i < sides; i++) {
-    const curr = ring[i];
-    const next = ring[(i + 1) % sides];
-    positions.push(...top, ...next, ...curr);
-    positions.push(...bot, ...curr, ...next);
+
+  const iters = 600;
+  const force = new THREE.Vector3();
+  const diff = new THREE.Vector3();
+  for (let it = 0; it < iters; it++) {
+    const step = 0.035 * (1 - it / iters) + 0.0015;
+    for (let i = 0; i < 8; i++) {
+      force.set(0, 0, 0);
+      for (let j = 0; j < 16; j++) {
+        if (i === j || j === i + 8) continue;
+        diff.subVectors(pts[i], pts[j]);
+        const d2 = Math.max(diff.lengthSq(), 1e-4);
+        const w = 1 / (d2 * d2 * d2);
+        force.addScaledVector(diff, w);
+      }
+      force.addScaledVector(pts[i], -force.dot(pts[i]));
+      const len = force.length();
+      if (len > 1e-8) {
+        const move = Math.min(len * step, 0.04);
+        pts[i].addScaledVector(force, move / len).normalize();
+        pts[i + 8].copy(pts[i]).negate();
+      }
+    }
   }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.computeVertexNormals();
-  return geo;
+  return pts;
+}
+
+function _clipPolyByPlane(poly, n, d) {
+  const EPS = 1e-6;
+  if (poly.length < 3) return [];
+  const out = [];
+  const len = poly.length;
+  for (let i = 0; i < len; i++) {
+    const curr = poly[i];
+    const next = poly[(i + 1) % len];
+    const dCurr = curr.dot(n) - d;
+    const dNext = next.dot(n) - d;
+    const inCurr = dCurr <= EPS;
+    const inNext = dNext <= EPS;
+    if (inCurr && inNext) {
+      out.push(next);
+    } else if (inCurr && !inNext) {
+      const t = dCurr / (dCurr - dNext);
+      out.push(new THREE.Vector3().lerpVectors(curr, next, t));
+    } else if (!inCurr && inNext) {
+      const t = dCurr / (dCurr - dNext);
+      out.push(new THREE.Vector3().lerpVectors(curr, next, t));
+      out.push(next);
+    }
+  }
+  return out;
+}
+
+/**
+ * Cached unit-radius DCC truncated-sphere d16 geometry (8 antipodal pairs of circular flat facets
+ * carved into a smooth sphere), pre-split for bold-outlined cel-shading (粗勾边三渲二):
+ *  - curvedGeo:  smooth spherical waist bands (stepped toon shading)
+ *  - flatGeo:    16 circular flat facets (crisp flat-shaded toon contrast)
+ *  - rimLineGeo: 16 crisp circular facet ink rings (zero sphere triangulation noise!)
+ *  - shellGeo:   merged solid hull for the 1.13x BackSide bold ink silhouette outline
+ */
+function _getDccD16Cache() {
+  if (_DCC_D16_CACHE) return _DCC_D16_CACHE;
+  const EPS = 1e-6;
+  const normals = _generateAntipodal16();
+  let maxDot = -1;
+  for (let i = 0; i < 16; i++) {
+    for (let j = i + 1; j < 16; j++) {
+      const dot = normals[i].dot(normals[j]);
+      if (dot > maxDot) maxDot = dot;
+    }
+  }
+  const minAngleRad = Math.acos(Math.min(1, Math.max(-1, maxDot)));
+  const dCrit = Math.cos(minAngleRad / 2);
+  const d = Math.min(0.95, dCrit + 0.008);
+  const rCircle = Math.sqrt(Math.max(1e-5, 1 - d * d));
+
+  // 1. Clipped smooth spherical bands (detail 5 -> silky silhouette, fast 60fps triangle budget)
+  const baseGeom = new THREE.IcosahedronGeometry(1, 5);
+  const posAttr = baseGeom.attributes.position;
+  const idxAttr = baseGeom.index;
+  const baseTris = [];
+  if (idxAttr) {
+    for (let i = 0; i < idxAttr.count; i += 3) {
+      baseTris.push([
+        new THREE.Vector3().fromBufferAttribute(posAttr, idxAttr.getX(i)).normalize(),
+        new THREE.Vector3().fromBufferAttribute(posAttr, idxAttr.getX(i + 1)).normalize(),
+        new THREE.Vector3().fromBufferAttribute(posAttr, idxAttr.getX(i + 2)).normalize(),
+      ]);
+    }
+  } else {
+    for (let i = 0; i < posAttr.count; i += 3) {
+      baseTris.push([
+        new THREE.Vector3().fromBufferAttribute(posAttr, i).normalize(),
+        new THREE.Vector3().fromBufferAttribute(posAttr, i + 1).normalize(),
+        new THREE.Vector3().fromBufferAttribute(posAttr, i + 2).normalize(),
+      ]);
+    }
+  }
+  baseGeom.dispose();
+
+  const curvedPos = [];
+  const curvedNorm = [];
+  for (let t = 0; t < baseTris.length; t++) {
+    let poly = baseTris[t];
+    for (let p = 0; p < 16; p++) {
+      const n = normals[p];
+      let allIn = true;
+      let allOut = true;
+      for (let k = 0; k < poly.length; k++) {
+        const sd = poly[k].dot(n) - d;
+        if (sd > EPS) allIn = false;
+        if (sd <= EPS) allOut = false;
+      }
+      if (allOut) {
+        poly = [];
+        break;
+      }
+      if (!allIn) {
+        poly = _clipPolyByPlane(poly, n, d);
+        if (poly.length < 3) break;
+      }
+    }
+    if (poly.length >= 3) {
+      const v0 = poly[0];
+      const n0 = v0.clone().normalize();
+      for (let k = 1; k < poly.length - 1; k++) {
+        const v1 = poly[k];
+        const v2 = poly[k + 1];
+        const n1 = v1.clone().normalize();
+        const n2 = v2.clone().normalize();
+        curvedPos.push(v0.x, v0.y, v0.z, v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
+        curvedNorm.push(n0.x, n0.y, n0.z, n1.x, n1.y, n1.z, n2.x, n2.y, n2.z);
+      }
+    }
+  }
+
+  // 2. 16 equal circular flat facets + crisp ink circular rim segments
+  const SEGMENTS = 36;
+  const flatPos = [];
+  const flatNorm = [];
+  const rimPos = [];
+  for (let i = 0; i < 16; i++) {
+    const n = normals[i];
+    const ref = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    const uAxis = new THREE.Vector3().crossVectors(ref, n).normalize();
+    const vAxis = new THREE.Vector3().crossVectors(n, uAxis).normalize();
+    const center = n.clone().multiplyScalar(d);
+
+    let poly = [];
+    for (let s = 0; s < SEGMENTS; s++) {
+      const angle = (s / SEGMENTS) * Math.PI * 2;
+      poly.push(
+        center.clone()
+          .addScaledVector(uAxis, Math.cos(angle) * rCircle)
+          .addScaledVector(vAxis, Math.sin(angle) * rCircle),
+      );
+    }
+    for (let j = 0; j < 16; j++) {
+      if (i === j) continue;
+      poly = _clipPolyByPlane(poly, normals[j], d);
+      if (poly.length < 3) break;
+    }
+    if (poly.length < 3) continue;
+
+    const centroid = new THREE.Vector3();
+    for (const p of poly) centroid.add(p);
+    centroid.divideScalar(poly.length);
+
+    for (let k = 0; k < poly.length; k++) {
+      const p1 = poly[k];
+      const p2 = poly[(k + 1) % poly.length];
+      flatPos.push(centroid.x, centroid.y, centroid.z, p1.x, p1.y, p1.z, p2.x, p2.y, p2.z);
+      flatNorm.push(n.x, n.y, n.z, n.x, n.y, n.z, n.x, n.y, n.z);
+      // Slight 1.004 outward lift prevents z-fighting on the circular ink rim
+      rimPos.push(p1.x * 1.004, p1.y * 1.004, p1.z * 1.004, p2.x * 1.004, p2.y * 1.004, p2.z * 1.004);
+    }
+  }
+
+  const curvedGeo = new THREE.BufferGeometry();
+  curvedGeo.setAttribute('position', new THREE.Float32BufferAttribute(curvedPos, 3));
+  curvedGeo.setAttribute('normal', new THREE.Float32BufferAttribute(curvedNorm, 3));
+
+  const flatGeo = new THREE.BufferGeometry();
+  flatGeo.setAttribute('position', new THREE.Float32BufferAttribute(flatPos, 3));
+  flatGeo.setAttribute('normal', new THREE.Float32BufferAttribute(flatNorm, 3));
+
+  const shellPos = new Float32Array(curvedPos.length + flatPos.length);
+  shellPos.set(curvedPos, 0);
+  shellPos.set(flatPos, curvedPos.length);
+  const shellGeo = new THREE.BufferGeometry();
+  shellGeo.setAttribute('position', new THREE.BufferAttribute(shellPos, 3));
+
+  const rimLineGeo = new THREE.BufferGeometry();
+  rimLineGeo.setAttribute('position', new THREE.Float32BufferAttribute(rimPos, 3));
+
+  const restQuat = new THREE.Quaternion().setFromUnitVectors(normals[0].clone(), new THREE.Vector3(0, 0, -1));
+  _DCC_D16_CACHE = { curvedGeo, flatGeo, shellGeo, rimLineGeo, inradius: d, restQuat };
+  return _DCC_D16_CACHE;
 }
 
 function makePolyGeo(sides, radius) {
@@ -205,8 +403,39 @@ function makePolyGeo(sides, radius) {
   if (sides <= 6) return new THREE.BoxGeometry(radius * 1.28, radius * 1.28, radius * 1.28);
   if (sides <= 8) return new THREE.OctahedronGeometry(radius * 1.06);
   if (sides <= 12) return new THREE.DodecahedronGeometry(radius * 1.04);
-  if (sides <= 16) return createD16Geometry(radius * 1.04);
   return new THREE.IcosahedronGeometry(radius * 1.04);
+}
+
+/**
+ * Compute exact flat-face resting quaternion & exact inradius (center-to-face perpendicular distance)
+ * directly from the polyhedron's BufferGeometry so its bottom face rests 100% FLUSH on the horizontal plane!
+ */
+function computePolyRestPose(geo, fallbackRadius) {
+  const pos = geo.attributes.position;
+  const idx = geo.index;
+  if (!pos || pos.count < 3) {
+    return { restQuat: new THREE.Quaternion(), inradius: fallbackRadius * 0.78 };
+  }
+  const i0 = idx ? idx.getX(0) : 0;
+  const i1 = idx ? idx.getX(1) : 1;
+  const i2 = idx ? idx.getX(2) : 2;
+  const a = new THREE.Vector3().fromBufferAttribute(pos, i0);
+  const b = new THREE.Vector3().fromBufferAttribute(pos, i1);
+  const c = new THREE.Vector3().fromBufferAttribute(pos, i2);
+  const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
+  if (n.lengthSq() < 1e-8) {
+    return { restQuat: new THREE.Quaternion(), inradius: fallbackRadius * 0.78 };
+  }
+  n.normalize();
+  if (n.dot(a) < 0) n.negate();
+  const inradius = Math.max(fallbackRadius * 0.45, n.dot(a));
+  // Align outward face normal `n` straight down `(0, -1, 0)` onto the horizontal floor plane,
+  // then apply a clean 22° horizontal yaw around vertical Y so front facets read clearly in 3D.
+  const down = new THREE.Vector3(0, -1, 0);
+  const alignQ = new THREE.Quaternion().setFromUnitVectors(n, down);
+  const yawQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.38);
+  const restQuat = yawQ.multiply(alignQ);
+  return { restQuat, inradius };
 }
 
 /**
@@ -558,6 +787,7 @@ export class ThreeWorld {
     this._motes = this._buildLightMotes();
 
     this.activeDice = [];
+    this._diceClearedWaiters = [];
     this.flippingCards = [];
     this.rings = [];
     this.vfxEffects = [];
@@ -662,7 +892,26 @@ export class ThreeWorld {
     return { points, phases, t: 0 };
   }
 
+  _getToonGradientMap() {
+    if (this._toonGradMap) return this._toonGradMap;
+    // 4-band stepped cel-shading ramp for crisp 3D-to-2D facet contrast
+    const bands = new Uint8Array([
+      82, 82, 82, 255,
+      148, 148, 148, 255,
+      212, 212, 212, 255,
+      255, 255, 255, 255,
+    ]);
+    const tex = new THREE.DataTexture(bands, 4, 1, THREE.RGBAFormat);
+    tex.minFilter = THREE.NearestFilter;
+    tex.magFilter = THREE.NearestFilter;
+    tex.generateMipmaps = false;
+    tex.needsUpdate = true;
+    this._toonGradMap = tex;
+    return tex;
+  }
+
   launchDie({
+    side = null,
     sides = 6,
     dieType = 'speed',
     rolledValue = 1,
@@ -675,52 +924,227 @@ export class ThreeWorld {
     radius = 28,
     lifetime = 1.9,
     revealDelay = 0.28,
+    alreadyRolled = false,
+    willClash = false,
     onReveal = null,
   }) {
     const pal = DIE_PALETTES[dieType] || DIE_PALETTES.speed;
     const group = new THREE.Group();
-    const geo = makePolyGeo(sides, radius);
-    const mat = new THREE.MeshStandardMaterial({
-      color: pal.body,
-      roughness: 0.28,
-      metalness: 0.14,
-      flatShading: true,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    const edgeGeo = new THREE.EdgesGeometry(geo);
-    const edgeMat = new THREE.LineBasicMaterial({ color: pal.edge, transparent: true, opacity: 0.68 });
-    mesh.add(new THREE.LineSegments(edgeGeo, edgeMat));
-    group.add(mesh);
+    const isDccD16 = sides > 12 && sides <= 16;
+    let geo;
+    let mat;
+    let outlineMat;
+    let edgeGeo;
+    let edgeMat;
+    let mesh;
+    let sharedGeo = false;
+    let extraMats = null;
+    let restQuat;
+    let inradius;
+
+    if (isDccD16) {
+      // Stylized Cel-Shaded DCC Truncated-Sphere d16 (粗勾边三渲二截球体 d16):
+      //  - Smooth toon-shaded spherical waist bands + slightly brighter flat circular facets
+      //  - Bold 1.13x inverted-hull ink silhouette + crisp circular facet rim ink rings
+      const cache = _getDccD16Cache();
+      const d16Scale = radius * 1.04;
+      sharedGeo = true;
+      geo = cache.curvedGeo;
+      edgeGeo = cache.rimLineGeo;
+      mat = new THREE.MeshToonMaterial({
+        color: pal.body,
+        gradientMap: this._getToonGradientMap(),
+        flatShading: false,
+      });
+      const facetColor = new THREE.Color(pal.body).lerp(new THREE.Color(0xfffaf0), 0.16);
+      const flatMat = new THREE.MeshToonMaterial({
+        color: facetColor,
+        gradientMap: this._getToonGradientMap(),
+        flatShading: true,
+      });
+      extraMats = [flatMat];
+      outlineMat = new THREE.MeshBasicMaterial({
+        color: 0x2b221a,
+        side: THREE.BackSide,
+      });
+      edgeMat = new THREE.LineBasicMaterial({ color: 0x2b221a, transparent: true, opacity: 0.92 });
+
+      mesh = new THREE.Group();
+      mesh.scale.setScalar(d16Scale);
+      mesh.add(new THREE.Mesh(cache.curvedGeo, mat));
+      mesh.add(new THREE.Mesh(cache.flatGeo, flatMat));
+      const outlineMesh = new THREE.Mesh(cache.shellGeo, outlineMat);
+      outlineMesh.scale.setScalar(1.13);
+      mesh.add(outlineMesh);
+      mesh.add(new THREE.LineSegments(cache.rimLineGeo, edgeMat));
+      group.add(mesh);
+
+      restQuat = cache.restQuat.clone();
+      inradius = cache.inradius * d16Scale;
+    } else {
+      geo = makePolyGeo(sides, radius);
+      // Bold-outlined cel-shaded (粗勾边三渲二) polyhedron:
+      // 1. Stepped flat-shaded Toon material for sharp 3D facet depth
+      mat = new THREE.MeshToonMaterial({
+        color: pal.body,
+        gradientMap: this._getToonGradientMap(),
+        flatShading: true,
+      });
+      mesh = new THREE.Mesh(geo, mat);
+      // 2. Inverted-hull bold ink silhouette outline (BackSide scaled 1.13x)
+      outlineMat = new THREE.MeshBasicMaterial({
+        color: 0x2b221a,
+        side: THREE.BackSide,
+      });
+      const outlineMesh = new THREE.Mesh(geo, outlineMat);
+      outlineMesh.scale.setScalar(1.13);
+      mesh.add(outlineMesh);
+      // 3. Crisp dark-ink crease lines on every polyhedral ridge
+      edgeGeo = new THREE.EdgesGeometry(geo, 12);
+      edgeMat = new THREE.LineBasicMaterial({ color: 0x2b221a, transparent: true, opacity: 0.9 });
+      mesh.add(new THREE.LineSegments(edgeGeo, edgeMat));
+      group.add(mesh);
+
+      const pose = computePolyRestPose(geo, radius);
+      restQuat = pose.restQuat;
+      inradius = pose.inradius;
+    }
 
     const shadowGeo = new THREE.CircleGeometry(radius * 1.18, 24);
     const shadowMat = new THREE.MeshBasicMaterial({
       color: 0xa89b87,
       transparent: true,
-      opacity: 0.32,
+      opacity: 0.34,
       depthWrite: false,
     });
     const shadow = new THREE.Mesh(shadowGeo, shadowMat);
     this.scene.add(shadow);
 
+    // Account for the 1.13x inverted-hull ink outline so bottom NEVER clips into the z = 0 shadow plane!
+    const restZ = inradius * 1.13;
+
+    // Genuine rigid-body throw & rolling physics on the clean z = 0 tabletop plane (NO sideways camera twist!):
+    //   - Real gravity + Coulomb impact friction on each bounce (`vx *= 0.82`)
+    //   - Coulomb + viscous rolling resistance on the felt (`z = restZ`)
+    //   - Real quaternion axis-angle rolling + smooth gravity face-settle into `restQuat`
+    //   - Rolling candidate numbers (`rollTextures`) slowing down with speed and locking onto `rolledValue`!
+    const initZ = alreadyRolled ? restZ : 74;
+    const initVz = alreadyRolled ? 0 : -110;
+    const dx = (targetX ?? startX) - startX;
+    const dy = (targetY ?? startY) - startY;
+    // Calibrated to exact airborne + bounce + rolling-friction stopping integral (~0.48 * v0 = dx)
+    const initVx = alreadyRolled ? 0 : (dx * 2.05);
+    const initVy = alreadyRolled ? 0 : (dy * 1.95);
+    const effectiveRevealDelay = alreadyRolled ? 0 : 0.54;
+
+    const initWp = this.screenToWorld(startX, startY, initZ);
+    group.position.copy(initWp);
+    shadow.position.set(initWp.x + 4, initWp.y - 6, 1);
+
     const badgeTex = makeDieReadoutTexture(rolledValue, subLabel || `1~${sides}`, pal.hex);
-    const badgeMat = new THREE.SpriteMaterial({ map: badgeTex, transparent: true, opacity: 0, depthTest: false });
+    const badgeMat = new THREE.SpriteMaterial({
+      map: badgeTex,
+      transparent: true,
+      opacity: alreadyRolled ? 1 : 0,
+      depthTest: false,
+    });
     const badge = new THREE.Sprite(badgeMat);
     badge.scale.set(radius * 2.45, radius * 2.45, 1);
+    badge.position.set(initWp.x, initWp.y, initZ + radius + 14);
     this.scene.add(badge);
+
+    // Pre-bake rolling-number texture cache (1..min(sides, 12)) for smooth number rolling before lock
+    const rollTextures = [];
+    const maxFace = Math.min(12, Math.max(2, Number(sides) || 6));
+    if (!alreadyRolled && typeof rolledValue === 'number') {
+      for (let f = 1; f <= maxFace; f++) {
+        rollTextures.push(makeDieReadoutTexture(f, subLabel || `1~${sides}`, pal.hex));
+      }
+    }
 
     this.scene.add(group);
     this.activeDice.push({
+      side,
+      rolledValue,
+      sides,
+      dieType,
       group, mesh, shadow, badge,
-      geo, mat, edgeGeo, edgeMat, shadowGeo, shadowMat, badgeTex, badgeMat,
+      geo, mat, outlineMat, edgeGeo, edgeMat, shadowGeo, shadowMat, badgeTex, badgeMat,
+      sharedGeo, extraMats,
+      rollTextures,
+      rollPhase: Math.random() * maxFace,
+      restQuat, inradius, restZ,
       startX, startY, targetX, targetY,
+      x: startX, y: startY,
+      vx: initVx, vy: initVy,
+      lastX: startX, lastY: startY,
       physicsBody,
-      z: 145, vz: 95,
-      rotVel: new THREE.Vector3(10 + Math.random() * 6, 9 + Math.random() * 6, 7 + Math.random() * 5),
+      z: initZ, vz: initVz,
+      bounces: 0,
+      angVel: new THREE.Vector3(
+        -(initVy / Math.max(12, inradius)) * 0.85 + (Math.random() - 0.5) * 4,
+        (initVx / Math.max(12, inradius)) * 0.85,
+        (Math.random() - 0.5) * 6,
+      ),
       age: 0, lifetime, radius,
-      revealDelay: Math.max(0, Number(revealDelay) || 0),
+      alreadyRolled: Boolean(alreadyRolled),
+      willClash: Boolean(willClash),
+      locked: Boolean(alreadyRolled),
+      revealDelay: effectiveRevealDelay,
       revealed: false,
       onReveal: typeof onReveal === 'function' ? onReveal : null,
     });
+  }
+
+  /**
+   * Seamlessly bind the MOST RECENT live 3D die for `side` directly to a Matter.js clash body
+   * at its exact live (lastX, lastY) — never hijacks or hard-deletes earlier fading dice.
+   */
+  attachClashBody(side, { physicsBody, rolledValue, subLabel = '', dieType = 'speed', lifetime = 1.75, onReveal = null }) {
+    let existing = null;
+    for (let i = this.activeDice.length - 1; i >= 0; i--) {
+      const cand = this.activeDice[i];
+      if (cand.side === side && !cand.physicsBody) {
+        existing = cand;
+        break;
+      }
+    }
+    if (!existing) return false;
+    if (physicsBody && existing.lastX != null && existing.lastY != null) {
+      physicsBody.position.x = existing.lastX;
+      physicsBody.position.y = existing.lastY;
+      if (physicsBody.positionPrev) {
+        physicsBody.positionPrev.x = existing.lastX;
+        physicsBody.positionPrev.y = existing.lastY;
+      }
+    }
+    existing.physicsBody = physicsBody;
+    existing.age = 0;
+    existing.lifetime = lifetime;
+    existing.alreadyRolled = true;
+    existing.locked = true;
+    existing.revealed = true;
+    existing.revealDelay = 0;
+    existing.onReveal = null;
+    existing.z = existing.inradius;
+    existing.vz = 0;
+    existing.mat.transparent = false;
+    existing.mat.opacity = 1;
+    existing.badgeMat.opacity = 1;
+    if (String(rolledValue) !== String(existing.rolledValue)) {
+      const pal = DIE_PALETTES[dieType] || DIE_PALETTES.speed;
+      const newTex = makeDieReadoutTexture(rolledValue, subLabel || `1~${existing.sides}`, pal.hex);
+      existing.badgeMat.map = newTex;
+      existing.badgeMat.needsUpdate = true;
+      existing.badgeTex?.dispose?.();
+      existing.badgeTex = newTex;
+      existing.rolledValue = rolledValue;
+    } else if (existing.badgeMat.map !== existing.badgeTex) {
+      existing.badgeMat.map = existing.badgeTex;
+      existing.badgeMat.needsUpdate = true;
+    }
+    onReveal?.();
+    return true;
   }
 
   spawnCardFlipArc({
@@ -1491,6 +1915,30 @@ export class ThreeWorld {
   clearDice() {
     for (const d of this.activeDice) this._disposeDie(d);
     this.activeDice = [];
+    this._flushDiceClearedWaiters();
+  }
+
+  hasActiveDice() {
+    return this.activeDice.length > 0;
+  }
+
+  hasActiveDieForSide(side) {
+    return this.activeDice.some((d) => d.side === side);
+  }
+
+  waitUntilDiceCleared(cb) {
+    if (typeof cb !== 'function') return;
+    if (this.activeDice.length === 0) {
+      cb();
+      return;
+    }
+    this._diceClearedWaiters.push(cb);
+  }
+
+  _flushDiceClearedWaiters() {
+    if (this.activeDice.length > 0 || !this._diceClearedWaiters.length) return;
+    const list = this._diceClearedWaiters.splice(0);
+    for (const fn of list) fn();
   }
 
   clearMatchFx() {
@@ -1520,12 +1968,21 @@ export class ThreeWorld {
 
   _disposeDie(d) {
     this.scene.remove(d.group, d.shadow, d.badge);
-    d.geo.dispose();
+    if (!d.sharedGeo) {
+      d.geo.dispose();
+      d.edgeGeo.dispose();
+    }
     d.mat.dispose();
-    d.edgeGeo.dispose();
+    if (d.extraMats) {
+      for (const m of d.extraMats) m?.dispose?.();
+    }
+    d.outlineMat?.dispose();
     d.edgeMat.dispose();
     d.shadowGeo.dispose();
     d.shadowMat.dispose();
+    if (d.rollTextures) {
+      for (const tex of d.rollTextures) tex?.dispose?.();
+    }
     d.badgeTex.dispose();
     d.badgeMat.dispose();
   }
@@ -1588,48 +2045,116 @@ export class ThreeWorld {
     }
     pAttr.needsUpdate = true;
 
-    // 3D Polyhedral Dice
+    // 3D Polyhedral Dice (real rigid-body throw & rolling physics + clean unpolluted z = 0 clash)
+    // 取舍说明：拼点碰撞阶段的 3D Z 轴纵深弹跳是导致击飞悬空、撞后无限翻滚 bug 的根源；
+    // 这里刻意保留该分支并用开关禁用（ENABLE_CLASH_Z_BOUNCE = false），以换取稳定贴桌的对撞表现。
+    const ENABLE_CLASH_Z_BOUNCE = false;
+    const tmpAxis = new THREE.Vector3();
+    const tmpQ = new THREE.Quaternion();
     for (let i = this.activeDice.length - 1; i >= 0; i--) {
       const d = this.activeDice[i];
       d.age += dtSec;
       let sx, sy;
+
       if (d.physicsBody) {
         sx = d.physicsBody.position.x;
         sy = d.physicsBody.position.y;
+        if (ENABLE_CLASH_Z_BOUNCE) {
+          d.vz -= 1220 * dtSec;
+          d.z += d.vz * dtSec;
+          if (d.z < d.restZ) {
+            d.z = d.restZ;
+            d.vz = Math.abs(d.vz) > 45 ? -d.vz * 0.45 : 0;
+          }
+        } else {
+          // 禁用拼点阶段 Z 轴弹跳，避免击飞悬空与无限翻滚
+          d.z = d.restZ;
+          d.vz = 0;
+        }
       } else {
-        const moveT = Math.min(1, d.age / 0.42);
-        const ease = 1 - Math.pow(1 - moveT, 3);
-        sx = d.startX + (d.targetX - d.startX) * ease;
-        sy = d.startY + (d.targetY - d.startY) * ease;
-      }
+        // Real rigid-body gravity + Coulomb impact friction + progressive rolling resistance
+        const G = 3100;
+        if (d.z > d.restZ || d.vz > 0) {
+          d.vz -= G * dtSec;
+          d.z += d.vz * dtSec;
+          if (d.z <= d.restZ) {
+            d.z = d.restZ;
+            d.bounces += 1;
+            d.vx *= 0.82;
+            d.vy *= 0.82;
+            d.angVel.y = d.vx / Math.max(12, d.inradius);
+            d.angVel.x = -d.vy / Math.max(12, d.inradius);
+            d.angVel.z *= 0.55;
+            d.vz = Math.abs(d.vz) > 75 ? -d.vz * 0.38 : 0;
+          }
+        } else {
+          const speed = Math.hypot(d.vx, d.vy);
+          if (speed > 4) {
+            const decel = (520 + speed * 2.4) * dtSec;
+            const nextSpeed = Math.max(0, speed - decel);
+            const ratio = nextSpeed / speed;
+            d.vx *= ratio;
+            d.vy *= ratio;
+          } else {
+            d.vx = 0;
+            d.vy = 0;
+          }
+          // Exact no-slip rolling on the z = 0 tabletop plane: ω_y = vx / r, ω_x = -vy / r
+          d.angVel.y = d.vx / Math.max(12, d.inradius);
+          d.angVel.x = -d.vy / Math.max(12, d.inradius);
+          d.angVel.z *= Math.pow(0.04, dtSec);
+        }
 
-      d.vz -= 1220 * dtSec;
-      d.z += d.vz * dtSec;
-      if (d.z < d.radius) {
-        d.z = d.radius;
-        d.vz = Math.abs(d.vz) > 45 ? -d.vz * 0.45 : 0;
+        d.x += d.vx * dtSec;
+        d.y += d.vy * dtSec;
+        sx = d.x;
+        sy = d.y;
       }
+      d.lastX = sx;
+      d.lastY = sy;
 
       const wp = this.screenToWorld(sx, sy, d.z);
       d.group.position.copy(wp);
       d.shadow.position.set(wp.x + 4, wp.y - 6, 1);
-      const shScale = Math.max(0.5, 1 - (d.z - d.radius) / 280);
+      const shScale = Math.max(0.5, 1 - (d.z - d.restZ) / 280);
       d.shadow.scale.setScalar(shScale);
 
-      if (d.physicsBody && Math.abs(d.physicsBody.angularVelocity) > 0.05) {
-        d.mesh.rotation.z += d.physicsBody.angularVelocity * 1.4;
-        d.mesh.rotation.x += d.physicsBody.velocity.y * 0.04;
-        d.mesh.rotation.y += d.physicsBody.velocity.x * 0.04;
-      } else {
-        const damp = d.age > 0.44 ? Math.pow(0.015, dtSec) : Math.pow(0.28, dtSec);
-        d.rotVel.multiplyScalar(damp);
-        d.mesh.rotation.x += d.rotVel.x * dtSec;
-        d.mesh.rotation.y += d.rotVel.y * dtSec;
-        d.mesh.rotation.z += d.rotVel.z * dtSec;
+      // Quaternion axis-angle rolling before lock; once locked, stay steady during pullback/charge,
+      // and allow brief damped tumble only if knocked flying on clash loss!
+      if (!d.locked) {
+        const wMag = d.angVel.length();
+        if (wMag > 1e-4) {
+          tmpAxis.copy(d.angVel).divideScalar(wMag);
+          tmpQ.setFromAxisAngle(tmpAxis, wMag * dtSec);
+          d.mesh.quaternion.premultiply(tmpQ);
+        }
+        if (d.rollTextures && d.rollTextures.length) {
+          const linSpeed = Math.hypot(d.vx, d.vy);
+          const speedRatio = Math.min(1, linSpeed / 420);
+          d.rollPhase += dtSec * (4 + 22 * speedRatio);
+          const idx = Math.floor(d.rollPhase) % d.rollTextures.length;
+          const tex = d.rollTextures[idx];
+          if (d.badgeMat.map !== tex) {
+            d.badgeMat.map = tex;
+            d.badgeMat.needsUpdate = true;
+          }
+        }
+      } else if (d.physicsBody && Math.abs(d.physicsBody.angularVelocity) > 0.05) {
+        // Frame-rate independent post-collision knockback tumble driven by Matter.js velocity & spin
+        const f60 = dtSec * 60;
+        d.mesh.rotation.z += d.physicsBody.angularVelocity * 1.4 * f60;
+        d.mesh.rotation.x += d.physicsBody.velocity.y * 0.04 * f60;
+        d.mesh.rotation.y += d.physicsBody.velocity.x * 0.04 * f60;
       }
 
-      if (!d.revealed && d.age >= d.revealDelay) {
+      const stoppedNaturally = !d.physicsBody && d.z <= d.restZ + 0.1 && Math.hypot(d.vx, d.vy) < 8 && d.bounces > 0;
+      if (!d.revealed && (d.age >= d.revealDelay || stoppedNaturally)) {
         d.revealed = true;
+        d.locked = true;
+        if (d.badgeMat.map !== d.badgeTex) {
+          d.badgeMat.map = d.badgeTex;
+          d.badgeMat.needsUpdate = true;
+        }
         if (d.onReveal) {
           const cb = d.onReveal;
           d.onReveal = null;
@@ -1637,19 +2162,37 @@ export class ThreeWorld {
         }
       }
       const fadeOut = d.age > d.lifetime - 0.32 ? Math.max(0, (d.lifetime - d.age) / 0.32) : 1;
-      const badgeIn = d.revealed ? Math.max(0, Math.min(1, (d.age - d.revealDelay) / 0.14)) : 0;
+      const badgeAlpha = (d.revealed || d.alreadyRolled)
+        ? 1
+        : (d.rollTextures && d.rollTextures.length ? Math.min(0.88, d.age / 0.10) : 0);
       d.badge.position.set(wp.x, wp.y, d.z + d.radius + 14);
-      d.badgeMat.opacity = badgeIn * fadeOut;
+      d.badgeMat.opacity = badgeAlpha * fadeOut;
       d.shadowMat.opacity = 0.3 * shScale * fadeOut;
       if (fadeOut < 1) {
         d.mat.transparent = true;
         d.mat.opacity = fadeOut;
+        if (d.extraMats) {
+          for (const m of d.extraMats) {
+            m.transparent = true;
+            m.opacity = fadeOut;
+          }
+        }
+        if (d.outlineMat) {
+          d.outlineMat.transparent = true;
+          d.outlineMat.opacity = fadeOut;
+        }
+        if (d.edgeMat) {
+          d.edgeMat.opacity = 0.9 * fadeOut;
+        }
       }
 
       if (d.age >= d.lifetime) {
         this._disposeDie(d);
         this.activeDice.splice(i, 1);
       }
+    }
+    if (this.activeDice.length === 0 && this._diceClearedWaiters.length) {
+      this._flushDiceClearedWaiters();
     }
 
     // 3D Flipping Cards

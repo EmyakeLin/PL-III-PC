@@ -75,13 +75,15 @@ class BattleHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="光点计划 III · 本机双人对战")
+    parser = argparse.ArgumentParser(description="光点计划 III · 本机对战")
     parser.add_argument("--port", type=int, default=8765, help="本地端口，默认 8765")
     parser.add_argument("--seed", type=int, help="指定对局随机种子")
+    parser.add_argument("--ai", action="store_true", help="启用人机对战（玩家一 vs 人机玩家二）")
     args = parser.parse_args()
     with ThreadingHTTPServer(("127.0.0.1", args.port), BattleHandler) as server:
-        server.session = BattleSession(seed=args.seed)
-        print(f"本机对战已开放  http://127.0.0.1:{server.server_port}/", flush=True)
+        server.session = BattleSession(seed=args.seed, ai_side=2 if args.ai else None)
+        mode_tag = "人机对战（P1 vs AI）" if args.ai else "本机双人热座"
+        print(f"{mode_tag}已开放  http://127.0.0.1:{server.server_port}/", flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:

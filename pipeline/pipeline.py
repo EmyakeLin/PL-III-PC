@@ -605,7 +605,17 @@ class Pipeline:
                     pipe.payment = None
                     pipe.withdrawn = pipe.used = False
                     pipe.opposing_card = None
+                    inherited_target = None
+                    if frame.suspended_skills[pipe.side]:
+                        parent_pipe, batch, _ = frame.suspended_skills[pipe.side][-1]
+                        if card in batch:
+                            cand = parent_pipe.target or (
+                                parent_pipe.opposing_card.character if parent_pipe.opposing_card is not None else None
+                            )
+                            if cand is not None and cand.is_alive:
+                                inherited_target = cand
                     pipe.target = (declared_target if card is attack and declared_target is not None else
+                                   inherited_target if inherited_target is not None else
                                    slot.resolve_target_character(pipe.side)
                                    if frame.interrupt or frame.space is self.game.pre_reveal.space else None)
                     if card in frame.pairing_copies.values() or slot.tail_is_live(card):

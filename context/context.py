@@ -38,9 +38,9 @@ class Context:
         self._lasting_entries = {}
         self._fact_collections = []
 
-    def observe_facts(self):
+    def observe_facts(self, collection=None):
         """Create a reader-owned queue for the lifetime of this context."""
-        facts = deque()
+        facts = deque() if collection is None else collection
         self._fact_collections.append(facts)
         return facts
 

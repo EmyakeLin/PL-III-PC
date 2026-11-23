@@ -117,18 +117,20 @@ export function createPresentationFx(env) {
       const isP1 = sd.side === 1;
       const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
       const displayVal = sd.clash_score ?? sd.final_score ?? sd.rolled_value ?? '—';
+      const isPaired = sidesList.length === 2;
       three.launchDie({
+        side: sd.side,
         sides,
         dieType: sd.type || 'blank',
         rolledValue: displayVal,
         subLabel: `1~${sides}`,
-        startX: cx + (isP1 ? -210 : 210),
+        startX: cx + (isP1 ? -240 : 240),
         startY: cy + 28,
-        targetX: sidesList.length === 1 ? cx : cx + (isP1 ? -78 : 78),
+        targetX: isPaired ? cx + (isP1 ? -86 : 86) : cx + (isP1 ? 30 : -30),
         targetY: cy,
         radius: 28,
-        lifetime: 1.55,
-        revealDelay: 0.26,
+        lifetime: isPaired ? 2.2 : 1.35,
+        willClash: isPaired,
         onReveal: onOne,
       });
     }
@@ -171,18 +173,21 @@ export function createPresentationFx(env) {
     const p1 = (ev.sides || []).find((s) => s.side === 1);
     const p2 = (ev.sides || []).find((s) => s.side === 2);
 
-    const revealDelay = needsNumberReveal ? 0.26 : 0.04;
+    const alreadyRolled = !needsNumberReveal;
+    const revealDelay = needsNumberReveal ? 0.26 : 0;
     if (p1 && p2 && !p1.skipped && !p2.skipped) {
       const outcome = p1.result === 'win' ? 'left_win' : p2.result === 'win' ? 'right_win' : 'draw';
       const winDie = p1.result === 'win' ? p1 : p2.result === 'win' ? p2 : null;
       const winColor = winDie ? (DIE_STYLE[winDie.type]?.color || INK.gold) : INK.gold;
+      // Collision radius = 34 matches outer 1.13x ink silhouette + polyhedron corners -> ZERO clipping (0穿模)!
       const group = physics.createClashDicePair({
         cx,
         cy,
-        radius: 28,
+        radius: 34,
         outcome,
         winnerColor: winColor,
-        lungeDelay: needsNumberReveal ? 0.34 : 0.14,
+        lungeDelay: needsNumberReveal ? 0.34 : 0.22,
+        alreadyRolled,
         onImpact: () => {
           playClashOutcomeStances(ev);
           onOutcomeImpact?.();
@@ -197,10 +202,22 @@ export function createPresentationFx(env) {
       };
       for (const [sd, body] of [[p1, group.leftBody], [p2, group.rightBody]]) {
         const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
+        const displayVal = sd.clash_score ?? sd.rolled_value ?? '—';
+        if (alreadyRolled && three.attachClashBody?.(sd.side, {
+          physicsBody: body,
+          rolledValue: displayVal,
+          subLabel: `1~${sides}`,
+          dieType: sd.type || 'blank',
+          lifetime: 1.75,
+          onReveal: onOneNum,
+        })) {
+          continue;
+        }
         three.launchDie({
+          side: sd.side,
           sides,
           dieType: sd.type || 'blank',
-          rolledValue: sd.clash_score ?? sd.rolled_value ?? '—',
+          rolledValue: displayVal,
           subLabel: `1~${sides}`,
           startX: body.position.x,
           startY: body.position.y,
@@ -210,6 +227,7 @@ export function createPresentationFx(env) {
           radius: 28,
           lifetime: 1.75,
           revealDelay,
+          alreadyRolled,
           onReveal: onOneNum,
         });
       }
@@ -233,16 +251,22 @@ export function createPresentationFx(env) {
       }
     };
     for (const sd of sidesList) {
+      // Never spawn a duplicate die on top of an already-rolled live die for this side (e.g. skipped/destroyed clash)!
+      if (alreadyRolled && three.hasActiveDieForSide?.(sd.side)) {
+        onOne();
+        continue;
+      }
       const isP1 = sd.side === 1;
       const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
       three.launchDie({
+        side: sd.side,
         sides,
         dieType: sd.type || 'blank',
         rolledValue: sd.skipped ? '跳过' : (sd.clash_score ?? sd.rolled_value ?? '—'),
         subLabel: sd.skipped ? '跳过' : `1~${sides}`,
-        startX: cx + (isP1 ? -210 : 210),
-        startY: cy,
-        targetX: cx + (isP1 ? -78 : 78),
+        startX: cx + (isP1 ? -240 : 240),
+        startY: cy + 32,
+        targetX: cx + (isP1 ? -86 : 86),
         targetY: cy,
         radius: 27,
         lifetime: 1.45,
@@ -561,24 +585,28 @@ export function createPresentationFx(env) {
 
     cards_reveal(ev) {
       audio.cardFlip();
-      const duels = ev.duels || [];
-      duels.forEach((d, idx) => {
-        for (const s of d.sides || []) {
-          const rect = getRegularSlotRect(`${d.number}:${s.side}`);
-          if (rect && s.cards?.length) {
-            setTimeout(() => {
-              if (!getState()) return;
-              three.spawnCardFlipArc({
-                fromX: rect.cx, fromY: rect.cy + 14, toX: rect.cx, toY: rect.cy,
-                width: Math.min(118, rect.w), height: Math.min(158, rect.h),
-                title: s.cards[0].name || '', cost: s.cards[0].cost ?? '',
-                accentHex: resolveCharColorHex(s.cards[0].character_id, s.side),
-                flipFromBack: true, duration: 0.42, peakZ: 108,
-              });
-            }, idx * 80);
+      if (typeof env.onCardsReveal === 'function') {
+        env.onCardsReveal(ev);
+      } else {
+        const duels = ev.duels || [];
+        duels.forEach((d, idx) => {
+          for (const s of d.sides || []) {
+            const rect = getRegularSlotRect(`${d.number}:${s.side}`);
+            if (rect && s.cards?.length) {
+              setTimeout(() => {
+                if (!getState()) return;
+                three.spawnCardFlipArc({
+                  fromX: rect.cx, fromY: rect.cy + 14, toX: rect.cx, toY: rect.cy,
+                  width: Math.min(118, rect.w), height: Math.min(158, rect.h),
+                  title: s.cards[0].name || '', cost: s.cards[0].cost ?? '',
+                  accentHex: resolveCharColorHex(s.cards[0].character_id, s.side),
+                  flipFromBack: true, duration: 0.42, peakZ: 108,
+                });
+              }, idx * 80);
+            }
           }
-        }
-      });
+        });
+      }
       showBanner('统一开牌', INK.gold, 1.25);
     },
 

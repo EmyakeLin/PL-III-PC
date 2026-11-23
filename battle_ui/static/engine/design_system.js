@@ -662,10 +662,15 @@ export function drawDieIcon(g, type, cx, cy, r, colorOverride = null) {
   }
 }
 
-export function drawUnifiedDieFrame(g, type, cx, cy, r, { muted = false, active = false } = {}) {
+export function drawUnifiedDieFrame(g, type, cx, cy, r, { muted = false, active = false, result = null, destroyed = false } = {}) {
   const ds = DIE_STYLE[type] || DIE_STYLE.blank;
-  const col = muted ? INK.muted : ds.color;
-  const fill = muted ? INK.paperSoft : ds.bg;
+  const isWin = !destroyed && result === 'win';
+  const isLose = !destroyed && result === 'lose';
+  const isDraw = !destroyed && result === 'draw';
+  const isSkip = !destroyed && result === 'skip';
+  const effectiveMuted = destroyed || isLose || isSkip || (muted && !isWin && !isDraw);
+  const col = destroyed ? 0xb83a2a : isWin ? INK.goldDeep : isDraw ? INK.secondary : effectiveMuted ? INK.muted : ds.color;
+  const fill = destroyed ? 0xfdece9 : isWin ? INK.goldBg : effectiveMuted ? INK.paperSoft : ds.bg;
   const fr = r * 1.32;
 
   if (ds.frame === 'hex') {
@@ -675,29 +680,53 @@ export function drawUnifiedDieFrame(g, type, cx, cy, r, { muted = false, active 
       const a = -Math.PI / 2 + (i * Math.PI) / 3;
       pts.push(cx + Math.cos(a) * fr, cy + Math.sin(a) * fr);
     }
-    if (active && !muted) {
+    if ((active && !effectiveMuted) || isWin) {
       const halo = [];
       for (let i = 0; i < 6; i++) {
         const a = -Math.PI / 2 + (i * Math.PI) / 3;
         halo.push(cx + Math.cos(a) * (fr + 2.2), cy + Math.sin(a) * (fr + 2.2));
       }
-      g.poly(halo).stroke({ width: 1.4, color: col, alpha: 0.35 });
+      g.poly(halo).stroke({ width: isWin ? 1.6 : 1.4, color: isWin ? INK.gold : col, alpha: isWin ? 0.65 : 0.35 });
     }
     g.poly(pts)
-      .fill({ color: fill })
-      .stroke({ width: active ? 1.85 : 1.3, color: col, alpha: muted ? 0.45 : 0.92 });
+      .fill({ color: fill, alpha: isSkip ? 0.35 : 1 })
+      .stroke({ width: (active || isWin || destroyed) ? 1.7 : 1.3, color: isWin ? INK.gold : col, alpha: destroyed ? 0.85 : effectiveMuted ? 0.48 : 0.92 });
+    if (isDraw) {
+      const inner = [];
+      for (let i = 0; i < 6; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 3;
+        inner.push(cx + Math.cos(a) * (fr - 2), cy + Math.sin(a) * (fr - 2));
+      }
+      g.poly(inner).stroke({ width: 0.85, color: INK.secondary, alpha: 0.6 });
+    }
   } else {
     // 招架 / 闪避（以及空白）：统一正方形框（招架与闪避为统一蓝色）
     const sq = fr * 0.86;
-    if (active && !muted) {
+    if ((active && !effectiveMuted) || isWin) {
       g.roundRect(cx - sq - 2, cy - sq - 2, (sq + 2) * 2, (sq + 2) * 2, 3)
-        .stroke({ width: 1.4, color: col, alpha: 0.35 });
+        .stroke({ width: isWin ? 1.6 : 1.4, color: isWin ? INK.gold : col, alpha: isWin ? 0.65 : 0.35 });
     }
     g.roundRect(cx - sq, cy - sq, sq * 2, sq * 2, 1.8)
-      .fill({ color: fill })
-      .stroke({ width: active ? 1.85 : 1.3, color: col, alpha: muted ? 0.45 : 0.92 });
+      .fill({ color: fill, alpha: isSkip ? 0.35 : 1 })
+      .stroke({ width: (active || isWin || destroyed) ? 1.7 : 1.3, color: isWin ? INK.gold : col, alpha: destroyed ? 0.85 : effectiveMuted ? 0.48 : 0.92 });
+    if (isDraw) {
+      const isq = sq - 2;
+      g.roundRect(cx - isq, cy - isq, isq * 2, isq * 2, 1.2)
+        .stroke({ width: 0.85, color: INK.secondary, alpha: 0.6 });
+    }
   }
-  drawDieIcon(g, type, cx, cy, r * 0.78, muted ? INK.muted : ds.color);
+  drawDieIcon(g, type, cx, cy, r * 0.78, isWin ? ds.color : effectiveMuted ? INK.muted : ds.color);
+  if (destroyed) {
+    g.moveTo(cx - fr * 0.72, cy - fr * 0.72)
+      .lineTo(cx + fr * 0.72, cy + fr * 0.72)
+      .moveTo(cx + fr * 0.72, cy - fr * 0.72)
+      .lineTo(cx - fr * 0.72, cy + fr * 0.72)
+      .stroke({ width: 1.65, color: 0xb83a2a, alpha: 0.92, cap: 'round' });
+  } else if (isLose) {
+    g.moveTo(cx - fr * 0.68, cy - fr * 0.68)
+      .lineTo(cx + fr * 0.68, cy + fr * 0.68)
+      .stroke({ width: 1.5, color: 0xb83a2a, alpha: 0.8, cap: 'round' });
+  }
 }
 
 export function drawStatusIcon(g, name, cx, cy, r, col) {
@@ -1135,38 +1164,6 @@ export function buildDamageBadge(badge, { compact = false, muted = false, maxWid
  *  - Left: Framed Die Emblem + Bold Exact Roll Range
  *  - Right: Inline Damage Spec + Rich Verbatim Trigger Entries
  */
-export function formatLiveDieOutcome(liveDie, { concealScore = false, concealOutcome = false } = {}) {
-  if (!liveDie) return null;
-  if (liveDie.destroyed) return { text: '碎裂', color: 0xb83a2a, bg: 0xfdece9 };
-  if (liveDie.result === 'skip') return { text: '跳过', color: INK.muted, bg: INK.paperSoft };
-  if (concealScore) return null;
-  const rawScore = liveDie.clash_score ?? liveDie.final_score ?? liveDie.rolled_value;
-  if (rawScore === null || rawScore === undefined) return null;
-  const scorePart = String(rawScore);
-  if (concealOutcome) {
-    return { text: `=${scorePart}`, color: INK.primary, bg: INK.paperSoft };
-  }
-  const resMap = { win: '胜', lose: '负', draw: '平' };
-  const resTxt = resMap[liveDie.result] || (liveDie.landed_hits > 0 ? '命中' : '');
-  const crit = liveDie.critical ? '暴' : '';
-  const text = [scorePart, resTxt, crit].filter(Boolean).join('');
-  const color = liveDie.result === 'win'
-    ? INK.goldDeep
-    : liveDie.result === 'lose'
-      ? 0xb83a2a
-      : liveDie.result === 'draw'
-        ? INK.secondary
-        : liveDie.landed_hits > 0
-          ? 0x2c6e49
-          : INK.primary;
-  const bg = liveDie.result === 'win'
-    ? 0xfef0c4
-    : liveDie.result === 'lose'
-      ? 0xfdece9
-      : INK.paperSoft;
-  return { text, color, bg };
-}
-
 export function buildUnifiedDieRow(die, {
   width = 240,
   active = false,
@@ -1176,9 +1173,8 @@ export function buildUnifiedDieRow(die, {
   compact = false,
   showDivider = true,
   isBlanked = false,
-  liveDie = null,
-  concealScore = false,
-  concealOutcome = false,
+  liveScore = null,
+  liveResult = null,
 } = {}) {
   const root = new PIXI.Container();
   const dType = isBlanked ? 'blank' : die.type;
@@ -1192,7 +1188,6 @@ export function buildUnifiedDieRow(die, {
   const leftColW = slim ? 66 : dense ? 76 : compact ? 82 : 92;
   const rightX = leftColW + 5;
   const rightW = Math.max(76, width - rightX - 3);
-  const liveBadge = formatLiveDieOutcome(liveDie, { concealScore, concealOutcome });
 
   let dmgNode = null;
   if (damageParts.length) {
@@ -1237,7 +1232,7 @@ export function buildUnifiedDieRow(die, {
   else if (dmgNode) rightContentH = dmgNode._height;
   else if (richNode) rightContentH = richNode._height;
 
-  const baseMinH = liveBadge ? (tight ? 34 : 40) : (tight ? 26 : 32);
+  const baseMinH = tight ? 26 : 32;
   const rowH = Math.max(baseMinH, rightContentH + (tight ? 8 : 10));
 
   const g = new PIXI.Graphics();
@@ -1254,14 +1249,16 @@ export function buildUnifiedDieRow(die, {
     g.moveTo(6, rowH).lineTo(width - 2, rowH).stroke({ width: 0.9, color: INK.hairline });
   }
 
-  const leftMidY = liveBadge
-    ? (tight ? 11 : 13)
-    : (rightContentH > baseMinH ? Math.min(rowH / 2, baseMinH / 2 + 2) : rowH / 2);
-  drawUnifiedDieFrame(g, dType, slim ? 14 : 16, leftMidY, slim ? 5.6 : tight ? 6.2 : 7.2, { muted: spent, active });
+  const leftMidY = rightContentH > baseMinH ? Math.min(rowH / 2, baseMinH / 2 + 2) : rowH / 2;
+  drawUnifiedDieFrame(g, dType, slim ? 14 : 16, leftMidY, slim ? 5.6 : tight ? 6.2 : 7.2, { muted: spent, active, result: liveResult, destroyed });
 
   const rngX = slim ? 24 : 28;
+  const baseRangeText = formatDieRange(die);
+  const rangeDisplay = (liveScore !== null && liveScore !== undefined)
+    ? `${baseRangeText}→${liveScore}`
+    : baseRangeText;
   const rngTxt = new PIXI.Text({
-    text: formatDieRange(die),
+    text: rangeDisplay,
     style: {
       fontFamily: FONT_NUM,
       fontSize: slim ? 11.2 : tight ? 12.2 : 13.5,
@@ -1276,27 +1273,6 @@ export function buildUnifiedDieRow(die, {
   rngTxt.anchor.set(0, 0.5);
   rngTxt.position.set(rngX, leftMidY);
   root.addChild(g, rngTxt);
-
-  if (liveBadge) {
-    const bt = new PIXI.Text({
-      text: liveBadge.text,
-      style: {
-        fontFamily: FONT_NUM,
-        fontSize: slim ? 9.5 : 10.2,
-        fontWeight: '900',
-        fill: liveBadge.color,
-      },
-    });
-    const bw = Math.min(leftColW - 8, Math.ceil(bt.width) + 8);
-    if (bt.width > bw - 6) bt.scale.set((bw - 6) / bt.width);
-    const by = leftMidY + (tight ? 9 : 11);
-    g.roundRect(7, by, bw, 14, 3)
-      .fill({ color: liveBadge.bg, alpha: 0.96 })
-      .stroke({ width: 0.9, color: liveBadge.color, alpha: 0.65 });
-    bt.anchor.set(0.5);
-    bt.position.set(7 + bw / 2, by + 7);
-    root.addChild(bt);
-  }
 
   let ry = Math.max(4, (rowH - rightContentH) / 2);
   if (dmgNode) {
