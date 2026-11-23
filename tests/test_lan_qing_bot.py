@@ -29,7 +29,8 @@ class LanQingDecisions(unittest.TestCase):
         moves = [{"kind": "place", "card_id": k} for k in keys] + [{"kind": "end"}]
         return choose_move(self.frame, moves).get("card_id")
 
-    def test_six_cost_can_prime_ultimate_and_five_cost_cannot(self):
+    def test_nine_cost_can_prime_ultimate_and_eight_cost_cannot(self):
+        self.own["cost"]["available"] = 9 - self.actor["cost"]["available"]
         self.assertEqual(self.place("lan_light", "lan_end"), "lan_end")
         self.own["cost"]["available"] -= 1
         self.assertEqual(self.place("lan_light", "lan_end"), "lan_light")
@@ -66,6 +67,7 @@ class LanQingDecisions(unittest.TestCase):
         self.assertAlmostEqual(turn.score(play) - base, 0.7)
 
     def test_skips_lethal_self_payment_even_when_a_third_hand_play_would_heal_next_turn(self):
+        self.own["cost"]["available"] = 7
         self.frame["duels"] = [self.slot(1, "lan_end"), self.slot(2, "lan_dance_2")]
         self.actor["duels"]["used"] = 2
         self.actor["hp"] = 2
