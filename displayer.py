@@ -39,8 +39,7 @@ def _split_die_entries(entries):
                 damage_parts.append({
                     "amount": amount,
                     "grade": grade,
-                    "label": f"{amount}{name}",
-                    "exact": f"{amount}点{name}伤害",
+                    "text": f"{amount}点{name}伤害",
                 })
                 continue
             independent = independent_damage_part(entry)
@@ -51,8 +50,7 @@ def _split_die_entries(entries):
                 damage_parts.append({
                     "amount": amount,
                     "grade": grade,
-                    "label": f"{amount}{name}",
-                    "exact": f"{amount}点{name}伤害",
+                    "text": f"{amount}点{name}伤害",
                 })
                 continue
         text = describe_entry(entry)

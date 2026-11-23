@@ -237,7 +237,7 @@
             },
             {
               "trigger": "BEFORE DAMAGE",
-              "description": "【伤害结算前】近战斩击的非百分比物理伤害转为三倍加一光点。",
+              "description": "【伤害结算前】近战斩击的非百分比物理伤害转为（原伤害×3+1）点光点伤害。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":1},
                 {"left":"$event.penetration","op":"eq","right":"normal"},
@@ -257,7 +257,7 @@
             },
             {
               "trigger": "BEFORE DAMAGE",
-              "description": "【伤害结算前】远程突刺的非百分比物理伤害转为三倍加一光点。",
+              "description": "【伤害结算前】远程突刺的非百分比物理伤害转为（原伤害×3+1）点光点伤害。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":2},
                 {"left":"$event.penetration","op":"eq","right":"normal"},
@@ -277,7 +277,7 @@
             },
             {
               "trigger": "AFTER DAMAGE",
-              "description": "【造成伤害后】三层同调时，每次实际造成物理伤害后追加等量光点。",
+              "description": "【造成伤害后】三层同调时，每次实际造成物理伤害后追加等量光点伤害。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
                 {"left":"$event.penetration","op":"eq","right":"normal"},
@@ -372,13 +372,13 @@
             },
             {
               "trigger": "before_dice_clash",
-              "description": "【拼点前】解放后，拼点开始时对对方造成1光点伤害。",
+              "description": "【拼点前】解放后，拼点开始时对对方造成1点光点伤害。",
               "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
               "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
             },
             {
               "trigger": "on_clash_lose",
-              "description": "【拼点失败】解放后，拼点失败时追加1光点伤害。",
+              "description": "【拼点失败】解放后，拼点失败时追加1点光点伤害。",
               "when": [{"left":{"field":"$self.rule_state","key":"天性解放","default":0},"op":"eq","right":true}],
               "operation": {"op":"program","code":["$event.target",1,"LIGHTCORE_DAMAGE"]}
             }
@@ -507,7 +507,7 @@
                 "1物理",
                 {
                   "trigger": "on_dice_hit",
-                  "description": "【命中时】抽1卡，同调至少3时追加1光点。",
+                  "description": "【命中时】抽1卡，同调至少3时追加1点光点伤害。",
                   "operation": {
                     "op": "program",
                     "code": ["DRAW 1","$self","环境同调","STATUS_COUNT",3,"GE",["$event.target",1,"LIGHTCORE_DAMAGE"],"WHEN"]
@@ -603,7 +603,7 @@
                 },
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】2光点，环境同调达到3时增加1。",
+                  "description": "【命中时】造成2点光点伤害，环境同调达到3时增加1点。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1015,7 +1015,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】3光点群伤。若生命高于6则失去3生命，减少6环境压制，本次群伤增加6。",
+                  "description": "【命中时】群体造成3点光点伤害；若生命高于6则失去3生命，减少6环境压制，本次伤害增加6点。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1264,7 +1264,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】群1光点。",
+                  "description": "【命中时】群体造成1点光点伤害。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",

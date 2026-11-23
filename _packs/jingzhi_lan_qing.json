@@ -9,7 +9,7 @@
     "残雪·幽蓝流光·活化": {"cap":1,"description":"同名技能共享1次活化，重复获得不累积。"},
     "电击": {"description":"每次实际被命中时获得等同层数的电流及一半层数（向下取整）的失衡。受到的麻痹至多额外增加3层，回合末解除。"},
     "麻痹": {"description":"战斗骰的变动点数改取两枚同范围骰点差的绝对值，按正常下限处理，随后减少1层。回合末清空。"},
-    "电流": {"description":"回合末每4层（向上取整）造成1点穿甲，至多3点。超出上限的每点由持有者选择弃置一张手牌，然后解除。"}
+    "电流": {"description":"回合末每4层（向上取整）造成1点穿甲伤害，至多3点。超出上限的每点由持有者选择弃置一张手牌，然后解除。"}
   },
   "status_entries": {
     "电击": [
@@ -395,7 +395,7 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群伤2。",
+                      "description": "【命中时】群体造成2点普通伤害。",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -475,7 +475,7 @@
               "entries": [
                 {
                   "trigger": "on_clash_win",
-                  "description": "【拼点胜利】反击1，对当前目标造成1普通伤害。",
+                  "description": "【拼点胜利】反击1，对当前目标造成1点普通伤害。",
                   "operation": {"op":"program","code":["$event.target",1,"normal","evade","DAMAGE"]}
                 },
                 {
@@ -1011,7 +1011,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】群伤2。",
+                  "description": "【命中时】群体造成2点普通伤害。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1090,7 +1090,7 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群伤3。",
+                      "description": "【命中时】群体造成3点普通伤害。",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1110,7 +1110,7 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群伤1。",
+                      "description": "【命中时】群体造成1点普通伤害。",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1217,7 +1217,7 @@
               "entries": [
                 {
                   "trigger": "AFTER RESOLVE_HIT",
-                  "description": "【命中时】群伤2。",
+                  "description": "【命中时】群体造成2点普通伤害。",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
@@ -1305,7 +1305,7 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群伤2。",
+                      "description": "【命中时】群体造成2点普通伤害。",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",
@@ -1352,7 +1352,7 @@
                   "entries": [
                     {
                       "trigger": "AFTER RESOLVE_HIT",
-                      "description": "【命中时】群伤3。",
+                      "description": "【命中时】群体造成3点普通伤害。",
                       "when": [{"left":"$event.result","op":"eq","right":true}],
                       "operation": {
                         "op": "program",

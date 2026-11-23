@@ -115,11 +115,11 @@ export const DIE_STYLE = {
 };
 
 export const DAMAGE_GRADE_STYLE = {
-  normal:    { label: '普通伤害', short: '普通',   color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
-  pierce:    { label: '穿甲伤害', short: '穿甲',   color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
-  concept:   { label: '超穿甲伤害', short: '超穿甲', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
-  lightcore: { label: '光点伤害', short: '光点',   color: 0x1b7fa8, bg: 0xeaf6fb, border: 0x82c4df },
-  real:      { label: '真实伤害', short: '真实',   color: 0x8f2447, bg: 0xfaebf0, border: 0xd48aa2 },
+  normal:    { label: '普通伤害', color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
+  pierce:    { label: '穿甲伤害', color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
+  concept:   { label: '超穿甲伤害', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
+  lightcore: { label: '光点伤害', color: 0x1b7fa8, bg: 0xeaf6fb, border: 0x82c4df },
+  real:      { label: '真实伤害', color: 0x8f2447, bg: 0xfaebf0, border: 0xd48aa2 },
 };
 
 export const SHIELD_STYLE = {
@@ -514,8 +514,7 @@ export function resolveDieDamageParts(die) {
     return {
       amount,
       grade,
-      shortText: part.label || `${amount}${style.short}`,
-      exactText: part.exact || `${amount}点${style.label}`,
+      text: part.text || `${amount}点${style.label}`,
       style,
     };
   });
@@ -1047,14 +1046,14 @@ export function buildTraitPills(card, maxWidth, { compact = false } = {}) {
 }
 
 /**
- * Clean Editorial Standalone Damage Spec ("2 点普通伤害" / "3 点穿甲伤害" / "3 点超穿甲伤害").
- * Whisper-light wash + crisp geometric grade indicator, NO thick rounded borders!
+ * Canonical Damage Part Badge ("1点普通伤害" / "2点穿甲伤害" / "3点超穿甲伤害" / "1点光点伤害" / "2点真实伤害").
+ * Always uses the single canonical wording — compact mode only adjusts typography size, never shortens words.
  */
 export function buildDamageBadge(badge, { compact = false, muted = false } = {}) {
   const c = new PIXI.Container();
   const st = badge.style;
-  const label = compact ? badge.shortText : badge.exactText;
-  const fontSize = compact ? 9.5 : 10.6;
+  const label = badge.text || `${badge.amount ?? 0}点${st.label}`;
+  const fontSize = compact ? 9.4 : 10.6;
   const pillH = compact ? 15 : 18;
 
   const txt = new PIXI.Text({

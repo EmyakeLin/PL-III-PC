@@ -249,9 +249,11 @@ export function buildBoardCardTag(card, {
     }
     if (badge && rx - (padX + 22 + rngTxt.width) >= 24) {
       const dmgT = new PIXI.Text({
-        text: badge.shortText,
-        style: { fontFamily: FONT_UI, fontSize: 8.6, fontWeight: '800', fill: badge.style.color },
+        text: badge.text,
+        style: { fontFamily: FONT_UI, fontSize: 8.4, fontWeight: '800', fill: badge.style.color },
       });
+      const maxDmgW = Math.max(20, rx - (padX + 22 + rngTxt.width) - 2);
+      if (dmgT.width > maxDmgW) dmgT.scale.set(maxDmgW / dmgT.width);
       dmgT.anchor.set(1, 0.5);
       dmgT.position.set(rx, ry + rowH / 2);
       sheet.addChild(dmgT);

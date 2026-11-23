@@ -101,8 +101,8 @@ test('die row reads type, numeric range, and structured damage_parts only (never
     multiplier: 2,
     final_bonus: 1,
     damage_parts: [
-      { amount: 2, grade: 'pierce', label: '2穿甲', exact: '2点穿甲伤害' },
-      { amount: 1, grade: 'lightcore', label: '1光点', exact: '1点光点伤害' },
+      { amount: 2, grade: 'pierce', text: '2点穿甲伤害' },
+      { amount: 1, grade: 'lightcore', text: '1点光点伤害' },
     ],
     entries: ['【命中时】获得1能源。'],
   };
@@ -110,12 +110,16 @@ test('die row reads type, numeric range, and structured damage_parts only (never
   assert.equal(formatDieRange({ type: 'skip' }), 'SKIP');
   assert.equal(resolveDieDamageParts(structuredDie).length, 2);
 
-  const row = buildUnifiedDieRow(structuredDie, { width: 260 });
-  const texts = collectTexts(row);
-  assert.ok(texts.some((t) => t.text === '(2+1~12)×2+1' && t.fill === DIE_STYLE.pierce.color));
-  assert.ok(texts.some((t) => t.text === '2点穿甲伤害' && t.fill === DAMAGE_GRADE_STYLE.pierce.color));
-  assert.ok(texts.some((t) => t.text === '1点光点伤害' && t.fill === DAMAGE_GRADE_STYLE.lightcore.color));
-  assert.ok(texts.some((t) => t.text === '[ 命中时 ]' && t.fill === TRIGGER_STYLE.hit.color));
+  // Both narrow (slim hand card) and wide (codex/hover) widths MUST use the single canonical wording, never "2穿甲"/"1光点"
+  for (const w of [160, 260]) {
+    const row = buildUnifiedDieRow(structuredDie, { width: w, dense: w < 194 });
+    const texts = collectTexts(row);
+    assert.ok(texts.some((t) => t.text === '(2+1~12)×2+1' && t.fill === DIE_STYLE.pierce.color));
+    assert.ok(texts.some((t) => t.text === '2点穿甲伤害' && t.fill === DAMAGE_GRADE_STYLE.pierce.color));
+    assert.ok(texts.some((t) => t.text === '1点光点伤害' && t.fill === DAMAGE_GRADE_STYLE.lightcore.color));
+    assert.ok(!texts.some((t) => t.text === '2穿甲' || t.text === '1光点'));
+    assert.ok(texts.some((t) => t.text === '[ 命中时 ]' && t.fill === TRIGGER_STYLE.hit.color));
+  }
 
   // Pairwise contrast: raw "2穿甲" inside entries with empty damage_parts MUST NOT become a damage badge!
   const textOnlyDie = {
@@ -151,7 +155,7 @@ test('buildFullCard and buildBoardCardTag read card.name, card.cost, and dice da
         type: 'slash',
         printed_level: 2,
         roll_max: 6,
-        damage_parts: [{ amount: 3, grade: 'concept', label: '3超穿甲', exact: '3点超穿甲伤害' }],
+        damage_parts: [{ amount: 3, grade: 'concept', text: '3点超穿甲伤害' }],
         entries: ['【拼点失败】驻留。'],
       },
     ],

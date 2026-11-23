@@ -267,5 +267,7 @@ class DisplayerTests(unittest.TestCase):
                         for part in die["damage_parts"]:
                             self.assertIn(part["grade"], ("normal", "pierce", "concept", "lightcore", "real"))
                             self.assertIsInstance(part["amount"], int)
+                            self.assertTrue(part["text"].startswith(f"{part['amount']}点") and part["text"].endswith("伤害"), part)
+                            self.assertNotIn("label", part)
                         for entry in die["entries"]:
                             self.assertTrue(entry.startswith("【") and "】" in entry, f"{char['id']}.{form['id']} die: {entry}")

@@ -345,7 +345,7 @@
                     "FOR_EACH_TARGET"
                   ]
                 },
-                "description": "【命中时】群伤4物理。自身每持有3层涡流，对主要目标的伤害+1（至多+2）。",
+                "description": "【命中时】群体造成4点普通伤害；自身每持有3层涡流，对主要目标的伤害+1（至多+2）。",
                 "when": [{"left":"$event.result","op":"eq","right":true}]
               }
             ]}
@@ -432,7 +432,7 @@
                     "FOR_EACH_TARGET"
                   ]
                 },
-                "description": "【命中时】群伤2物理，并在下回合对全体敌方施加1层骰子等级降低。",
+                "description": "【命中时】群体造成2点普通伤害，并在下回合对全体敌方施加1层骰子等级降低。",
                 "when": [{"left":"$event.result","op":"eq","right":true}]
               }
             ]}

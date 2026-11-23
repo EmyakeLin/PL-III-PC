@@ -467,7 +467,7 @@ async function showCard(id, liveCard, preview) {
             traits.push(card.instant_interceptable ? "场内进攻可迎击" : "场内进攻不可拦截");
         const lines = [traits.join(" · "), ...card.entries];
         for (const die of card.dice) {
-            const dmgLabels = (die.damage_parts || []).map(p => p.exact || p.label);
+            const dmgLabels = (die.damage_parts || []).map(p => p.text);
             const effects = [...dmgLabels, ...die.range_traits, ...die.entries];
             if (die.resource_cost) effects.push("使用本骰须消耗" + die.resource_cost.amount + die.resource_cost.status);
             if (die.base_value) effects.push("基础值 " + die.base_value);

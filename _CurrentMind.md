@@ -6,7 +6,7 @@
 - **能读数据的全部直读数据，前端禁止用正则猜卡面**：
   - 技能名读 `card.name`，费用读 `card.cost`（及 `card.resource_cost`），技能特性读结构化字段。
   - 骰子类型读 `die.type`（含 `skip` 专用样式 `DIE_STYLE.skip`），数值范围由 `formatDieRange(die)` 直接读取 `roll_max`/`level`/`base_value`/`multiplier`/`final_bonus` 拼接（`skip` 显示 `SKIP`）。
-  - 伤害部分由后端 `displayer.py` 的 `_split_die_entries` 从引擎固定伤害段直接投影为 `die.damage_parts`（支持 `normal`/`pierce`/`concept`/`lightcore`/`real` 五级，含 `0` 点伤害段）；已投影的固定伤害段不再重复出现在 `die.entries` 中。前端 `resolveDieDamageParts(die)` 与 `buildDamageBadge` 直接读取 `die.damage_parts`，彻底删除 `extractDieDamageBadge`。
+  - 伤害部分由后端 `displayer.py` 的 `_split_die_entries` 从引擎固定伤害段直接投影为 `die.damage_parts`（支持 `normal`/`pierce`/`concept`/`lightcore`/`real` 五级，含 `0` 点伤害段）；已投影的固定伤害段不再重复出现在 `die.entries` 中。全界面统一只输出唯一标准格式 `text: "{N}点{等级}伤害"`（彻底移除 `label`/`exact` 与 `shortText`/`exactText` 双格式混用，窄牌与微缩牌也不再退化为 `1普通`/`1光点`）。同步将 `_packs` 正文中所有残留简写（`群1光点`、`群伤2`、`1物理`、`1超穿甲`、`1伤`、`1光点伤害` 等）统一改写为 `{N}点{等级}伤害`。前端 `resolveDieDamageParts(die)` 与 `buildDamageBadge` 直接读取 `die.damage_parts`，彻底删除 `extractDieDamageBadge`。
   - 移除旧的 `printed_sheet` / `printed_text` / `printed_line` / `printed_rules` / `printed_profile` / `printed_heading` 覆盖旁路（清理 `loader.py`、`displayer.py`、`models/card.py`、`models/dice.py`、`battle_ui/match.py`、`terminal_bridge.py`、`battle_mcp/static/app.js`、`card_print.js`、`design_system.js`、`table_overlays.js`），全部 8 位角色（含流阴）走同一条数据直读渲染管线。
 - **触发器纯字符串扫描替换与着色（零正则）**：
   - `_packs` 内全部 8 位角色及 3 个共享效果包（共 11 个 JSON 文件、459 条词条）的 `description` 统一改写为以 `【触发器名称】` 标注触发器的标准格式（不重复书写前置时机词）；字符串关键词（如 `"引燃"`）由 `describe_entry` 投影为 `【命中时】引燃。`；为流阴 3 处动态远程字段补齐 `description`，为赫里斯 `heris_crush` 补齐缺失 `description`。
