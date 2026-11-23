@@ -126,7 +126,11 @@ class FxDslInterfaceTests(unittest.TestCase):
 
     def test_battle_snapshot_serves_each_approved_status_icon(self):
         visuals = BattleSession(seed=37).state()["status_visuals"]
-        for name in ("麻痹", "弹药", "威压", "电击", "电流", "堆芯熔毁", "隧道", "星结"):
+        names = (
+            "麻痹", "弹药", "威压", "电击", "电流", "堆芯熔毁", "隧道", "星结",
+            "全开", "载体容器", "伤害提升",
+        )
+        for name in names:
             with self.subTest(status=name):
                 self.assertIn(name, visuals)
                 asset, content_type = _resolve_static(visuals[name]["icon_url"])

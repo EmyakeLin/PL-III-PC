@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <title>载体容器</title>
+  <g stroke-linejoin="round">
+    <path d="M22.077 18.032 L7.513 16.304 L1.923 20.805 M7.513 16.304 L7.513 1.468" stroke="#918C9F" stroke-width="0.95" fill="none" />
+    <g transform="translate(12 12)" fill="none" stroke-linejoin="miter" stroke-miterlimit="3">
+      <path d="M-3.9 1.35-1.25-2.85 2.2 1.9-2.7 2.75.75-3.1 3.1-.7-.85 1.48-2.9-.9 2.35-1.1" stroke="#5935CA" stroke-width=".96" />
+      <path d="m-3.95 2.75 4.55-3.8-1.55 3.4 4.6-4.15" stroke="#8263F2" stroke-width=".72" />
+      <path d="m-1.45-2.2.25-1.85.96 2.2Zm3.15 3.8 1.05 1.7-2.25-.85Z" fill="#5935CA" />
+    </g>
+    <path d="M7.513 1.468 L22.077 3.195 L22.077 18.032 L16.487 22.532 L1.923 20.805 L1.923 5.968Z M1.923 5.968 L16.487 7.696 L22.077 3.195 M16.487 7.696 L16.487 22.532" fill="none" stroke="#191823" stroke-width="1.65" />
+  </g>
+</svg>
