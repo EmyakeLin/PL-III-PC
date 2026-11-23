@@ -1,5 +1,6 @@
 """Read-only, JSON-ready views of a live match. Read between engine steps."""
 
+from entry.predicates import compile_value, read_value
 from game import Game
 from models.card import CardState, allows_interception, describe_entry, describe_range_traits
 from models.dice import Dice
@@ -447,12 +448,18 @@ class Displayer:
         }
 
     def _character(self, c, own):
+        passive_values = {
+            spec["name"]: value for spec in c.passive_skill_data
+            if isinstance(spec, dict) and "display_value" in spec
+            and (value := read_value(compile_value(spec["display_value"]), c, {})) is not None
+        }
         return {
             "id": c.id, "printed_id": c.data["id"], "name": c.name, "title": c.data.get("title"), "faction": c.faction,
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": {k: n for k, n in c.statuses.items() if k not in c.team_statuses},
+            "passive_values": passive_values,
             "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
             "ability_effects": dict(c.ability_effects),
             "reserved_dice": [{"skill": reserve.template.card.name, "position": reserve.template.position,

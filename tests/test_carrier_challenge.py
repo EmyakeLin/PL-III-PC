@@ -10,6 +10,7 @@ from battle_mcp.room import Room
 from battle_mcp.bot import choose_draw_bottom, choose_move
 from battle_mcp.declarations import ORDINARY
 from battle_mcp.transport import ArenaServer
+from displayer import Displayer
 from game import Game
 from loader import load_characters_from_packs
 from models.card import Card
@@ -83,13 +84,13 @@ class CarrierTests(unittest.TestCase):
                 self.assertEqual(zones.hand.content, [])
 
     def test_modified_four_rerolls_only_once_and_returns_to_each_deck(self):
-        self.boss.add_status("模板修正", 2)
+        self.ctx.eval_block([self.boss, "模板修正", 2, OpCode.SET_TURN_STATE])
         self.game.draw_phase()
         self.assertEqual(len(self.machine.cardspace.draw.content), 10)
         with patch.object(self.game.rng, "randint", side_effect=[2, 4]):
             self.ctx.dispatch_pipeline("after_turn_start")
             self.ctx.dispatch_pipeline("before_reveal")
-        self.assertEqual(self.boss.statuses["模板数"], 6)
+        self.assertEqual(self.boss.turn_state["模板数"], 6)
         selected = [slot.get_content(2)[0] for slot in self.game.duelspace.space]
         self.machine.max_cost = self.boss.independent_cost = 0
         for card in selected:
@@ -97,7 +98,8 @@ class CarrierTests(unittest.TestCase):
             self.assertEqual(card.cost, 3)
         self.game.finish_turn()
         self.assertEqual(self.machine.cardspace.decisive.content[-3:], selected)
-        self.assertNotIn("模板数", self.boss.statuses)
+        self.game.open_turn()
+        self.assertNotIn("模板数", self.boss.turn_state)
         self.assertEqual(self.machine.cardspace.hand.content, [])
 
     def test_frozen_hp_and_first_real_hit_during_each_window(self):
@@ -108,19 +110,19 @@ class CarrierTests(unittest.TestCase):
         self.assertEqual(self.boss.hp, 12)
         self.boss.add_shield("normal", 5)
         self.ctx.eval_block([self.boss, 7, OpCode.REAL_DAMAGE])
-        self.assertEqual((self.boss.hp, self.boss.shield, self.boss.statuses["纳米休止"]), (9, 5, 1))
+        self.assertEqual((self.boss.hp, self.boss.shield, self.boss.rule_state["休止恢复回合"]), (9, 5, self.game.turn_number + 2))
         self.ctx.eval_block([self.boss, 2, OpCode.REAL_DAMAGE])
         self.assertEqual(self.boss.hp, 7)
         self.game.turn_count += 1
         self.game.open_turn()
-        self.assertIn("纳米休止", self.boss.statuses)
+        self.assertTrue(self.boss.rule_state.get("休止恢复回合"))
         self.game.turn_count += 1
         self.game.open_turn()
-        self.assertNotIn("纳米休止", self.boss.statuses)
+        self.assertFalse(self.boss.rule_state.get("休止恢复回合"))
         self.boss.add_status("载体容器", 2)
         self.ctx.eval_block([self.boss, 2, OpCode.REAL_DAMAGE])
         self.assertEqual(self.boss.hp, 5)
-        self.assertNotIn("纳米休止", self.boss.statuses)
+        self.assertFalse(self.boss.rule_state.get("休止恢复回合"))
 
     def test_pressure_thresholds_and_sustained_strength(self):
         die = self.cards["heart"].get_current_die(self.game)
@@ -146,12 +148,76 @@ class CarrierTests(unittest.TestCase):
         self.boss.add_status("载体容器", 2)
         self.assertEqual(self.boss.status_overflow["堆芯熔毁"], 5)
         self.boss.add_status("堆芯熔毁", 3)
-        self.assertNotIn("纳米休止", self.boss.statuses)
+        self.assertFalse(self.boss.rule_state.get("休止恢复回合"))
         self.ctx.dispatch_pipeline("before_turn_end")
-        self.assertNotIn("容器发射", self.boss.statuses)
+        self.assertFalse(self.boss.rule_state.get("容器发射"))
         self.assertNotIn("载体容器", self.boss.statuses)
         self.assertNotIn("堆芯熔毁", self.boss.status_overflow)
-        self.assertEqual(self.boss.statuses["纳米休止"], 1)
+        self.assertEqual(self.boss.rule_state["休止恢复回合"], self.game.turn_number + 2)
+
+    def test_passive_transitions_do_not_apply_or_expose_status_stacks(self):
+        written = []
+        self.ctx.register_entries(self.boss, [dict(trigger="BEFORE STATUS", subject="target",
+            operation=lambda ctx: written.append(ctx.event["status"]))])
+        self.boss.rule_state["私人记录"] = self.cards["nightmare"]
+        public = Displayer(self.game)
+
+        def boss_view():
+            return public.snapshot()["players"][1]["characters"][0]
+
+        with self.ctx.collect_facts() as facts:
+            self.one.add_status("威压", 12)
+            with patch.object(self.game.rng, "randint", return_value=3):
+                self.ctx.dispatch_pipeline("after_turn_start")
+            self.boss.add_status("载体容器", 2)
+            view = boss_view()
+            self.assertEqual(view["passive_values"], {"行为剖析": 3, "容器发射": "发射中"})
+            self.assertEqual(view["statuses"], {"强壮": 2, "载体容器": 2, "堆芯熔毁": 4})
+            self.assertEqual(self.boss.personal_statuses, {"载体容器": 2, "堆芯熔毁": 4})
+            self.ctx.dispatch_pipeline("before_turn_end")
+            self.ctx.eval_block([self.boss, 6, OpCode.REAL_DAMAGE])
+            self.assertEqual(self.boss.hp, 15)
+            self.assertEqual(boss_view()["passive_values"], {"行为剖析": 3, "纳米休止": "休止中"})
+        self.assertEqual(written, ["载体容器", "堆芯熔毁", "载体容器"])
+        self.assertEqual({v["status"] for k, v in facts if k == "status_balance"},
+                         {"威压", "强壮", "载体容器", "堆芯熔毁"})
+
+    def test_strength_recalculates_after_rewind_without_spending_another_sources_stacks(self):
+        self.boss.add_status("强壮", 1)
+        grant = [self.boss, "强壮", "另一被动"]
+        self.assertEqual(self.ctx.eval_block([*grant, 3, OpCode.SET_SUSTAINED_STACKS]), 4)
+        self.one.add_status("威压", 12)
+        self.assertEqual(self.boss.statuses["强壮"], 6)
+        self.assertEqual(self.boss.personal_statuses, {"强壮": 1})
+        with self.ctx.collect_facts() as facts:
+            self.assertEqual(self.ctx.eval_block([*grant, 3, OpCode.SET_SUSTAINED_STACKS]), 6)
+        self.assertFalse(any(k == "status_balance" for k, _ in facts))
+        self.ctx.eval_block([self.one, "威压", 11, OpCode.RESTORE_STATUS_STACKS])
+        self.assertEqual(self.boss.statuses["强壮"], 4)
+        self.ctx.eval_block([self.boss, "强壮", "all", OpCode.SPEND_STATUS])
+        self.assertEqual(self.boss.statuses["强壮"], 3)
+        self.ctx.eval_block([self.one, "威压", 12, OpCode.RESTORE_STATUS_STACKS])
+        self.assertEqual(self.boss.statuses["强壮"], 5)
+        self.assertEqual(self.ctx.eval_block([*grant, 0, OpCode.SET_SUSTAINED_STACKS]), 2)
+        with self.assertRaises(ValueError):
+            self.ctx.eval_block([*grant, -1, OpCode.SET_SUSTAINED_STACKS])
+        self.assertEqual(self.boss.statuses["强壮"], 2)
+
+    def test_turn_values_belong_to_the_character_until_the_next_turn_opens(self):
+        self.ctx.register_entries(self.boss, [
+            {"trigger": "after_turn_end", "operation": {"op": "program", "code": [
+                "$self", "末尾记录", "$self.turn_state", "模板数", 0, "LOOKUP", "SET_TURN_STATE"]}},
+        ])
+        self.ctx.eval_block([self.boss, "模板数", 3, OpCode.SET_TURN_STATE])
+        self.ctx.eval_block([self.one, "模板数", 1, OpCode.SET_TURN_STATE])
+        self.game.open_turn()
+        self.assertEqual(self.one.turn_state, {"模板数": 1})
+        self.game.finish_turn()
+        self.ctx.dispatch_pipeline("after_turn_end")
+        self.assertEqual(self.boss.turn_state, {"模板数": 3, "末尾记录": 3})
+        self.game.open_turn()
+        self.assertEqual(self.boss.turn_state, {})
+        self.assertEqual(self.one.turn_state, {})
 
     def test_core_reward_self_damage_rounding_and_immunity(self):
         for stacks in (4, 5, 7, 8, 9):
@@ -160,7 +226,7 @@ class CarrierTests(unittest.TestCase):
                     self.setUp()
                     self.boss.add_status("堆芯熔毁", stacks)
                     if protected:
-                        self.boss.add_status("熔毁免伤", 1)
+                        self.ctx.eval_block([self.boss, "熔毁免伤", True, OpCode.SET_TURN_STATE])
                     self.game.finish_turn()
                     self.assertEqual(self.boss.hp, 18 if protected else 18 - stacks // 3)
                     self.assertEqual(self.boss.statuses["堆芯熔毁"], stacks - (stacks + 2) // 3)
@@ -226,14 +292,14 @@ class CarrierTests(unittest.TestCase):
         self.boss.add_status("堆芯熔毁", 8)
         self.game.finish_turn()
         self.assertEqual(self.boss.statuses["载体容器"], 2)
-        self.assertIn("容器发射", self.boss.statuses)
+        self.assertTrue(self.boss.rule_state.get("容器发射"))
         self.game.prepare_turn()
         hp = self.boss.hp
         self.ctx.eval_block([self.boss, 1, OpCode.REAL_DAMAGE])
         self.assertEqual(self.boss.hp, hp - 1)
-        self.assertNotIn("纳米休止", self.boss.statuses)
+        self.assertFalse(self.boss.rule_state.get("休止恢复回合"))
         self.game.finish_turn()
-        self.assertNotIn("容器发射", self.boss.statuses)
+        self.assertFalse(self.boss.rule_state.get("容器发射"))
         self.assertNotIn("载体容器", self.boss.statuses)
 
     def test_percentage_absorbed_by_concept_shield_and_heal_keeps_fraction(self):
@@ -305,7 +371,7 @@ class CarrierTests(unittest.TestCase):
                                  [substitute if is_exception else drawn])
                 self.game.finish_turn()
                 self.game.prepare_turn()
-                self.assertEqual(self.boss.statuses["模板修正"], 1)
+                self.assertEqual(self.boss.turn_state["模板修正"], 1)
 
     def test_brand_checks_pressure_before_its_own_on_use_and_delays_limits(self):
         for initial in (5, 6):
@@ -365,11 +431,17 @@ class CarrierTests(unittest.TestCase):
         self.place(self.cards["repair"])
         self.fight()
         self.assertEqual((self.boss.hp, self.boss.statuses["堆芯熔毁"]), (13, 5))
+        self.assertTrue(self.boss.turn_state["熔毁免伤"])
+        self.assertEqual(self.boss.personal_statuses, {"堆芯熔毁": 5})
         self.game.finish_turn()
         self.assertEqual(self.boss.hp, 13)
-        self.assertNotIn("熔毁免伤", self.boss.statuses)
         self.game.prepare_turn()
-        self.assertEqual(self.boss.statuses["模板修正"], 1)
+        self.assertNotIn("熔毁免伤", self.boss.turn_state)
+        self.assertEqual(self.boss.turn_state["模板修正"], 1)
+        self.game.finish_turn()
+        self.assertEqual(self.boss.hp, 12)
+        self.game.open_turn()
+        self.assertNotIn("模板修正", self.boss.turn_state)
 
     def test_crystal_survives_destroy_and_repeats_its_d100(self):
         crystal = self.cards["crystal"]
@@ -404,7 +476,7 @@ class CarrierTests(unittest.TestCase):
         self.fight()
         self.assertFalse(self.one.is_alive)
         self.assertEqual(self.two.statuses["威压"], 6)
-        self.assertIn("容器发射", self.boss.statuses)
+        self.assertTrue(self.boss.rule_state.get("容器发射"))
         self.assertNotIn("载体容器", self.boss.statuses)
 
     def test_barrier_destroys_opposing_card_and_victim_discards_if_over_two(self):
@@ -431,7 +503,7 @@ class CarrierTests(unittest.TestCase):
         slots = self.game.duelspace.space
         self.assertEqual([s.get_content(2) for s in slots[:4]], [[], [top[0]], [top[1]], []])
         self.assertEqual([c.effective_range for c in top], [c.data.get("range_level", 0)+1 for c in top])
-        self.assertEqual(self.boss.rule_state["反制次数"], 2)
+        self.assertEqual(self.boss.turn_state["反制次数"], 2)
 
     def test_room_locks_challenge_on_ready_and_restart(self):
         room = Room(challenge=CHALLENGES["carrier"], seed=7)

@@ -717,6 +717,7 @@ export function buildHeroSidePanel({
       const plate = buildUnifiedEntryPlate({
         variant: 'passive',
         title: p.name || '角色被动',
+        tagLabel: String(character.passive_values?.[p.name] ?? ''),
         entries: p.display_lines,
         width: innerW,
         accentColor: INK.gold,
@@ -958,6 +959,7 @@ export function buildPassiveDrawer({
           const plate = buildUnifiedEntryPlate({
             variant: 'passive',
             title: p.name || '角色被动',
+            tagLabel: String(ch.passive_values?.[p.name] ?? ''),
             entries: p.display_lines,
             width: innerColW - 6,
             accentColor: INK.gold,

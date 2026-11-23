@@ -134,6 +134,9 @@ class Game:
         if self.turn_number != number:
             self.turn_number = number
             self.turn_ending = False
+            for player in self.players:
+                for character in player.characters:
+                    character.turn_state.clear()
             self.context.record("turn_opened", number=number)
             self.context.turn_entry_uses.clear()
             self.turn_history.clear()

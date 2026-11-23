@@ -105,6 +105,7 @@ function updateTeam(node, player) {
         "个人费 " + fighter.cost.available, "通用费 " + player.cost.available,
         "手牌 " + player.hand_count, "速度 " + player.speed];
     for (const [name, n] of Object.entries(player.team_statuses || {})) stats.push(name + " " + n);
+    for (const [name, value] of Object.entries(fighter.passive_values || {})) stats.push(name + " " + value);
     setText(node.querySelector(".team-stats"), stats.join(" · "));
     const shields = {normal: "护盾", reinforced: "强化护盾", concept: "概念护盾"};
     const statuses = Object.entries(fighter.statuses || {}).map(([name, n]) => name + " " + n);

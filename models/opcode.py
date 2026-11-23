@@ -75,6 +75,8 @@ class OpCode(Enum):
     SET_SKILL_STATE = auto()
     SET_DIE_STATE = auto()
     SET_CHARACTER_STATE = auto()
+    SET_TURN_STATE = auto()
+    SET_SUSTAINED_STACKS = auto()
     FLOOR_DIV = auto()
     MIN = auto()
     LT = auto()

@@ -79,11 +79,13 @@ class Character:
         self.ability_effects = {}
         self.reserved_dice = []
         self.rule_state = {}
+        self.turn_state = {}
         self.status_overflow = {}
-        # While a status supplies stacks, keep the ordinary stacks independently
+        # While a source supplies stacks, keep the ordinary stacks independently
         # so expiring the turn or removing the source only removes its own part.
         self._ordinary_stacks = {}
         self._sustained_stacks = {}
+        self._sustained_sources = {}
         self._status_listeners = {}
         self.activating_statuses = set()
         self.active_statuses = set()
@@ -158,7 +160,7 @@ class Character:
 
     @property
     def personal_statuses(self):
-        """Ordinary personal stacks exclude team pools and stacks supplied by another status."""
+        """Ordinary personal stacks exclude team pools and sustained contributions."""
         return {name: amount for name in self.statuses.maps[0]
                 if (amount := self._ordinary_status(name)) > 0}
 
@@ -314,6 +316,26 @@ class Character:
 
     def spendable_status(self, name):
         return 0 if self.status_rules.get(name, {}).get("permanent") else self._ordinary_status(name)
+
+    def set_sustained_stacks(self, name, source, amount):
+        """Set one source's contribution to a personal status, preserving all other stacks."""
+        name = self.canonical_status_name(name)
+        if type(amount) is not int or amount < 0:
+            raise ValueError("常驻层数须为非负整数")
+        if not isinstance(source, str) or not source:
+            raise ValueError("常驻层数需要来源名称")
+        if self.status_rules.get(name, {}).get("pool") == "team" or name in self.ability_rules:
+            raise ValueError("常驻层数需要个人状态")
+        key = (name, source)
+        previous = self._sustained_sources.get(key, 0)
+        if previous == amount:
+            return self.statuses.get(name, 0)
+        if amount:
+            self._sustained_sources[key] = amount
+        else:
+            self._sustained_sources.pop(key)
+        total = self._sustained_stacks.get(name, 0) + amount - previous
+        return self._set_status(name, self._ordinary_status(name), total)
 
     def skill_restricted(self, card):
         from entry.play_conditions import denies_skill_use

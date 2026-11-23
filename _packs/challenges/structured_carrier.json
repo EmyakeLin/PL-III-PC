@@ -1,15 +1,8 @@
 {
-  "turn_end_statuses": ["模板修正","熔毁免伤","伤害提升","模板数"],
+  "turn_end_statuses": ["伤害提升"],
   "status_rules": {
     "威压": {"cap":12,"description":"最多12层，跨回合保留。"},
-    "堆芯熔毁": {"cap":9,"track_overflow":true,"description":"回合末结算自伤并衰减。上限9，溢出记为无效堆芯熔毁。"},
-    "容器发射": {"cap":1},
-    "纳米休止": {"cap":1},
-    "熔毁免伤": {"cap":1},
-    "乘胜·威压": {"cap":1,"sustain":{"强壮":2}},
-    "乘胜·强化一": {"cap":1,"sustain":{"强壮":1}},
-    "乘胜·强化二": {"cap":1,"sustain":{"强壮":1}},
-    "模板数": {"description":"本回合的行为剖析判定结果，包含模板修正。"}
+    "堆芯熔毁": {"cap":9,"track_overflow":true,"description":"回合末结算自伤并衰减。上限9，溢出记为无效堆芯熔毁。"}
   },
   "status_entries": {
     "堆芯熔毁": [
@@ -20,7 +13,7 @@
         "operation": {
           "op": "program",
           "code": [
-            "$self", "堆芯熔毁", "STATUS_COUNT", "stacks", "STORE", "$self", "熔毁免伤", "STATUS_COUNT", 0, "EQ",
+            "$self", "堆芯熔毁", "STATUS_COUNT", "stacks", "STORE", "$self.turn_state", "熔毁免伤", false, "LOOKUP", "NOT",
             ["$self","$local.stacks",3,"FLOOR_DIV","normal","none",{"call":"DAMAGE","with":{"damage_cause":"堆芯熔毁"}}],
             "WHEN", "$self", "堆芯熔毁", "$local.stacks", 3, "CEIL_DIV", "SPEND_STATUS"
           ]
@@ -79,6 +72,13 @@
               "operation": {"op":"program","code":["carrier_momentum",{"literal":{}},"PUBLISH"]}
             },
             {
+              "trigger": "AFTER RESTORE_STATUS_STACKS",
+              "description": "威压被回退时，按回退后的总数重算常驻强壮。",
+              "subject": "any",
+              "when": [{"left":"$event.status","op":"eq","right":"威压"}],
+              "operation": {"op":"program","code":["carrier_momentum",{"literal":{}},"PUBLISH"]}
+            },
+            {
               "trigger": "AFTER CHECK_DEATH",
               "description": "敌人阵亡时重算存活敌人的威压。",
               "subject": "any",
@@ -93,13 +93,9 @@
                 "op": "program",
                 "code": [
                   0, "total", "STORE", "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
-                  ["$local.total","$event.item","威压","STATUS_COUNT","ADD","total","STORE"], "EACH", "$local.total", 12, "GE",
-                  [1], [0], "IF_ELSE", "$self", "乘胜·威压", "STATUS_COUNT", "SUB", "delta", "STORE", "$local.delta", 0, "EQ",
-                  "NOT", ["$self","乘胜·威压","$local.delta","STATUS"], "WHEN", "$local.total", 18, "GE", [1], [0], "IF_ELSE",
-                  "$self", "乘胜·强化一", "STATUS_COUNT", "SUB", "delta", "STORE", "$local.delta", 0, "EQ", "NOT",
-                  ["$self","乘胜·强化一","$local.delta","STATUS"], "WHEN", "$local.total", 24, "GE", [1], [0], "IF_ELSE", "$self",
-                  "乘胜·强化二", "STATUS_COUNT", "SUB", "delta", "STORE", "$local.delta", 0, "EQ", "NOT",
-                  ["$self","乘胜·强化二","$local.delta","STATUS"], "WHEN"
+                  ["$local.total","$event.item","威压","STATUS_COUNT","ADD","total","STORE"], "EACH",
+                  "$self", "强壮", "乘胜", "$local.total", 12, "GE",
+                  ["$local.total",12,"SUB",6,"FLOOR_DIV",2,"MIN",2,"ADD"], [0], "IF_ELSE", "SET_SUSTAINED_STACKS"
                 ]
               }
             }
@@ -114,8 +110,8 @@
               "subject": "target",
               "authority": "最高话语权",
               "when": [
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0},
-                {"left":{"field":"$self.statuses","key":"纳米休止","default":0},"op":"eq","right":0},
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0},
                 {"left":"$event.damage_cause","op":"ne","right":"堆芯熔毁"}
               ],
               "operation": {
@@ -133,8 +129,8 @@
               "subject": "target",
               "authority": "最高话语权",
               "when": [
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0},
-                {"left":{"field":"$self.statuses","key":"纳米休止","default":0},"op":"eq","right":0}
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0}
               ],
               "operation": {"op":"cancel"}
             },
@@ -144,8 +140,8 @@
               "subject": "target",
               "authority": "最高话语权",
               "when": [
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0},
-                {"left":{"field":"$self.statuses","key":"纳米休止","default":0},"op":"eq","right":0}
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0}
               ],
               "operation": {"op":"cancel"}
             }
@@ -184,6 +180,7 @@
         },
         {
           "name": "容器发射",
+          "display_value": {"if":{"field":"$self.rule_state","key":"容器发射"},"then":"发射中","else":null},
           "entries": [
             {
               "trigger": "on_status_changed",
@@ -192,7 +189,7 @@
               "when": [
                 {"left":"$event.status","op":"eq","right":"载体容器"},
                 {"left":{"field":"$self.statuses","key":"载体容器","default":0},"op":"ge","right":2},
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0}
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}
               ],
               "operation": {"op":"program","code":["carrier_launch",{"literal":{}},"PUBLISH"]}
             },
@@ -201,7 +198,7 @@
               "description": "若上次发射结束后仍有至少2容器，新回合再次发射。",
               "when": [
                 {"left":{"field":"$self.statuses","key":"载体容器","default":0},"op":"ge","right":2},
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0}
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}
               ],
               "operation": {"op":"program","code":["carrier_launch",{"literal":{}},"PUBLISH"]}
             },
@@ -209,10 +206,10 @@
               "trigger": "carrier_launch",
               "description": "解除冻结并获得4堆芯熔毁，本回合伤害部分改为最终伤害量×目标生命上限的10%，造成超穿甲伤害。",
               "trigger_type": "event",
-              "when": [{"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0}],
+              "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}],
               "operation": {
                 "op": "program",
-                "code": ["$self","容器发射",1,"STATUS","$self","堆芯熔毁",4,"STATUS","carrier_cool",{"literal":{}},"PUBLISH"]
+                "code": ["$self","容器发射",true,"SET_CHARACTER_STATE","$self","堆芯熔毁",4,"STATUS","carrier_cool",{"literal":{}},"PUBLISH"]
               }
             },
             {
@@ -220,7 +217,7 @@
               "description": "本次伤害部分按超穿甲等级进入减伤结算。",
               "subject": "source",
               "when": [
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"gt","right":0},
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true},
                 {"left":"$event.damage_part","op":"eq","right":true},
                 {"left":"$event.damage_die.card.character","op":"eq","right":"$self"}
               ],
@@ -231,7 +228,7 @@
               "description": "最终伤害每1点转换为目标生命上限的10%，保留小数。",
               "subject": "source",
               "when": [
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"gt","right":0},
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true},
                 {"left":"$event.damage_part","op":"eq","right":true},
                 {"left":"$event.damage_die.card.character","op":"eq","right":"$self"}
               ],
@@ -240,11 +237,11 @@
             {
               "trigger": "before_turn_end",
               "description": "回合结束前消耗2容器并结束发射，重新判断休止。",
-              "when": [{"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"gt","right":0}],
+              "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true}],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self", "载体容器", -2, "STATUS", "$self", "容器发射", "all", "SPEND_STATUS", "carrier_check_rest", {"literal":{}},
+                  "$self", "载体容器", -2, "STATUS", "$self", "容器发射", false, "SET_CHARACTER_STATE", "carrier_check_rest", {"literal":{}},
                   "PUBLISH"
                 ]
               }
@@ -253,6 +250,7 @@
         },
         {
           "name": "纳米休止",
+          "display_value": {"if":{"field":"$self.rule_state","key":"休止恢复回合"},"then":"休止中","else":null},
           "entries": [
             {
               "trigger": "AFTER STATUS",
@@ -265,13 +263,13 @@
               "trigger": "carrier_check_rest",
               "description": "未发射且累计至少8个无效熔毁时，清除无效熔毁，解除冻结至下回合结束。",
               "trigger_type": "event",
-              "when": [{"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0}],
+              "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}],
               "operation": {
                 "op": "program",
                 "code": [
                   "$self.status_overflow", "堆芯熔毁", 0, "LOOKUP", 8, "GE",
                   [
-                    "$self", "堆芯熔毁", 0, "SET_STATUS_OVERFLOW", "$self", "纳米休止", 1, "STATUS", "$self", "休止恢复回合",
+                    "$self", "堆芯熔毁", 0, "SET_STATUS_OVERFLOW", "$self", "休止恢复回合",
                     "$game.turn_number", 2, "ADD", "SET_CHARACTER_STATE"
                   ],
                   "WHEN"
@@ -281,11 +279,11 @@
             {
               "trigger": "on_turn_limits_reset",
               "description": "休止在第二个后续回合开始时失效。",
-              "when": [{"left":{"field":"$self.statuses","key":"纳米休止","default":0},"op":"gt","right":0}],
+              "when": [{"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"gt","right":0}],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$game.turn_number", "$self.rule_state", "休止恢复回合", 0, "LOOKUP", "GE", ["$self","纳米休止","all","SPEND_STATUS"],
+                  "$game.turn_number", "$self.rule_state", "休止恢复回合", 0, "LOOKUP", "GE", ["$self","休止恢复回合",0,"SET_CHARACTER_STATE"],
                   "WHEN"
                 ]
               }
@@ -296,14 +294,14 @@
               "subject": "target",
               "authority": "最高话语权",
               "when": [
-                {"left":{"field":"$self.statuses","key":"容器发射","default":0},"op":"eq","right":0},
-                {"left":{"field":"$self.statuses","key":"纳米休止","default":0},"op":"eq","right":0},
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0},
                 {"left":"$event.amount","op":"gt","right":0}
               ],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self", "纳米休止", 1, "STATUS", "$self", "休止恢复回合", "$game.turn_number", 2, "ADD", "SET_CHARACTER_STATE",
+                  "$self", "休止恢复回合", "$game.turn_number", 2, "ADD", "SET_CHARACTER_STATE",
                   "$self", 3, "REAL_DAMAGE", {"op":"cancel"}
                 ]
               }
@@ -334,29 +332,25 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self.rule_state", "反制次数", 0, "LOOKUP", 2, "LT",
+                  "$self.turn_state", "反制次数", 0, "LOOKUP", 2, "LT",
                   [
                     "$player", "draw", "ZONE_CARDS", ["$event.item.destroyed","NOT"], "FILTER", "FIRST", "defense", "STORE",
                     "$local.defense", "$event.duel", {"call":"JOIN_DUEL","result":"result","default":false},
                     [
-                      "$local.defense", "range_bonus", 1, "SET_SKILL_STATE", "$self", "反制次数", "$self.rule_state", "反制次数", 0,
-                      "LOOKUP", 1, "ADD", "SET_CHARACTER_STATE"
+                      "$local.defense", "range_bonus", 1, "SET_SKILL_STATE", "$self", "反制次数", "$self.turn_state", "反制次数", 0,
+                      "LOOKUP", 1, "ADD", "SET_TURN_STATE"
                     ],
                     "WHEN"
                   ],
                   "WHEN"
                 ]
               }
-            },
-            {
-              "trigger": "on_turn_limits_reset",
-              "description": "重置本回合反制次数。",
-              "operation": {"op":"program","code":["$self","反制次数",0,"SET_CHARACTER_STATE"]}
             }
           ]
         },
         {
           "name": "行为剖析",
+          "display_value": {"field":"$self.turn_state","key":"模板数"},
           "entries": [
             {
               "trigger": "BEFORE DRAW",
@@ -376,8 +370,8 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  1, 4, "RANDOM_INT", "$self", "模板修正", "STATUS_COUNT", "ADD", "number", "STORE", "$self", "模板数",
-                  "$local.number", "$self", "模板数", "STATUS_COUNT", "SUB", "STATUS", "carrier_deploy", {"literal":{}},
+                  "$self", "模板数", 1, 4, "RANDOM_INT", "$self.turn_state", "模板修正", 0, "LOOKUP", "ADD",
+                  "SET_TURN_STATE", "carrier_deploy", {"literal":{}},
                   "PUBLISH"
                 ]
               }
@@ -388,11 +382,11 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self", "模板数", "STATUS_COUNT", 4, "GE",
+                  "$self.turn_state", "模板数", 0, "LOOKUP", 4, "GE",
                   [
-                    1, 4, "RANDOM_INT", "$self", "模板修正", "STATUS_COUNT", "ADD", "number", "STORE", "$self", "模板数",
-                    "$local.number", "$self", "模板数", "STATUS_COUNT", "SUB", "STATUS", "carrier_deploy", {"literal":{}},
-                    "PUBLISH", "$self", "模板数", "STATUS_COUNT", 4, "GE",
+                    "$self", "模板数", 1, 4, "RANDOM_INT", "$self.turn_state", "模板修正", 0, "LOOKUP", "ADD",
+                    "SET_TURN_STATE", "carrier_deploy", {"literal":{}},
+                    "PUBLISH", "$self.turn_state", "模板数", 0, "LOOKUP", 4, "GE",
                     [
                       {"literal":["decisive","decisive","decisive"]},
                       [
@@ -411,7 +405,7 @@
               "trigger": "carrier_deploy",
               "description": "模板1：依次置五张普通牌。",
               "trigger_type": "event",
-              "when": [{"left":{"field":"$self.statuses","key":"模板数","default":0},"op":"eq","right":1}],
+              "when": [{"left":{"field":"$self.turn_state","key":"模板数","default":0},"op":"eq","right":1}],
               "operation": {
                 "op": "program",
                 "code": [
@@ -428,7 +422,7 @@
               "trigger": "carrier_deploy",
               "description": "模板2：依次置决战、普通、普通、普通。",
               "trigger_type": "event",
-              "when": [{"left":{"field":"$self.statuses","key":"模板数","default":0},"op":"eq","right":2}],
+              "when": [{"left":{"field":"$self.turn_state","key":"模板数","default":0},"op":"eq","right":2}],
               "operation": {
                 "op": "program",
                 "code": [
@@ -445,7 +439,7 @@
               "trigger": "carrier_deploy",
               "description": "模板3：依次置决战、普通、决战。",
               "trigger_type": "event",
-              "when": [{"left":{"field":"$self.statuses","key":"模板数","default":0},"op":"eq","right":3}],
+              "when": [{"left":{"field":"$self.turn_state","key":"模板数","default":0},"op":"eq","right":3}],
               "operation": {
                 "op": "program",
                 "code": [
@@ -464,7 +458,7 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$self", "模板数", "STATUS_COUNT", 3, "EQ",
+                  "$self.turn_state", "模板数", 0, "LOOKUP", 3, "EQ",
                   [
                     "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "enemies", "STORE",
                     "$local.enemies", "FIRST", "victim", "STORE", "$local.enemies",
@@ -475,7 +469,7 @@
                     ],
                     "REPEAT_WHILE"
                   ],
-                  "WHEN", "$self", "模板数", "STATUS_COUNT", 4, "GE",
+                  "WHEN", "$self.turn_state", "模板数", 0, "LOOKUP", 4, "GE",
                   [
                     "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "enemies", "STORE",
                     "$local.enemies", "FIRST", "victim", "STORE", "$local.enemies",
@@ -1031,7 +1025,7 @@
                           "uses": 1,
                           "require_source_alive": false,
                           "require_target_alive": true,
-                          "then": ["$event.target","模板修正",1,"STATUS"]
+                          "then": ["$event.target","模板修正","$event.target.turn_state","模板修正",0,"LOOKUP",1,"ADD","SET_TURN_STATE"]
                         }
                       }
                     ]
@@ -1057,7 +1051,7 @@
                 {
                   "trigger": "on_dice_hit",
                   "description": "回复1生命值，获得2堆芯熔毁，本回合末免受堆芯熔毁伤害。",
-                  "operation": {"op":"program","code":["HEAL 1 $self","$self","堆芯熔毁",2,"STATUS","$self","熔毁免伤",1,"STATUS"]}
+                  "operation": {"op":"program","code":["HEAL 1 $self","$self","堆芯熔毁",2,"STATUS","$self","熔毁免伤",true,"SET_TURN_STATE"]}
                 }
               ]
             }
@@ -1278,7 +1272,7 @@
                       "uses": 1,
                       "require_source_alive": false,
                       "require_target_alive": true,
-                      "then": ["$event.target","模板修正",1,"STATUS"]
+                      "then": ["$event.target","模板修正","$event.target.turn_state","模板修正",0,"LOOKUP",1,"ADD","SET_TURN_STATE"]
                     }
                   }
                 ]
@@ -1570,7 +1564,7 @@
                   "description": "容器发射期间额外追加1伤。",
                   "operation": {
                     "op": "program",
-                    "code": ["$self","容器发射","STATUS_COUNT",0,"GT",["$event.target",1,"normal","$event.die.type","DAMAGE"],"WHEN"],
+                    "code": ["$self.rule_state","容器发射",false,"LOOKUP",["$event.target",1,"normal","$event.die.type","DAMAGE"],"WHEN"],
                     "damage_part": true
                   }
                 }

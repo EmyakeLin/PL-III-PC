@@ -206,8 +206,15 @@ def handle_set_status_overflow(ctx):
 def handle_set_character_state(ctx):
     value, key, actor = ctx.pop(), ctx.pop(), ctx.pop()
     if actor is not None and actor.is_alive:
-        actor.rule_state[key] = value
+        state = actor.turn_state if ctx.current_op == OpCode.SET_TURN_STATE else actor.rule_state
+        state[key] = value
         return value
+
+
+def handle_set_sustained_stacks(ctx):
+    amount, source, name, holder = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    if holder is not None and holder.is_alive:
+        return holder.set_sustained_stacks(name, source, amount)
 
 
 def handle_map_or_filter(ctx):
@@ -1225,6 +1232,8 @@ DISPATCH_TABLE = {
     OpCode.CAPTURE_SKILL_DIE: handle_capture_skill_die, OpCode.GRANT_DIE_RESPONSE: handle_grant_die_response,
     OpCode.ACTIVATE_STATUS: handle_activate_status, OpCode.SET_DIE_STATE: handle_set_component_state,
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
+    OpCode.SET_TURN_STATE: handle_set_character_state,
+    OpCode.SET_SUSTAINED_STACKS: handle_set_sustained_stacks,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
     OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
     OpCode.QUEUE_TARGET_HIT: handle_queue_hit, OpCode.SET_UNOPPOSED_RESULT: handle_unopposed_result,
@@ -1304,6 +1313,8 @@ OPERANDS = {
     OpCode.GRANT_DIE_RESPONSE: ("target", "template", "count", "trigger", "through_turn", "spend_on", "spend_amount"),
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
+    OpCode.SET_TURN_STATE: ("target", "key", "value"),
+    OpCode.SET_SUSTAINED_STACKS: ("target", "status", "grant_source", "amount"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
     OpCode.QUEUE_HIT: ("die", "mode", "origin"), OpCode.SKIP_ROUND: ("die",),
     OpCode.QUEUE_TARGET_HIT: ("die", "mode", "origin", "target"),
