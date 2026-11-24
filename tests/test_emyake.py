@@ -3,6 +3,7 @@ import random
 import unittest
 from unittest.mock import patch
 
+from displayer import Displayer
 from entry.entry import Entry
 from game import Game
 from loader import load_characters_from_packs
@@ -227,6 +228,78 @@ class EmyakeTests(unittest.TestCase):
         self.fight('虚空障壁')
         self.assertEqual(self.actor.statuses.get('羽流·终'),1)
         self.assertNotIn('羽流·势',self.actor.statuses)
+
+    def test_status_catalog_shows_each_printed_rule_once(self):
+        catalog = Displayer(self.game).catalog()["statuses"]
+        for name in ("羽流·势", "羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终",
+                     "裂伤", "裂伤拘束", "折影化铭刻"):
+            with self.subTest(name=name):
+                self.assertEqual(catalog[name], [self.spec["status_rules"][name]["description"]])
+        self.assertTrue(any("回合结束" in line for line in catalog["涡流"]))
+
+    def test_solo_stance_settles_before_the_first_slash_hits_or_returns_to_hand(self):
+        for name, stacks, shield in [("折影吞噬", 2, 1), ("折影交织", 5, 3),
+                                     ("折影交织", 4, 0)]:
+            with self.subTest(card=name, stacks=stacks):
+                self.setUp()
+                self.status(self.actor, "羽流·势", stacks)
+                at_hit = []
+                resolve_hit = self.ctx.resolve_hit
+
+                def observe(**event):
+                    if event["card"] is self.cards[name] and event["die"].position == 1:
+                        actor = Displayer(self.game).snapshot()["players"][0]["characters"][0]
+                        at_hit.append((actor["statuses"].get("羽流·势"), actor["statuses"].get("羽流·制衡"),
+                                       actor["shields"]["normal"]))
+                    return resolve_hit(**event)
+
+                with patch.object(self.ctx, "resolve_hit", side_effect=observe):
+                    card = self.fight(name)
+                self.assertEqual(at_hit, [(None, 1, shield)] if shield else [(stacks, None, 0)])
+                spent = [e["amount"] for k, e in self.events if k == "status_spent" and e["name"] == "羽流·势"]
+                self.assertEqual(spent, [stacks] if shield else [])
+                if name == "折影吞噬":
+                    self.assertIn(card, self.left.cardspace.hand.content)
+
+    def test_weave_spends_five_once_for_the_first_slash_verdict(self):
+        for score, stance in [(1, "羽流·延攻"), (8, "羽流·制衡"), (100, "羽流·反制")]:
+            with self.subTest(score=score):
+                self.setUp()
+                self.status(self.actor, "羽流·势", 5)
+                with patch.object(self.game.rng, "randint", side_effect=lambda low, high: low):
+                    self.fight("折影交织", [score] * 4)
+                self.assertEqual(self.actor.statuses.get(stance), 1)
+                self.assertNotIn("羽流·势", self.actor.statuses)
+                self.assertEqual([e["amount"] for k, e in self.events
+                                  if k == "status_spent" and e["name"] == "羽流·势"], [5])
+                if stance == "羽流·反制":
+                    self.assertEqual(len(self.left.cardspace.hand.content), 3)
+                elif stance == "羽流·制衡":
+                    self.assertEqual(self.actor.shield, 3)
+                else:
+                    self.assertEqual(self.actor.statuses["强壮"], 3)
+
+    def test_stance_requires_an_actual_gain_and_does_not_transfer_to_the_next_slash(self):
+        self.status(self.actor, "羽流·势", 5)
+        self.ctx.register_entries(self.actor, [{
+            "trigger": "BEFORE STATUS", "subject": "target",
+            "when": [{"left": "$event.status", "op": "eq", "right": "羽流·制衡"},
+                     {"left": "$event.die.position", "op": "eq", "right": 1}],
+            "operation": {"op": "cancel"},
+        }])
+        self.fight("折影交织")
+        self.assertEqual(self.actor.statuses["羽流·势"], 5)
+        self.assertNotIn("羽流·制衡", self.actor.statuses)
+        self.assertEqual(self.actor.shield, 0)
+        self.assertFalse(any(k == "status_spent" and e["name"] == "羽流·势" for k, e in self.events))
+
+    def test_unopposed_first_slash_can_settle_even_when_range_prevents_the_hit(self):
+        self.status(self.actor, "羽流·势", 2)
+        self.fight("虚空障壁", [-100], range_level=1)
+        self.assertEqual(self.actor.statuses.get("羽流·制衡"), 1)
+        self.assertNotIn("羽流·势", self.actor.statuses)
+        self.assertFalse(any(k == "solo_attack" for k, _ in self.events))
+        self.assertEqual(self.enemy.hp, self.enemy.max_hp)
 
     def test_weave_replacement_on_either_trigger(self):
         for ranged in (False,True):

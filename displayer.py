@@ -517,8 +517,10 @@ class Displayer:
         statuses = {name: [describe_entry(e) for e in entries]
                     for name, entries in self._game.status_entries.items()}
         for name, rule in self._game.status_rules.items():
-            if rule.get("description"):
-                statuses.setdefault(name, []).insert(0, rule["description"])
+            if description := rule.get("description"):
+                printed = {description, *description.splitlines()}
+                extra = [line for line in statuses.get(name, ()) if line not in printed]
+                statuses[name] = [description, *extra]
         return {
             "players": [{
                 "side": p.side,

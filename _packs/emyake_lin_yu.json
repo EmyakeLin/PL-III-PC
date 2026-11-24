@@ -447,174 +447,94 @@
               "subject": "source"
             },
             {
-              "description": "-【拼点胜利】获得1层羽流·延攻并获得羽流·势层数一半（向上取整）层强壮",
-              "trigger": "on_clash_win",
+              "description": "使用费用等同于羽流·势层数的技能时，该技能骰子的变动点数+3且第一枚斩击骰子获得效果：",
+              "trigger": "before_dice_use",
+              "when": [
+                {"left": "$event.card.use_state.羽流用势", "op": "gt", "right": 0},
+                {"left": "$event.card.use_state.羽流已结算", "op": "ne", "right": true},
+                {"left": "$event.die.type", "op": "eq", "right": "slash"}
+              ],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$event.card.dice",
-                  ["$event.item.type", "slash", "EQ"],
-                  "FILTER", "FIRST", "$event.die.data", "IS",
-                  [
-                    "$self", "羽流·延攻", "STATUS_COUNT", 3, "GE",
-                    ["羽流·终"],
-                    ["羽流·延攻"],
-                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
-                    {"call": "STATUS", "result": "actual_delta", "default": 0},
-                    0, "GT",
-                    [
-                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
-                      [
-                        "$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$self", "强壮", "$local.份数",
-                        "STATUS"
-                      ],
-                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
-                    ],
-                    "WHEN"
-                  ],
-                  "WHEN"
+                  "$event.card.dice", ["$event.item.type", "slash", "EQ"], "FILTER", "FIRST", "$event.die.data", "IS",
+                  ["$event.die", "羽流首斩", true, "SET_DIE_STATE"], "WHEN"
                 ]
-              },
+              }
+            },
+            {
+              "description": "-【拼点胜利】获得1层羽流·延攻并获得羽流·势层数一半（向上取整）层强壮",
+              "trigger": "on_clash_win",
               "when": [
-                {"left": "$event.die.type", "op": "eq", "right": "slash"},
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
-                  "op": "gt",
-                  "right": 0
-                },
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
-                  "op": "eq",
-                  "right": false
-                }
-              ]
+                {"left": "$event.die.use_state.羽流首斩", "op": "eq", "right": true}
+              ],
+              "operation": {"op": "program", "code": ["羽流首斩结算", {"literal": {"剑术": "羽流·延攻"}}, "PUBLISH"]}
             },
             {
               "description": "-【拼点失败】获得1层羽流·反制并抽取羽流·势层数一半（向上取整）数量的卡牌",
               "trigger": "on_clash_lose",
-              "operation": {
-                "op": "program",
-                "code": [
-                  "$event.card.dice",
-                  ["$event.item.type", "slash", "EQ"],
-                  "FILTER", "FIRST", "$event.die.data", "IS",
-                  [
-                    "$self", "羽流·反制", "STATUS_COUNT", 3, "GE",
-                    ["羽流·终"],
-                    ["羽流·反制"],
-                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
-                    {"call": "STATUS", "result": "actual_delta", "default": 0},
-                    0, "GT",
-                    [
-                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
-                      ["$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$player", "$local.份数", "DRAW"],
-                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
-                    ],
-                    "WHEN"
-                  ],
-                  "WHEN"
-                ]
-              },
               "when": [
-                {"left": "$event.die.type", "op": "eq", "right": "slash"},
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
-                  "op": "gt",
-                  "right": 0
-                },
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
-                  "op": "eq",
-                  "right": false
-                }
-              ]
+                {"left": "$event.die.use_state.羽流首斩", "op": "eq", "right": true}
+              ],
+              "operation": {"op": "program", "code": ["羽流首斩结算", {"literal": {"剑术": "羽流·反制"}}, "PUBLISH"]}
             },
             {
               "description": "-不属于上述两种情况：获得1层羽流·制衡并获得羽流·势层数一半（向上取整）数量的护盾",
               "trigger": "on_clash_draw",
-              "operation": {
-                "op": "program",
-                "code": [
-                  "$event.card.dice",
-                  ["$event.item.type", "slash", "EQ"],
-                  "FILTER", "FIRST", "$event.die.data", "IS",
-                  [
-                    "$self", "羽流·制衡", "STATUS_COUNT", 3, "GE",
-                    ["羽流·终"],
-                    ["羽流·制衡"],
-                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
-                    {"call": "STATUS", "result": "actual_delta", "default": 0},
-                    0, "GT",
-                    [
-                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
-                      [
-                        "$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$self", "normal", "$local.份数",
-                        "SHIELD"
-                      ],
-                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
-                    ],
-                    "WHEN"
-                  ],
-                  "WHEN"
-                ]
-              },
               "when": [
-                {"left": "$event.die.type", "op": "eq", "right": "slash"},
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
-                  "op": "gt",
-                  "right": 0
-                },
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
-                  "op": "eq",
-                  "right": false
-                }
-              ]
+                {"left": "$event.die.use_state.羽流首斩", "op": "eq", "right": true}
+              ],
+              "operation": {"op": "program", "code": ["羽流首斩结算", {"literal": {"剑术": "羽流·制衡"}}, "PUBLISH"]}
+            },
+            {
+              "description": "-不属于上述两种情况：获得1层羽流·制衡并获得羽流·势层数一半（向上取整）数量的护盾",
+              "trigger": "before_dice_hit",
+              "when": [
+                {"left": "$event.die.use_state.羽流首斩", "op": "eq", "right": true},
+                {"left": "$event.one_sided", "op": "eq", "right": true},
+                {"left": "$event.clash_result", "op": "eq", "right": null},
+                {"left": "$event.hit_index", "op": "eq", "right": 1}
+              ],
+              "operation": {"op": "program", "code": ["羽流首斩结算", {"literal": {"剑术": "羽流·制衡"}}, "PUBLISH"]}
             },
             {
               "description": "-不属于上述两种情况：获得1层羽流·制衡并获得羽流·势层数一半（向上取整）数量的护盾",
               "trigger": "after_dice_use",
+              "when": [
+                {"left": "$event.die.use_state.羽流首斩", "op": "eq", "right": true},
+                {"left": "$event.clash_result", "op": "eq", "right": null},
+                {"left": "$event.die.hit_index", "op": "eq", "right": 0}
+              ],
+              "operation": {"op": "program", "code": ["羽流首斩结算", {"literal": {"剑术": "羽流·制衡"}}, "PUBLISH"]}
+            },
+            {
+              "description": "成功触发上述效果并获取了羽流剑术状态后，消耗全部羽流·势。",
+              "trigger_type": "event",
+              "trigger": "羽流首斩结算",
+              "subject": "source",
+              "when": [
+                {"left": "$event.die.type", "op": "eq", "right": "slash"},
+                {"left": "$event.card.use_state.羽流已结算", "op": "ne", "right": true}
+              ],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$event.card.dice",
-                  ["$event.item.type", "slash", "EQ"],
-                  "FILTER", "FIRST", "$event.die.data", "IS",
+                  "$self", "$event.剑术", "STATUS_COUNT", 3, "GE", ["羽流·终"], ["$event.剑术"], "IF_ELSE", "剑术", "STORE",
+                  "$self", "$local.剑术", 1, {"call": "STATUS", "result": "actual_delta", "default": 0}, 0, "GT",
                   [
-                    "$self", "羽流·制衡", "STATUS_COUNT", 3, "GE",
-                    ["羽流·终"],
-                    ["羽流·制衡"],
-                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
-                    {"call": "STATUS", "result": "actual_delta", "default": 0},
-                    0, "GT",
+                    "$event.card", "羽流已结算", true, "SET_SKILL_STATE",
+                    "$self.statuses", "羽流·势", null, "LOOKUP", "势", "STORE", "$local.势",
                     [
-                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
+                      "$local.势", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE",
+                      "$event.剑术", "羽流·延攻", "EQ", ["$self", "强壮", "$local.份数", "STATUS"],
                       [
-                        "$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$self", "normal", "$local.份数",
-                        "SHIELD"
-                      ],
-                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
-                    ],
-                    "WHEN"
-                  ],
-                  "WHEN"
+                        "$event.剑术", "羽流·反制", "EQ", ["$player", "$local.份数", "DRAW"],
+                        ["$self", "normal", "$local.份数", "SHIELD"], "IF_ELSE"
+                      ], "IF_ELSE", "$self", "羽流·势", "all", "SPEND_STATUS"
+                    ], "WHEN"
+                  ], "WHEN"
                 ]
-              },
-              "when": [
-                {"left": "$event.die.type", "op": "eq", "right": "slash"},
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
-                  "op": "gt",
-                  "right": 0
-                },
-                {
-                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
-                  "op": "eq",
-                  "right": false
-                },
-                {"left": "$event.clash_result", "op": "eq", "right": null}
-              ]
+              }
             },
             {
               "description": "-若上述状态在获得时超出上限，则改为获取1层羽流·终",
