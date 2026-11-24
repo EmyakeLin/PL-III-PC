@@ -1,3 +1,4 @@
+from decimal import Decimal
 import operator
 import random
 
@@ -7,6 +8,7 @@ from entry.play_conditions import record_card_play
 from entry.program import adjusted_value
 from entry.scheduling import schedule_effect
 from models.card import Card, CardState
+from models.character import SHIELD_FIELDS, _public_amount
 from models.die_response import DieResponse, SkillDieTemplate
 from models.duel import DuelSlot
 from models.opcode import OpCode
@@ -656,6 +658,74 @@ def handle_damage_modifier(ctx):
     if kind not in ("damage_add", "damage_multiply", "armor") or grade not in GRADE_RANK:
         raise ValueError(f"无效的伤害修正 {kind!r} / {grade!r}")
     channel.append((kind, amount, grade))
+
+
+def handle_shield_defense(ctx):
+    rule, holder, channel = ctx.pop(), ctx.pop(), ctx.pop()
+    if not isinstance(channel, list):
+        raise ValueError("护盾防卫需要待结算的防卫通道")
+    if not isinstance(rule, (list, tuple)):
+        raise ValueError("护盾防卫需要可执行的规则代码块")
+    authority = ctx.executions[-1].entry.authority if ctx.executions else 0
+    channel.append((holder, rule, authority))
+
+
+def _apply_shield_settlement(ctx, holder, shield_kind, requested, *, blocked=None):
+    settlement = ctx.event.get("_shield_settlement")
+    if settlement is None:
+        raise ValueError("护盾结算指令只能在伤害护盾结算期间使用")
+    if holder is None or not holder.is_alive:
+        return 0
+    field = SHIELD_FIELDS[shield_kind]
+    balance = Decimal(str(getattr(holder, field)))
+    req = max(Decimal(0), Decimal(str(requested)))
+    spent = min(balance, req)
+    if blocked is not None:
+        cap = min(settlement["remaining"], max(Decimal(0), Decimal(str(blocked))))
+        if req > 0:
+            cap = min(cap, (spent * max(Decimal(0), Decimal(str(blocked)))) // req)
+        if cap <= 0:
+            return 0
+        setattr(holder, field, _public_amount(balance - spent))
+        settlement["remaining"] -= cap
+        settlement["absorbed"][field] = _public_amount(Decimal(str(settlement["absorbed"].get(field, 0))) + cap)
+        if holder is not settlement["target"]:
+            settlement["borrowed_absorbed"].append({
+                "holder": holder.combat_name, "field": field,
+                "spent": _public_amount(spent), "blocked": _public_amount(cap),
+            })
+        return _public_amount(cap)
+    if spent <= 0:
+        return 0
+    setattr(holder, field, _public_amount(balance - spent))
+    settlement["eroded"][field] = _public_amount(Decimal(str(settlement["eroded"].get(field, 0))) + spent)
+    if holder is not settlement["target"]:
+        settlement["borrowed_eroded"].append({
+            "holder": holder.combat_name, "field": field, "worn": _public_amount(spent),
+        })
+    return _public_amount(spent)
+
+
+def handle_shield_absorb(ctx):
+    blocked_damage, shield_cost, shield_kind, holder = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
+    return _apply_shield_settlement(ctx, holder, shield_kind, shield_cost, blocked=blocked_damage)
+
+
+def handle_shield_erode(ctx):
+    amount, shield_kind, holder = ctx.pop(), ctx.pop(), ctx.pop()
+    return _apply_shield_settlement(ctx, holder, shield_kind, amount)
+
+
+def handle_skip_shield_erosion(ctx):
+    shield_kind = ctx.pop()
+    settlement = ctx.event.get("_shield_settlement")
+    if settlement is None:
+        raise ValueError("SKIP_SHIELD_EROSION 只能在伤害护盾结算期间使用")
+    field = SHIELD_FIELDS[shield_kind]
+    if field in settlement["erode_pools"]:
+        settlement["erode_pools"].remove(field)
+        return True
+    return False
 
 
 def handle_roll(ctx):
@@ -1322,6 +1392,9 @@ DISPATCH_TABLE = {
     OpCode.SET_STATUS_OVERFLOW: handle_set_status_overflow,
     OpCode.UPDATE_ROLL: handle_roll_update, OpCode.QUEUE_ROLL_UPDATE: handle_roll_update,
     OpCode.ADD_DAMAGE_MODIFIER: handle_damage_modifier,
+    OpCode.ADD_SHIELD_DEFENSE: handle_shield_defense,
+    OpCode.SHIELD_ABSORB: handle_shield_absorb, OpCode.SHIELD_ERODE: handle_shield_erode,
+    OpCode.SKIP_SHIELD_EROSION: handle_skip_shield_erosion,
     OpCode.WINDOW_OPEN: lambda ctx: ctx.push(ctx.game.special.window_open(ctx.pop())),
     OpCode.SET_CARD_FACE: handle_set_card_face, OpCode.SET_PLACEMENT_LOCK: handle_placement_lock,
     OpCode.WITH_BINDINGS: handle_with_bindings,
@@ -1412,6 +1485,10 @@ OPERANDS = {
     OpCode.SET_STATUS_OVERFLOW: ("target", "status", "amount"),
     OpCode.UPDATE_ROLL: ("die", "mode", "amount"), OpCode.QUEUE_ROLL_UPDATE: ("die", "mode", "amount"),
     OpCode.ADD_DAMAGE_MODIFIER: ("target", "channel", "kind", "amount", "grade"),
+    OpCode.ADD_SHIELD_DEFENSE: ("channel", "holder", "rule"),
+    OpCode.SHIELD_ABSORB: ("holder", "shield_kind", "shield_cost", "blocked_damage"),
+    OpCode.SHIELD_ERODE: ("holder", "shield_kind", "amount"),
+    OpCode.SKIP_SHIELD_EROSION: ("shield_kind",),
     OpCode.WINDOW_OPEN: ("window",), OpCode.SET_CARD_FACE: ("card", "face"),
     OpCode.SET_PLACEMENT_LOCK: ("card", "locked"), OpCode.WITH_BINDINGS: ("names", "block"),
     OpCode.MAP: ("collection", "expression"), OpCode.FLATTEN: ("collection",), OpCode.FIRST: ("collection",),

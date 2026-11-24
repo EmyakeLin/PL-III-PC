@@ -16,6 +16,7 @@ MODULES = (
     "tests.test_scheduled_effect_semantics",
     "tests.test_shared_status_entries",
     "tests.test_rear_duel",
+    "tests.test_shield_defense",
 )
 
 

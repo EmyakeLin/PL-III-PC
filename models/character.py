@@ -543,39 +543,88 @@ class Character:
 
     def apply_resolved_damage(self, incoming, grade):
         """Settle a resolved damage amount against shields and return the HP lost to this hit."""
+        from entry.program import execute_program_block
+
         if not self.is_alive or incoming <= 0:
             return 0
         remaining = Decimal(str(incoming))
         absorbed, eroded = {}, {}
-        multiplier = self._effect_context.event.get("damage_multiplier", 1)
+        ctx = self._effect_context
+        multiplier = ctx.event.get("damage_multiplier", 1)
         # A shield below the incident grade wears down even when it cannot absorb damage.
         if grade == "concept":
             absorb = ("concept_shield",)
-            erode = ("shield", "reinforced_shield")
+            erode = ["shield", "reinforced_shield"]
         elif grade == "pierce":
             absorb = ("reinforced_shield",)
-            erode = ("shield",)
+            erode = ["shield"]
         else:
             absorb = ("reinforced_shield", "shield")
-            erode = ()
+            erode = []
         for field in absorb:
             balance = Decimal(str(getattr(self, field)))
             blocked = min(balance, remaining)
             setattr(self, field, _public_amount(balance - blocked))
             remaining -= blocked
             absorbed[field] = _public_amount(blocked)
+        settlement = {
+            "target": self,
+            "incoming": Decimal(str(incoming)),
+            "remaining": remaining,
+            "absorbed": absorbed,
+            "eroded": eroded,
+            "erode_pools": erode,
+            "borrowed_absorbed": [],
+            "borrowed_eroded": [],
+        }
+        for holder, rule, authority in ctx.event.get("shield_defenses") or ():
+            if holder is not None and not holder.is_alive:
+                continue
+            previous_stack = ctx.stack
+            ctx.stack = []
+            try:
+                with ctx.binding(
+                    holder=holder,
+                    target=self,
+                    incoming=_public_amount(settlement["incoming"]),
+                    remaining=_public_amount(settlement["remaining"]),
+                    penetration=grade,
+                    erode_pools=settlement["erode_pools"],
+                    authority=authority,
+                    _shield_settlement=settlement,
+                ):
+                    execute_program_block(ctx, rule)
+            finally:
+                ctx.stack = previous_stack
+        remaining = settlement["remaining"]
         for field in erode:
             balance = Decimal(str(getattr(self, field)))
             worn = min(balance, Decimal(str(incoming)))
             setattr(self, field, _public_amount(balance - worn))
             eroded[field] = _public_amount(worn)
+        shield_absorbed = _public_amount(sum(Decimal(str(v)) for v in absorbed.values()))
+        shield_eroded = _public_amount(sum(Decimal(str(v)) for v in eroded.values()))
+        ctx.event.update(
+            absorbed=absorbed,
+            eroded=eroded,
+            shield_absorbed=shield_absorbed,
+            shield_eroded=shield_eroded,
+            shield_lost=_public_amount(Decimal(str(shield_absorbed)) + Decimal(str(shield_eroded))),
+            borrowed_absorbed=settlement["borrowed_absorbed"],
+            borrowed_eroded=settlement["borrowed_eroded"],
+        )
         lost = self._deduct_hp(remaining)
         self._status_event("on_direct_damage_applied",
-                           suppressed_damage_statuses=self._effect_context.event.get("suppressed_damage_statuses", ()))
+                           suppressed_damage_statuses=ctx.event.get("suppressed_damage_statuses", ()))
         self.check_death()
+        extra = {}
+        if settlement["borrowed_absorbed"]:
+            extra["borrowed_absorbed"] = settlement["borrowed_absorbed"]
+        if settlement["borrowed_eroded"]:
+            extra["borrowed_eroded"] = settlement["borrowed_eroded"]
         self.record("damage_settled", grade=grade, incoming=incoming, multiplier=multiplier,
                     absorbed=absorbed, eroded=eroded, hp_lost=lost, hp=self.hp, maximum=self.max_hp,
-                    cause=self._effect_context.event.get("damage_cause"))
+                    cause=ctx.event.get("damage_cause"), **extra)
         return lost
 
     def check_death(self):

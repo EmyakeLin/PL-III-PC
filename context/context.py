@@ -362,7 +362,9 @@ class Context:
             return None
         if originating_entry is not None:
             fields["execution"] = originating_entry
-        if opcode == OpCode.RESOLVE_STATUS_AMOUNT:
+        if opcode == OpCode.APPLY_DAMAGE:
+            fields.setdefault("shield_defenses", [])
+        elif opcode == OpCode.RESOLVE_STATUS_AMOUNT:
             fields["value_ref"] = ValueBounds()
         elif opcode == OpCode.RESOLVE_RANGE_DEFICIT:
             card = fields["card"]

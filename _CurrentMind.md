@@ -1,5 +1,15 @@
 # 当前设计与工作记录
 
+## 通用护盾防卫通道 `ADD_SHIELD_DEFENSE`（2026-11-24）
+
+- **已确认语义**：
+  - 在 `OpCode.APPLY_DAMAGE` 阶段暴露 `$event.shield_defenses` 通道，`OpCode.ADD_SHIELD_DEFENSE` 仅接收 `(channel, holder, rule)` 三个操作数，不向内核传入任何比例、等级上限或磨损开关等业务特例。
+  - `Character.apply_resolved_damage` 在结算受击者自身默认抵挡之后、默认磨损之前，按注册顺序在独立求值栈上执行各 `(holder, rule)`，暴露 `$event.holder`、`$event.target`、`$event.incoming`、`$event.remaining`、`$event.penetration` 与 `$event.erode_pools`。
+  - 新增专用于伤害护盾结算期间的原子操作 `OpCode.SHIELD_ABSORB`（`holder, shield_kind, shield_cost, blocked_damage`）、`OpCode.SHIELD_ERODE`（`holder, shield_kind, amount`）与 `OpCode.SKIP_SHIELD_EROSION`（`shield_kind`），将实际吸收、磨损及跨位借盾明细写入 `damage_settled` 与 `AFTER APPLY_DAMAGE` 事件的 `shield_absorbed` / `shield_eroded` / `shield_lost`。
+- **验证结果**：
+  - 新增 [护盾防卫通道专测](tests/test_shield_defense.py)（4 项，覆盖 2:1 穿甲抵挡的 `0/1/2/3/5/10^6` 边界与 `SKIP_SHIELD_EROSION` 留存对比、1:3 自定义规则、多友方顺序借盾与已阵亡跳过、非法调用上下文校验），接入 `tests.entry_semantics`。
+  - `python -m unittest tests.entry_semantics` **223/223 通过**。
+
 ## 双形态技能并排卡面展示与结构化投影（2026-11-24）
 
 - **结构化双形态投影**（`displayer.py`、`battle_ui/match.py`）：
