@@ -577,7 +577,7 @@ class Character:
             "borrowed_absorbed": [],
             "borrowed_eroded": [],
         }
-        for holder, rule, authority in ctx.event.get("shield_defenses") or ():
+        for holder, rule, authority, issuer in ctx.event.get("shield_defenses") or ():
             if holder is not None and not holder.is_alive:
                 continue
             previous_stack = ctx.stack
@@ -591,6 +591,7 @@ class Character:
                     penetration=grade,
                     erode_pools=settlement["erode_pools"],
                     authority=authority,
+                    _authority_owner=issuer,
                     _shield_settlement=settlement,
                 ):
                     execute_program_block(ctx, rule)

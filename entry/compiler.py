@@ -80,7 +80,8 @@ def compile_program(tokens, *, expand=expand_command):
                     if result is not None and not isinstance(result, str):
                         raise ValueError("调用的结果字段需要名称")
                     options = token.get("with", {})
-                    if not isinstance(options, dict) or {"result_field", "defer_payment", "opcode", "authority", "execution"} & options.keys():
+                    reserved = {"result_field", "defer_payment", "opcode", "authority", "_authority_owner", "execution"}
+                    if not isinstance(options, dict) or reserved & options.keys():
                         raise ValueError("调用参数不能覆盖执行栈或词条话语权")
                     yield Invocation(opcode, tuple(options.items()), result, token.get("default"))
                 elif "field" in token:

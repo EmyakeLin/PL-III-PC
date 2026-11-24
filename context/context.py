@@ -4,7 +4,7 @@ from copy import copy
 import random
 
 from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
-from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
+from entry.entry import AUTHORITY, Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.scheduling import deliver_scheduled
 from models.opcode import OpCode
 from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
@@ -84,9 +84,20 @@ class Context:
             self.op_stack[-1] = value
 
     def cancel_op(self, authority=None, *, frame=-1):
-        if (self.op_stack and not self._protected_op(self.op_stack[frame], self._op_events[frame])
-                and (authority is None or authority >= self._op_events[frame].get("authority", 0))):
-            self.op_stack[frame] = None
+        if not self.op_stack:
+            return
+        event = self._op_events[frame]
+        required = event.get("authority", 0)
+        if self._protected_op(self.op_stack[frame], event) or (authority is not None and authority < required):
+            return
+        if authority == required == AUTHORITY["highest"]:
+            first = getattr(self.game, "first_player", None)
+            issuer = getattr(character_of(event.get("_authority_owner", event.get("source"))), "player", None)
+            owner = self.executions[-1].entry.owner if self.executions else self.event.get("_authority_owner")
+            protector = getattr(character_of(owner), "player", None)
+            if first is not None and issuer is first and protector is not None and protector is not first:
+                return
+        self.op_stack[frame] = None
 
     def range_blocks_target(self, target, *, card=None, die=None):
         """Use the actual originating skill; character and status passives remain independent."""
@@ -216,6 +227,10 @@ class Context:
     @contextmanager
     def binding(self, **fields):
         previous = self.event
+        if "authority" in fields and "_authority_owner" not in fields:
+            # Operation hooks may rebind source to their subject (e.g. the resource holder).
+            fields["_authority_owner"] = (self.executions[-1].entry.owner if self.executions
+                                          else fields.get("source", previous.get("source")))
         self.event = {**previous, **fields}
         try:
             yield self.event

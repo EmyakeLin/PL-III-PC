@@ -141,6 +141,18 @@ class ScheduledEffectTests(unittest.TestCase):
         self.ctx.dispatch_pipeline("sample", source=self.target, target=self.source)
         self.assertEqual(observed, [(self.source, self.target, 2)])
 
+    def test_highest_authority_spend_uses_the_scheduled_source_and_initiative_at_delivery(self):
+        self.ctx.register_entries(self.target, [dict(trigger="BEFORE SPEND_STATUS", subject="target",
+            authority="最高话语权", operation={"op": "cancel"})])
+        self.target.add_status("强壮", 2)
+        for first, expected in ((self.target.player, 2), (self.source.player, 1)):
+            with self.subTest(first=first.side):
+                self.game.first_player = self.target.player if first is self.source.player else self.source.player
+                self.run_entry(self.terms(["$event.target", "强壮", 1, "SPEND_STATUS"]))
+                self.game.first_player = first
+                self.ctx.dispatch_pipeline("sample", source=self.target)
+                self.assertEqual(self.target.statuses["强壮"], expected)
+
     def test_a_nested_trigger_does_not_leak_the_callers_fields_into_its_reservation(self):
         for channel in ("pipeline", "event"):
             self.run_entry(self.terms(["$event.scheduled.target", "额外数值", "$event.unrelated",

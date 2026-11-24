@@ -443,6 +443,25 @@ class CarrierTests(unittest.TestCase):
         self.game.open_turn()
         self.assertNotIn("模板修正", self.boss.turn_state)
 
+    def test_destroy_against_crystal_protection_at_each_authority_and_initiative(self):
+        crystal = self.cards["crystal"].data
+        immunity = next(entry for entry in crystal["entries"] if entry["trigger"] == "BEFORE DESTROY")
+        for attack in range(3):
+            trigger = f"destroy_at_{attack}"
+            self.ctx.register_entries(self.one, [dict(trigger=trigger, trigger_type="event", authority=attack,
+                operation={"op": "program", "code": ["$event.target", "DESTROY"]})])
+            for protection in range(3):
+                for first in (self.human, self.machine):
+                    with self.subTest(attack=attack, protection=protection, first=first.side):
+                        self.game.first_player = first
+                        card = Card(self.machine, dict(crystal, entries=[dict(immunity, authority=protection)]), self.boss)
+                        with self.ctx.collect_facts() as facts:
+                            self.ctx.publish(trigger, dict(source=self.one, target=card))
+                        destroyed = attack > protection or (attack == protection == 2 and first is self.human)
+                        self.assertEqual(card.destroyed, destroyed)
+                        self.assertEqual([e["instance_id"] for k, e in facts if k == "card_destroyed"],
+                                         [card.instance_id] if destroyed else [])
+
     def test_crystal_survives_destroy_and_repeats_its_d100(self):
         crystal = self.cards["crystal"]
         self.assertFalse(self.ctx.eval_block([crystal, OpCode.DESTROY]))

@@ -109,7 +109,8 @@ def deliver_scheduled(ctx, event_type, event, fields, valid=None):
         previous_event, previous_stack, previous_executions = ctx.event, ctx.stack, ctx.executions
         ctx.stack, ctx.executions = [], []
         ctx.event = {**delivery, "observed": observed, "source": effect.source, "target": effect.target,
-                     "side": getattr(getattr(effect.source, "player", None), "side", None), "authority": effect.authority}
+                     "side": getattr(getattr(effect.source, "player", None), "side", None), "authority": effect.authority,
+                     "_authority_owner": effect.source}
         effect.executing = True
         try:
             execute_program_block(ctx, effect.block)

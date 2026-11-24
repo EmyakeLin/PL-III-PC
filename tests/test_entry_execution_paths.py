@@ -59,6 +59,13 @@ def fire(ctx, owner, trigger, **fields):
 
 
 class PrintedCountingTests(unittest.TestCase):
+    def test_opcode_call_cannot_override_authority_or_its_owner(self):
+        from entry.compiler import compile_program
+
+        for field in ("authority", "_authority_owner"):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "话语权"):
+                compile_program([{"call": "DESTROY", "with": {field: None}}])
+
     def test_draw_command_reaches_the_same_draw_opcode_for_each_amount(self):
         from entry.compiler import prepare_effect
         from player.card_space import CardSpace

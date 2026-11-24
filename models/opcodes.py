@@ -671,8 +671,7 @@ def handle_shield_defense(ctx):
         raise ValueError("护盾防卫需要待结算的防卫通道")
     if not isinstance(rule, (list, tuple)):
         raise ValueError("护盾防卫需要可执行的规则代码块")
-    authority = ctx.executions[-1].entry.authority if ctx.executions else 0
-    channel.append((holder, rule, authority))
+    channel.append((holder, rule, ctx.event.get("authority", 0), ctx.event.get("_authority_owner")))
 
 
 def _apply_shield_settlement(ctx, holder, shield_kind, requested, *, blocked=None):

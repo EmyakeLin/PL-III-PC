@@ -216,6 +216,21 @@ class ShieldDefenseChannelTests(unittest.TestCase):
         self.assertEqual(donor_b.reinforced_shield, 2)
         self.assertEqual(lost2, 3)
 
+    def test_highest_authority_shield_rule_keeps_its_issuer_during_damage_settlement(self):
+        ctx = TraceContext()
+        defender = actor_for(ctx, 1)
+        attacker = actor_for(ctx, 2)
+        ctx.game = defender.game
+        ctx.register_entries(defender, [dict(self._pierce_two_to_one_rule(), authority="最高话语权")])
+        ctx.register_entries(attacker, [dict(trigger="BEFORE SHIELD_ABSORB", subject="any",
+            authority="最高话语权", operation={"op": "cancel"})])
+        for first, expected_loss in ((defender.player, 0), (attacker.player, 1)):
+            with self.subTest(first=first.side):
+                ctx.game.first_player = first
+                defender.shield = 2
+                lost = ctx.deal_damage(attacker, defender, 1, penetration="pierce", result_field="hp_lost")
+                self.assertEqual(lost, expected_loss)
+
     def test_shield_settlement_opcodes_validate_context_and_channel(self):
         ctx = Context()
         actor = actor_for(ctx, 1)
