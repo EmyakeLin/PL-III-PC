@@ -375,6 +375,44 @@ class EmyakeTests(unittest.TestCase):
                 self.assertEqual(self.enemy.hp, 100 if explicit else 98)
                 self.assertEqual(self.actor.statuses.get("复原词条", 0), int(not explicit))
 
+    def test_extreme_range_only_blanks_the_die_reached_in_each_round(self):
+        for skill_range in (0, 3):
+            with self.subTest(skill_range=skill_range):
+                self.setUp()
+                self.status(self.actor, "铭刻", 1)
+                dice = [dict(type=kind, level=1, calc_formula="50", entries=["1超穿甲"],
+                             resource_cost={"status": "铭刻", "amount": 1})
+                        for kind in ("slash", "pierce", "blunt")]
+                if skill_range:
+                    dice[1]["ignore_range"] = 3
+                card = Card(self.left, dict(id="per_die", name="逐骰核对", cost=0, dice=dice), self.actor)
+                foe = self.opposition([1, 1, 1], range_level=skill_range)
+                if not skill_range:
+                    foe.dice[0]["range_level"] = foe.dice[2]["range_level"] = 3
+                planned = list(card.planned_dice(self.game))
+                snapshots = []
+
+                def observe(ctx):
+                    snapshots.append(tuple((d.type, d.blanked, d.range_deficit) for d in planned))
+
+                self.ctx.register_entries(self.actor, [
+                    dict(trigger="on_skill_use", operation=observe),
+                    dict(trigger="before_dice_use", operation=observe),
+                ])
+                self.assertTrue(self.game.place_in_duel(1, card, 0))
+                self.assertTrue(self.game.place_in_duel(2, foe, 0))
+                self.start_duel()
+                slash, pierce, blunt = ((d["type"], False, 0) for d in dice)
+                blank = ("blank", True, 3)
+                self.assertEqual(snapshots, [
+                    (slash, pierce, blunt), (blank, pierce, blunt),
+                    (blank, pierce, blunt), (blank, pierce, blank),
+                ])
+                self.assertEqual(card.instantiated_dice, planned)
+                self.assertEqual([d.landed_hits for d in planned], [0, 1, 0])
+                self.assertEqual([d.resource_paid for d in planned], [False, True, False])
+                self.assertNotIn("铭刻", self.actor.statuses)
+
     def test_weave_against_carrier_brand_keeps_both_public_clashes_after_flash_dissolves(self):
         for route in ("regular", "intercept", "pull"):
             for first in (1, 2):

@@ -75,6 +75,7 @@ class Dice:
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
         self._type = dice_type_map[kind].name.lower()
+        self.paired_range_deficit = 0
         self.blanked_by_range = False
         self._printed_level = DiceLevel(1 if self.type == "skip" else data["level"])
         self._printed_roll_max = data.get("roll_max", dice_value_range[self._printed_level][1])
@@ -129,12 +130,19 @@ class Dice:
 
     @property
     def range_deficit(self):
-        return self.card.range_deficit if self.card and self.effective_ignore_range < 3 else 0
+        return self.paired_range_deficit if self.paired_range_deficit and self.effective_ignore_range < 3 else 0
 
     @property
     def blanked(self):
-        return (self.type == "blank" or self.range_deficit >= 3
-                or bool(self.card and self.card.use_state.get("blank_skill")))
+        return self.type == "blank" or bool(self.card and self.card.use_state.get("blank_skill"))
+
+    def apply_paired_range(self, *, blank_at):
+        """Apply this pairing to this use only. Future uses keep their printed dice."""
+        self.paired_range_deficit = self.card.range_deficit
+        if self.card.use_state.get("blank_skill"):
+            self.make_blank()
+        else:
+            self.blanked_by_range = blank_at is not None and self.range_deficit >= blank_at
 
     @property
     def is_passive(self):

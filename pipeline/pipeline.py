@@ -823,23 +823,27 @@ class Pipeline:
         if not die.data.get("resource_cost") or die.resource_paid:
             return True
         with self._die_range(die, opponent):
+            if die.range_deficit >= 3:
+                return True
             return die.can_afford_use() if skipping else die.pay_use_cost()
 
     @staticmethod
     @contextmanager
     def _die_range(die, opponent):
-        if opponent is None:
-            yield
-            return
         card = die.card
         previous = card.range_opponent, card.range_deficit
+        previous_die_deficit = die.paired_range_deficit
         try:
-            card.set_range_opponent(opponent.card, own_range=die.effective_range,
-                                    opposing_range=opponent.effective_range,
-                                    ignore_range=die.effective_ignore_range)
+            if opponent is not None:
+                card.set_range_opponent(opponent.card, own_range=die.effective_range,
+                                        opposing_range=opponent.effective_range,
+                                        ignore_range=die.effective_ignore_range)
+            die.paired_range_deficit = card.range_deficit
             yield
         finally:
-            card.range_opponent, card.range_deficit = previous
+            die.paired_range_deficit = previous_die_deficit
+            if opponent is not None:
+                card.range_opponent, card.range_deficit = previous
 
     def _play_round(self, ready):
         self._rounds_started += 1
@@ -890,11 +894,9 @@ class Pipeline:
         solo = len(ready) == 1 and ready[0].die.can_attack_alone
         attempted_responses = set()
         response = self._pending_response_die(ready[0]) if solo else None
+        blank_at = 2 if solo else 3
         for pipe in ready:
-            if pipe.card.use_state.get("blank_skill"):
-                pipe.die.make_blank()
-            else:
-                pipe.die.blanked_by_range = response is None and pipe.die.range_deficit >= (2 if solo else 3)
+            pipe.die.apply_paired_range(blank_at=blank_at if response is None else None)
         for pipe in ready:
             if pipe.die.is_attack and (len(ready) == 2 or solo) and self._die_live(pipe):
                 with self._die_range(pipe.die, response):
@@ -1043,10 +1045,7 @@ class Pipeline:
                 pipe.card.set_range_opponent(other.card, own_range=pipe.die.effective_range,
                                              opposing_range=other.die.effective_range,
                                              ignore_range=pipe.die.effective_ignore_range)
-                if pipe.card.use_state.get("blank_skill"):
-                    pipe.die.make_blank()
-                else:
-                    pipe.die.blanked_by_range = pipe.die.range_deficit >= 3
+                pipe.die.apply_paired_range(blank_at=3)
             self.game.context.record("skill_intercept" if skill else "reserved_intercept",
                                      target=target.combat_name, card=reply.card.name, position=die.position)
             starters = participants if start_attacker else [reply]

@@ -26,6 +26,31 @@ const collectTexts = (node, out = []) => {
   return out;
 };
 
+test('range pressure changes only the dice reported blank by the combat engine', () => {
+  const card = {
+    name: '逐骰核对', cost: 0, range_deficit: 3,
+    dice: [
+      { type: 'slash', roll_max: 6, entries: ['首骰词条'] },
+      { type: 'pierce', roll_max: 8, entries: ['次骰词条'] },
+      { type: 'block', roll_max: 12, entries: ['末骰词条'] },
+    ],
+  };
+  for (const firstType of [null, 'blank', 'slash']) {
+    card.live_dice = firstType ? [{ position: 1, type: firstType }, { position: 2, type: 'pierce' }] : [];
+    for (const builder of [buildUniformCard, buildFullCard, buildBoardCardTag]) {
+      const texts = collectTexts(builder(card, { width: 240, height: 320, rangeDeficit: 3 }));
+      for (const [range, type] of [['1~6', firstType ?? 'slash'], ['1~8', 'pierce'], ['1~12', 'block']]) {
+        assert.ok(texts.some(t => t.text === range && t.fill === DIE_STYLE[type].color), range);
+      }
+      if (builder !== buildBoardCardTag) {
+        assert.equal(texts.some(t => t.text === '首骰词条'), firstType !== 'blank');
+        assert.ok(texts.some(t => t.text === '次骰词条'));
+        assert.ok(texts.some(t => t.text === '末骰词条'));
+      }
+    }
+  }
+});
+
 test('settled clash dice retain win/loss colors on the table, in the detail view and in duel history', () => {
   const card = {
     name: '闪回识破', cost: 0, used: true, dissolved: true,

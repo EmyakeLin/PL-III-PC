@@ -231,13 +231,6 @@ export function buildCardBack(side = 1, { width = 82, height = 104, accentColor 
   return root;
 }
 
-function dieShowsBlank(die, live, deficit) {
-  if (live && (live.type === 'blank' || live.result != null || live.rolled_value != null)) {
-    return live.type === 'blank';
-  }
-  return deficit >= 3 && (die.ignore_range ?? 0) < 3;
-}
-
 /**
  * Razor-sharp 1:1 Strictly VERTICAL Portrait Board Mini-Card (W : H = 1 : 1.40, NEVER horizontal!):
  * Shares the exact vertical anatomy & physical card-stock craft of buildFullCard:
@@ -331,8 +324,8 @@ export function buildBoardCardTag(card, {
     const die = dice[i];
     const ry = cursorY + i * rowH;
     const live = card.live_dice?.findLast(d => d?.position === i + 1);
-    const blankDie = dieShowsBlank(die, live, rangeDeficit);
-    const dType = blankDie ? 'blank' : die.type;
+    const dType = live?.type ?? die.type;
+    const blankDie = dType === 'blank';
     const ds = DIE_STYLE[dType] || DIE_STYLE.blank;
     const dmgParts = blankDie ? [] : resolveDieDamageParts(die);
     const badge = dmgParts[0] || null;
@@ -457,7 +450,7 @@ export function buildFullCard(card, {
       const row = buildUnifiedDieRow(die, {width: targetInnerW, active, destroyed,
         spent: destroyed || (activeDieNumber !== null && position < activeDieNumber),
         dense, compact, showDivider: idx < dice.length - 1,
-        liveResult: live?.result ?? null, isBlanked: dieShowsBlank(die, live, rangeDeficit)});
+        liveResult: live?.result ?? null, isBlanked: (live?.type ?? die.type) === 'blank'});
       row.position.set(0, y);
       box.addChild(row);
       y += row._height + (idx < dice.length - 1 ? 1 : 0);
@@ -828,7 +821,7 @@ export function buildUniformCard(card, {
       destroyed: isDestroyedDie,
       dense: true,
       showDivider: idx < dice.length - 1,
-      isBlanked: dieShowsBlank(die, liveDie, effectiveDeficit),
+      isBlanked: (liveDie?.type ?? die.type) === 'blank',
       liveScore,
       liveResult,
     });
