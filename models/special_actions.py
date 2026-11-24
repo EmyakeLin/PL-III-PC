@@ -161,12 +161,19 @@ class SpecialActions:
             cards.append(card)
         return cards
 
+    @staticmethod
+    def _decision_owner_alive(choice):
+        owner = choice.invocation.entry.owner
+        if owner is None:
+            return any(character.is_alive for character in choice.player.characters)
+        actor = character_of(owner)
+        return actor is not None and actor.is_alive
+
     @property
     def card_decision(self):
         while self._card_choices:
             choice = self._card_choices[0]
-            actor = character_of(choice.invocation.entry.owner)
-            if (actor is not None and actor.is_alive and not choice.invocation.cancelled
+            if (self._decision_owner_alive(choice) and not choice.invocation.cancelled
                     and not choice.invocation.entry.blanked and self._valid_candidates(choice)):
                 return choice
             self._card_choices.pop(0)
@@ -218,8 +225,7 @@ class SpecialActions:
     def option_decision(self):
         while self._option_choices:
             choice = self._option_choices[0]
-            actor = character_of(choice.invocation.entry.owner)
-            if (actor is not None and actor.is_alive and not choice.invocation.cancelled
+            if (self._decision_owner_alive(choice) and not choice.invocation.cancelled
                     and not choice.invocation.entry.blanked and choice.options):
                 return choice
             self._option_choices.pop(0)
@@ -278,8 +284,7 @@ class SpecialActions:
     def character_decision(self):
         while self._character_choices:
             choice = self._character_choices[0]
-            actor = character_of(choice.invocation.entry.owner)
-            if (actor is not None and actor.is_alive and not choice.invocation.cancelled
+            if (self._decision_owner_alive(choice) and not choice.invocation.cancelled
                     and not choice.invocation.entry.blanked and self._valid_character_candidates(choice)):
                 return choice
             self._character_choices.pop(0)

@@ -8,11 +8,20 @@
         "label": "烧伤", "keywords": ["ignite", "引燃"],
         "operation": {"op": "program", "code": [
           "$event.target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", "units", "STORE",
+          "$event.target", "爆燃", "STATUS_COUNT", "deflag", "STORE",
           {"local": "units"}, 0, "GT",
-          ["$event.target", {"local": "units"}, 3, "MIN", "normal", "none", "DAMAGE"], "WHEN",
+          [
+            "$event.target", {"local": "units"}, 3, {"local": "deflag"}, "ADD", "MIN", "normal", "none", "DAMAGE",
+            {"local": "deflag"}, 0, "GT", ["$event.target", "爆燃", -1, "STATUS"], "WHEN"
+          ], "WHEN",
           "$event.target", "烧伤", 0, {"local": "units"}, 2, "ADD", "SUB", "STATUS"
         ]}
       }
+    },
+    "爆燃": {
+      "aliases": ["deflagration"],
+      "polarity": "negative",
+      "description": "烧伤的伤害上限+X（即原始伤害至多为 3+X 点）；实际触发烧伤伤害时减少 1 层。"
     },
     "裂血": {"aliases": ["bleed"], "cap": 9, "active_from": 6, "active_label": "裂血（爆发）"},
     "呼吸": {
@@ -53,14 +62,26 @@
         ]}
       }
     ],
-    "致命失衡": [{
-      "trigger": "on_direct_damage_applied",
-      "description": "持有至少 1 层时，所受直伤翻倍，多层共用这一倍率。受到至少 1 点直伤后减少 1 层，每轮用骰至多因此减少 1 层。即使护盾挡下全部伤害，也会消耗层数。",
-      "operation": {"op": "program", "code": [
-        "$event.suppressed_damage_statuses", "致命失衡", "CONTAINS", "NOT",
-        "$self", "致命失衡损耗", "ROUND_TRIGGER_COUNT", 1, "LT", "AND",
-        ["$self", "致命失衡损耗", "RECORD_ROUND_TRIGGER", "$self", "致命失衡", -1, "STATUS"], "WHEN"
-      ]}
-    }]
+    "致命失衡": [
+      {
+        "trigger": "BEFORE RESOLVE_DAMAGE_STATUS",
+        "subject": "target",
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "致命失衡"},
+          {"left": "$event.damage_cause", "op": "eq", "right": "烧伤"}
+        ],
+        "description": "烧伤与引燃伤害不触发亦不消耗致命失衡。",
+        "operation": {"op": "cancel"}
+      },
+      {
+        "trigger": "on_direct_damage_applied",
+        "description": "持有至少 1 层时，所受直伤翻倍，多层共用这一倍率。受到至少 1 点直伤后减少 1 层，每轮用骰至多因此减少 1 层。即使护盾挡下全部伤害，也会消耗层数。",
+        "operation": {"op": "program", "code": [
+          "$event.suppressed_damage_statuses", "致命失衡", "CONTAINS", "NOT",
+          "$self", "致命失衡损耗", "ROUND_TRIGGER_COUNT", 1, "LT", "AND",
+          ["$self", "致命失衡损耗", "RECORD_ROUND_TRIGGER", "$self", "致命失衡", -1, "STATUS"], "WHEN"
+        ]}
+      }
+    ]
   }
 }

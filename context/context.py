@@ -339,6 +339,7 @@ class Context:
             fields["damage_card"] = (fields["damage_die"].card if fields["damage_die"] is not None
                                      else originating_entry.entry.owning_card if originating_entry else None)
             fields["damage_status"] = originating_entry.entry.status_name if originating_entry else None
+            fields.setdefault("damage_source", fields.get("source") or self.event.get("source") or character_of(owner))
             if originating_entry and fields.get("damage_cause") is None:
                 fields["damage_cause"] = originating_entry.entry.damage_cause
         elif opcode == OpCode.ACTIVATE_STATUS:
@@ -364,6 +365,7 @@ class Context:
             fields["execution"] = originating_entry
         if opcode == OpCode.APPLY_DAMAGE:
             fields.setdefault("shield_defenses", [])
+            fields.setdefault("damage_source", fields.get("damage_source") or fields.get("source") or self.event.get("source"))
         elif opcode == OpCode.RESOLVE_STATUS_AMOUNT:
             fields["value_ref"] = ValueBounds()
         elif opcode == OpCode.RESOLVE_RANGE_DEFICIT:

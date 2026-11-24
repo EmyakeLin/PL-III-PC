@@ -19,6 +19,7 @@ MODULES = (
     "tests.test_shield_defense",
     "tests.test_attack_redirect",
     "tests.test_choose_character",
+    "tests.test_cang_feng",
 )
 
 

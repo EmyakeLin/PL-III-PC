@@ -1,0 +1,3010 @@
+{
+  "faction": "藏锋事务所",
+  "status_rules": {
+    "偏转力场": {
+      "cap": 3,
+      "polarity": "positive",
+      "description": "上限 3 层，跨回合保留。其他友方角色承受伤害时，可将自身的护盾一并用于抵挡（无其他存活友方角色时，自身每 2 点普通护盾可抵挡 1 点穿甲伤害，尾数不足 2 点仍受磨损）。敌方进攻型骰子使用后，若受击的友方角色（含自身）未实际失去生命值，则消耗 1 层偏转力场，对攻击者施加 2 烧伤与 2 失衡并触发【防反】（每轮至多触发 1 次，每次至多由 1 名友方角色响应）。",
+      "global_entries": [
+        {
+          "trigger": "BEFORE APPLY_DAMAGE",
+          "subject": "any",
+          "when": [
+            {"left": "$event.target.is_alive", "op": "eq", "right": true},
+            {"left": "$event.amount", "op": "gt", "right": 0}
+          ],
+          "description": "【偏转力场】为友方角色借用自身护盾抵挡伤害；孤身时每 2 点普通护盾抵挡 1 点穿甲伤害。",
+          "operation": {
+            "op": "program",
+            "code": [
+              "$event.target.player.characters",
+              ["$event.item.is_alive", "$event.item", "偏转力场", "STATUS_COUNT", 0, "GT", "AND"],
+              "FILTER",
+              [
+                "$event.item", "holder", "STORE",
+                "$local.holder", "$event.target", "IS", "NOT",
+                [
+                  "$event.penetration", "normal", "EQ", "$event.penetration", "pierce", "EQ", "OR",
+                  [
+                    "$event.shield_defenses", "$local.holder",
+                    [
+                      0, "used_r", "STORE",
+                      "$event.penetration", "normal", "EQ", "$event.penetration", "pierce", "EQ", "OR",
+                      [
+                        "$event.remaining", "$event.holder.reinforced_shield", "MIN", "used_r", "STORE",
+                        {"local": "used_r"}, 0, "GT",
+                        ["$event.holder", "reinforced", {"local": "used_r"}, {"local": "used_r"}, "SHIELD_ABSORB"],
+                        "WHEN"
+                      ], "WHEN",
+                      "$event.penetration", "normal", "EQ",
+                      [
+                        "$event.remaining", {"local": "used_r"}, "SUB", 0, "MAX",
+                        "$event.holder.shield", "MIN", "used_n", "STORE",
+                        {"local": "used_n"}, 0, "GT",
+                        ["$event.holder", "normal", {"local": "used_n"}, {"local": "used_n"}, "SHIELD_ABSORB"],
+                        "WHEN"
+                      ], "WHEN"
+                    ],
+                    "ADD_SHIELD_DEFENSE"
+                  ], "WHEN"
+                ],
+                [
+                  "$local.holder.player.characters", ["$event.item.is_alive"], "FILTER", "SIZE", 1, "EQ",
+                  "$event.penetration", "pierce", "EQ", "AND",
+                  "$local.holder.shield", 0, "GT", "AND",
+                  [
+                    "$event.shield_defenses", "$local.holder",
+                    [
+                      "$event.holder.shield", 2, "FLOOR_DIV", "$event.remaining", "MIN", "blocked", "STORE",
+                      {"local": "blocked"}, 0, "GT",
+                      ["$event.holder", "normal", {"local": "blocked"}, 2, "MUL", {"local": "blocked"}, "SHIELD_ABSORB"],
+                      "WHEN",
+                      "normal", "SKIP_SHIELD_EROSION",
+                      "$event.remaining", {"local": "blocked"}, "SUB", "leftover", "STORE",
+                      {"local": "leftover"}, 0, "GT", "$event.holder.shield", 0, "GT", "AND",
+                      ["$event.holder", "normal", "$event.holder.shield", {"local": "leftover"}, "MIN", "SHIELD_ERODE"],
+                      "WHEN"
+                    ],
+                    "ADD_SHIELD_DEFENSE"
+                  ], "WHEN"
+                ],
+                "IF_ELSE"
+              ],
+              "EACH"
+            ]
+          }
+        },
+        {
+          "trigger": "AFTER DAMAGE",
+          "subject": "any",
+          "hidden": true,
+          "when": [
+            {"left": "$event.damage_die", "op": "ne", "right": null},
+            {"left": "$event.hp_lost", "op": "gt", "right": 0}
+          ],
+          "description": "记录当次进攻骰造成了实际生命流失。",
+          "operation": {
+            "op": "program",
+            "code": ["$event.damage_die", "attack_hp_lost", true, "SET_DIE_STATE"]
+          }
+        },
+        {
+          "trigger": "after_dice_use",
+          "subject": "any",
+          "when": [
+            {"left": "$event.die", "op": "ne", "right": null},
+            {"left": "$event.die.is_attack", "op": "eq", "right": true},
+            {"left": "$event.die.landed_hits", "op": "gt", "right": 0},
+            {"left": "$event.target", "op": "ne", "right": null},
+            {"left": "$event.target.is_alive", "op": "eq", "right": true},
+            {"left": "$event.source", "op": "ne", "right": null}
+          ],
+          "description": "【偏转力场】受击友方未失去生命值时，消耗 1 层力场对攻击者施加 2 烧伤与 2 失衡并触发【防反】（每轮至多 1 次）。",
+          "operation": {
+            "op": "program",
+            "code": [
+              "$event.die.use_state", "attack_hp_lost", false, "LOOKUP", "NOT",
+              "$event.die.card.player", "$event.target.player", "IS", "NOT", "AND",
+              [
+                0, "already_used", "STORE",
+                "$event.target.player.characters",
+                ["$event.item.is_alive", "$event.item", "偏转力场触发", "ROUND_TRIGGER_COUNT", 0, "GT", "AND"],
+                "FILTER", "SIZE", 0, "GT",
+                ["1", "already_used", "STORE"], "WHEN",
+                {"local": "already_used"}, 0, "EQ",
+                [
+                  "$event.target.player.characters",
+                  ["$event.item.is_alive", "$event.item", "偏转力场", "STATUS_COUNT", 0, "GT", "AND"],
+                  "FILTER", "FIRST", "field_holder", "STORE",
+                  {"local": "field_holder"}, null, "EQ", "NOT",
+                  [
+                    {"local": "field_holder"}, "偏转力场", 1,
+                    {"call": "SPEND_STATUS", "result": "result", "default": 0, "with": {"require_full": true}},
+                    1, "EQ",
+                    [
+                      "$event.target.player.characters",
+                      ["$event.item.is_alive"], "FILTER",
+                      ["$event.item", "偏转力场触发", "RECORD_ROUND_TRIGGER"], "EACH",
+                      "$event.die.card.character", "烧伤", 2, "STATUS",
+                      "$event.die.card.character", "失衡", 2, "STATUS",
+                      {
+                        "literal": {
+                          "chooser": "target",
+                          "title": "偏转力场 · 【防反】",
+                          "description": "选择至多 1 名友方角色响应本次【防反】。",
+                          "optional": true,
+                          "options": [
+                            {
+                              "id": "he_lian_counter",
+                              "label": "贺敛 · 寸火返",
+                              "description": "使用 -寸火返- 立即反击该敌人（本回合至多 1 次）",
+                              "when": [
+                                {
+                                  "left": {
+                                    "count_in": "$event.target.player.characters",
+                                    "where": [
+                                      {"left": "$event.item.is_alive", "op": "eq", "right": true},
+                                      {"left": "$event.item.id", "op": "eq", "right": "cang_feng_he_lian"},
+                                      {"left": {"field": "$event.item.turn_state", "key": "寸火返次数", "default": 0}, "op": "lt", "right": 1}
+                                    ]
+                                  },
+                                  "op": "gt", "right": 0
+                                }
+                              ],
+                              "then": {
+                                "op": "program",
+                                "code": [
+                                  "$event.target.player.characters",
+                                  ["$event.item.is_alive", "$event.item.id", "cang_feng_he_lian", "EQ", "AND"],
+                                  "FILTER", "FIRST", "responder", "STORE",
+                                  {"local": "responder"}, null, "EQ", "NOT", "$event.die.card.character.is_alive", "AND",
+                                  [
+                                    {"local": "responder"}, "寸火返次数",
+                                    {"local": "responder"}, {"field": "turn_state"}, "寸火返次数", 0, "LOOKUP", 1, "ADD",
+                                    "SET_TURN_STATE",
+                                    {"local": "responder"}, {"local": "responder"}, {"field": "skill_data"},
+                                    ["$event.item.id", "cang_feng_he_lian_inch_flash", "EQ"],
+                                    "FILTER", "FIRST", "SKILL_COPY",
+                                    "$event.die.card.character", "immediate_attack", "INSERT_AT",
+                                    {"call": "INSERT_SKILL", "result": "result", "default": false}, "POP"
+                                  ], "WHEN"
+                                ]
+                              }
+                            },
+                            {
+                              "id": "ji_lan_counter",
+                              "label": "纪岚 · 重盾顶退",
+                              "description": "消耗 2 护盾使用 -重盾顶退- 立即反击（本回合至多 1 次）",
+                              "when": [
+                                {
+                                  "left": {
+                                    "count_in": "$event.target.player.characters",
+                                    "where": [
+                                      {"left": "$event.item.is_alive", "op": "eq", "right": true},
+                                      {"left": "$event.item.id", "op": "eq", "right": "cang_feng_ji_lan"},
+                                      {"left": "$event.item.shield", "op": "ge", "right": 2},
+                                      {"left": {"field": "$event.item.turn_state", "key": "重盾顶退次数", "default": 0}, "op": "lt", "right": 1}
+                                    ]
+                                  },
+                                  "op": "gt", "right": 0
+                                }
+                              ],
+                              "then": {
+                                "op": "program",
+                                "code": [
+                                  "$event.target.player.characters",
+                                  ["$event.item.is_alive", "$event.item.id", "cang_feng_ji_lan", "EQ", "AND"],
+                                  "FILTER", "FIRST", "responder", "STORE",
+                                  {"local": "responder"}, null, "EQ", "NOT",
+                                  "$local.responder.shield", 2, "GE", "AND",
+                                  "$event.die.card.character.is_alive", "AND",
+                                  [
+                                    {"local": "responder"}, "normal", -2, "SHIELD",
+                                    {"local": "responder"}, "重盾顶退次数",
+                                    {"local": "responder"}, {"field": "turn_state"}, "重盾顶退次数", 0, "LOOKUP", 1, "ADD",
+                                    "SET_TURN_STATE",
+                                    {"local": "responder"}, {"local": "responder"}, {"field": "skill_data"},
+                                    ["$event.item.id", "cang_feng_ji_lan_heavy_bash", "EQ"],
+                                    "FILTER", "FIRST", "SKILL_COPY",
+                                    "$event.die.card.character", "immediate_attack", "INSERT_AT",
+                                    {"call": "INSERT_SKILL", "result": "result", "default": false}, "POP"
+                                  ], "WHEN"
+                                ]
+                              }
+                            },
+                            {
+                              "id": "ji_xia_counter",
+                              "label": "季夏 · 滑步点射",
+                              "description": "使用 -滑步点射- 立即反击该敌人（本回合至多 1 次）",
+                              "when": [
+                                {
+                                  "left": {
+                                    "count_in": "$event.target.player.characters",
+                                    "where": [
+                                      {"left": "$event.item.is_alive", "op": "eq", "right": true},
+                                      {"left": "$event.item.id", "op": "eq", "right": "cang_feng_ji_xia"},
+                                      {"left": {"field": "$event.item.turn_state", "key": "滑步点射次数", "default": 0}, "op": "lt", "right": 1}
+                                    ]
+                                  },
+                                  "op": "gt", "right": 0
+                                }
+                              ],
+                              "then": {
+                                "op": "program",
+                                "code": [
+                                  "$event.target.player.characters",
+                                  ["$event.item.is_alive", "$event.item.id", "cang_feng_ji_xia", "EQ", "AND"],
+                                  "FILTER", "FIRST", "responder", "STORE",
+                                  {"local": "responder"}, null, "EQ", "NOT", "$event.die.card.character.is_alive", "AND",
+                                  [
+                                    {"local": "responder"}, "滑步点射次数",
+                                    {"local": "responder"}, {"field": "turn_state"}, "滑步点射次数", 0, "LOOKUP", 1, "ADD",
+                                    "SET_TURN_STATE",
+                                    {"local": "responder"}, {"local": "responder"}, {"field": "skill_data"},
+                                    ["$event.item.id", "cang_feng_ji_xia_slide_shot", "EQ"],
+                                    "FILTER", "FIRST", "SKILL_COPY",
+                                    "$event.die.card.character", "immediate_attack", "INSERT_AT",
+                                    {"call": "INSERT_SKILL", "result": "result", "default": false}, "POP"
+                                  ], "WHEN"
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "CHOOSE_OPTION"
+                    ], "WHEN"
+                  ], "WHEN"
+                ], "WHEN"
+              ], "WHEN"
+            ]
+          }
+        }
+      ]
+    },
+    "拔芯": {
+      "cap": 1,
+      "polarity": "positive",
+      "per_stack": {"speed": 1},
+      "description": "上限 1 层。自身交锋数+1，速度+1，双形态技能改为使用拔芯形态。使用技能时失去等同于「剑芯过热」层数的生命值，随后获得 1 层「剑芯过热」。解除拔芯时清空「剑芯过热」。",
+      "global_entries": [
+        {
+          "trigger": "AFTER STATUS",
+          "subject": "any",
+          "when": [{"left": "$event.status", "op": "eq", "right": "拔芯"}],
+          "description": "拔芯态变化时即时同步交锋数，解除拔芯时清空剑芯过热。",
+          "operation": {
+            "op": "program",
+            "code": [
+              "$event.previous_stacks", 0, "EQ", "$event.current_stacks", 0, "GT", "AND",
+              ["$event.target", 1, "TURN_DUELS_ADD"], "WHEN",
+              "$event.previous_stacks", 0, "GT", "$event.current_stacks", 0, "EQ", "AND",
+              [
+                "$event.target", -1, "TURN_DUELS_ADD",
+                "$event.target", "剑芯过热", 0, "$event.target", "剑芯过热", "STATUS_COUNT", "SUB", "STATUS"
+              ], "WHEN"
+            ]
+          }
+        }
+      ]
+    },
+    "剑芯过热": {
+      "polarity": "negative",
+      "description": "拔芯状态下每次使用技能前先失去等同于此层数的生命值，随后+1 层。解除拔芯时清空。"
+    },
+    "剑壳外置": {
+      "cap": 1,
+      "hidden": true,
+      "polarity": "neutral",
+      "description": "场上存在剑壳镇压时同步标记，使「掷城镇压」切换为「归城回斩」。"
+    },
+    "剑壳镇压": {
+      "cap": 1,
+      "polarity": "negative",
+      "per_stack": {"speed": -2},
+      "description": "全场至多存在 1 份。速度−2，被施加失衡时层数+1；场上有角色带有此状态时，贺敛无法解除拔芯。"
+    },
+    "炉温": {
+      "polarity": "positive",
+      "description": "双生炉门记录的蓄热状态；每达到 3 层自动消耗 3 层并为护盾冲击来源施加 1 层爆燃。"
+    }
+  },
+  "status_entries": {
+    "拔芯": [
+      {
+        "trigger": "on_turn_prepared",
+        "description": "【拔芯】持有时本回合交锋数+1。",
+        "when": [{"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "gt", "right": 0}],
+        "operation": {"op": "program", "code": ["$self", 1, "TURN_DUELS_ADD"]}
+      },
+      {
+        "trigger": "on_skill_use",
+        "when": [
+          {"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "gt", "right": 0},
+          {"left": {"field": "$event.card.data", "key": "skip_drawcore_cost", "default": false}, "op": "eq", "right": false}
+        ],
+        "description": "【拔芯】使用技能时，失去等同于剑芯过热层数的生命值（未标记豁免时），随后获得 1 层剑芯过热。",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$event.card.data", "skip_drawcore_hp", false, "LOOKUP", "NOT",
+            [
+              "$self", "剑芯过热", "STATUS_COUNT", "heat", "STORE",
+              {"local": "heat"}, 0, "GT", ["$self", {"local": "heat"}, "LOSE_HP"], "WHEN"
+            ], "WHEN",
+            "$self", "剑芯过热", 1, "STATUS"
+          ]
+        }
+      }
+    ],
+    "剑壳镇压": [
+      {
+        "trigger": "BEFORE STATUS",
+        "subject": "any",
+        "hidden": true,
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "剑壳镇压"},
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "description": "全场至多存在 1 份剑壳镇压。",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+            ["$event.item.is_alive", "$event.item", "$event.target", "IS", "NOT", "AND",
+             "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"], "FILTER",
+            ["$event.item", "剑壳镇压", -1, "STATUS"], "EACH"
+          ]
+        }
+      },
+      {
+        "trigger": "AFTER STATUS",
+        "subject": "any",
+        "hidden": true,
+        "when": [{"left": "$event.status", "op": "eq", "right": "剑壳镇压"}],
+        "description": "同步场上是否存在剑壳镇压。",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+            ["$event.item.is_alive", "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"], "FILTER",
+            "SIZE", 0, "GT", "active", "STORE",
+            "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+            ["$event.item.is_alive", "$event.item.id", "cang_feng_he_lian", "EQ", "AND"], "FILTER",
+            [
+              "$event.item", "hl", "STORE",
+              {"local": "active"},
+              [
+                {"local": "hl"}, "剑壳外置", "STATUS_COUNT", 0, "EQ",
+                [{"local": "hl"}, "剑壳外置", 1, "STATUS"], "WHEN"
+              ],
+              [
+                {"local": "hl"}, "剑壳外置", "STATUS_COUNT", 0, "GT",
+                [{"local": "hl"}, "剑壳外置", -1, "STATUS"], "WHEN"
+              ],
+              "IF_ELSE"
+            ], "EACH"
+          ]
+        }
+      },
+      {
+        "trigger": "AFTER CHECK_DEATH",
+        "subject": "any",
+        "hidden": true,
+        "description": "持有剑壳镇压的角色阵亡后同步清除剑壳外置标记。",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+            ["$event.item.is_alive", "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"], "FILTER",
+            "SIZE", 0, "GT", "active", "STORE",
+            "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+            ["$event.item.is_alive", "$event.item.id", "cang_feng_he_lian", "EQ", "AND"], "FILTER",
+            [
+              "$event.item", "hl", "STORE",
+              {"local": "active"},
+              [
+                {"local": "hl"}, "剑壳外置", "STATUS_COUNT", 0, "EQ",
+                [{"local": "hl"}, "剑壳外置", 1, "STATUS"], "WHEN"
+              ],
+              [
+                {"local": "hl"}, "剑壳外置", "STATUS_COUNT", 0, "GT",
+                [{"local": "hl"}, "剑壳外置", -1, "STATUS"], "WHEN"
+              ],
+              "IF_ELSE"
+            ], "EACH"
+          ]
+        }
+      },
+      {
+        "trigger": "BEFORE STATUS",
+        "subject": "target",
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "失衡"},
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "description": "【剑壳镇压】被施加失衡时层数+1。",
+        "operation": {"op": "program", "code": [1, "ADD"]}
+      },
+      {
+        "trigger": "BEFORE STATUS",
+        "subject": "any",
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "拔芯"},
+          {"left": "$pending.amount", "op": "lt", "right": 0}
+        ],
+        "description": "【剑壳镇压】场上有角色带有此状态时，贺敛无法解除拔芯。",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+            ["$event.item.is_alive", "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"], "FILTER",
+            "SIZE", 0, "GT", [{"op": "cancel"}], "WHEN"
+          ]
+        }
+      }
+    ]
+  },
+  "faction_passives": [
+    {
+      "name": "藏锋事务所",
+      "entries": [
+        {
+          "trigger": "on_turn_start",
+          "description": "【回合开始】己方每有一名存活的藏锋事务所角色满足“手牌中属于自身的技能不低于 3 张”或“持有偏转力场”，该角色获得 2 护盾且己方提升 1 费用（每回合至多以此提升 2 费用）。",
+          "operation": {
+            "op": "program",
+            "code": [
+              0, "cost_gained", "STORE",
+              "$player.characters",
+              ["$event.item.is_alive", "$event.item.faction", "藏锋事务所", "EQ", "AND"],
+              "FILTER",
+              [
+                "$event.item", "member", "STORE",
+                "$player.cardspace.hand.content",
+                ["$event.item.character", "$local.member", "IS"], "FILTER", "SIZE", 3, "GE",
+                {"local": "member"}, "偏转力场", "STATUS_COUNT", 0, "GT", "OR",
+                [
+                  {"local": "member"}, "normal", 2, "SHIELD",
+                  {"local": "cost_gained"}, 2, "LT",
+                  [
+                    "$player", 1, "TURN_COST_ADD",
+                    {"local": "cost_gained"}, 1, "ADD", "cost_gained", "STORE"
+                  ], "WHEN"
+                ], "WHEN"
+              ], "EACH"
+            ]
+          }
+        },
+        {
+          "trigger": "AFTER STATUS",
+          "subject": "any",
+          "when": [
+            {"left": "$event.status", "op": "eq", "right": "致命失衡"},
+            {"left": "$event.actual_delta", "op": "gt", "right": 0},
+            {"left": "$event.target.is_alive", "op": "eq", "right": true},
+            {"left": "$event.target.player", "op": "ne", "right": "$self.player"}
+          ],
+          "description": "敌方角色获得致命失衡时，立即对其触发一次引燃。",
+          "operation": {"keyword": "ignite"}
+        }
+      ]
+    }
+  ],
+  "characters": [
+    {
+      "id": "cang_feng_he_lian",
+      "name": "贺敛",
+      "title": "XVI阶代理人 · 藏锋事务所所长",
+      "faction": "藏锋事务所",
+      "rank": "BOSS",
+      "max_hp": 18,
+      "base_max_duels": 3,
+      "color": "#c95a2b",
+      "passive_skills": [
+        {
+          "name": "XVI阶代理人",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "description": "回合开始时，额外抽 1 卡；若未处于拔芯，获得 3 护盾与 1 偏转力场。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", 1, "DRAW",
+                  "$self", "拔芯", "STATUS_COUNT", 0, "EQ",
+                  ["$self", "normal", 3, "SHIELD", "$self", "偏转力场", 1, "STATUS"], "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "重城·烛芯",
+          "description": "回合开始至开牌前阶段结束前，每回合可选择触发 1 次：\n1. 进入或解除拔芯（场上有剑壳镇压时无法解除）。\n2. 场上无剑壳镇压时，消耗 1 费用进入拔芯，对 1 名敌方造成 2 点普通伤害并施加 4 失衡与剑壳镇压。\n3. 场上有剑壳镇压时，移除该状态并对原持有者造成 2 点穿甲伤害、触发失衡爆发，随后可解除拔芯并获得 2 强化护盾。",
+          "entries": []
+        },
+        {
+          "name": "寸火返",
+          "entries": [
+            {
+              "trigger": "after_dice_use",
+              "subject": "any",
+              "when": [
+                {"left": "$event.die", "op": "ne", "right": null},
+                {"left": "$event.die.is_attack", "op": "eq", "right": true},
+                {"left": "$event.clash_result", "op": "eq", "right": "lose"},
+                {"left": "$event.opponent_die", "op": "ne", "right": null},
+                {"left": "$event.opponent_die.type", "op": "eq", "right": "block"},
+                {"left": "$event.opponent_die.card", "op": "ne", "right": null},
+                {"left": "$event.opponent_die.card.character", "op": "eq", "right": "$self"},
+                {"left": "$event.die.card", "op": "ne", "right": null},
+                {"left": "$event.die.card.player", "op": "ne", "right": "$self.player"},
+                {"left": "$event.die.card.character.is_alive", "op": "eq", "right": true},
+                {"left": {"field": "$self.turn_state", "key": "寸火返次数", "default": 0}, "op": "lt", "right": 1}
+              ],
+              "description": "触发【防反】时，或敌方进攻型骰子拼点败给自身的招架骰子时，可使用一次 -寸火返- 反击该目标（每回合 1 次，选择性触发）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": {
+                      "title": "寸火返",
+                      "description": "敌方进攻骰拼点败给招架骰，是否反击 -寸火返-？",
+                      "optional": true,
+                      "options": [
+                        {
+                          "id": "counter_inch_flash",
+                          "label": "使用 -寸火返-",
+                          "description": "对目标发起即时交锋反击",
+                          "then": {
+                            "op": "program",
+                            "code": [
+                              "$self", "寸火返次数",
+                              "$self.turn_state", "寸火返次数", 0, "LOOKUP", 1, "ADD",
+                              "SET_TURN_STATE",
+                              "$self", "$self.skill_data",
+                              ["$event.item.id", "cang_feng_he_lian_inch_flash", "EQ"],
+                              "FILTER", "FIRST", "SKILL_COPY",
+                              "$event.die.card.character", "immediate_attack", "INSERT_AT",
+                              {"call": "INSERT_SKILL", "result": "result", "default": false}, "POP"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "actions": [
+        {
+          "id": "he_lian_core_command",
+          "name": "重城·烛芯",
+          "window": "before_reveal",
+          "target": "self",
+          "per_turn": 1,
+          "operation": {
+            "op": "program",
+            "code": [
+              {
+                "literal": {
+                  "title": "重城·烛芯",
+                  "description": "选择本回合「重城·烛芯」战术动作：",
+                  "options": [
+                    {
+                      "id": "enter_core",
+                      "label": "进入拔芯",
+                      "description": "交锋数+1、速度+1，双形态切换为拔芯形态",
+                      "when": [{"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "eq", "right": 0}],
+                      "then": {"op": "program", "code": ["$self", "拔芯", 1, "STATUS"]}
+                    },
+                    {
+                      "id": "sheath_core",
+                      "label": "解除拔芯",
+                      "description": "归鞘并清空剑芯过热",
+                      "when": [
+                        {"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "gt", "right": 0},
+                        {"left": {"field": "$self.statuses", "key": "剑壳外置", "default": 0}, "op": "eq", "right": 0}
+                      ],
+                      "then": {"op": "program", "code": ["$self", "拔芯", -1, "STATUS"]}
+                    },
+                    {
+                      "id": "throw_shell",
+                      "label": "投掷重剑壳（1 费）",
+                      "description": "消耗 1 费进入拔芯，对 1 名敌人造成 2 普通伤害并施加 4 失衡与剑壳镇压",
+                      "when": [
+                        {"left": {"field": "$self.statuses", "key": "剑壳外置", "default": 0}, "op": "eq", "right": 0},
+                        {"left": {"left": "$self.available_cost", "op": "add", "right": "$self.player.available_cost"}, "op": "ge", "right": 1}
+                      ],
+                      "then": {
+                        "op": "program",
+                        "code": [
+                          "$player", "OPPONENT", {"field": "characters"}, ["$event.item.is_alive"], "FILTER",
+                          {
+                            "literal": {
+                              "title": "投掷重剑壳",
+                              "description": "选择 1 名敌方角色承受剑壳撞击与镇压。",
+                              "then": {
+                                "op": "program",
+                                "code": [
+                                  "$self.available_cost", 1, "GE",
+                                  ["$self", -1, "TURN_COST_ADD"],
+                                  ["$player", -1, "TURN_COST_ADD"],
+                                  "IF_ELSE",
+                                  "$self", "拔芯", 1, "STATUS",
+                                  "$event.chosen_character", 2, "normal", "none", "DAMAGE",
+                                  "$event.chosen_character", "失衡", 4, "STATUS",
+                                  "$event.chosen_character", "剑壳镇压", 1, "STATUS"
+                                ]
+                              }
+                            }
+                          },
+                          "CHOOSE_CHARACTER"
+                        ]
+                      }
+                    },
+                    {
+                      "id": "recall_shell",
+                      "label": "召回重剑壳",
+                      "description": "移除剑壳镇压并对持有者造成 2 穿甲伤害、触发失衡爆发，随后获 2 强化护盾并可选归鞘",
+                      "when": [{"left": {"field": "$self.statuses", "key": "剑壳外置", "default": 0}, "op": "gt", "right": 0}],
+                      "then": {
+                        "op": "program",
+                        "code": [
+                          "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+                          ["$event.item.is_alive", "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"],
+                          "FILTER", "FIRST", "shell_holder", "STORE",
+                          {"local": "shell_holder"}, null, "EQ", "NOT",
+                          [
+                            {"local": "shell_holder"}, "剑壳镇压", -1, "STATUS",
+                            {"local": "shell_holder"}, 2, "pierce", "none", "DAMAGE",
+                            {"local": "shell_holder"}, "STAGGER"
+                          ], "WHEN",
+                          "$self", "reinforced", 2, "SHIELD",
+                          "$self", "拔芯", "STATUS_COUNT", 0, "GT",
+                          [
+                            {
+                              "literal": {
+                                "title": "召回剑壳",
+                                "description": "是否随重剑壳归鞘解除拔芯？",
+                                "optional": true,
+                                "options": [
+                                  {
+                                    "id": "sheath_on_recall",
+                                    "label": "归鞘并解除拔芯",
+                                    "then": {"op": "program", "code": ["$self", "拔芯", -1, "STATUS"]}
+                                  }
+                                ]
+                              }
+                            },
+                            "CHOOSE_OPTION"
+                          ], "WHEN"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              },
+              "CHOOSE_OPTION"
+            ]
+          }
+        }
+      ],
+      "skills": [
+        {
+          "id": "cang_feng_he_lian_inch_flash",
+          "name": "寸火返",
+          "cost": 0,
+          "out_of_combat": true,
+          "description": "本技能仅用作特定效果触发。",
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "printed_text": "突刺 1~12：1 穿甲；施加 3 烧伤与 1 爆燃；触发失衡爆发",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 烧伤与 1 爆燃，触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "烧伤", 3, "STATUS",
+                      "$event.target", "爆燃", 1, "STATUS",
+                      "$event.target", "STAGGER"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤与 1 爆燃；触发失衡爆发"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_he_lian_flash_draw",
+          "name": "瞬拔·一线火",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】抽 1 卡。",
+              "operation": {"op": "program", "code": ["$player", 1, "DRAW"]}
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "【使用后】可选择进入拔芯。",
+              "when": [{"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "eq", "right": 0}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": {
+                      "title": "瞬拔·一线火",
+                      "description": "是否在技能使用后进入拔芯？",
+                      "optional": true,
+                      "options": [
+                        {
+                          "id": "enter_core_after",
+                          "label": "顺势拔芯",
+                          "then": {"op": "program", "code": ["$self", "拔芯", 1, "STATUS"]}
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "final_bonus": 1,
+              "printed_text": "招架 1~8+1：获得 1 偏转力场；施加 2 失衡",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】获得 1 偏转力场，对目标施加 2 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "偏转力场", 1, "STATUS", "$event.target", "失衡", 2, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["获得 1 偏转力场；施加 2 失衡"]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "printed_text": "突刺 1~8：1 穿甲；施加 2 烧伤与 1 爆燃",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 烧伤与 1 爆燃。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 2, "STATUS", "$event.target", "爆燃", 1, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤与 1 爆燃"]
+            }
+          ],
+          "form_when": {"status": "拔芯", "form": "拔芯", "snapshot": "use"},
+          "forms": {
+            "拔芯": {
+              "name": "瞬拔·一线火",
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "【使用时】抽 1 卡。",
+                  "operation": {"op": "program", "code": ["$player", 1, "DRAW"]}
+                },
+                {
+                  "trigger": "after_skill_use",
+                  "description": "【使用后】若场上无剑壳镇压，可选择解除拔芯并获得 2 护盾。",
+                  "when": [
+                    {"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "gt", "right": 0},
+                    {"left": {"field": "$self.statuses", "key": "剑壳外置", "default": 0}, "op": "eq", "right": 0}
+                  ],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "literal": {
+                          "title": "瞬拔·一线火",
+                          "description": "是否解除拔芯并获得 2 护盾？",
+                          "optional": true,
+                          "options": [
+                            {
+                              "id": "sheath_and_shield",
+                              "label": "归鞘并获得 2 护盾",
+                              "then": {"op": "program", "code": ["$self", "拔芯", -1, "STATUS", "$self", "normal", 2, "SHIELD"]}
+                            }
+                          ]
+                        }
+                      },
+                      "CHOOSE_OPTION"
+                    ]
+                  }
+                }
+              ],
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 3,
+                  "final_bonus": 2,
+                  "printed_text": "突刺 1~8+2：1 穿甲；施加 3 烧伤",
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 3 烧伤。",
+                      "operation": {"op": "program", "code": ["$event.target", "烧伤", 3, "STATUS"]}
+                    }
+                  ],
+                  "printed_effects": ["施加 3 烧伤"]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "printed_text": "斩击 1~8：1 穿甲；触发失衡爆发",
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】触发失衡爆发。",
+                      "operation": {"op": "program", "code": ["$event.target", "STAGGER"]}
+                    }
+                  ],
+                  "printed_effects": ["触发失衡爆发"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "cang_feng_he_lian_force_sweep",
+          "name": "镇岳力场",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 3 护盾与 1 偏转力场。",
+              "operation": {"op": "program", "code": ["$self", "normal", 3, "SHIELD", "$self", "偏转力场", 1, "STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "roll_max": 10,
+              "printed_text": "招架 1~10：施加 3 失衡；【跳过拼点】使生命值最低的友方角色获得 2 强化护盾",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 3 失衡。",
+                  "operation": {"op": "program", "code": ["$event.target", "失衡", 3, "STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "【跳过拼点】使生命值最低的友方角色获得 2 强化护盾。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player.characters", ["$event.item.is_alive"], "FILTER", "FIRST", "lowest", "STORE",
+                      "$player.characters", ["$event.item.is_alive"], "FILTER",
+                      [
+                        "$event.item.hp", "$local.lowest.hp", "LT",
+                        ["$event.item", "lowest", "STORE"], "WHEN"
+                      ], "EACH",
+                      {"local": "lowest"}, null, "EQ", "NOT",
+                      [{"local": "lowest"}, "reinforced", 2, "SHIELD"], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 失衡；【跳过拼点】最低生命友方获 2 强化护盾"]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "printed_text": "打击 1~8：1 物理；施加 2 失衡",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 失衡。",
+                  "operation": {"op": "program", "code": ["$event.target", "失衡", 2, "STATUS"]}
+                }
+              ],
+              "printed_effects": ["施加 2 失衡"]
+            }
+          ],
+          "form_when": {"status": "拔芯", "form": "拔芯", "snapshot": "use"},
+          "forms": {
+            "拔芯": {
+              "name": "烛芯掠火",
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "【使用时】目标每有 4 烧伤，最终点数+1（至多+2）。",
+                  "when": [{"left": "$event.target", "op": "ne", "right": null}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.card",
+                      "$event.target", "烧伤", "STATUS_COUNT", 4, "FLOOR_DIV", 2, "MIN",
+                      "SKILL_FINAL_ADD"
+                    ]
+                  }
+                }
+              ],
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 3,
+                  "printed_text": "突刺 1~8：1 物理；施加 3 烧伤",
+                  "entries": [
+                    "1物理",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 3 烧伤。",
+                      "operation": {"op": "program", "code": ["$event.target", "烧伤", 3, "STATUS"]}
+                    }
+                  ],
+                  "printed_effects": ["施加 3 烧伤"]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "final_bonus": 1,
+                  "printed_text": "斩击 1~8+1：1 穿甲；施加 2 烧伤与 1 爆燃",
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 2 烧伤与 1 爆燃。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target", "烧伤", 2, "STATUS", "$event.target", "爆燃", 1, "STATUS"]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加 2 烧伤与 1 爆燃"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "cang_feng_he_lian_flat_twin",
+          "name": "阔剑拍脊",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 2 护盾。",
+              "operation": {"op": "program", "code": ["$self", "normal", 2, "SHIELD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "printed_text": "招架 1~12：施加 2 烧伤与 2 失衡；下一骰最终点数+2",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 2 烧伤与 2 失衡，使下一骰最终点数+2。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "烧伤", 2, "STATUS",
+                      "$event.target", "失衡", 2, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "before_dice_use",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 0,
+                          "through_turns": 0,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "capture": {"card": "$event.card"},
+                          "when": [
+                            {"left": "$event.card", "op": "eq", "right": "$event.scheduled.capture.card"},
+                            {"left": "$event.die.destroyed", "op": "eq", "right": false}
+                          ],
+                          "then": ["$event.die", 2, "DIE_FINAL_ADD"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤与 2 失衡；下一骰最终点数+2"]
+            },
+            {
+              "type": "blunt",
+              "level": 4,
+              "printed_text": "打击 1~12：2 物理；施加 3 失衡；触发失衡爆发",
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 失衡，触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "失衡", 3, "STATUS", "$event.target", "STAGGER"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 失衡；触发失衡爆发"]
+            }
+          ],
+          "form_when": {"status": "拔芯", "form": "拔芯", "snapshot": "use"},
+          "forms": {
+            "拔芯": {
+              "name": "燎刃双刺",
+              "ignore_range": 1,
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "printed_text": "突刺 1~12：1 穿甲；施加 3 烧伤与 2 失衡",
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 3 烧伤与 2 失衡。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "失衡", 2, "STATUS"]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加 3 烧伤与 2 失衡"]
+                },
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "printed_text": "突刺 1~12：2 穿甲；施加 1 爆燃；触发失衡爆发",
+                  "entries": [
+                    "2穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 1 爆燃并触发失衡爆发。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target", "爆燃", 1, "STATUS", "$event.target", "STAGGER"]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加 1 爆燃；触发失衡爆发"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "cang_feng_he_lian_sidestep_shield",
+          "name": "错身力场盾",
+          "cost": 2,
+          "ignore_range": 2,
+          "anytime_replace": true,
+          "replace_targets": "ally",
+          "entries": [
+            {
+              "trigger": "on_skill_replaced",
+              "description": "本技能可在任意时刻替换一张友方技能，此时额外抽 1 卡。",
+              "operation": {"op": "program", "code": ["$event.card", "$owner", "IS", ["$player", 1, "DRAW"], "WHEN"]}
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】若处于拔芯且场上无剑壳镇压，可选择解除拔芯；获得 2 强化护盾与 1 偏转力场。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "reinforced", 2, "SHIELD",
+                  "$self", "偏转力场", 1, "STATUS",
+                  "$self", "拔芯", "STATUS_COUNT", 0, "GT",
+                  "$self", "剑壳外置", "STATUS_COUNT", 0, "EQ", "AND",
+                  [
+                    {
+                      "literal": {
+                        "title": "错身力场盾",
+                        "description": "是否于使用时解除拔芯？",
+                        "optional": true,
+                        "options": [
+                          {
+                            "id": "sheath_on_sidestep",
+                            "label": "解除拔芯",
+                            "then": {"op": "program", "code": ["$self", "拔芯", -1, "STATUS"]}
+                          }
+                        ]
+                      }
+                    },
+                    "CHOOSE_OPTION"
+                  ], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "招架 1~12+2：施加 3 失衡；触发失衡爆发",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 3 失衡并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "失衡", 3, "STATUS", "$event.target", "STAGGER"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 失衡；触发失衡爆发"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "final_bonus": 2,
+              "printed_text": "斩击 1~8+2：2 穿甲；施加 2 烧伤与 1 爆燃",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 烧伤与 1 爆燃。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 2, "STATUS", "$event.target", "爆燃", 1, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤与 1 爆燃"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_he_lian_throw_recall",
+          "name": "掷城镇压",
+          "cost": 2,
+          "range_level": 2,
+          "skip_drawcore_cost": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】若未处于拔芯，进入拔芯（本次技能不触发拔芯的生命流失与过热增加）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "拔芯", "STATUS_COUNT", 0, "EQ",
+                  ["$self", "拔芯", 1, "STATUS"], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "打击 1~12+2：2 穿甲；施加 4 失衡与剑壳镇压；触发失衡爆发",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 4 失衡与剑壳镇压，触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "失衡", 4, "STATUS",
+                      "$event.target", "剑壳镇压", 1, "STATUS",
+                      "$event.target", "STAGGER"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 4 失衡与剑壳镇压；触发失衡爆发"]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "final_bonus": 1,
+              "printed_text": "突刺 1~8+1：1 穿甲；施加 3 烧伤与 1 爆燃",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 烧伤与 1 爆燃。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "爆燃", 1, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤与 1 爆燃"]
+            }
+          ],
+          "form_when": {"status": "剑壳外置", "form": "归城", "snapshot": "use"},
+          "forms": {
+            "归城": {
+              "name": "归城回斩",
+              "cost": 1,
+              "ignore_range": 2,
+              "skip_drawcore_cost": false,
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "【使用时】移除场上的剑壳镇压，对原持有者造成 2 点穿甲伤害并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+                      ["$event.item.is_alive", "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"],
+                      "FILTER", "FIRST", "shell_holder", "STORE",
+                      {"local": "shell_holder"}, null, "EQ", "NOT",
+                      [
+                        {"local": "shell_holder"}, "剑壳镇压", -1, "STATUS",
+                        {"local": "shell_holder"}, 2, "pierce", "none", "DAMAGE",
+                        {"local": "shell_holder"}, "STAGGER"
+                      ], "WHEN"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "after_skill_use",
+                  "description": "【使用后】可选择解除拔芯并获得 3 护盾。",
+                  "when": [{"left": {"field": "$self.statuses", "key": "拔芯", "default": 0}, "op": "gt", "right": 0}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "literal": {
+                          "title": "归城回斩",
+                          "description": "是否解除拔芯并获得 3 护盾？",
+                          "optional": true,
+                          "options": [
+                            {
+                              "id": "sheath_after_recall_slash",
+                              "label": "归鞘并获得 3 护盾",
+                              "then": {"op": "program", "code": ["$self", "拔芯", -1, "STATUS", "$self", "normal", 3, "SHIELD"]}
+                            }
+                          ]
+                        }
+                      },
+                      "CHOOSE_OPTION"
+                    ]
+                  }
+                }
+              ],
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 4,
+                  "final_bonus": 2,
+                  "printed_text": "斩击 1~12+2：2 穿甲；施加 3 烧伤；若目标带有致命失衡，额外施加 2 爆燃",
+                  "entries": [
+                    "2穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 3 烧伤；目标带有致命失衡时额外施加 2 爆燃。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$event.target", "烧伤", 3, "STATUS",
+                          "$event.target", "致命失衡", "STATUS_COUNT", 0, "GT",
+                          ["$event.target", "爆燃", 2, "STATUS"], "WHEN"
+                        ]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加 3 烧伤；若目标带有致命失衡，额外施加 2 爆燃"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "cang_feng_he_lian_crag_frenzy",
+          "name": "重城断岳",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 3 强化护盾。",
+              "operation": {"op": "program", "code": ["$self", "reinforced", 3, "SHIELD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "招架 1~12+2：施加 4 失衡；使目标本交锋内后续骰子最终点数−2",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 4 失衡，使目标本交锋内后续骰子最终点数−2。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "失衡", 4, "STATUS",
+                      "$event.opponent_card", null, "EQ", "NOT",
+                      [
+                        {
+                          "schedule": {
+                            "event": "before_dice_use",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 0,
+                            "through_turns": 0,
+                            "uses": 99,
+                            "require_source_alive": false,
+                            "require_target_alive": false,
+                            "capture": {"card": "$event.opponent_card", "duel": "$event.duel"},
+                            "when": [
+                              {"left": "$event.card", "op": "eq", "right": "$event.scheduled.capture.card"},
+                              {"left": "$event.duel", "op": "eq", "right": "$event.scheduled.capture.duel"},
+                              {"left": "$event.die.destroyed", "op": "eq", "right": false}
+                            ],
+                            "then": ["$event.die", -2, "DIE_FINAL_ADD"]
+                          }
+                        }
+                      ], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 4 失衡；目标本交锋后续骰子最终点数−2"]
+            },
+            {
+              "type": "blunt",
+              "level": 5,
+              "printed_text": "打击 1~16：3 物理；触发失衡爆发；若因此获得致命失衡，下回合施加 1 限制",
+              "entries": [
+                "3物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】触发失衡爆发；若目标因此获得致命失衡，下回合对其施加 1 限制。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", {"call": "STAGGER", "result": "result", "default": false},
+                      [
+                        {
+                          "schedule": {
+                            "event": "on_turn_prepared",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 1,
+                            "through_turns": 1,
+                            "uses": 1,
+                            "require_source_alive": false,
+                            "require_target_alive": true,
+                            "then": ["$event.scheduled.target", "限制", 1, "STATUS"]
+                          }
+                        }
+                      ], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["触发失衡爆发；若因此致命失衡，下回合施加 1 限制"]
+            }
+          ],
+          "form_when": {"status": "拔芯", "form": "拔芯", "snapshot": "use"},
+          "forms": {
+            "拔芯": {
+              "name": "赤芯乱舞",
+              "ignore_range": 2,
+              "entries": [
+                {
+                  "trigger": "on_skill_use",
+                  "description": "【使用时】对目标施加 1 爆燃。",
+                  "when": [{"left": "$event.target", "op": "ne", "right": null}],
+                  "operation": {"op": "program", "code": ["$event.target", "爆燃", 1, "STATUS"]}
+                }
+              ],
+              "dice": [
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "printed_text": "突刺 1~12：1 穿甲；施加 3 烧伤与 2 失衡",
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 3 烧伤与 2 失衡。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "失衡", 2, "STATUS"]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加 3 烧伤与 2 失衡"]
+                },
+                {
+                  "type": "slash",
+                  "level": 4,
+                  "printed_text": "斩击 1~12：1 穿甲；施加 3 烧伤；触发失衡爆发",
+                  "entries": [
+                    "1穿甲",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】施加 3 烧伤并触发失衡爆发。",
+                      "operation": {
+                        "op": "program",
+                        "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "STAGGER"]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加 3 烧伤；触发失衡爆发"]
+                },
+                {
+                  "type": "pierce",
+                  "level": 4,
+                  "final_bonus": 2,
+                  "printed_text": "突刺 1~12+2：2 穿甲；触发失衡爆发；若目标带有致命失衡，伤害+1",
+                  "entries": [
+                    "2穿甲",
+                    {
+                      "trigger": "BEFORE DAMAGE",
+                      "subject": "source",
+                      "hidden": true,
+                      "when": [
+                        {"left": {"field": "$event.target.statuses", "key": "致命失衡", "default": 0}, "op": "gt", "right": 0}
+                      ],
+                      "description": "目标带有致命失衡时，本骰伤害+1。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$event.damage_die", "$owner", "IS",
+                          ["$event.target", "$event.modifiers", "damage_add", 1, "pierce", "ADD_DAMAGE_MODIFIER"], "WHEN"
+                        ]
+                      }
+                    },
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "【命中时】触发失衡爆发；若目标带有致命失衡，本骰伤害+1。",
+                      "operation": {"op": "program", "code": ["$event.target", "STAGGER"]}
+                    }
+                  ],
+                  "printed_effects": ["触发失衡爆发；若目标带有致命失衡，伤害+1"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "cang_feng_he_lian_fly_city",
+          "name": "飞城破阵·踏鞘归火",
+          "cost": 5,
+          "ignore_range": 2,
+          "skip_drawcore_hp": true,
+          "entries": [
+            {
+              "trigger": "BEFORE DESTROY",
+              "subject": "any",
+              "description": "本技能无法被摧毁词条摧毁。",
+              "when": [],
+              "operation": {"op": "program", "code": ["$event.target", "$owner", "IS", [{"op": "cancel"}], "WHEN"]}
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】若场上有剑壳镇压，先将其移除；本技能不触发拔芯的生命流失。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.players", ["$event.item.characters"], "MAP", "FLATTEN",
+                  ["$event.item.is_alive", "$event.item", "剑壳镇压", "STATUS_COUNT", 0, "GT", "AND"],
+                  "FILTER", ["$event.item", "剑壳镇压", -1, "STATUS"], "EACH"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 5,
+              "final_bonus": 2,
+              "range_level": 2,
+              "printed_text": "打击 1~16+2：2 物理；强化远程骰子；自身进入拔芯，施加 4 失衡与剑壳镇压，使目标技能的所有骰子顺延 2 轮并激活剩余骰子",
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】进入拔芯，施加 4 失衡与剑壳镇压，目标技能所有骰子顺延 2 轮并激活剩余骰子。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "拔芯", 1, "STATUS",
+                      "$event.target", "失衡", 4, "STATUS",
+                      "$event.target", "剑壳镇压", 1, "STATUS",
+                      "$event.opponent_card", null, "EQ", "NOT",
+                      [
+                        "$event.opponent_card", "delay_rounds",
+                        "$event.opponent_card.use_state", "delay_rounds", 0, "LOOKUP", 2, "ADD",
+                        "SET_SKILL_STATE"
+                      ], "WHEN",
+                      "$event.card", "激活剩余骰子", true, "SET_SKILL_STATE"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["强化远程；进入拔芯；4失衡与剑壳镇压；目标顺延2轮并激活剩余骰子"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "roll_max": 10,
+              "requires_skill_state": "激活剩余骰子",
+              "printed_text": "斩击 1~10：1 穿甲；施加 3 烧伤与 1 爆燃；重复使用 1 次；需激活",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 烧伤与 1 爆燃。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "爆燃", 1, "STATUS"]
+                  }
+                },
+                {
+                  "trigger": "after_dice_use",
+                  "description": "【使用后】重复使用 1 次。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.die.is_repeat", "NOT", ["$event.die", "REPEAT_DIE"], "WHEN"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤与 1 爆燃；重复使用 1 次；需激活"]
+            },
+            {
+              "type": "blunt",
+              "level": 5,
+              "multiplier": 2,
+              "requires_skill_state": "激活剩余骰子",
+              "printed_text": "打击 1~16×2：2 穿甲；移除目标的剑壳镇压，施加 4 失衡并触发失衡爆发，摧毁目标技能，自身解除拔芯并获得 3 强化护盾与 1 偏转力场；需激活",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】移除剑壳镇压，施加 4 失衡并失衡爆发，摧毁目标技能，解除拔芯并获 3 强化护盾与 1 偏转力场。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "剑壳镇压", -1, "STATUS",
+                      "$event.target", "失衡", 4, "STATUS",
+                      "$event.target", "STAGGER",
+                      "$event.opponent_card", null, "EQ", "NOT", ["$event.opponent_card", "DESTROY"], "WHEN",
+                      "$self", "拔芯", -1, "STATUS",
+                      "$self", "reinforced", 3, "SHIELD",
+                      "$self", "偏转力场", 1, "STATUS"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["移除剑壳镇压；4失衡+失衡爆发；摧毁目标技能；归鞘并获3强化护盾+1偏转力场；需激活"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cang_feng_ji_lan",
+      "name": "纪岚",
+      "title": "XIII阶代理人 · 藏锋事务所重装专员",
+      "faction": "藏锋事务所",
+      "rank": "ELITE",
+      "max_hp": 15,
+      "base_max_duels": 2,
+      "color": "#2f85a8",
+      "passive_skills": [
+        {
+          "name": "双生炉门",
+          "entries": [
+            {
+              "trigger": "on_turn_start",
+              "description": "回合开始时，自身获得 2 护盾，并使另一名生命值最低的存活友方角色获得 2 护盾（若无其他存活友方角色，改为自身获得 1 偏转力场）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "normal", 2, "SHIELD",
+                  "$player.characters", ["$event.item.is_alive", "$event.item", "$self", "IS", "NOT", "AND"],
+                  "FILTER", "others", "STORE",
+                  {"local": "others"}, "SIZE", 0, "GT",
+                  [
+                    {"local": "others"}, "FIRST", "lowest", "STORE",
+                    {"local": "others"},
+                    ["$event.item.hp", "$local.lowest.hp", "LT", ["$event.item", "lowest", "STORE"], "WHEN"],
+                    "EACH",
+                    {"local": "lowest"}, "normal", 2, "SHIELD"
+                  ],
+                  ["$self", "偏转力场", 1, "STATUS"],
+                  "IF_ELSE"
+                ]
+              }
+            },
+            {
+              "trigger": "AFTER APPLY_DAMAGE",
+              "subject": "any",
+              "when": [
+                {"left": "$event.target.is_alive", "op": "eq", "right": true},
+                {"left": "$event.target.player", "op": "eq", "right": "$self.player"},
+                {"left": "$event.shield_lost", "op": "gt", "right": 0},
+                {"left": "$event.damage_source", "op": "ne", "right": null},
+                {"left": "$event.damage_source.player", "op": "ne", "right": "$self.player"},
+                {"left": "$event.damage_source.is_alive", "op": "eq", "right": true},
+                {"left": {"field": "$self.turn_state", "key": "双生炉门次数", "default": 0}, "op": "lt", "right": 3}
+              ],
+              "description": "友方角色的护盾抵挡伤害或因磨损失去层数时，对伤害来源施加 2 烧伤，自身获得 1 炉温（每回合至多触发 3 次）。炉温每达到 3 层，消耗 3 层并对该伤害来源施加 1 爆燃。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "双生炉门次数", "$self.turn_state", "双生炉门次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE",
+                  "$event.damage_source", "烧伤", 2, "STATUS",
+                  "$self", "炉温", 1, "STATUS",
+                  "$self", "炉温", "STATUS_COUNT", 3, "GE",
+                  [
+                    "$self", "炉温", 3, {"call": "SPEND_STATUS", "result": "result", "default": 0, "with": {"require_full": true}},
+                    3, "EQ",
+                    ["$event.damage_source", "爆燃", 1, "STATUS"], "WHEN"
+                  ], "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "重盾顶退",
+          "entries": [
+            {
+              "trigger": "before_attack_target",
+              "subject": "any",
+              "when": [
+                {"left": "$event.one_sided", "op": "eq", "right": true},
+                {"left": "$event.die", "op": "ne", "right": null},
+                {"left": "$event.die.can_attack_alone", "op": "eq", "right": true},
+                {"left": "$event.target.player", "op": "eq", "right": "$self.player"},
+                {"left": "$event.target", "op": "ne", "right": "$self"},
+                {"left": "$self.shield", "op": "ge", "right": 2},
+                {"left": {"field": "$self.turn_state", "key": "重盾顶退次数", "default": 0}, "op": "lt", "right": 1}
+              ],
+              "description": "即将有其他友方角色受到单方面攻击时，消耗 2 护盾转火至自身并以 -重盾顶退- 迎击（每回合 1 次，选择性触发）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": {
+                      "title": "重盾顶退 · 援护转火",
+                      "description": "友方即将遭受单方面攻击，是否消耗 2 护盾替其接下攻击并使用 -重盾顶退- 迎击？",
+                      "optional": true,
+                      "options": [
+                        {
+                          "id": "guard_redirect",
+                          "label": "消耗 2 护盾顶退迎击",
+                          "then": {
+                            "op": "program",
+                            "code": [
+                              "$event.die", "$self", {"call": "REDIRECT_ATTACK", "result": "result", "default": false},
+                              [
+                                "$self", "normal", -2, "SHIELD",
+                                "$self", "重盾顶退次数", "$self.turn_state", "重盾顶退次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE",
+                                "$event.die", "重盾顶退已触发", "$self", "SET_DIE_STATE"
+                              ], "WHEN"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              }
+            },
+            {
+              "trigger": "before_one_sided_attack",
+              "subject": "target",
+              "when": [
+                {"left": "$event.die", "op": "ne", "right": null},
+                {"left": "$event.die.can_attack_alone", "op": "eq", "right": true}
+              ],
+              "description": "自身受到单方面攻击（含援护转火）时，可使用 -重盾顶退- 迎击（每回合 1 次，选择性触发）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.die.use_state", "重盾顶退已触发", null, "LOOKUP", "$self", "IS",
+                  [
+                    "$self", "$self.skill_data", ["$event.item.id", "cang_feng_ji_lan_heavy_bash", "EQ"],
+                    "FILTER", "FIRST", "SKILL_COPY", "respond_to_die", "INSERT_SKILL"
+                  ],
+                  [
+                    "$self.shield", 2, "GE",
+                    "$self.turn_state", "重盾顶退次数", 0, "LOOKUP", 1, "LT", "AND",
+                    [
+                      {
+                        "literal": {
+                          "title": "重盾顶退 · 迎击",
+                          "description": "自身即将遭受单方面攻击，是否消耗 2 护盾使用 -重盾顶退- 迎击？",
+                          "optional": true,
+                          "options": [
+                            {
+                              "id": "self_guard_bash",
+                              "label": "消耗 2 护盾使用 -重盾顶退-",
+                              "then": {
+                                "op": "program",
+                                "code": [
+                                  "$self", "normal", -2, "SHIELD",
+                                  "$self", "重盾顶退次数", "$self.turn_state", "重盾顶退次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE",
+                                  "$self", "$self.skill_data", ["$event.item.id", "cang_feng_ji_lan_heavy_bash", "EQ"],
+                                  "FILTER", "FIRST", "SKILL_COPY", "respond_to_die", "INSERT_SKILL"
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "CHOOSE_OPTION"
+                    ], "WHEN"
+                  ],
+                  "IF_ELSE"
+                ]
+              }
+            },
+            {
+              "trigger": "AFTER SPEND_STATUS",
+              "subject": "target",
+              "when": [
+                {"left": "$event.status", "op": "eq", "right": "炉温"},
+                {"left": "$event.previous_stacks", "op": "gt", "right": "$event.current_stacks"}
+              ],
+              "description": "本局首次消耗炉温时将战斗外的 -合炉·焦土锻葬- 置入手牌且本局首次使用费用-1；此后每累计消耗 6 层炉温再次置入手牌。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.previous_stacks", "$event.current_stacks", "SUB", "paid", "STORE",
+                  "$self.rule_state", "合炉已首启", false, "LOOKUP", "NOT",
+                  [
+                    "$self", "合炉已首启", true, "SET_CHARACTER_STATE",
+                    "$self", "合炉首减费", true, "SET_CHARACTER_STATE",
+                    "$player.cardspace.out_of_combat.content",
+                    ["$event.item.id", "cang_feng_ji_lan_furnace_burial", "EQ"],
+                    "FILTER", "FIRST", "ult", "STORE",
+                    {"local": "ult"}, null, "EQ", "NOT",
+                    [{"local": "ult"}, "hand", "MOVE_CARD"], "WHEN"
+                  ],
+                  [
+                    "$self.rule_state", "合炉待再铸", false, "LOOKUP",
+                    [
+                      "$self.rule_state", "炉温再铸累计", 0, "LOOKUP", {"local": "paid"}, "ADD", "acc", "STORE",
+                      "$self", "炉温再铸累计", {"local": "acc"}, "SET_CHARACTER_STATE",
+                      {"local": "acc"}, 6, "GE",
+                      [
+                        "$player.cardspace.out_of_combat.content",
+                        ["$event.item.id", "cang_feng_ji_lan_furnace_burial", "EQ"],
+                        "FILTER", "FIRST", "ult", "STORE",
+                        {"local": "ult"}, null, "EQ", "NOT",
+                        [
+                          "$self", "炉温再铸累计", {"local": "acc"}, 6, "SUB", "SET_CHARACTER_STATE",
+                          "$self", "合炉待再铸", false, "SET_CHARACTER_STATE",
+                          {"local": "ult"}, "hand", "MOVE_CARD"
+                        ], "WHEN"
+                      ], "WHEN"
+                    ], "WHEN"
+                  ],
+                  "IF_ELSE"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "cang_feng_ji_lan_heavy_bash",
+          "name": "重盾顶退",
+          "cost": 0,
+          "out_of_combat": true,
+          "description": "本技能仅用作特定效果触发。",
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "printed_text": "打击 1~12：1 物理；施加 3 失衡",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 失衡。",
+                  "operation": {"op": "program", "code": ["$event.target", "失衡", 3, "STATUS"]}
+                }
+              ],
+              "printed_effects": ["施加 3 失衡"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_lan_furnace_burial",
+          "name": "合炉·焦土锻葬",
+          "cost": 4,
+          "out_of_combat": true,
+          "ignore_range": 2,
+          "entries": [
+            {
+              "trigger": "BEFORE DESTROY",
+              "subject": "any",
+              "description": "本技能无法被摧毁词条摧毁。",
+              "when": [],
+              "operation": {"op": "program", "code": ["$event.target", "$owner", "IS", [{"op": "cancel"}], "WHEN"]}
+            },
+            {
+              "trigger": "BEFORE PAY_COST",
+              "subject": "source",
+              "hidden": true,
+              "when": [
+                {"left": {"field": "$self.rule_state", "key": "合炉首减费", "default": false}, "op": "eq", "right": true}
+              ],
+              "description": "本局首次使用时费用−1。",
+              "operation": {"op": "program", "code": ["$event.card", "$owner", "IS", [1, "SUB", 0, "MAX"], "WHEN"]}
+            },
+            {
+              "trigger": "AFTER PAY_COST",
+              "subject": "source",
+              "hidden": true,
+              "when": [
+                {"left": "$event.paid", "op": "eq", "right": true},
+                {"left": {"field": "$self.rule_state", "key": "合炉首减费", "default": false}, "op": "eq", "right": true}
+              ],
+              "description": "消耗本局首次使用减费资格。",
+              "operation": {
+                "op": "program",
+                "code": ["$event.card", "$owner", "IS", ["$self", "合炉首减费", false, "SET_CHARACTER_STATE"], "WHEN"]
+              }
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 4 强化护盾；施加 4 烧伤与 2 爆燃。",
+              "when": [{"left": "$event.target", "op": "ne", "right": null}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "reinforced", 4, "SHIELD",
+                  "$event.target", "烧伤", 4, "STATUS",
+                  "$event.target", "爆燃", 2, "STATUS"
+                ]
+              }
+            },
+            {
+              "trigger": "on_skill_use",
+              "hidden": true,
+              "when": [{"left": "$event.target", "op": "eq", "right": null}],
+              "description": "【使用时】获得 4 强化护盾。",
+              "operation": {"op": "program", "code": ["$self", "reinforced", 4, "SHIELD"]}
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "【使用后】移出战斗（此后每累计消耗 6 层炉温，再次置入手牌）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "炉温再铸累计", 0, "SET_CHARACTER_STATE",
+                  "$self", "合炉待再铸", true, "SET_CHARACTER_STATE",
+                  "$event.card", "out_of_combat", "MOVE_CARD"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 5,
+              "printed_text": "招架 1~16：施加 4 失衡；触发失衡爆发；【跳过拼点】施加 4 失衡",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 4 失衡并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "失衡", 4, "STATUS", "$event.target", "STAGGER"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "【跳过拼点】对目标施加 4 失衡。",
+                  "when": [{"left": "$event.target", "op": "ne", "right": null}],
+                  "operation": {"op": "program", "code": ["$event.target", "失衡", 4, "STATUS"]}
+                }
+              ],
+              "printed_effects": ["施加 4 失衡；触发失衡爆发；【跳过拼点】施加 4 失衡"]
+            },
+            {
+              "type": "blunt",
+              "level": 5,
+              "final_bonus": 2,
+              "printed_text": "打击 1~16+2：2 穿甲；消耗全体友方角色全部护盾与强化护盾（每消耗 3 点使伤害+1，至多+4）；触发失衡爆发",
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "2 穿甲；消耗全体友方全部护盾与强化护盾以增伤（每 3 点+1，至多+4）。",
+                  "damage_part": {"amount": 2, "grade": "pierce"},
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      0, "total_spent", "STORE",
+                      "$player.characters", ["$event.item.is_alive"], "FILTER",
+                      [
+                        "$event.item", "ally", "STORE",
+                        {"local": "ally"}, "shield", "SHIELD_COUNT", "n", "STORE",
+                        {"local": "ally"}, "reinforced", "SHIELD_COUNT", "r", "STORE",
+                        {"local": "n"}, 0, "GT", [{"local": "ally"}, "normal", 0, {"local": "n"}, "SUB", "SHIELD"], "WHEN",
+                        {"local": "r"}, 0, "GT", [{"local": "ally"}, "reinforced", 0, {"local": "r"}, "SUB", "SHIELD"], "WHEN",
+                        {"local": "total_spent"}, {"local": "n"}, {"local": "r"}, "ADD", "ADD", "total_spent", "STORE"
+                      ], "EACH",
+                      "$event.target", 2, {"local": "total_spent"}, 3, "FLOOR_DIV", 4, "MIN", "ADD",
+                      "pierce", "$event.die.type", "DAMAGE"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】触发失衡爆发。",
+                  "operation": {"op": "program", "code": ["$event.target", "STAGGER"]}
+                }
+              ],
+              "printed_effects": ["消耗全体友方护盾与强化护盾（每 3 点+1伤，至多+4）；触发失衡爆发"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_lan_wall_stance",
+          "name": "立盾成垣",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】抽 1 卡；自身与另一名生命值最低的存活友方角色各获得 2 护盾（若无其他存活友方角色，改为自身获得 4 护盾）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", 1, "DRAW",
+                  "$player.characters", ["$event.item.is_alive", "$event.item", "$self", "IS", "NOT", "AND"],
+                  "FILTER", "others", "STORE",
+                  {"local": "others"}, "SIZE", 0, "GT",
+                  [
+                    "$self", "normal", 2, "SHIELD",
+                    {"local": "others"}, "FIRST", "lowest", "STORE",
+                    {"local": "others"},
+                    ["$event.item.hp", "$local.lowest.hp", "LT", ["$event.item", "lowest", "STORE"], "WHEN"],
+                    "EACH",
+                    {"local": "lowest"}, "normal", 2, "SHIELD"
+                  ],
+                  ["$self", "normal", 4, "SHIELD"],
+                  "IF_ELSE"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "final_bonus": 1,
+              "printed_text": "招架 1~8+1：施加 2 失衡",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 2 失衡。",
+                  "operation": {"op": "program", "code": ["$event.target", "失衡", 2, "STATUS"]}
+                }
+              ],
+              "printed_effects": ["施加 2 失衡"]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "printed_text": "打击 1~8：1 物理；施加 2 烧伤",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 烧伤。",
+                  "operation": {"op": "program", "code": ["$event.target", "烧伤", 2, "STATUS"]}
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_lan_shift_barrier",
+          "name": "移障代受",
+          "cost": 1,
+          "anytime_play": ["place"],
+          "anytime_replace": true,
+          "replace_targets": "ally",
+          "entries": [
+            {
+              "trigger": "on_skill_replaced",
+              "description": "若替换其他友方角色的技能，使该角色获得 1 个人费。",
+              "when": [
+                {"left": "$event.replaced_card", "op": "ne", "right": null},
+                {"left": "$event.replaced_card.character", "op": "ne", "right": "$self"},
+                {"left": "$event.replaced_card.character.is_alive", "op": "eq", "right": true}
+              ],
+              "operation": {
+                "op": "program",
+                "code": ["$event.card", "$owner", "IS", ["$event.replaced_card.character", 1, "TURN_COST_ADD"], "WHEN"]
+              }
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 2 强化护盾与 1 偏转力场。",
+              "operation": {"op": "program", "code": ["$self", "reinforced", 2, "SHIELD", "$self", "偏转力场", 1, "STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "roll_max": 10,
+              "printed_text": "招架 1~10：施加 2 烧伤与 2 失衡；【拼点失败】获得 2 护盾",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 2 烧伤与 2 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 2, "STATUS", "$event.target", "失衡", 2, "STATUS"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】获得 2 护盾。",
+                  "operation": {"op": "program", "code": ["$self", "normal", 2, "SHIELD"]}
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤与 2 失衡；【拼点失败】获得 2 护盾"]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "printed_text": "打击 1~8：1 物理；下回合施加 1 虚弱",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】下回合对目标施加 1 虚弱。",
+                  "operation": {
+                    "schedule": {
+                      "event": "on_turn_prepared",
+                      "source": "$self",
+                      "target": "$event.target",
+                      "after_turns": 1,
+                      "through_turns": 1,
+                      "uses": 1,
+                      "require_source_alive": false,
+                      "require_target_alive": true,
+                      "then": ["$event.scheduled.target", "虚弱", 1, "STATUS"]
+                    }
+                  }
+                }
+              ],
+              "printed_effects": ["下回合施加 1 虚弱"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_lan_thermal_bulwark",
+          "name": "蓄热铁壁",
+          "cost": 2,
+          "ignore_range": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 3 护盾。",
+              "operation": {"op": "program", "code": ["$self", "normal", 3, "SHIELD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "printed_text": "招架 1~12：获得 2 强化护盾；施加 3 烧伤与 1 爆燃；【跳过拼点】获得 1 偏转力场并对目标施加 3 烧伤",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】获得 2 强化护盾，对目标施加 3 烧伤与 1 爆燃。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "reinforced", 2, "SHIELD",
+                      "$event.target", "烧伤", 3, "STATUS",
+                      "$event.target", "爆燃", 1, "STATUS"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "【跳过拼点】获得 1 偏转力场并对目标施加 3 烧伤。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "偏转力场", 1, "STATUS",
+                      "$event.target", null, "EQ", "NOT", ["$event.target", "烧伤", 3, "STATUS"], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["获得 2 强化护盾；施加 3 烧伤与 1 爆燃；【跳过拼点】1偏转力场并施加3烧伤"]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "final_bonus": 2,
+              "printed_text": "打击 1~8+2：2 物理；施加 2 失衡",
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 失衡。",
+                  "operation": {"op": "program", "code": ["$event.target", "失衡", 2, "STATUS"]}
+                }
+              ],
+              "printed_effects": ["施加 2 失衡"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_lan_heavy_pile",
+          "name": "叩门重桩",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】自身每有 3 点普通护盾，最终点数+1（至多+3）。",
+              "operation": {
+                "op": "program",
+                "code": ["$event.card", "$self.shield", 3, "FLOOR_DIV", 3, "MIN", "SKILL_FINAL_ADD"]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 3,
+              "final_bonus": 1,
+              "printed_text": "打击 1~8+1：1 物理；施加 3 失衡；下回合施加 1 束缚",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 失衡，下回合施加 1 束缚。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "失衡", 3, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target", "束缚", 1, "STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 失衡；下回合施加 1 束缚"]
+            },
+            {
+              "type": "blunt",
+              "level": 4,
+              "printed_text": "打击 1~12：2 穿甲；触发失衡爆发；【拼点失败】驻留（跳过伤害部分）",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留（跳过伤害部分）。",
+                  "operation": {"op": "program", "code": ["$event.die", "effects_only", null, "QUEUE_HIT"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】触发失衡爆发。",
+                  "operation": {"op": "program", "code": ["$event.target", "STAGGER"]}
+                }
+              ],
+              "printed_effects": ["触发失衡爆发；【拼点失败】驻留（跳过伤害部分）"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_lan_flame_sweep",
+          "name": "排焰冲击",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】全体友方角色获得 2 强化护盾；自身获得 1 偏转力场。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player.characters", ["$event.item.is_alive"], "FILTER",
+                  ["$event.item", "reinforced", 2, "SHIELD"], "EACH",
+                  "$self", "偏转力场", 1, "STATUS"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "招架 1~12+2：施加 3 烧伤与 3 失衡",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 3 烧伤与 3 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "失衡", 3, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤与 3 失衡"]
+            },
+            {
+              "type": "blunt",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "打击 1~12+2：2 穿甲；施加 1 爆燃；触发失衡爆发；自身每有 2 点护盾，额外施加 1 烧伤（至多 4）",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 1 爆燃并触发失衡爆发，自身每有 2 点护盾额外施加 1 烧伤（至多 4）。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "爆燃", 1, "STATUS",
+                      "$event.target", "STAGGER",
+                      "$self.shield", 2, "FLOOR_DIV", 4, "MIN", "extra_burn", "STORE",
+                      {"local": "extra_burn"}, 0, "GT",
+                      ["$event.target", "烧伤", {"local": "extra_burn"}, "STATUS"], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 1 爆燃；触发失衡爆发；每 2 护盾额外+1 烧伤（至多 4）"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cang_feng_ji_xia",
+      "name": "季夏",
+      "title": "XIII阶代理人 · 藏锋事务所先遣专员",
+      "faction": "藏锋事务所",
+      "rank": "ELITE",
+      "max_hp": 9,
+      "base_max_duels": 2,
+      "color": "#c44558",
+      "passive_skills": [
+        {
+          "name": "红线缠缚",
+          "entries": [
+            {
+              "trigger": "on_pre_reveal_play",
+              "subject": "source",
+              "hidden": true,
+              "when": [
+                {"left": "$event.play_mode", "op": "eq", "right": "passive"},
+                {"left": "$event.duel.origin", "op": "eq", "right": "pre_reveal"}
+              ],
+              "description": "标记开牌前被动迎击的技能。",
+              "operation": {"op": "program", "code": ["$event.card", "被动迎击", true, "SET_SKILL_STATE"]}
+            },
+            {
+              "trigger": "BEFORE PAY_COST",
+              "subject": "source",
+              "when": [{"left": {"field": "$event.card.use_state", "key": "被动迎击", "default": false}, "op": "eq", "right": true}],
+              "description": "在开牌前被动迎击时，该技能费用−1。",
+              "operation": {"op": "program", "code": [1, "SUB", 0, "MAX"]}
+            },
+            {
+              "trigger": "BEFORE RESOLVE_RANGE_DEFICIT",
+              "subject": "source",
+              "when": [{"left": {"field": "$event.card.use_state", "key": "被动迎击", "default": false}, "op": "eq", "right": true}],
+              "description": "在开牌前被动迎击时，该技能无视 1 级远程。",
+              "operation": {"op": "program", "code": [1, "SUB", 0, "MAX"]}
+            },
+            {
+              "trigger": "on_clash_win",
+              "when": [
+                {"left": "$event.die.type", "op": "eq", "right": "evade"},
+                {"left": {"field": "$self.turn_state", "key": "红线闪避胜场", "default": 0}, "op": "lt", "right": 2}
+              ],
+              "description": "自身的闪避骰子拼点胜利时，对目标施加 2 烧伤与 2 失衡，下回合自身获得 1 迅捷（每回合至多 2 次）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "红线闪避胜场", "$self.turn_state", "红线闪避胜场", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE",
+                  "$event.target", "烧伤", 2, "STATUS",
+                  "$event.target", "失衡", 2, "STATUS",
+                  {
+                    "schedule": {
+                      "event": "on_turn_prepared",
+                      "source": "$self",
+                      "target": "$self",
+                      "after_turns": 1,
+                      "through_turns": 1,
+                      "uses": 1,
+                      "require_source_alive": false,
+                      "require_target_alive": true,
+                      "then": ["$event.scheduled.target", "迅捷", 1, "STATUS"]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "顺丝叩响",
+          "entries": [
+            {
+              "trigger": "after_dice_use",
+              "subject": "any",
+              "when": [
+                {"left": "$event.die", "op": "ne", "right": null},
+                {"left": "$event.die.is_attack", "op": "eq", "right": true},
+                {"left": "$event.clash_result", "op": "eq", "right": "lose"},
+                {"left": "$event.opponent_die", "op": "ne", "right": null},
+                {"left": "$event.opponent_die.type", "op": "eq", "right": "evade"},
+                {"left": "$event.opponent_die.card", "op": "ne", "right": null},
+                {"left": "$event.opponent_die.card.player", "op": "eq", "right": "$self.player"},
+                {"left": "$event.die.card", "op": "ne", "right": null},
+                {"left": "$event.die.card.player", "op": "ne", "right": "$self.player"},
+                {"left": "$event.die.card.character.is_alive", "op": "eq", "right": true},
+                {"left": {"field": "$event.die.card.character.statuses", "key": "失衡", "default": 0}, "op": "ge", "right": 6},
+                {"left": {"field": "$self.turn_state", "key": "滑步点射次数", "default": 0}, "op": "lt", "right": 1}
+              ],
+              "description": "触发【防反】时，或敌方进攻型骰子拼点败给友方闪避骰子且该敌方失衡不低于 6 时，可使用一次 -滑步点射- 对该目标发起攻击（每回合 1 次，选择性触发）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": {
+                      "title": "滑步点射",
+                      "description": "高失衡敌方进攻骰被友方闪避，是否立即以 -滑步点射- 追击？",
+                      "optional": true,
+                      "options": [
+                        {
+                          "id": "counter_slide_shot",
+                          "label": "使用 -滑步点射-",
+                          "description": "对该敌人发起即时交锋攻击",
+                          "then": {
+                            "op": "program",
+                            "code": [
+                              "$self", "滑步点射次数",
+                              "$self.turn_state", "滑步点射次数", 0, "LOOKUP", 1, "ADD",
+                              "SET_TURN_STATE",
+                              "$self", "$self.skill_data",
+                              ["$event.item.id", "cang_feng_ji_xia_slide_shot", "EQ"],
+                              "FILTER", "FIRST", "SKILL_COPY",
+                              "$event.die.card.character", "immediate_attack", "INSERT_AT",
+                              {"call": "INSERT_SKILL", "result": "result", "default": false}, "POP"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              }
+            },
+            {
+              "trigger": "AFTER STATUS",
+              "subject": "any",
+              "hidden": true,
+              "when": [
+                {"left": "$event.status", "op": "eq", "right": "致命失衡"},
+                {"left": "$event.actual_delta", "op": "gt", "right": 0},
+                {"left": "$event.target.player", "op": "ne", "right": "$self.player"}
+              ],
+              "description": "本局首次有敌方累计获得 2 次致命失衡时，解锁 -千丝收束·零距礼花- 并本回合交锋数+1。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.rule_state", "敌方致命失衡次数", 0, "LOOKUP", 1, "ADD", "f_count", "STORE",
+                  "$self", "敌方致命失衡次数", {"local": "f_count"}, "SET_CHARACTER_STATE",
+                  "$self.rule_state", "季夏大招首启", false, "LOOKUP", "NOT",
+                  {"local": "f_count"}, 2, "GE", "AND",
+                  [
+                    "$self", "季夏大招首启", true, "SET_CHARACTER_STATE",
+                    "$player.cardspace.out_of_combat.content",
+                    ["$event.item.id", "cang_feng_ji_xia_fireworks", "EQ"],
+                    "FILTER", "FIRST", "ult", "STORE",
+                    {"local": "ult"}, null, "EQ", "NOT",
+                    [{"local": "ult"}, "hand", "MOVE_CARD", "$self", 1, "TURN_DUELS_ADD"], "WHEN"
+                  ], "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_clash_win",
+              "when": [{"left": "$event.die.type", "op": "eq", "right": "evade"}],
+              "description": "本局首次自身闪避骰累计拼赢 4 次时解锁 -千丝收束·零距礼花- 并本回合交锋数+1；此后每当单回合内自身闪避骰拼赢不低于 2 次，再次置入手牌。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.rule_state", "季夏累计闪避胜场", 0, "LOOKUP", 1, "ADD", "total_wins", "STORE",
+                  "$self", "季夏累计闪避胜场", {"local": "total_wins"}, "SET_CHARACTER_STATE",
+                  "$self.turn_state", "季夏本回合闪避胜场", 0, "LOOKUP", 1, "ADD", "turn_wins", "STORE",
+                  "$self", "季夏本回合闪避胜场", {"local": "turn_wins"}, "SET_TURN_STATE",
+                  "$self.rule_state", "季夏大招首启", false, "LOOKUP", "NOT",
+                  {"local": "total_wins"}, 4, "GE", "AND",
+                  [
+                    "$self", "季夏大招首启", true, "SET_CHARACTER_STATE",
+                    "$player.cardspace.out_of_combat.content",
+                    ["$event.item.id", "cang_feng_ji_xia_fireworks", "EQ"],
+                    "FILTER", "FIRST", "ult", "STORE",
+                    {"local": "ult"}, null, "EQ", "NOT",
+                    [{"local": "ult"}, "hand", "MOVE_CARD", "$self", 1, "TURN_DUELS_ADD"], "WHEN"
+                  ],
+                  [
+                    "$self.rule_state", "季夏大招待回收", false, "LOOKUP",
+                    {"local": "turn_wins"}, 2, "GE", "AND",
+                    [
+                      "$player.cardspace.out_of_combat.content",
+                      ["$event.item.id", "cang_feng_ji_xia_fireworks", "EQ"],
+                      "FILTER", "FIRST", "ult", "STORE",
+                      {"local": "ult"}, null, "EQ", "NOT",
+                      [
+                        "$self", "季夏大招待回收", false, "SET_CHARACTER_STATE",
+                        {"local": "ult"}, "hand", "MOVE_CARD"
+                      ], "WHEN"
+                    ], "WHEN"
+                  ],
+                  "IF_ELSE"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "cang_feng_ji_xia_slide_shot",
+          "name": "滑步点射",
+          "cost": 0,
+          "out_of_combat": true,
+          "range_level": 1,
+          "description": "本技能仅用作特定效果触发。",
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 3,
+              "roll_max": 10,
+              "printed_text": "突刺 1~10：1 穿甲；施加 1 爆燃；触发失衡爆发；抽 1 卡",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 1 爆燃，触发失衡爆发，抽 1 卡。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "爆燃", 1, "STATUS",
+                      "$event.target", "STAGGER",
+                      "$player", 1, "DRAW"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 1 爆燃；触发失衡爆发；抽 1 卡"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_xia_fireworks",
+          "name": "千丝收束·零距礼花",
+          "cost": 3,
+          "out_of_combat": true,
+          "range_level": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】目标每有 4 层（烧伤+失衡），最终点数+1（至多+4）；施加 1 爆燃。",
+              "when": [{"left": "$event.target", "op": "ne", "right": null}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card",
+                  "$event.target", "烧伤", "STATUS_COUNT", "$event.target", "失衡", "STATUS_COUNT", "ADD",
+                  4, "FLOOR_DIV", 4, "MIN", "SKILL_FINAL_ADD",
+                  "$event.target", "爆燃", 1, "STATUS"
+                ]
+              }
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "【使用后】抽 1 卡，移出战斗（此后每当单回合内自身闪避骰子拼点胜利不低于 2 次，再次置入手牌）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", 1, "DRAW",
+                  "$self", "季夏大招待回收", true, "SET_CHARACTER_STATE",
+                  "$event.card", "out_of_combat", "MOVE_CARD"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "printed_text": "突刺 1~12：1 穿甲；施加 3 失衡；触发失衡爆发",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 失衡并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "失衡", 3, "STATUS", "$event.target", "STAGGER"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 失衡；触发失衡爆发"]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "printed_text": "突刺 1~12：1 穿甲；施加 3 烧伤；触发失衡爆发",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 烧伤并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "STAGGER"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤；触发失衡爆发"]
+            },
+            {
+              "type": "blunt",
+              "level": 5,
+              "multiplier": 2,
+              "printed_text": "打击 1~16×2：3 穿甲；若目标带有致命失衡，本骰伤害改为超穿甲伤害，否则触发失衡爆发",
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "3 穿甲；若目标带有致命失衡改为超穿甲伤害，否则触发失衡爆发。",
+                  "damage_part": {"amount": 3, "grade": "pierce"},
+                  "operation": {
+                    "op": "program",
+                    "damage_part": true,
+                    "code": [
+                      "$event.target", "致命失衡", "STATUS_COUNT", 0, "GT",
+                      ["$event.target", 3, "concept", "$event.die.type", "DAMAGE"],
+                      ["$event.target", 3, "pierce", "$event.die.type", "DAMAGE"],
+                      "IF_ELSE"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】若未升级为超穿甲（不带致命失衡），触发失衡爆发。",
+                  "when": [{"left": {"field": "$event.target.statuses", "key": "致命失衡", "default": 0}, "op": "eq", "right": 0}],
+                  "operation": {"op": "program", "code": ["$event.target", "STAGGER"]}
+                }
+              ],
+              "printed_effects": ["若目标带有致命失衡改为超穿甲伤害，否则触发失衡爆发"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_xia_probe_wire",
+          "name": "抛丝探虚",
+          "cost": 1,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】抽 1 卡；若本次交锋牵制了敌方技能，获得 1 偏转力场。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", 1, "DRAW",
+                  "$event.opponent_card", null, "EQ", "NOT",
+                  "$event.duel", "$player", "OPPONENT", {"field": "side"}, "REMAINING_CARDS", "SIZE", 0, "GT", "OR",
+                  ["$self", "偏转力场", 1, "STATUS"], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 3,
+              "printed_text": "突刺 1~8：1 物理；施加 2 烧伤与 2 失衡",
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 烧伤与 2 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 2, "STATUS", "$event.target", "失衡", 2, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤与 2 失衡"]
+            },
+            {
+              "type": "evade",
+              "level": 3,
+              "printed_text": "闪避 1~8：获得 2 护盾；施加 2 烧伤；【跳过拼点】下回合获得 1 迅捷",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】获得 2 护盾，对目标施加 2 烧伤。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "normal", 2, "SHIELD", "$event.target", "烧伤", 2, "STATUS"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "【跳过拼点】下回合获得 1 迅捷。",
+                  "operation": {
+                    "schedule": {
+                      "event": "on_turn_prepared",
+                      "source": "$self",
+                      "target": "$self",
+                      "after_turns": 1,
+                      "through_turns": 1,
+                      "uses": 1,
+                      "require_source_alive": false,
+                      "require_target_alive": true,
+                      "then": ["$event.scheduled.target", "迅捷", 1, "STATUS"]
+                    }
+                  }
+                }
+              ],
+              "printed_effects": ["获得 2 护盾；施加 2 烧伤；【跳过拼点】下回合获 1 迅捷"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_xia_slip_defuse",
+          "name": "侧身卸劲",
+          "cost": 1,
+          "dice": [
+            {
+              "type": "evade",
+              "level": 3,
+              "roll_max": 10,
+              "printed_text": "闪避 1~10：回复 1 生命值；施加 2 失衡；【拼点失败】获得 2 护盾",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】回复 1 生命值，对目标施加 2 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", 1, "HEAL", "$event.target", "失衡", 2, "STATUS"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】获得 2 护盾。",
+                  "operation": {"op": "program", "code": ["$self", "normal", 2, "SHIELD"]}
+                }
+              ],
+              "printed_effects": ["回复 1 生命；施加 2 失衡；【拼点失败】获 2 护盾"]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "printed_text": "突刺 1~8：1 穿甲；施加 2 烧伤；若在开牌前交锋中使用，施加 1 爆燃并触发失衡爆发",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 2 烧伤；若在开牌前交锋中使用，额外施加 1 爆燃并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "烧伤", 2, "STATUS",
+                      "$event.combat_window", "pre_reveal", "EQ",
+                      ["$event.target", "爆燃", 1, "STATUS", "$event.target", "STAGGER"],
+                      "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 2 烧伤；开牌前交锋使用时+1 爆燃并触发失衡爆发"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_xia_thermal_snare",
+          "name": "导热绊索",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】使下交锋中首个友方技能所属角色获得 2 护盾与 1 偏转力场。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.active_duelspace", 1, "SLOT_AT_OFFSET", "next_slot", "STORE",
+                  {"local": "next_slot"}, null, "EQ", "NOT",
+                  [
+                    {"local": "next_slot"}, "$player.side", "SLOT_CARDS",
+                    ["$event.item.character.is_alive"], "FILTER", "FIRST", "next_card", "STORE",
+                    {"local": "next_card"}, null, "EQ", "NOT",
+                    [
+                      {"local": "next_card.character"}, "normal", 2, "SHIELD",
+                      {"local": "next_card.character"}, "偏转力场", 1, "STATUS"
+                    ], "WHEN"
+                  ], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 3,
+              "final_bonus": 2,
+              "printed_text": "闪避 1~8+2：施加 3 烧伤；下回合施加 1 束缚；【跳过拼点】施加 2 烧伤与 2 失衡",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 3 烧伤，下回合施加 1 束缚。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "烧伤", 3, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target", "束缚", 1, "STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "【跳过拼点】对目标施加 2 烧伤与 2 失衡。",
+                  "when": [{"left": "$event.target", "op": "ne", "right": null}],
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 2, "STATUS", "$event.target", "失衡", 2, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤；下回合 1 束缚；【跳过拼点】2 烧伤与 2 失衡"]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "roll_max": 10,
+              "printed_text": "突刺 1~10：1 穿甲；施加 1 爆燃与 3 失衡",
+              "entries": [
+                "1穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 1 爆燃与 3 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "爆燃", 1, "STATUS", "$event.target", "失衡", 3, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 1 爆燃与 3 失衡"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_xia_flank_pistol",
+          "name": "绕后温压铳",
+          "cost": 2,
+          "ignore_range": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】若己方速度高于对方，最终点数+2。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player.speed", "$player", "OPPONENT", {"field": "speed"}, "GT",
+                  ["$event.card", 2, "SKILL_FINAL_ADD"], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 4,
+              "printed_text": "闪避 1~12：使目标本交锋内后续骰子最终点数−2；施加 2 失衡",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】使目标本交锋内后续骰子最终点数−2，施加 2 失衡。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "失衡", 2, "STATUS",
+                      "$event.opponent_card", null, "EQ", "NOT",
+                      [
+                        {
+                          "schedule": {
+                            "event": "before_dice_use",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 0,
+                            "through_turns": 0,
+                            "uses": 99,
+                            "require_source_alive": false,
+                            "require_target_alive": false,
+                            "capture": {"card": "$event.opponent_card", "duel": "$event.duel"},
+                            "when": [
+                              {"left": "$event.card", "op": "eq", "right": "$event.scheduled.capture.card"},
+                              {"left": "$event.duel", "op": "eq", "right": "$event.scheduled.capture.duel"},
+                              {"left": "$event.die.destroyed", "op": "eq", "right": false}
+                            ],
+                            "then": ["$event.die", -2, "DIE_FINAL_ADD"]
+                          }
+                        }
+                      ], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["使目标本交锋后续骰子最终点数−2；施加 2 失衡"]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "printed_text": "突刺 1~12：2 穿甲；施加 3 烧伤；触发失衡爆发",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加 3 烧伤并触发失衡爆发。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "STAGGER"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤；触发失衡爆发"]
+            }
+          ]
+        },
+        {
+          "id": "cang_feng_ji_xia_deadwire_strangle",
+          "name": "死线绞杀",
+          "cost": 3,
+          "range_level": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得 1 偏转力场；目标每有 5 层（烧伤+失衡），进攻型骰子伤害+1（至多+2）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "偏转力场", 1, "STATUS",
+                  "$event.target", null, "EQ", "NOT",
+                  [
+                    "$event.card", "deadwire_bonus",
+                    "$event.target", "烧伤", "STATUS_COUNT", "$event.target", "失衡", "STATUS_COUNT", "ADD",
+                    5, "FLOOR_DIV", 2, "MIN",
+                    "SET_SKILL_STATE"
+                  ], "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESOLVE_DAMAGE",
+              "subject": "source",
+              "hidden": true,
+              "when": [
+                {"left": "$event.damage_part", "op": "eq", "right": true},
+                {"left": "$event.damage_die.is_attack", "op": "eq", "right": true}
+              ],
+              "description": "目标每有 5 层（烧伤+失衡），进攻型骰子伤害+1（至多+2）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.damage_die.card", "$owner", "IS",
+                  ["$owner.use_state", "deadwire_bonus", 0, "LOOKUP", "ADD"], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "闪避 1~12+2：施加 3 烧伤与 1 爆燃",
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加 3 烧伤与 1 爆燃。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "烧伤", 3, "STATUS", "$event.target", "爆燃", 1, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["施加 3 烧伤与 1 爆燃"]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "final_bonus": 2,
+              "printed_text": "突刺 1~12+2：2 穿甲；触发失衡爆发；若目标因此获得致命失衡，回复 1 生命值并抽 1 卡",
+              "entries": [
+                "2穿甲",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】触发失衡爆发；若因此获得致命失衡，回复 1 生命值并抽 1 卡。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", {"call": "STAGGER", "result": "result", "default": false},
+                      ["$self", 1, "HEAL", "$player", 1, "DRAW"], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["触发失衡爆发；若因此致命失衡，回复 1 生命并抽 1 卡"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
