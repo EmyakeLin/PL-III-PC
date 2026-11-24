@@ -300,11 +300,11 @@ class CollectionAndTargetTests(unittest.TestCase):
         entry = die.entries[2]
         resolve_entry(ctx, die, entry, **event)
         choices = game.special.options(actor.player)
-        self.assertEqual(choices, [SpecialAction("choose_card", target_card=c) for c in (first, second)])
+        self.assertEqual(choices, [SpecialAction("choose_card", target_card=c) for c in (first, other, second)])
         slots[0].content[2].remove(first)
         with self.assertRaises(ValueError):
             game.special.apply(actor.player, choices[0])
-        self.assertTrue(game.special.apply(actor.player, choices[1]))
+        self.assertTrue(game.special.apply(actor.player, choices[2]))
         resolve_entry(ctx, die, entry, **event)
         self.assertTrue(second.destroyed)
         self.assertFalse(first.destroyed or other.destroyed)
