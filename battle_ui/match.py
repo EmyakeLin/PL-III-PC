@@ -1,6 +1,7 @@
 """Local two-player battle host for private declarations and public resolution."""
 
 from collections import Counter, deque
+from itertools import islice
 import random
 import time
 
@@ -155,7 +156,8 @@ def roster_art(pool):
 class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
-    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False, extra_packs=()):
+    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False, extra_packs=(),
+                 full_history=False):
         pool = {spec["id"]: spec for spec in load_characters_from_packs(extra_packs=extra_packs)}
         teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
         self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
@@ -189,8 +191,11 @@ class BattleMatch:
                         character.id = f"@{player.side}.{position}:{key}"
                         if teammates[key] > 1:
                             character.name += f"（{position}号）"
+                        for assets in (self._character_colors, self._character_sprites, self._character_fx):
+                            if key in assets:
+                                assets[character.id] = assets[key]
         self._views = {side: Displayer(self.game, viewer_side=side) for side in (None, 1, 2)}
-        self._history = deque(maxlen=100)
+        self._history = deque(maxlen=None if full_history else 100)
         self._require_handoff = initial_handoff
         self._pre_seat = None
         self._pre_reveal_claimed = {1: False, 2: False}
@@ -355,7 +360,7 @@ class BattleMatch:
             "response_times": [dict(timing) for timing in self._response_times],
             "can_pass": self.mode == "placement" and self.game.placed_this_window > 0,
             "window_remaining": self._window_size - self.game.placed_this_window if self.mode == "placement" else 0,
-            "history": list(self._history),
+            "history": list(islice(reversed(self._history), 100))[::-1],
         }
 
     def act(self, action, revision, *, card_id=None, card_ids=None, target=None, side=None,

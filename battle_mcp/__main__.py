@@ -8,6 +8,23 @@ from .network import lan_address
 from .transport import ArenaServer
 
 
+def serve_local_game(variant, *, challenge=False, roster=None, port=0, seed=None):
+    mode = "challenge" if challenge else "regular"
+    with ArenaServer(port=port, seed=seed) as server:
+        if roster:
+            teams = [[key] if isinstance(key, str) else key for key in roster]
+            game = server.lobby.create({"mode": mode, "variant": variant, "roster": teams})
+            path = game["play_url"]
+        else:
+            path = f"/lobby/?mode={mode}&variant={variant}"
+        print(f"对战大厅  {server.invite_url}/", flush=True)
+        print(f"玩家 1 入口  {server.invite_url}{path}", flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="光点计划 III · 对战服务端")
     parser.add_argument("--lobby", action="store_true", help="开启常驻对战大厅，可随时创建不同模式的房间")
@@ -38,9 +55,12 @@ def main():
     if args.bot and multiplayer:
         parser.error("--bot 仅在本机运行，不能和联机参数同时使用。")
     try:
+        if args.bot or args.challenge:
+            return serve_local_game(args.challenge or "solo", challenge=bool(args.challenge),
+                                    roster=args.roster, port=args.port, seed=args.seed)
         address = args.address if args.address is not None else (lan_address() if args.lan else "127.0.0.1")
         room = None if args.lobby else Room(
-            args.roster, seed=args.seed, selectable=multiplayer, bot=args.bot, challenge=CHALLENGES.get(args.challenge))
+            args.roster, seed=args.seed, selectable=multiplayer)
         server = ArenaServer(room, args.port, address=address, public_url=args.public_url, seed=args.seed)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
@@ -52,15 +72,9 @@ def main():
             print(f"观战页面  {url}/")
             print(f"Canvas 观战页面  {url}/canvas/")
             for seat, token in server.tokens.items():
-                player_path = "/canvas/" if room.bot_side else "/"
-                print(f"玩家 {seat} 私人邀请  {url}{player_path}#token={token}")
-                if not room.bot_side:
-                    print(f"玩家 {seat} Canvas 邀请  {url}/canvas/#token={token}")
-            if room.challenge:
-                print(f"挑战 · {room.challenge.name}。打开玩家 1 的邀请，选择自己的阵容后开战。")
-            elif args.bot:
-                print("打开玩家 1 的邀请，选择双方角色后点击开战。")
-            elif multiplayer:
+                print(f"玩家 {seat} 私人邀请  {url}/#token={token}")
+                print(f"玩家 {seat} Canvas 邀请  {url}/canvas/#token={token}")
+            if multiplayer:
                 print(f"房间监听  {server.server_address[0]}:{server.server_port}")
                 print("房主打开玩家 1 的邀请，将玩家 2 的完整邀请发给对手。"
                       "双方选人、准备后开局。重连时打开原来的邀请。")

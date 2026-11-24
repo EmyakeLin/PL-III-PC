@@ -3,7 +3,6 @@
 import argparse
 from functools import cache
 from itertools import permutations
-from threading import Thread
 from uuid import uuid4
 
 from loader import load_characters_from_packs
@@ -249,31 +248,15 @@ def play_seat(room, side):
 
 
 def main():
-    from battle_mcp.room import Room
-    from battle_mcp.transport import ArenaServer
+    from battle_mcp.__main__ import serve_local_game
 
     parser = argparse.ArgumentParser(description="本机挑战幽兰残雪·澜清")
     parser.add_argument("--opponent", default="plan_b_annolin", help="真人席位的角色 ID，默认安诺琳")
     parser.add_argument("--seed", type=int, help="固定洗牌与掷骰种子")
     parser.add_argument("--port", type=int, default=0, help="房间端口，默认自动分配")
     args = parser.parse_args()
-    room = Room((args.opponent, "lan_qing"), seed=args.seed)
-    try:
-        with ArenaServer(room, port=args.port) as server:
-            server_thread = Thread(target=server.serve_forever, daemon=True)
-            server_thread.start()
-            try:
-                table = "canvas/" if hasattr(room, "canvas_state") else ""
-                print(f"玩家 1 私人邀请  http://127.0.0.1:{server.server_port}/{table}#token={server.tokens[1]}", flush=True)
-                winner = play_seat(room, 2)
-                result = {1: "你获胜了。", 2: "澜清获胜。", None: "平局。"}[winner]
-                print(f"{result} 按 Ctrl+C 关闭房间，再次运行命令可重新挑战。", flush=True)
-                server_thread.join()
-            finally:
-                server.shutdown()
-                server_thread.join()
-    finally:
-        room.close()
+    serve_local_game("lan_qing", challenge=True, roster=[args.opponent, "lan_qing"],
+                     seed=args.seed, port=args.port)
 
 
 if __name__ == "__main__":

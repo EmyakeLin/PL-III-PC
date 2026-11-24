@@ -9,14 +9,15 @@ from battle_ui.match import roster_art
 from loader import load_characters_from_packs
 from .challenges import CHALLENGES
 from .manual import ManualDesk
-from .room import Room
 
 
 def mode_definitions():
     """Each playable variant supplies a label and a factory accepting seed=."""
     return {
-        "regular": ("常规对战", {"hotseat": ("热座", BattleSession), "solo": ("单人模式", partial(Room, bot=True))}),
-        "challenge": ("挑战模式", {key: (c.name, partial(Room, challenge=c)) for key, c in CHALLENGES.items()}),
+        "regular": ("常规对战", {"hotseat": ("热座", BattleSession),
+                             "solo": ("单人模式", partial(BattleSession, ai_side=2, open_rosters=True))}),
+        "challenge": ("挑战模式", {key: (c.name, partial(BattleSession, ai_side=2, open_rosters=True, challenge=c))
+                               for key, c in CHALLENGES.items()}),
         "limit_battle": ("界限战斗", {}),
         "combat_contract": ("砺战合约", {}),
     }
@@ -38,14 +39,14 @@ class RequestError(ValueError):
 class HostedRoom:
     def __init__(self, room):
         self.room = room
-        self.hotseat = isinstance(room, BattleSession)
-        seats = (1,) if self.hotseat else (1, 2)
+        self.local_table = isinstance(room, BattleSession)
+        seats = (1,) if self.local_table else (1, 2)
         self.tokens = {s: secrets.token_urlsafe(32) for s in seats if s != getattr(room, "bot_side", None)}
-        self.desk = None if self.hotseat else ManualDesk(room)
+        self.desk = None if self.local_table else ManualDesk(room)
         self.desk_token = secrets.token_urlsafe(32)
 
     def close(self):
-        if not self.hotseat:
+        if not self.local_table:
             self.room.close()
 
     def authorized_seats(self, authorization, *, desk=False):
@@ -128,21 +129,14 @@ class Lobby:
                 raise RequestError(400, "请为双方各选至少一名角色。")
             args["roster"] = roster
         hosted = HostedRoom(factory(**args))
-        if "roster" in spec and not hosted.hotseat:
-            try:
-                hosted.room.ready(1, 0, "lobby-start", human=True, canvas=True)
-            except Exception:
-                hosted.close()
-                raise
         room_id = secrets.token_hex(16)
         with self._lock:
             if self._closed:
                 hosted.close()
                 raise RequestError(503, "服务正在关闭。")
             self._rooms[room_id] = hosted
-        table = "table" if hosted.hotseat else "canvas"
         return {"id": room_id, "mode": mode, "variant": variant,
-                "play_url": f"/rooms/{room_id}/{table}/#token={hosted.tokens[1]}"}
+                "play_url": f"/rooms/{room_id}/table/#token={hosted.tokens[1]}"}
 
     def get(self, room_id):
         with self._lock:

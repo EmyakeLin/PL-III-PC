@@ -282,7 +282,15 @@ function render() {
 }
 
 async function loadMenu() {
-  try { modes = await request('/api/modes'); notice(); render(); }
+  try {
+    modes = await request('/api/modes');
+    const params = new URLSearchParams(location.search);
+    mode = modes.find(item => item.id === params.get('mode')) || null;
+    const choice = mode?.variants.find(item => item.id === params.get('variant'));
+    notice();
+    render();
+    if (choice) await chooseVariant(choice);
+  }
   catch { notice('无法读取对战模式。'); button(app.stage, '重新连接', 25, 25, 140, () => location.reload()); }
 }
 

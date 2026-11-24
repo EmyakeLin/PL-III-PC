@@ -1,19 +1,22 @@
 """Mode selection, private invitations and simultaneous tables on one listener."""
 import http.client
+import io
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout
 from urllib.parse import parse_qs, urljoin, urlsplit
 from unittest.mock import patch
 
 from battle_mcp.bot import choose_move
+from battle_mcp.__main__ import serve_local_game
 from battle_mcp.challenges import CHALLENGES, Challenge
 from battle_mcp.transport import ArenaServer
-from tests.test_carrier_challenge import PlaysChallenge
+from battle_ui.session import BattleSession
 from tests.test_mcp_transport import WireClient
 
 
-class LobbyTests(PlaysChallenge, WireClient, unittest.TestCase):
+class LobbyTests(WireClient, unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.server = ArenaServer(port=0, seed=37)
@@ -28,7 +31,7 @@ class LobbyTests(PlaysChallenge, WireClient, unittest.TestCase):
         self.assertEqual(status, 201, created)
         invite = urlsplit(created["play_url"])
         prefix = "/rooms/" + created["id"]
-        self.assertEqual(invite.path, prefix + ("/table/" if variant == "hotseat" else "/canvas/"))
+        self.assertEqual(invite.path, prefix + "/table/")
         token, = parse_qs(invite.fragment)["token"]
         return prefix, {"Authorization": "Bearer " + token}
 
@@ -54,6 +57,18 @@ class LobbyTests(PlaysChallenge, WireClient, unittest.TestCase):
             self.assertIn(module.encode(), menu)
             self.assertTrue(asset(urljoin("/lobby/engine/lobby.js", module), "text/javascript"))
 
+    def test_direct_launch_uses_lobby_lineup_or_starts_a_local_table(self):
+        for roster in (None, ["emyake_lin_yu", "lan_qing"]):
+            with self.subTest(roster=roster), patch.object(ArenaServer, "serve_forever"), redirect_stdout(io.StringIO()) as log:
+                serve_local_game("lan_qing", challenge=True, roster=roster, seed=37)
+                link = urlsplit(log.getvalue().split("玩家 1 入口  ")[1].strip())
+                if roster:
+                    self.assertRegex(link.path, r"^/rooms/[a-f0-9]+/table/$")
+                    self.assertIn("token", parse_qs(link.fragment))
+                else:
+                    self.assertEqual(link.path, "/lobby/")
+                    self.assertEqual(parse_qs(link.query), {"mode": ["challenge"], "variant": ["lan_qing"]})
+
     def test_lineup_preview_has_printed_skills_and_never_opens_a_room(self):
         with patch("battle_mcp.hosting.HostedRoom") as open_room:
             for mode, variant in (("regular", "hotseat"), ("regular", "solo"), ("challenge", "carrier")):
@@ -73,11 +88,9 @@ class LobbyTests(PlaysChallenge, WireClient, unittest.TestCase):
                 ("regular", "solo", [["plan_b_heris", "plan_b_heris"], ["plan_b_heck"]]),
                 ("challenge", "carrier", [["plan_b_annolin", "plan_b_heck"], ["structured_carrier"]])):
             path, key = self.create(mode, variant, roster=teams)
-            if variant == "hotseat":
-                _, state = self.request(path + "/api/state", method="GET", **key)
-            else:
-                _, state = self.request(path + "/api/canvas/state", {}, **key)
-                self.assertTrue(state["started"])
+            status, state = self.request(path + "/api/state", method="GET", **key)
+            self.assertEqual(status, 200)
+            self.assertEqual(state["ai_side"], None if variant == "hotseat" else 2)
             self.assertEqual([[c["printed_id"] for c in p["characters"]] for p in state["frame"]["players"]], teams)
         for teams in (([], ["structured_carrier"]), (["structured_carrier"], ["structured_carrier"]),
                       (["plan_b_annolin"], ["lan_qing"])):
@@ -104,56 +117,118 @@ class LobbyTests(PlaysChallenge, WireClient, unittest.TestCase):
             tables = list(executor.map(lambda pair: self.create(*pair), variants))
         self.assertEqual(len({path for path, _ in tables}), 4)
         (table, key), (solo, solo_key), (boss, boss_key), (lan, lan_key) = tables
-        state = "/api/canvas/state"
-        start = "/api/canvas/ready"
-        self.assertEqual(self.request(table + "/api/state", method="GET")[0], 403)
-        status, initial = self.request(table + "/api/state", method="GET", **key)
-        self.assertEqual(status, 200)
-        play = {"action": "place", "card_id": initial["legal_cards"][0], "revision": initial["revision"]}
-        status, handoff = self.request(table + "/api/action", play, **key)
-        self.assertEqual((status, handoff["mode"]), (200, "handoff"))
-        self.assertTrue(all(p["hand"] is None for p in handoff["frame"]["players"]))
-        self.assertEqual(self.request(boss + state, {}, **solo_key)[0], 403)
-        self.assertEqual(self.request(boss + state, {})[1]["side"], None)
-        self.assertEqual(self.request(solo + state, {}, **solo_key)[1]["challenge"], None)
-        args = {"revision": 0, "request_id": "ready", "roster": [["plan_b_annolin"], ["structured_carrier"]]}
-        self.assertEqual(self.request(boss + start, args, **boss_key)[0], 200)
-        self.assertTrue(self.request(boss + state, {}, **boss_key)[1]["started"])
-        self.assertFalse(self.request(lan + state, {}, **lan_key)[1]["started"])
-        self.assertEqual(self.request(table + "/api/state", method="GET", **key)[1], handoff)
-        close = "/api" + boss
-        self.assertEqual(self.request(close, method="DELETE", **solo_key)[0], 403)
-        self.assertEqual(self.request(close, method="DELETE", **boss_key)[0], 204)
-        self.assertEqual(self.request(boss + state, {}, **boss_key)[0], 404)
-        self.assertEqual(self.request(lan + state, {}, **lan_key)[1]["challenge"], "幽兰残雪·澜清")
-        self.assertEqual(self.request(solo + start, {**args, "roster": [["plan_b_annolin"], ["plan_b_heck"]]},
-                                      **solo_key)[0], 200)
+        def read(path, auth):
+            return self.request(path + "/api/state", method="GET", **auth)
+        self.assertEqual(read(table, {})[0], 403)
+        self.assertEqual(read(boss, solo_key)[0], 403)
+        self.assertEqual(read(boss, {})[0], 403)
+        _, initial = read(table, key)
+        _, carrier = read(boss, boss_key)
+        _, original_lan = read(lan, lan_key)
+        self.assertEqual(original_lan["challenge"], "幽兰残雪·澜清")
+        args = {"revision": carrier["revision"], "action": "new", "roster": [["plan_b_annolin"], ["structured_carrier"]]}
+        self.assertEqual(self.request(boss + "/api/action", args, **boss_key)[1]["match_number"], 2)
+        self.assertEqual(read(table, key)[1], initial)
+        self.assertEqual(read(lan, lan_key)[1], original_lan)
+        self.assertEqual(self.request("/api" + boss, method="DELETE", **solo_key)[0], 403)
+        self.assertEqual(self.request("/api" + boss, method="DELETE", **boss_key)[0], 204)
+        self.assertEqual(read(boss, boss_key)[0], 404)
+        self.assertEqual(read(solo, solo_key)[1]["ai_side"], 2)
 
-    def test_scripted_team_is_locked_in_order_through_ready_and_rematch(self):
+    def test_scripted_team_is_locked_in_order_on_new_game(self):
         team = Challenge("测试小队", "plan_b_annolin", choose_move, teammates=("lan_qing",))
         with patch.dict(CHALLENGES, test_team=team):
             path, key = self.create("challenge", "test_team")
-        state = self.request(path + "/api/canvas/state", {}, **key)[1]
+        _, state = self.request(path + "/api/state", method="GET", **key)
         players = state["frame"]["players"]
-        self.assertEqual([c["printed_id"] for c in players[1]["characters"]], list(team.opponents))
         self.assertNotIn(players[0]["characters"][0]["printed_id"], team.opponents)
-        args = {"revision": state["revision"], "request_id": "start"}
+        self.assertEqual([c["printed_id"] for c in players[1]["characters"]], list(team.opponents))
+        args = {"revision": state["revision"], "action": "new"}
         for opponent in (list(reversed(team.opponents)), ["lan_qing"]):
-            self.assertEqual(self.request(path + "/api/canvas/ready",
-                             {**args, "roster": [["plan_b_heck"], opponent]}, **key)[0], 400)
-        self.assertEqual(self.request(path + "/api/canvas/ready",
-                         {**args, "roster": [["plan_b_heck"], list(team.opponents)]}, **key)[0], 200)
-        state = self.request(path + "/api/canvas/state", {}, **key)[1]
-        again = {"revision": state["revision"], "request_id": "restart"}
-        self.assertEqual(self.request(path + "/api/canvas/rematch",
-                         {**again, "roster": [["plan_b_heck"], ["lan_qing"]]}, **key)[0], 400)
-        self.assertEqual(self.request(path + "/api/canvas/rematch", again, **key)[0], 200)
-        state = self.request(path + "/api/canvas/state", {}, **key)[1]
-        self.assertEqual(state["match_number"], 2)
-        self.assertEqual([c["printed_id"] for c in state["frame"]["players"][1]["characters"]], list(team.opponents))
+            self.assertEqual(self.request(path + "/api/action", {**args, "roster": [["plan_b_heck"], opponent]}, **key)[0], 400)
+        status, again = self.request(path + "/api/action", {**args, "roster": [["plan_b_heck"], list(team.opponents)]}, **key)
+        self.assertEqual((status, again["match_number"]), (200, 2))
+        self.assertEqual([c["printed_id"] for c in again["frame"]["players"][1]["characters"]], list(team.opponents))
+
+    def test_lobby_solo_uses_the_standalone_ai_table_and_actions(self):
+        teams = [["emyake_lin_yu"], ["lan_qing"]]
+        path, key = self.create("regular", "solo", roster=teams)
+        reference = BattleSession(seed=37, ai_side=2, roster=teams)
+        _, live = self.request(path + "/api/state", method="GET", **key)
+        direct = reference.state()
+        for _ in range(50):
+            for field in ("mode", "active_side", "legal_cards", "pre_reveal_claimed", "pre_reveal_eligible_cards",
+                          "pre_reveal_stage_targets", "card_owners"):
+                self.assertEqual(live[field], direct[field], field)
+            if live["mode"] == "placement":
+                break
+            _, live = self.request(path + "/api/action", {"action": "next", "revision": live["revision"]}, **key)
+            _, direct = reference.command({"action": "next", "revision": direct["revision"]})
+        self.assertEqual(live["mode"], "placement")
+        self.assertTrue(live["pre_reveal_eligible_cards"])
+
+    def test_lan_qing_challenge_stages_and_unstages_on_the_local_table(self):
+        path, key = self.create("challenge", "lan_qing", roster=[["emyake_lin_yu"], ["lan_qing"]])
+        _, state = self.request(path + "/api/state", method="GET", **key)
+        def act(action, **kwargs):
+            code, result = self.request(path + "/api/action", {"revision": state["revision"], "action": action, **kwargs}, **key)
+            self.assertEqual(code, 200, result)
+            return result
+        for _ in range(50):
+            if state["mode"] == "placement":
+                break
+            state = act("next")
+        card = state["pre_reveal_eligible_cards"][0]
+        target = {"kind": "character", "id": "lan_qing"}
+        state = act("claim_pre_reveal")
+        state = act("stage_pre_reveal", card_id=card, target=target)
+        self.assertEqual([(p["card_id"], p["target"]) for p in state["pre_reveal_plan"]], [(card, target)])
+        self.assertNotIn(card, state["legal_cards"])
+        state = act("unstage_pre_reveal", card_id=card)
+        self.assertEqual(state["pre_reveal_plan"], [])
+        self.assertIn(card, state["pre_reveal_eligible_cards"])
+
+    def test_ai_answers_the_specific_interception_and_pending_special(self):
+        table = BattleSession(ai_side=2, seed=37)
+        snap = {"active_side": 2, "mode": "intercept", "pending_responses": [1, 2],
+                "legal_intercept_cards": ["late"], "intercepts_by_number": {1: [], 2: ["late"]},
+                "frame": {"players": [{"side": 2, "hand": [{"id": "late", "cost": 0}]}]}}
+        with patch.object(table.match, "act") as act:
+            self.assertTrue(table._ai_step(snap))
+            act.assert_called_once_with("let_through", table.match.revision, duel_number=1)
+            self.assertTrue(table._ai_step({"active_side": 2, "mode": "special", "special_pending": True,
+                                           "special_options": [{"kind": "intercept"}, {"kind": "pass_intercept"}]}))
+            act.assert_called_with("use_special", table.match.revision, option=1)
 
     def test_play_and_rematch_both_scripted_challenges_from_their_own_invitations(self):
         for variant, challenge in CHALLENGES.items():
             with self.subTest(variant=variant):
-                path, key = self.create("challenge", variant)
-                self.play(challenge, ["plan_b_annolin", "plan_b_heris"], prefix=path, credentials=key)
+                teams = [["emyake_lin_yu"], list(challenge.opponents)]
+                path, key = self.create("challenge", variant, roster=teams)
+                session = self.server.lobby.get(path.split("/")[-1]).room
+                state = session.state()
+                for _ in range(2000):
+                    mode = state["mode"]
+                    self.assertNotEqual(state["active_side"], 2)
+                    self.assertIsNone(state["frame"]["players"][1]["hand"])
+                    if mode == "finished":
+                        break
+                    if mode == "placement":
+                        cards = state["legal_cards"]
+                        command = {"action": "place", "card_id": cards[0]} if cards else {"action": "end"}
+                    elif mode == "intercept":
+                        command = {"action": "let_through", "duel_number": state["pending_responses"][0]}
+                    elif mode == "pre_attack":
+                        command = {"action": "end_attack"}
+                    elif mode == "special":
+                        command = {"action": "use_special", "option": 0} if state["special_pending"] else {"action": "leave_special"}
+                    else:
+                        command = {"action": "next"}
+                    _, state = session.command({**command, "revision": state["revision"]})
+                self.assertEqual(state["mode"], "finished")
+                self.assertEqual(self.request(path + "/api/battle_record", method="GET")[0], 403)
+                status, record = self.request(path + "/api/battle_record", method="GET", **key)
+                self.assertEqual((status, record["match_number"], record["finished"]), (200, 1, True))
+                self.assertEqual(record["history"][-100:], state["history"])
+                status, again = self.request(path + "/api/action", {"action": "new", "roster": teams, "revision": state["revision"]}, **key)
+                self.assertEqual((status, again["match_number"], again["challenge"]), (200, 2, challenge.name))

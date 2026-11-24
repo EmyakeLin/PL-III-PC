@@ -11,16 +11,27 @@ from .match import BattleMatch
 class BattleSession:
     """A single table shared by the browsers connected to this local process."""
 
-    def __init__(self, seed=None, *, roster=None, ai_side=None):
+    def __init__(self, seed=None, *, roster=None, ai_side=None, challenge=None, open_rosters=False):
         self.seed = seed
         self.ai_side = ai_side
+        self.challenge = challenge
+        self.open_rosters = open_rosters
         self._rng = random.Random(seed)
-        self.match = BattleMatch(roster, seed=seed, initial_handoff=(roster is not None and ai_side is None))
+        self.match = self._new_match(roster, initial_handoff=roster is not None and ai_side is None)
         if self.ai_side is not None:
             self._drive_ai()
         self.revision = secrets.randbits(40)
         self.match_number = 1
         self.lock = Lock()
+
+    def _new_match(self, roster, *, initial_handoff):
+        if self.challenge:
+            roster = self.challenge.validate_roster(roster)
+        match = BattleMatch(roster, seed=self.seed, initial_handoff=initial_handoff, open_rosters=self.open_rosters,
+                            extra_packs=self.challenge.packs if self.challenge else (), full_history=True)
+        if self.challenge:
+            match.game.players[self.ai_side - 1].target_priority = (("hp", 1), ("lightcore_hp", 1))
+        return match
 
     def _remaining_budget(self, snap):
         """Compute AI's exact remaining shared & per-character cost budget after already-placed cards."""
@@ -87,6 +98,11 @@ class BattleSession:
 
         if active != self.ai_side:
             return False
+
+        if self.challenge and (decision := self.challenge.table_action(snap)):
+            action, arguments = decision
+            self.match.act(action, rev, **arguments)
+            return True
 
         if mode == "draw_select":
             prompt = snap.get("draw_select") or {}
@@ -155,7 +171,7 @@ class BattleSession:
 
         if mode == "intercept":
             pending = list(snap.get("pending_responses") or [])
-            legal_int = list(snap.get("legal_intercept_cards") or [])
+            legal_int = snap["intercepts_by_number"].get(pending[0], []) if pending else []
             players = (snap.get("frame") or {}).get("players") or []
             me = next((p for p in players if p.get("side") == self.ai_side), None)
             hand_by_key = {(c.get("action_key") or c.get("id")): c for c in ((me or {}).get("hand") or [])}
@@ -175,6 +191,10 @@ class BattleSession:
 
         if mode == "special" or snap.get("effect_choice"):
             options = snap.get("special_options") or []
+            if snap.get("special_pending") and not snap.get("effect_choice") and options:
+                idx = next((i for i, option in enumerate(options) if option["kind"] == "pass_intercept"), 0)
+                self.match.act("use_special", rev, option=idx)
+                return True
             if snap.get("effect_choice") and options:
                 non_decline = [i for i, o in enumerate(options) if o.get("kind") != "decline_card"]
                 idx = self._rng.choice(non_decline) if non_decline else 0
@@ -199,23 +219,36 @@ class BattleSession:
             if not acted:
                 break
 
+    def _state(self):
+        return {**self.match.snapshot(), "revision": self.revision, "match_number": self.match_number,
+                "ai_side": self.ai_side, "challenge": self.challenge.name if self.challenge else None,
+                "open_rosters": self.open_rosters}
+
     def state(self):
         with self.lock:
-            return {**self.match.snapshot(), "revision": self.revision, "match_number": self.match_number, "ai_side": self.ai_side}
+            return self._state()
+
+    def battle_record(self):
+        with self.lock:
+            game = self.match.game
+            frame = self.match._views[None].snapshot()
+            return {"match_number": self.match_number, "history": list(self.match._history),
+                    "challenge": self.challenge.name if self.challenge else None, "bot_side": self.ai_side,
+                    "finished": game.is_over, "winner_side": frame["winner_side"],
+                    "frame": {"turn": frame["turn"], "players": [
+                        {"side": p.side, "characters": [{"name": c.name} for c in p.characters]} for p in game.players]}}
 
     def command(self, request):
         if not isinstance(request, dict) or type(request.get("revision")) is not int:
             raise ValueError("操作缺少有效的对局版本。")
         with self.lock:
             if request["revision"] != self.revision:
-                return HTTPStatus.CONFLICT, {**self.match.snapshot(), "revision": self.revision, "match_number": self.match_number, "ai_side": self.ai_side}
+                return HTTPStatus.CONFLICT, self._state()
             action = request.get("action")
             if action == "new":
                 roster = request.get("roster")
-                self.match = BattleMatch(roster, seed=self.seed, initial_handoff=(self.ai_side is None))
-                self._drive_ai()
+                self.match = self._new_match(roster, initial_handoff=self.ai_side is None)
                 self.match_number += 1
-                frame = self.match.snapshot()
             else:
                 if action not in ("place", "end", "pass", "ready", "next",
                                   "attack", "end_attack", "intercept", "let_through", "switch_side",
@@ -234,7 +267,6 @@ class BattleSession:
                     option=request.get("option"),
                     character_id=request.get("character_id"),
                 )
-                self._drive_ai()
-                frame = self.match.snapshot()
+            self._drive_ai()
             self.revision += 1
-            return HTTPStatus.OK, {**frame, "revision": self.revision, "match_number": self.match_number, "ai_side": self.ai_side}
+            return HTTPStatus.OK, self._state()

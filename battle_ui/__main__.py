@@ -44,6 +44,9 @@ class BattleHandler(BaseHTTPRequestHandler):
         if path == "/api/state":
             self._json(HTTPStatus.OK, self.server.session.state())
             return
+        if path == "/api/battle_record":
+            self._json(HTTPStatus.OK, self.server.session.battle_record())
+            return
         resolved = _resolve_static(path)
         if resolved is not None:
             file_path, content_type = resolved

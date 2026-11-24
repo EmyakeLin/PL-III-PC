@@ -270,18 +270,18 @@ class ArenaHandler(BaseHTTPRequestHandler):
                     filename, mime = asset
                     return self._send(200, filename.read_bytes(), mime)
             hosted, path = self._route(path)
-            if hosted is not None and hosted.hotseat and path == "/api/state":
+            if hosted is not None and hosted.local_table and path in ("/api/state", "/api/battle_record"):
                 if hosted.side_for(self.headers.get("Authorization")) is None:
                     raise RequestError(403, "请使用本桌私人邀请。")
-                return self._send(200, hosted.room.state())
-            if path == "/mcp" and hosted is not None and not hosted.hotseat:
+                return self._send(200, hosted.room.state() if path == "/api/state" else hosted.room.battle_record())
+            if path == "/mcp" and hosted is not None and not hosted.local_table:
                 # This server uses JSON results and does not offer an SSE stream.
                 self._send(405)
             elif hosted is not None and hosted is self.server.default_room and path in ASSETS:
                 filename, mime = ASSETS[path]
                 self._send(200, (STATIC_DIR / filename).read_bytes(), mime)
             else:
-                table = "/table" if hosted and hosted.hotseat else "/canvas"
+                table = "/table" if hosted and hosted.local_table else "/canvas"
                 asset = None
                 if hosted and path.startswith(table + "/"):
                     asset = resolve_static(path.removeprefix(table))
@@ -362,12 +362,12 @@ class ArenaHandler(BaseHTTPRequestHandler):
             if hosted is None:
                 raise RequestError(404, "请从大厅选择房间。")
             room = hosted.room
-            if hosted.hotseat:
+            if hosted.local_table:
                 if path != "/api/action":
-                    raise RequestError(404, "热座操作不存在。")
+                    raise RequestError(404, "本机战桌操作不存在。")
                 if hosted.side_for(authorization) is None:
                     raise RequestError(403, "请使用本桌私人邀请。")
-                status, frame = room.command(self._json_body(limit=8192))
+                status, frame = room.command(self._json_body(limit=None if room.open_rosters and self.server.local_only else 8192))
                 return self._send(status, frame)
             if path.startswith("/api/desk/"):
                 seats = hosted.authorized_seats(authorization, desk=True)

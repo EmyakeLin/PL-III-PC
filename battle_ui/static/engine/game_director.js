@@ -3043,6 +3043,12 @@ export class GameDirector {
         openTeams: Boolean(this.state.bot_side),
         quantity: m.quantity,
         quantityInput: m.quantityInput,
+      } : this.state.open_rosters ? {
+        editableSides: this.state.challenge ? [1] : [1, 2],
+        title: this.state.challenge || '单人对战',
+        lockedIds: this.state.challenge ? m.team2 : [],
+        sideNames: { 1: '我的角色', 2: this.state.challenge ? '挑战对手' : '电脑对手' },
+        openTeams: true,
       } : null;
       const canEdit = side => !roomLobby || roomLobby.editableSides.includes(side);
       const inspectCharacter = ch => {
@@ -3205,7 +3211,7 @@ export class GameDirector {
         catalog: this.state.catalog,
         characterColors: this.state.character_colors || {},
         history: this.state.history || [],
-        onExport: this.state.started ? this.openBattleRecord : null,
+        onExport: !this.transport.isRoom || this.state.started ? this.openBattleRecord : null,
         onTab: (tab) => { m.tab = tab; m.scrollY = 0; this._rebuildOverlay(); },
         onScrollChange: (val) => { m.scrollY = val; },
         onClose: () => { this.codexModal = null; this._rebuildOverlay(); },
@@ -3344,7 +3350,7 @@ export class GameDirector {
       const canRematch = !this.transport.isRoom || this.state.can_rematch;
       const ov = buildFinishOverlay(w, h, {
         winnerSide,
-        winnerName: winnerSide === this.state.bot_side ? (this.state.challenge || '电脑对手') : null,
+        winnerName: winnerSide && winnerSide === (this.state.ai_side ?? this.state.bot_side) ? (this.state.challenge || '电脑对手') : null,
         turn: this.state.frame.turn,
         history: this.state.history || [],
         onExport: this.openBattleRecord,
@@ -3353,7 +3359,7 @@ export class GameDirector {
             this._sendAction('rematch');
             return;
           }
-          const teams = (this.state.frame.players || []).map((p) => p.characters.map((c) => c.id));
+          const teams = (this.state.frame.players || []).map((p) => p.characters.map((c) => c.printed_id || c.id));
           this.three.clearDice();
           this.physics.clearClashGroups();
           this._sendAction('new', { roster: teams });

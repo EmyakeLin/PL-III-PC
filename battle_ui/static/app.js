@@ -53,7 +53,7 @@ async function boot() {
   const isRoom = table?.[2] === 'canvas';
   const token = new URLSearchParams(location.hash.slice(1)).get('token');
   const transport = isRoom ? new RoomSeatTransport(token, baseUrl) : new LocalBattleTransport(baseUrl, token);
-  const openBattleRecord = isRoom ? bindBattleRecord(transport) : null;
+  const openBattleRecord = bindBattleRecord(transport);
   const hosted = baseUrl.startsWith('/rooms/');
   const returnToLobby = hosted ? () => {
     const id = baseUrl.split('/').pop();
@@ -96,7 +96,7 @@ async function boot() {
 
   const applyFrame = state => {
     director.applyState(state, { isInitial: !director.state });
-    if (roomName) roomName.text = state.challenge || (isRoom ? '单人对战' : '热座对战');
+    if (roomName) roomName.text = state.challenge || (state.ai_side || state.bot_side ? '单人对战' : '热座对战');
   };
 
   if (isRoom) {

@@ -20,6 +20,13 @@ export class LocalBattleTransport {
     return data;
   }
 
+  async fetchBattleRecord() {
+    const res = await fetch(`${this.baseUrl}/api/battle_record`, { headers: this.headers, cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || '无法读取战报。');
+    return battleRecordText(data);
+  }
+
   async send(action, payload = {}) {
     if (this.busy) return null;
     this.busy = true;
@@ -119,8 +126,8 @@ function findRoomMove(state, action, payload) {
   });
 }
 
-function battleRecordText({ bot_side: botSide, challenge, events, finished, frame, winner_side: winnerSide }) {
-  let matchNumber = 1;
+function battleRecordText({ bot_side: botSide, challenge, events = [], history, match_number = 1, finished, frame, winner_side: winnerSide }) {
+  let matchNumber = match_number;
   let start = 0;
   for (const [index, event] of events.entries()) {
     if (event.kind === 'match_start') {
@@ -136,7 +143,7 @@ function battleRecordText({ bot_side: botSide, challenge, events, finished, fram
   });
   const result = winnerSide ? `${sideName(winnerSide)}获胜` : '双方平局';
   const status = finished ? `终局　${result} · 第 ${frame.turn} 回合` : `对局进行中 · 第 ${frame.turn} 回合`;
-  const record = events.slice(start)
+  const record = history ?? events.slice(start)
     .filter(event => event.kind !== 'ready' && event.kind !== 'select_character')
     .map(event => event.text);
   return [`《光点计划 III》战局记录 · 第 ${matchNumber} 局`, ...teams, status, '',
