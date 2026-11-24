@@ -32,7 +32,7 @@ class PreRevealDuel(DuelSlot):
                 return "passive"
             if card is self.pulled_card:
                 return "pulled"
-        return None
+        return super().play_mode(card)
 
     def prepare(self, phase):
         """在本场交锋真正开始时按位置查牌，上一场的牵制、回手及死亡均已生效。"""

@@ -160,3 +160,6 @@ class OpCode(Enum):
     APPLY_DAMAGE = auto()
     DIVIDE = auto()
     MAX = auto()
+    REAR_SLOT_CARDS = auto()
+    REAR_CAPACITY = auto()
+    SET_REAR_CAPACITY = auto()

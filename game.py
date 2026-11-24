@@ -215,6 +215,37 @@ class Game:
         self.placement_capacity = 1
         self.placed_this_window = 0
 
+    @staticmethod
+    def may_place_rear(card):
+        owner = card.character
+        if owner is None or not owner.is_alive:
+            return False
+        return bool(
+            card.data.get("rear_duel")
+            or owner.data.get("rear_duel")
+            or owner.ability_permission("rear_duel") is not None
+        )
+
+    def legal_rear_placements(self):
+        if self.placing is None or self.pre_reveal.phase != "idle":
+            return {}
+        side = self.placing.side
+        result = {}
+        for card in self.placing.cardspace.hand.content:
+            if (card.destroyed or card.state == CardState.NEGATED
+                    or card.player is not self.placing or not card.character.is_alive
+                    or not card.meets_use_requirements() or not self.may_place_rear(card)):
+                continue
+            slots = [
+                idx for idx, slot in enumerate(self.duelspace.space)
+                if slot.can_accept_rear(side)
+                and (any(c.character is card.character for c in slot.all_side_cards(side))
+                     or card.character.used_duels < card.character.max_duels)
+            ]
+            if slots:
+                result[card] = slots
+        return result
+
     def legal_placements(self):
         if self.placing is None:
             return []
@@ -224,7 +255,7 @@ class Game:
                 and card.character.used_duels < card.character.max_duels
                 and card.meets_use_requirements()]
 
-    def submit_placement(self, player, card=None, *, after="continue"):
+    def submit_placement(self, player, card=None, *, after="continue", rear_duel_index=None):
         """Apply a seat's decision; return whether a card actually entered the slot."""
         if self.is_over or player is None or player is not self.placing:
             raise ValueError("当前不属于该玩家的常规置卡窗口。")
@@ -234,9 +265,19 @@ class Game:
             raise ValueError("先置入一张牌才能交出此次置卡权。")
         placed = False
         if card is not None:
-            if card not in self.legal_placements():
-                raise ValueError("这张手牌当前无法扣置。")
-            placed = self.auto_place_in_duel(player.side, card)
+            if rear_duel_index is not None:
+                rear_legal = self.legal_rear_placements()
+                if card not in rear_legal or rear_duel_index not in rear_legal[card]:
+                    raise ValueError("这张手牌当前无法扣置到该后置交锋。")
+                owner = card.character
+                if not card.data.get("rear_duel") and not owner.data.get("rear_duel"):
+                    if not owner.spend_ability_effect(owner.ability_permission("rear_duel")):
+                        raise ValueError("当前无法开启后置交锋。")
+                placed = self.place_in_duel(player.side, card, rear_duel_index, rear=True, regular=True)
+            else:
+                if card not in self.legal_placements():
+                    raise ValueError("这张手牌当前无法扣置。")
+                placed = self.auto_place_in_duel(player.side, card)
             self.placed_this_window += int(placed)
             if self.is_over:
                 return placed
@@ -257,7 +298,14 @@ class Game:
             return False
         return self.place_in_duel(side, content, self.duelspace.locate_nearest_empty_duel(side))
 
-    def place_in_duel(self, side, content, duel_idx, *, special=False, queued=False, regular=False):
+    def sync_rear_duels(self, slot=None, side=None):
+        slots = (slot,) if slot is not None else tuple(self.board_slots())
+        sides = (side,) if side is not None else tuple(p.side for p in self.players)
+        for s in slots:
+            for sd in sides:
+                s.sync_rear_validity(sd, self.context)
+
+    def place_in_duel(self, side, content, duel_idx, *, special=False, queued=False, regular=False, rear=False):
         # Once regular placement closes, only an executing rule effect may insert a card.
         if self.pre_reveal.phase != "idle" and not special and not queued and not self.context.executions:
             return False
@@ -265,11 +313,11 @@ class Game:
         owner = content.character
         if player.side != side or duel_idx < 0 or not owner.is_alive:
             return False
-        if any(content in slot.content.get(side, ()) for slot in self.board_slots()):
+        if any(content in slot.all_side_cards(side) for slot in self.board_slots()):
             return False
         zones = player.cardspace
         old_zone = next((zone for zone in zones.piles() if content in zone.content), None)
-        event = dict(side=side, source=owner, card=content)
+        event = dict(side=side, source=owner, card=content, lane="rear" if rear else "front")
         self.context.dispatch_pipeline("before_place", **event)
         if not owner.is_alive or content.state == CardState.NEGATED:
             return False
@@ -279,13 +327,18 @@ class Game:
         if queued and ((content not in zones.hand.content and not content.temporary) or duel_idx >= len(space.space)
                        or not self.pipeline.can_join(space.space[duel_idx])):
             return False
+        if rear and (duel_idx >= len(space.space) or not space.space[duel_idx].can_accept_rear(side)):
+            return False
         with self.context.binding(special_placement=content if special else None,
-                                  queued_placement=content if queued else None, regular_placement=regular):
+                                  queued_placement=content if queued else None,
+                                  regular_placement=regular,
+                                  rear_placement=content if rear else None):
             placed = self.context.eval_block([side, duel_idx, content, OpCode.PLACE])
         if not placed or duel_idx >= len(space.space):
             return False
         slot = space.space[duel_idx]
-        if content not in slot.content.get(side, ()):
+        target_list = slot.get_rear_content(side) if rear else slot.get_content(side)
+        if content not in target_list:
             return False
         event["duel"] = slot
         self.context.dispatch_pipeline("on_place", **event)
@@ -302,21 +355,26 @@ class Game:
         revealed = []
         for number, slot in enumerate(self.duelspace.space, 1):
             sides = {p.side: [] for p in self.players}
-            for side, cards in slot.content.items():
-                for card in cards:
+            for p in self.players:
+                for card in slot.all_side_cards(p.side):
                     if card.state == CardState.PLACED_FACE_DOWN:
                         card.state = CardState.PLACED_FACE_UP
-                        sides[side].append(card.id)
+                        sides[p.side].append(card.id)
             revealed.append({"number": number, "sides": sides})
         self.context.record("cards_revealed", duels=revealed)
         for slot in self.duelspace.space:
             for player in sorted(self.players, key=lambda p: p is not self.first_player):
                 for card in tuple(slot.get_content(player.side)):
-                    if card.character.is_alive and not card.destroyed:
+                    if card.character.is_alive and not card.destroyed and card.state != CardState.NEGATED:
                         self.context.dispatch_pipeline("on_card_reveal", source=card.character, side=player.side,
-                                                       card=card, duel=slot)
+                                                       card=card, duel=slot, lane="front")
+                self.sync_rear_duels(slot, player.side)
+                for card in tuple(slot.get_rear_content(player.side)):
+                    if card.character.is_alive and not card.destroyed and card.state != CardState.NEGATED:
+                        self.context.dispatch_pipeline("on_card_reveal", source=card.character, side=player.side,
+                                                       card=card, duel=slot, lane="rear")
         for number, slot in enumerate(self.duelspace.space, 1):
-            sides = tuple((p.name, tuple(card.name for card in slot.get_content(p.side))) for p in self.players)
+            sides = tuple((p.name, tuple(card.name for card in slot.all_side_cards(p.side))) for p in self.players)
             self.context.record("slot_revealed", number=number, sides=sides)
 
     def finish_turn(self):
@@ -343,8 +401,7 @@ class Game:
             player.turn_common_cost_bonus = 0
             self.context.eval_block([player, 0, 0, OpCode.RESET_COST])
 
-        on_board = [card for slot in self.board_slots() for cards in slot.content.values()
-                    for card in cards]
+        on_board = [card for slot in self.board_slots() for card in slot.all_cards()]
         remaining = set(on_board)
         used = set(self.used_cards)
         recycled = {p.side: {"side": p.side, "used_count": 0, "board_count": 0} for p in self.players}

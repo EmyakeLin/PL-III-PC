@@ -11,6 +11,7 @@ import { FONT_UI, INK } from './design_system.js';
 
 const ACTION_COLOR = {
   place: 0x1a825e,
+  place_rear: 0x9c6e18,
   attack: 0xc8452e,
   replace: 0x1b6ea8,
   custom: 0xb67b14,
@@ -40,7 +41,7 @@ export function analyzeFieldActions(options = []) {
 
   options.forEach((opt, idx) => {
     const kind = opt.kind;
-    if (kind === 'place' || kind === 'attack' || kind === 'replace' || kind === 'custom' || kind === 'intercept') {
+    if (kind === 'place' || kind === 'place_rear' || kind === 'attack' || kind === 'replace' || kind === 'custom' || kind === 'intercept') {
       pushCard(opt.card_id, { idx, opt, kind });
       if (kind === 'intercept' && opt.response_number != null) {
         const num = opt.response_number;
@@ -101,7 +102,8 @@ export function resolveFieldHighlights(analysis, { selectedCardId = null, active
   const handCardKeys = new Set();
   const enemyCharTargets = new Map();  // charId -> optionIndex
   const regularDuelTargets = new Map(); // duelNumber -> optionIndex
-  const boardCardTargets = new Map();  // `${kind}:${number}:${side}:${position}` -> optionIndex
+  const rearDuelTargets = new Map();   // duelNumber -> optionIndex
+  const boardCardTargets = new Map();  // `${kind}:${number}:${side}:${lane}:${position}` -> optionIndex
   const instantDuelTargets = new Map();// responseNumber -> optionIndex
 
   // 1. If a board-targeted or hand-targeted ability is armed
@@ -110,17 +112,17 @@ export function resolveFieldHighlights(analysis, { selectedCardId = null, active
     for (const entry of ab.options) {
       const t = entry.target;
       if (t?.zone === 'board') {
-        boardCardTargets.set(`${t.kind}:${t.number}:${t.side}:${t.position}`, entry.idx);
+        boardCardTargets.set(`${t.kind}:${t.number}:${t.side}:${t.lane || 'front'}:${t.position}`, entry.idx);
       }
     }
-    return { handCardKeys, enemyCharTargets, regularDuelTargets, boardCardTargets, instantDuelTargets };
+    return { handCardKeys, enemyCharTargets, regularDuelTargets, rearDuelTargets, boardCardTargets, instantDuelTargets };
   }
   if (activeAbilityKey && analysis.handAbilities.has(activeAbilityKey)) {
     const ab = analysis.handAbilities.get(activeAbilityKey);
     for (const entry of ab.options) {
       if (entry.targetCardId) handCardKeys.add(entry.targetCardId);
     }
-    return { handCardKeys, enemyCharTargets, regularDuelTargets, boardCardTargets, instantDuelTargets };
+    return { handCardKeys, enemyCharTargets, regularDuelTargets, rearDuelTargets, boardCardTargets, instantDuelTargets };
   }
 
   // 2. All actionable hand cards glow when nothing specific is armed
@@ -136,20 +138,23 @@ export function resolveFieldHighlights(analysis, { selectedCardId = null, active
       if (kind === 'attack') {
         if (opt.character_id) enemyCharTargets.set(opt.character_id, idx);
         else if (opt.duel_number != null) regularDuelTargets.set(opt.duel_number, idx);
+      } else if (kind === 'place_rear' && opt.duel_number != null) {
+        rearDuelTargets.set(opt.duel_number, idx);
       } else if (kind === 'replace' && opt.effect_target?.zone === 'board') {
         const t = opt.effect_target;
-        boardCardTargets.set(`${t.kind}:${t.number}:${t.side}:${t.position}`, idx);
+        boardCardTargets.set(`${t.kind}:${t.number}:${t.side}:${t.lane || 'front'}:${t.position}`, idx);
       } else if (kind === 'intercept' && opt.response_number != null) {
         instantDuelTargets.set(opt.response_number, idx);
       }
     }
   }
 
-  return { handCardKeys, enemyCharTargets, regularDuelTargets, boardCardTargets, instantDuelTargets };
+  return { handCardKeys, enemyCharTargets, regularDuelTargets, rearDuelTargets, boardCardTargets, instantDuelTargets };
 }
 
 const GLYPH_TIPS = {
   place: '置入常规交锋',
+  place_rear: '置入后置交锋',
   custom: '按牌面打出',
   ability: '以此牌发动能力',
   intercept: '迎击即时进攻',
@@ -165,6 +170,10 @@ function drawActionGlyph(g, kind, r, color) {
     g.moveTo(0, -s).lineTo(0, s * 0.35).stroke(line);
     g.moveTo(-s * 0.5, -s * 0.1).lineTo(0, s * 0.4).lineTo(s * 0.5, -s * 0.1).stroke(line);
     g.moveTo(-s, s * 0.85).lineTo(s, s * 0.85).stroke(line);
+  } else if (kind === 'place_rear') {
+    g.moveTo(-s * 0.72, -s * 0.85).lineTo(-s * 0.72, s * 0.85).stroke(line);
+    g.moveTo(s * 0.85, 0).lineTo(-s * 0.25, 0).stroke(line);
+    g.moveTo(s * 0.22, -s * 0.52).lineTo(-s * 0.28, 0).lineTo(s * 0.22, s * 0.52).stroke(line);
   } else if (kind === 'custom') {
     g.poly([0, -s, s * 0.28, -s * 0.28, s, 0, s * 0.28, s * 0.28, 0, s, -s * 0.28, s * 0.28, -s, 0, -s * 0.28, -s * 0.28])
       .fill({ color });
@@ -304,6 +313,8 @@ export function buildFieldActionLayer({
       const o = entry.opt;
       if (entry.kind === 'place') {
         seals.push({ kind: 'place', tip: `${GLYPH_TIPS.place}${o.duel_number != null ? ` ${o.duel_number}` : ''}`, idx: entry.idx });
+      } else if (entry.kind === 'place_rear') {
+        seals.push({ kind: 'place_rear', tip: `${GLYPH_TIPS.place_rear}${o.duel_number != null ? ` ${o.duel_number}` : ''}`, idx: entry.idx });
       } else if (entry.kind === 'custom') {
         seals.push({ kind: 'custom', tip: o.label || GLYPH_TIPS.custom, idx: entry.idx });
       } else if (entry.kind === 'ability') {

@@ -611,6 +611,7 @@ class Character:
                 if card.character is not card.printed_owner:
                     self.game.pipeline.withdraw_skill(slot, card)
                 removed.append(card)
+            self.game.sync_rear_duels(slot)
         for card in dict.fromkeys(removed):
             if card.deck_owner is not self:
                 card.return_to_printed_owner()

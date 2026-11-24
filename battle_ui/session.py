@@ -58,7 +58,8 @@ class BattleSession:
         )
         for slot in all_slots:
             se = next((s for s in (slot.get("sides") or []) if s.get("side") == self.ai_side), None)
-            for card in (se or {}).get("cards") or []:
+            all_side_cards = [*((se or {}).get("cards") or []), *((se or {}).get("rear_cards") or [])]
+            for card in all_side_cards:
                 if not card or card.get("used") or card.get("destroyed") or card.get("skipped"):
                     continue
                 c_cost = max(0, int(card.get("cost") or 0))
@@ -135,6 +136,16 @@ class BattleSession:
             if affordable:
                 chosen = self._rng.choice(affordable)
                 self.match.act("place", rev, card_id=chosen)
+                return True
+            rear_legal = [
+                k for k in (snap.get("legal_rear_cards") or [])
+                if self._is_card_affordable(hand_by_key.get(k), shared, char_budget, char_statuses)
+                and (snap.get("rear_targets") or {}).get(k)
+            ]
+            if rear_legal:
+                chosen = self._rng.choice(rear_legal)
+                duel_num = self._rng.choice(snap["rear_targets"][chosen])
+                self.match.act("place_rear", rev, card_id=chosen, duel_number=duel_num)
                 return True
             # If AI still holds an affordable pre-reveal card, optionally claim pre-reveal before ending placement!
             if not snap.get("pre_reveal_claimed"):
@@ -250,7 +261,7 @@ class BattleSession:
                 self.match = self._new_match(roster, initial_handoff=self.ai_side is None)
                 self.match_number += 1
             else:
-                if action not in ("place", "end", "pass", "ready", "next",
+                if action not in ("place", "place_rear", "end", "pass", "ready", "next",
                                   "attack", "end_attack", "intercept", "let_through", "switch_side",
                                   "claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal", "commit_pre_reveal_plan",
                                   "trigger_table_action",

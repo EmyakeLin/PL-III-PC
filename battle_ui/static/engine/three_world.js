@@ -912,6 +912,7 @@ export class ThreeWorld {
 
   launchDie({
     side = null,
+    lane = 'front',
     sides = 6,
     dieType = 'speed',
     rolledValue = 1,
@@ -1065,6 +1066,7 @@ export class ThreeWorld {
     this.scene.add(group);
     this.activeDice.push({
       side,
+      lane,
       rolledValue,
       sides,
       dieType,
@@ -1100,11 +1102,11 @@ export class ThreeWorld {
    * Seamlessly bind the MOST RECENT live 3D die for `side` directly to a Matter.js clash body
    * at its exact live (lastX, lastY) — never hijacks or hard-deletes earlier fading dice.
    */
-  attachClashBody(side, { physicsBody, rolledValue, subLabel = '', dieType = 'speed', lifetime = 1.75, onReveal = null }) {
+  attachClashBody(side, { lane = 'front', physicsBody, rolledValue, subLabel = '', dieType = 'speed', lifetime = 1.75, onReveal = null }) {
     let existing = null;
     for (let i = this.activeDice.length - 1; i >= 0; i--) {
       const cand = this.activeDice[i];
-      if (cand.side === side && !cand.physicsBody) {
+      if (cand.side === side && (cand.lane || 'front') === lane && !cand.physicsBody) {
         existing = cand;
         break;
       }
@@ -1922,8 +1924,8 @@ export class ThreeWorld {
     return this.activeDice.length > 0;
   }
 
-  hasActiveDieForSide(side) {
-    return this.activeDice.some((d) => d.side === side);
+  hasActiveDieForSide(side, lane = null) {
+    return this.activeDice.some((d) => d.side === side && (!lane || (d.lane || 'front') === lane));
   }
 
   waitUntilDiceCleared(cb) {

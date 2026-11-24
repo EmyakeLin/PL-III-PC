@@ -296,7 +296,7 @@ export function buildBoardCardTag(card, {
   // Optional tiny subline (owner / play mode / range suppression)
   const subBits = [];
   if (rangeDeficit > 0) subBits.push(`压制-${rangeDeficit}`);
-  else if (playMode) subBits.push(playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动');
+  else if (playMode) subBits.push(playMode === 'rear' ? '后置' : playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动');
   if (showOwner && ownerName) subBits.push(ownerName);
   if (subBits.length) {
     const subT = new PIXI.Text({
@@ -576,8 +576,8 @@ export function buildFullCard(card, {
   // Subtle right-aligned owner or play-mode / suppression stamp in header
   let rightCursor = W - padX;
   if (playMode || rangeDeficit > 0) {
-    const label = rangeDeficit > 0 ? `压制-${rangeDeficit}` : playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动';
-    const col = rangeDeficit > 0 ? 0xc93e2b : playMode === 'pulled' ? INK.gold : pal.accent;
+    const label = rangeDeficit > 0 ? `压制-${rangeDeficit}` : playMode === 'rear' ? '后置' : playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动';
+    const col = rangeDeficit > 0 ? 0xc93e2b : (playMode === 'pulled' || playMode === 'rear') ? INK.gold : pal.accent;
     const tagT = new PIXI.Text({
       text: label,
       style: { fontFamily: FONT_UI, fontSize: 9.2, fontWeight: '800', fill: INK.paper },
@@ -856,8 +856,8 @@ export function buildUniformCard(card, {
   else if (effectiveDeficit > 0) addHeaderPill(`压制-${effectiveDeficit}`, 0xc93e2b);
   else if (playMode) {
     addHeaderPill(
-      playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动',
-      playMode === 'pulled' ? INK.gold : pal.accent,
+      playMode === 'rear' ? '后置' : playMode === 'pulled' ? '被牵制' : playMode === 'passive' ? '迎击' : '主动',
+      (playMode === 'pulled' || playMode === 'rear') ? INK.gold : pal.accent,
     );
   }
 

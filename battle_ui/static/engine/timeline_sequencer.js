@@ -15,8 +15,8 @@
  *    in-flight animations or stacks stale 3D dice from earlier beats.
  */
 
-export function combatRollKey(turn, kind, duelNumber, roundId, side, dieNumber) {
-  return `${turn || 0}:${kind || ''}:${duelNumber || 0}:${roundId || 0}:${side || 0}:${dieNumber || 0}`;
+export function combatRollKey(turn, kind, duelNumber, roundId, side, dieNumber, lane = 'front') {
+  return `${turn || 0}:${kind || ''}:${duelNumber || 0}:${roundId || 0}:${side || 0}:${lane || 'front'}:${dieNumber || 0}`;
 }
 
 const IMPACT_CONSEQUENCE_KINDS = new Set([
@@ -216,7 +216,12 @@ export class TimelineSequencer {
         for (const s of combat.sides || []) {
           if (s.die && s.die.rolled_value != null) {
             this.revealedRollKeys.add(combatRollKey(
-              nextTurn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? s.die.position
+              nextTurn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? s.die.position, 'front'
+            ));
+          }
+          if (s.rear?.die && s.rear.die.rolled_value != null) {
+            this.revealedRollKeys.add(combatRollKey(
+              nextTurn, combat.kind, combat.duel_number, combat.round_id, s.side, s.rear.die_number ?? s.rear.die.position, 'rear'
             ));
           }
         }
@@ -251,12 +256,13 @@ export class TimelineSequencer {
 
       for (const ev of fresh) {
         if (ev.kind === 'dice_roll' || ev.kind === 'dice_clash') {
+          const nonSkipped = (ev.sides || []).filter((sd) => !sd.skipped);
           const isRealPairClash = ev.kind === 'dice_clash'
-            && (ev.sides || []).filter((sd) => !sd.skipped).length === 2;
+            && new Set(nonSkipped.map((sd) => sd.side)).size === 2;
           for (const sd of ev.sides || []) {
             if (sd.skipped || sd.rolled_value == null) continue;
             const k = combatRollKey(
-              ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position
+              ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position, sd.lane || 'front'
             );
             if (!this.revealedRollKeys.has(k)) {
               this.pendingCombatRollKeys.add(k);
@@ -400,7 +406,7 @@ export class TimelineSequencer {
       const rollKeys = (ev.sides || [])
         .filter((sd) => !sd.skipped && sd.rolled_value != null)
         .map((sd) => combatRollKey(
-          ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position
+          ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position, sd.lane || 'front'
         ));
       const needsNumberReveal = rollKeys.some((k) => this.pendingCombatRollKeys.has(k));
       // If launching a brand-new clash while earlier dice are still fading out, block queue until they clear!
@@ -456,7 +462,7 @@ export class TimelineSequencer {
       const rollKeys = (ev.sides || [])
         .filter((sd) => !sd.skipped && sd.rolled_value != null)
         .map((sd) => combatRollKey(
-          ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position
+          ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position, sd.lane || 'front'
         ));
       this._setActiveRollKind('dice_roll');
       this.hooks.clearClashGroups?.();

@@ -271,6 +271,7 @@ def special_seats(game):
             if not actor.is_alive:
                 continue
             if (actor.ability_permission("place") or actor.ability_permission("replace")
+                    or actor.ability_permission("rear_duel")
                     or any(game.special.window_open(a["window"]) for a in actor.action_specs())
                     or any(s.get("anytime_play") or s.get("anytime_replace") or s.get("replace_targets")
                            or s.get("before_duel_attack") and game.special.window_open("before_duel")
@@ -283,6 +284,8 @@ _DUEL_NAMES = {"regular": "常规交锋", "pre_reveal": "开牌前交锋", "inst
 
 
 def board_location_label(target):
+    if target.get("lane") == "rear":
+        return f"{_DUEL_NAMES[target['kind']]} {target['number']} · 后置第 {target['position']} 张"
     return f"{_DUEL_NAMES[target['kind']]} {target['number']} · 第 {target['position']} 张"
 
 
@@ -324,17 +327,19 @@ def _board_card_target(card, viewer):
     for kind, slots in (("regular", game.duelspace.space), ("pre_reveal", game.pre_reveal.space.space),
                         ("instant", game.special.duels)):
         for number, slot in enumerate(slots, 1):
-            cards = slot.get_content(card.player.side)
-            if card in cards:
-                position = cards.index(card) + 1
-                target = {
-                    "zone": "board", "side": card.player.side, "kind": kind, "number": number, "position": position,
-                    "character_id": card.character.id, "character_name": card.character.name,
-                }
-                visible = kind != "regular" or _board_visible_to(card, viewer)
-                if visible:
-                    target["card"] = _visible_card(card)
-                return target
+            for lane, cards in (("front", slot.get_content(card.player.side)),
+                                ("rear", slot.get_rear_content(card.player.side))):
+                if card in cards:
+                    position = cards.index(card) + 1
+                    target = {
+                        "zone": "board", "side": card.player.side, "kind": kind, "number": number,
+                        "lane": lane, "position": position,
+                        "character_id": card.character.id, "character_name": card.character.name,
+                    }
+                    visible = kind != "regular" or _board_visible_to(card, viewer)
+                    if visible:
+                        target["card"] = _visible_card(card)
+                    return target
     raise ValueError("所选技能已离开候选区域。")
 
 
@@ -361,7 +366,12 @@ def special_action_label(action):
         spec = next(s for s in action.character.action_specs() if s["id"] == action.ability_id)
         label = f"{action.character.name} · {spec['name']}"
         if action.duel_index is not None:
-            cards = action.target_card.player.game.duelspace.space[action.duel_index].get_content(action.target_card.player.side)
+            slot = action.target_card.player.game.duelspace.space[action.duel_index]
+            side = action.target_card.player.side
+            if action.target_card in slot.get_rear_content(side):
+                cards = slot.get_rear_content(side)
+                return f"{label} · 常规交锋 {action.duel_index + 1} 后置交锋的第 {cards.index(action.target_card) + 1} 张扣牌"
+            cards = slot.get_content(side)
             return f"{label} · 常规交锋 {action.duel_index + 1} 的第 {cards.index(action.target_card) + 1} 张扣牌"
         if action.target_card:
             borrowed = "（取自对手）" if action.target_card.printed_owner is not action.target_card.character else ""
@@ -375,6 +385,8 @@ def special_action_label(action):
         skill += "〔限制中〕"
     if action.kind == "place":
         return f"{skill}置入常规交锋 {action.duel_index + 1}"
+    if action.kind == "place_rear":
+        return f"{skill}置入常规交锋 {action.duel_index + 1} 的后置交锋"
     if action.kind == "replace":
         return f"用{skill}换下{action.target_card.name}"
     if action.kind == "attack":
@@ -457,7 +469,12 @@ class Displayer:
             "players": [self._player(p) for p in game.players],
             "duels": [
                 {"number": number, "sides": [
-                    {"side": p.side, "cards": [self._board_card(c) for c in slot.get_content(p.side)]}
+                    {
+                        "side": p.side,
+                        "cards": [self._board_card(c) for c in slot.get_content(p.side)],
+                        "rear_cards": [self._board_card(c) for c in slot.get_rear_content(p.side)],
+                        "rear_capacity": slot.get_rear_capacity(p.side),
+                    }
                     for p in game.players
                 ]}
                 for number, slot in enumerate(game.duelspace.space, 1)
@@ -489,7 +506,10 @@ class Displayer:
             "pulled_card_id": slot.pulled_card.id if slot.pulled_card else None,
             "resolved_target_id": slot.resolved_target.id if slot.resolved_target else None,
             "sides": [{"side": p.side, "cards": [
-                {**_visible_card(c), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)]}
+                {**_visible_card(c), "play_mode": slot.play_mode(c)} for c in slot.get_content(p.side)],
+                "rear_cards": [
+                {**_visible_card(c), "play_mode": slot.play_mode(c)} for c in slot.get_rear_content(p.side)],
+                "rear_capacity": slot.get_rear_capacity(p.side)}
                       for p in self._game.players],
         }
 
@@ -673,14 +693,33 @@ class Displayer:
         early = space is game.pre_reveal.space
         instant = space is game.pipeline.interrupt_space
         pipes = game.pipeline.side_pipelines
+        rear_pipes = game.pipeline.rear_side_pipelines
+        all_pipes = [*pipes.values(), *rear_pipes.values()]
         if not early and not instant and (not game.cards_revealed or any(
-                pipe.card is not None and not self._board_visible(pipe.card) for pipe in pipes.values())):
+                pipe.card is not None and not self._board_visible(pipe.card) for pipe in all_pipes)):
             return None
         sides = []
         for player in game.players:
             pipe = pipes[player.side]
             card, die = pipe.card, pipe.die
             target = die.attack_target if die is not None and die.attack_redirected else pipe.target
+            rear_pipe = rear_pipes.get(player.side)
+            r_card = rear_pipe.card if rear_pipe is not None else None
+            r_die = rear_pipe.die if rear_pipe is not None else None
+            r_target = (r_die.attack_target if r_die is not None and r_die.attack_redirected
+                        else rear_pipe.target if rear_pipe is not None else None)
+            rear_view = {
+                "node": rear_pipe.current_node.id if rear_pipe and rear_pipe.current_node else None,
+                "waiting_at": rear_pipe.blocked_at.id if rear_pipe and rear_pipe.blocked_at else None,
+                "card_id": r_card.id if r_card is not None else None,
+                "card_instance_id": r_card.instance_id if r_card is not None else None,
+                "play_mode": "rear",
+                "range_deficit": r_card.range_deficit if r_card is not None else 0,
+                "character_id": r_card.character.id if r_card is not None else None,
+                "target_id": r_target.id if r_target is not None and r_card is not None else None,
+                "die_number": r_card.current_dice_index + 1 if r_die is not None else None,
+                "die": _live_die(r_die),
+            } if (r_card is not None or r_die is not None) else None
             sides.append({
                 "side": player.side, "node": pipe.current_node.id if pipe.current_node else None,
                 "waiting_at": pipe.blocked_at.id if pipe.blocked_at else None,
@@ -692,6 +731,7 @@ class Displayer:
                 "target_id": target.id if target is not None and card is not None else None,
                 "die_number": card.current_dice_index + 1 if die is not None else None,
                 "die": _live_die(die),
+                "rear": rear_view,
             })
         number = index + 1 if 0 <= index < len(space.space) else None
         if instant and number is not None:

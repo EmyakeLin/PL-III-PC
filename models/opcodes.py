@@ -110,9 +110,9 @@ def handle_skill_level_add(ctx):
     if _usable_component(card):
         card.positive_modifiers["level_bonus"] = card.positive_modifiers.get("level_bonus", 0) + max(0, amount)
         card.level_bonus += amount
-        die = ctx.active_dice.get(card.player.side) if card.player else None
-        if die is not None and die.card is card:
-            die.refresh_resolved_level()
+        for die in ctx.side_active_dice(card.player.side) if card.player else ():
+            if die is not None and die.card is card:
+                die.refresh_resolved_level()
         return card.level_bonus
 
 
@@ -160,7 +160,7 @@ def handle_queue_hit(ctx):
 def handle_skip_round(ctx):
     die = ctx.pop()
     pair = ctx.game.pipeline.current_clash_pair
-    if pair is not None and die in pair.dice_dict.values():
+    if pair is not None and die in pair.all_dice():
         pair.skipped = True
         return True
     return False
@@ -169,7 +169,7 @@ def handle_skip_round(ctx):
 def handle_draw_clash(ctx):
     die = ctx.pop()
     pair = ctx.game.pipeline.current_clash_pair
-    if pair and die in pair.dice_dict.values() and not die.destroyed:
+    if pair and die in pair.all_dice() and not die.destroyed:
         pair.drawn = True
         return True
     return False
@@ -180,7 +180,7 @@ def handle_unopposed_result(ctx):
     if result not in ("win", "lose", "draw"):
         raise ValueError(f"未知的拼点结果 {result!r}")
     pair = ctx.game.pipeline.current_clash_pair
-    if pair is not None and die in pair.dice_dict.values() and not die.destroyed:
+    if pair is not None and die in pair.all_dice() and not die.destroyed:
         pair.unopposed_results[die] = result
         return True
     return False
@@ -285,10 +285,29 @@ def handle_place_in_duel(ctx):
 
 def handle_slot_cards(ctx):
     side, slot = ctx.pop(), ctx.pop()
-    cards = slot.get_content(side) if slot is not None else []
-    if ctx.current_op == OpCode.REMAINING_CARDS and slot is not None:
-        cards = cards[slot.current_card_index.get(side, 0):]
-    ctx.push(cards)
+    if slot is None:
+        ctx.push([])
+        return
+    if ctx.current_op == OpCode.REAR_SLOT_CARDS:
+        ctx.push(list(slot.get_rear_content(side)))
+        return
+    if ctx.current_op == OpCode.REMAINING_CARDS:
+        front = slot.get_content(side)[slot.current_card_index.get(side, 0):]
+        rear = (slot.get_rear_content(side)[slot.rear_card_index.get(side, 0):]
+                if slot.has_valid_front_anchor(side) else [])
+        ctx.push([*front, *rear])
+        return
+    ctx.push(slot.all_side_cards(side))
+
+
+def handle_rear_capacity(ctx):
+    if ctx.current_op == OpCode.SET_REAR_CAPACITY:
+        amount, side, slot = ctx.pop(), ctx.pop(), ctx.pop()
+        if slot is None:
+            return None
+        return slot.set_rear_capacity(side, amount)
+    side, slot = ctx.pop(), ctx.pop()
+    ctx.push(slot.get_rear_capacity(side) if slot is not None else 0)
 
 
 def handle_opponent(ctx):
@@ -377,7 +396,7 @@ def handle_set_skill_form(ctx):
 def handle_split_clash(ctx):
     die = ctx.pop()
     pair = ctx.game.pipeline.current_clash_pair
-    if pair is not None and die in pair.dice_dict.values():
+    if pair is not None and die in pair.all_dice():
         pair.split = True
 
 
@@ -557,35 +576,51 @@ def handle_place(ctx):
         raise ValueError("交锋索引不能为负")
     if (getattr(card, "destroyed", False) or card.player.side != side
             or not card.character.is_alive or not card.meets_use_requirements()
-            or any(card in placed.content.get(side, ()) for placed in game.board_slots())):
+            or any(card in placed.all_side_cards(side) for placed in game.board_slots())):
         return False
+    rear = ctx.event.get("rear_placement") is card
     special = ctx.event.get("special_placement") is card
-    if special and (card not in card.player.cardspace.hand.content
-                    or not game.special.may_place(card)
-                    or game.special.first_open_slot(side) != idx):
+    if special and not rear and (card not in card.player.cardspace.hand.content
+                                 or not game.special.may_place(card)
+                                 or game.special.first_open_slot(side) != idx):
+        return False
+    if special and rear and (card not in card.player.cardspace.hand.content
+                             or not game.special.may_place_rear(card, idx)):
         return False
     queued = ctx.event.get("queued_placement") is card
     space = game.duelspace if special or queued or ctx.event.get("regular_placement") else game.active_duelspace
     # Opening a new numbered pre-reveal duel requires a player's attack declaration.
-    if space is not game.duelspace and idx >= len(space.space):
+    if (space is not game.duelspace or rear) and idx >= len(space.space):
         return False
-    if special and "place" not in card.data.get("anytime_play", ()):
+    if rear and not space.space[idx].can_accept_rear(side):
+        return False
+    if special and not rear and "place" not in card.data.get("anytime_play", ()):
         owner = card.character
         if not owner.spend_ability_effect(owner.ability_permission("place")):
             return False
         if (not owner.is_alive or card.destroyed or card not in owner.player.cardspace.hand.content
                 or owner.used_duels >= owner.max_duels or game.special.first_open_slot(side) != idx):
             return False
+    if special and rear and "rear_duel" not in card.data.get("anytime_play", ()) and not card.data.get("rear_duel") and not card.character.data.get("rear_duel"):
+        owner = card.character
+        if not owner.spend_ability_effect(owner.ability_permission("rear_duel")):
+            return False
+        if (not owner.is_alive or card.destroyed or card not in owner.player.cardspace.hand.content
+                or not space.space[idx].can_accept_rear(side)):
+            return False
     zones = card.player.cardspace
     record_card_play(card, from_hand=card in zones.hand.content)
     while idx >= len(space.space):
         space.append_new_duel(DuelSlot(game))
     slot = space.space[idx]
-    side_cards = slot.content.get(side, [])
-    if (space is game.duelspace and card.character
+    side_cards = slot.all_side_cards(side)
+    if (space is game.duelspace and card.character and not (rear and queued)
             and not any(c.character is card.character for c in side_cards if isinstance(c, Card))):
         card.character.used_duels += 1
-    slot.add_content(side, card)
+    if rear:
+        slot.add_rear_content(side, card)
+    else:
+        slot.add_content(side, card)
     face_up = game.cards_revealed or space is not game.duelspace
     card.state = CardState.PLACED_FACE_UP if face_up else CardState.PLACED_FACE_DOWN
     for zone in zones.piles():
@@ -1143,6 +1178,10 @@ def handle_destroy(ctx):
         target.destroyed = True
         target.state = CardState.NEGATED
         publish_disabled_skill(ctx, target, "destroy")
+        if target.player is not None and hasattr(ctx.game, "board_slots"):
+            for slot in ctx.game.board_slots():
+                if target in slot.get_content(target.player.side):
+                    slot.sync_rear_validity(target.player.side, ctx)
     elif hasattr(target, "card") and hasattr(target, "roll"):
         if not target.destroyed:
             owning_card = getattr(target, "card", None)
@@ -1187,6 +1226,10 @@ def handle_negate_skill(ctx):
         return False
     card.state = CardState.NEGATED
     publish_disabled_skill(ctx, card, "negate")
+    if card.player is not None and hasattr(ctx.game, "board_slots"):
+        for slot in ctx.game.board_slots():
+            if card in slot.get_content(card.player.side):
+                slot.sync_rear_validity(card.player.side, ctx)
     return True
 
 
@@ -1256,7 +1299,7 @@ def handle_take_board_card(ctx):
         raise ValueError("收牌需要普通或决战牌堆及是否忽略使用条件。")
     if card is None or card.temporary or actor is None or not actor.is_alive or card.destroyed:
         return False
-    slot = next((s for s in ctx.game.board_slots() if card in s.get_content(card.player.side)), None)
+    slot = next((s for s in ctx.game.board_slots() if card in s.all_side_cards(card.player.side)), None)
     if slot is None or actor.player is card.player or ctx.game.special.is_locked(card):
         return False
     slot.remove_card(card)
@@ -1289,6 +1332,8 @@ DISPATCH_TABLE = {
     OpCode.BOARD_SLOTS: lambda ctx: ctx.push(tuple(ctx.game.board_slots())),
     OpCode.ZONE_CARDS: handle_zone_cards, OpCode.PLACE_IN_DUEL: handle_place_in_duel,
     OpCode.SLOT_CARDS: handle_slot_cards, OpCode.REMAINING_CARDS: handle_slot_cards,
+    OpCode.REAR_SLOT_CARDS: handle_slot_cards,
+    OpCode.REAR_CAPACITY: handle_rear_capacity, OpCode.SET_REAR_CAPACITY: handle_rear_capacity,
     OpCode.SLOT_AT_OFFSET: handle_slot_offset, OpCode.SKILL_RESTRICTED: handle_skill_restricted,
     OpCode.CAN_JOIN_DUEL: lambda ctx: ctx.push(ctx.game.pipeline.can_join(ctx.pop())),
     OpCode.NEXT_PLANNED_DIE: lambda ctx: ctx.push(ctx.game.pipeline.next_planned_die(ctx.pop())),
@@ -1373,6 +1418,8 @@ OPERANDS = {
     OpCode.LOOKUP: ("collection", "key", "default"), OpCode.OPPONENT: ("seat",), OpCode.BOARD_SLOTS: (),
     OpCode.ZONE_CARDS: ("seat", "zone"), OpCode.PLACE_IN_DUEL: ("card", "slot"),
     OpCode.SLOT_CARDS: ("slot", "side"), OpCode.REMAINING_CARDS: ("slot", "side"),
+    OpCode.REAR_SLOT_CARDS: ("slot", "side"),
+    OpCode.REAR_CAPACITY: ("slot", "side"), OpCode.SET_REAR_CAPACITY: ("slot", "side", "amount"),
     OpCode.SLOT_AT_OFFSET: ("space", "offset"), OpCode.SKILL_RESTRICTED: ("holder", "skill"),
     OpCode.CAN_JOIN_DUEL: ("slot",), OpCode.NEXT_PLANNED_DIE: ("holder",), OpCode.DIE_VALUE: ("component",),
     OpCode.SIZE: ("collection",), OpCode.FILTER: ("collection", "predicate"),

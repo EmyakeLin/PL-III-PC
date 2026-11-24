@@ -341,7 +341,11 @@ export class GameDirector {
     this.tabletop = new CombatTabletop(this.tabletopLayer, {
       resolveCharColor: (cid, s) => this._resolveCharColor(cid, s),
       resolveCardOwner: (duelKind, duelNumber, side, cardIdx = 0) => {
-        const bucket = duelKind === 'pre_reveal' ? this.state?.card_owners?.pre_reveal : this.state?.card_owners?.duels;
+        const bucket = duelKind === 'pre_reveal'
+          ? this.state?.card_owners?.pre_reveal
+          : duelKind === 'regular_rear'
+            ? this.state?.card_owners?.duels_rear
+            : this.state?.card_owners?.duels;
         const entry = bucket?.[`${duelNumber}:${side}`]?.[cardIdx];
         if (!entry) return null;
         return {
@@ -392,6 +396,20 @@ export class GameDirector {
           this._placeCard(this.selectedHandCardId);
         }
       },
+      onRearSlotTap: (duelNumber) => {
+        if (this.selectedHandCardId && this._isFieldActionMode()) {
+          const { analysis } = this._getFieldActionContext();
+          const entries = analysis.byCardId.get(this.selectedHandCardId) || [];
+          const match = entries.find((e) => e.kind === 'place_rear' && e.opt.duel_number === duelNumber);
+          if (match) {
+            this._pickFieldOption(match.idx);
+            return;
+          }
+        }
+        if (this.selectedHandCardId && this.state?.mode === 'placement') {
+          this._placeRearCard(this.selectedHandCardId, duelNumber);
+        }
+      },
       onAttackDuel: (duelNumber) => {
         const cid = this.selectedHandCardId;
         if (!cid) return;
@@ -414,8 +432,8 @@ export class GameDirector {
         this.audio.cardSlide();
         this._sendAction('unstage_pre_reveal', { card_id: cardId });
       },
-      markEffectTarget: (host, kind, number, side, pos, x, y, w, h) => {
-        this._markEffectTarget(host, kind, number, side, pos, x, y, w, h);
+      markEffectTarget: (host, kind, number, side, pos, x, y, w, h, lane = 'front') => {
+        this._markEffectTarget(host, kind, number, side, pos, x, y, w, h, lane);
       },
     });
 
@@ -2081,12 +2099,14 @@ export class GameDirector {
     this._rebuildActionControls();
   }
 
-  _markEffectTarget(parent, kind, number, side, position, x, y, width, height) {
+  _markEffectTarget(parent, kind, number, side, position, x, y, width, height, lane = 'front') {
     if (this.state.effect_choice) {
       const options = this.state.special_options || [];
       const index = options.findIndex(({ effect_target: target }) =>
         target?.zone === 'board' && target.kind === kind && target.number === number
-        && (position == null ? target.position == null : target.position === position && target.side === side));
+        && (position == null
+          ? target.position == null
+          : target.position === position && target.side === side && (target.lane || 'front') === lane));
       if (index < 0) return;
       const mark = new PIXI.Container();
       mark.position.set(x, y);
@@ -2123,7 +2143,7 @@ export class GameDirector {
     let optionIdx = null;
     let accent = INK.gold;
     if (position != null) {
-      const k = `${kind}:${number}:${side}:${position}`;
+      const k = `${kind}:${number}:${side}:${lane}:${position}`;
       if (highlights.boardCardTargets.has(k)) {
         optionIdx = highlights.boardCardTargets.get(k);
         accent = this.activeFieldAbilityKey ? 0x7b42b8 : 0x1b6ea8;
@@ -2259,7 +2279,19 @@ export class GameDirector {
       }
     }
 
-    const canTapEmptySlot = Boolean(isPlacement && !isStaging && this.selectedHandCardId);
+    const canTapEmptySlot = Boolean(isPlacement && !isStaging && this.selectedHandCardId && (this.state.legal_cards || []).includes(this.selectedHandCardId));
+    const rearCandidateId = !isStaging ? (this.dragState?.actKey || this.selectedHandCardId) : null;
+    const rearSlotTargets = new Set(
+      isPlacement && rearCandidateId
+        ? (this.state.rear_targets?.[rearCandidateId] || [])
+        : [],
+    );
+    if (rearCandidateId && this._isFieldActionMode()) {
+      const { analysis } = this._getFieldActionContext();
+      for (const e of analysis.byCardId.get(rearCandidateId) || []) {
+        if (e.kind === 'place_rear' && e.opt.duel_number != null) rearSlotTargets.add(e.opt.duel_number);
+      }
+    }
     const canClickIntercept = Boolean(
       this.selectedHandCardId
       && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
@@ -2272,6 +2304,7 @@ export class GameDirector {
       activeIndex,
       combat: null,
       concealBySide: new Map(),
+      concealRearBySide: new Map(),
       isPlacement,
       overview: true,
       activeSide,
@@ -2279,6 +2312,7 @@ export class GameDirector {
       cardsRevealed: Boolean(frame.cards_revealed),
       pendingResponses,
       attackableDuels,
+      rearSlotTargets,
       canTapEmptySlot,
       canClickIntercept,
       interceptableNumbers: new Set([...pendingResponses].filter(n => this._canInterceptNumber(this.selectedHandCardId, n))),
@@ -2328,14 +2362,35 @@ export class GameDirector {
     }));
 
     const concealBySide = new Map();
+    const concealRearBySide = new Map();
     for (const s of combat?.sides || []) {
       const die = s.die;
-      if (!die) continue;
-      const rk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position);
-      concealBySide.set(s.side, {
-        score: this.sequencer.isDieScoreConcealed(rk, die),
-        outcome: this.sequencer.isDieOutcomeConcealed(rk, die),
-      });
+      if (die) {
+        const rk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position, 'front');
+        concealBySide.set(s.side, {
+          score: this.sequencer.isDieScoreConcealed(rk, die),
+          outcome: this.sequencer.isDieOutcomeConcealed(rk, die),
+        });
+      }
+      const rDie = s.rear?.die;
+      if (rDie) {
+        const rrk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.rear.die_number ?? rDie.position, 'rear');
+        concealRearBySide.set(s.side, {
+          score: this.sequencer.isDieScoreConcealed(rrk, rDie),
+          outcome: this.sequencer.isDieOutcomeConcealed(rrk, rDie),
+        });
+      }
+    }
+
+    const fieldRearSlots = new Set();
+    if (this._isFieldActionMode()) {
+      const rearCand = this.dragState?.actKey || this.selectedHandCardId;
+      if (rearCand) {
+        const { analysis } = this._getFieldActionContext();
+        for (const e of analysis.byCardId.get(rearCand) || []) {
+          if (e.kind === 'place_rear' && e.opt.duel_number != null) fieldRearSlots.add(e.opt.duel_number);
+        }
+      }
     }
 
     this.tabletop.setLayout({ arenaX, arenaW, stageTop, stageH });
@@ -2344,11 +2399,13 @@ export class GameDirector {
       activeIndex,
       combat,
       concealBySide,
+      concealRearBySide,
       isPlacement: false,
       overview: false,
       activeSide: this.state.active_side || 1,
       viewerSide: frame.viewer_side ?? null,
       cardsRevealed: Boolean(frame.cards_revealed),
+      rearSlotTargets: fieldRearSlots,
     });
     this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
 
@@ -2417,10 +2474,11 @@ export class GameDirector {
       const mx = isLeft ? arenaX + 10 : arenaX + arenaW - medW - 10;
       const my = clashTop + 26;
       const mh = clashH - 36;
-      const die = s.die;
+      const frontDie = s.die;
+      const rearDie = s.rear?.die || null;
       const theme = SIDE_THEME[s.side];
 
-      if (!die) {
+      if (!frontDie && !rearDie) {
         const empty = new PIXI.Text({
           text: `${theme.name} · 无对位`,
           style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '700', fill: INK.muted },
@@ -2431,7 +2489,76 @@ export class GameDirector {
         continue;
       }
 
-      const rollKey = combatRollKey(turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position);
+      if (frontDie && rearDie) {
+        // Dual-Die Medallion (前置 + 后置 simultaneously active!)
+        const fKey = combatRollKey(turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? frontDie.position, 'front');
+        const rKey = combatRollKey(turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.rear.die_number ?? rearDie.position, 'rear');
+        const fScoreHide = this.sequencer.isDieScoreConcealed(fKey, frontDie);
+        const fOutHide = this.sequencer.isDieOutcomeConcealed(fKey, frontDie);
+        const rScoreHide = this.sequencer.isDieScoreConcealed(rKey, rearDie);
+        const rOutHide = this.sequencer.isDieOutcomeConcealed(rKey, rearDie);
+
+        const anyWin = (!fOutHide && frontDie.result === 'win') || (!rOutHide && rearDie.result === 'win');
+        const bothLose = (!fOutHide && frontDie.result === 'lose') && (!rOutHide && rearDie.result === 'lose');
+        const mg = new PIXI.Graphics();
+        mg.roundRect(mx, my, medW, mh, 12)
+          .fill({ color: anyWin ? INK.goldBg : INK.paper, alpha: bothLose ? 0.72 : 0.96 })
+          .stroke({ width: anyWin ? 2.4 : 1.4, color: anyWin ? INK.gold : theme.accent });
+        mg.moveTo(mx + 10, my + mh * 0.5).lineTo(mx + medW - 10, my + mh * 0.5)
+          .stroke({ width: 1, color: INK.line, alpha: 0.55 });
+        this.clashLayer.addChild(mg);
+
+        const drawMiniRow = (die, laneLabel, deficit, hideScore, hideOut, rowTop, rowH) => {
+          const ds = DIE_STYLE[die.type] || DIE_STYLE.blank;
+          const w = !hideOut && die.result === 'win';
+          const l = !hideOut && die.result === 'lose';
+          drawUnifiedDieFrame(mg, die.type, mx + 20, rowTop + rowH * 0.5, 7.2, { active: w, muted: l });
+          const outStr = hideScore || hideOut ? ''
+            : w ? '胜' : l ? '负' : die.result === 'draw' ? '平' : die.result === 'skip' ? '跳过' : '';
+          const hTxt = new PIXI.Text({
+            text: `${laneLabel}·${ds.label} ${formatDieRange(die)}${deficit ? ` -${deficit}` : ''}${outStr ? ` 〔${outStr}〕` : ''}`,
+            style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '800', fill: w ? INK.goldDeep : l ? INK.muted : INK.primary },
+          });
+          hTxt.anchor.set(0, 0.5);
+          hTxt.position.set(mx + 33, rowTop + rowH * 0.5);
+          this.clashLayer.addChild(hTxt);
+
+          const rawVal = hideScore ? null : (die.clash_score ?? die.final_score);
+          const sc = new PIXI.Text({
+            text: rawVal != null ? String(rawVal) : '—',
+            style: { fontFamily: FONT_NUM, fontSize: 20, fontWeight: '900', fill: w ? ds.color : l ? INK.muted : INK.primary },
+          });
+          sc.anchor.set(1, 0.5);
+          sc.position.set(mx + medW - 12, rowTop + rowH * 0.5);
+          this.clashLayer.addChild(sc);
+          return rawVal;
+        };
+
+        const fv = drawMiniRow(frontDie, '前', s.range_deficit, fScoreHide, fOutHide, my + 2, mh * 0.5 - 2);
+        const rv = drawMiniRow(rearDie, '后', s.rear?.range_deficit, rScoreHide, rOutHide, my + mh * 0.5, mh * 0.5 - 2);
+        if (typeof fv === 'number' && typeof rv === 'number') {
+          const sumPill = new PIXI.Graphics();
+          const sumLabel = `合 ${fv + rv}`;
+          const sw = Math.max(44, sumLabel.length * 9 + 14);
+          const px = isLeft ? (mx + medW - sw) : mx;
+          sumPill.roundRect(px, my - 17, sw, 16, 5)
+            .fill({ color: INK.goldBg, alpha: 0.96 })
+            .stroke({ width: 1.1, color: INK.gold });
+          const st = new PIXI.Text({
+            text: sumLabel,
+            style: { fontFamily: FONT_NUM, fontSize: 10, fontWeight: '900', fill: INK.goldDeep },
+          });
+          st.anchor.set(0.5);
+          st.position.set(px + sw * 0.5, my - 9);
+          this.clashLayer.addChild(sumPill, st);
+        }
+        continue;
+      }
+
+      const activeLane = frontDie ? 'front' : 'rear';
+      const die = frontDie || rearDie;
+      const activeEntry = frontDie ? s : s.rear;
+      const rollKey = combatRollKey(turn, combat.kind, combat.duel_number, combat.round_id, s.side, activeEntry.die_number ?? die.position, activeLane);
       const isScoreConcealed = this.sequencer.isDieScoreConcealed(rollKey, die);
       const isOutcomeConcealed = this.sequencer.isDieOutcomeConcealed(rollKey, die);
 
@@ -2454,15 +2581,15 @@ export class GameDirector {
             : lose ? '负' : die.result === 'draw' ? '平' : die.result === 'skip' ? '跳过' : '';
       const repeatHit = !isOutcomeConcealed && die.hit_index > 1 ? `第 ${die.hit_index} 次命中` : '';
       const resLabel = [outcome, repeatHit].filter(Boolean).join(' · ');
+      const rearTag = activeLane === 'rear' ? '〔后置〕' : '';
 
       const head = new PIXI.Text({
-        text: `${ds.label} ${rangeStr}${s.range_deficit ? ` 压制-${s.range_deficit}` : ''}`,
+        text: `${rearTag}${ds.label} ${rangeStr}${activeEntry.range_deficit ? ` 压制-${activeEntry.range_deficit}` : ''}`,
         style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '800', fill: INK.primary },
       });
       head.position.set(mx + 38, my + 12);
       this.clashLayer.addChild(head);
 
-      // 4-Layer Score Breakdown Cascade (only displays rolled/final numbers once the 3D die reveals them)
       const layers = [
         `基础 ${die.base_value ?? 0}`,
         `变动 ${isScoreConcealed ? '—' : (die.rolled_value ?? '—')}`,
@@ -2475,7 +2602,6 @@ export class GameDirector {
       lTxt.position.set(mx + 14, my + mh - 24);
       this.clashLayer.addChild(lTxt);
 
-      // Big Score Numeral + Win/Lose Stamp (numbers appear on 3D reveal; win/lose stamps on physical clash impact)
       const rawScore = isScoreConcealed ? null : (die.clash_score ?? die.final_score);
       const scoreVal = rawScore !== null && rawScore !== undefined ? String(rawScore) : '—';
       const scTxt = new PIXI.Text({
@@ -2505,20 +2631,31 @@ export class GameDirector {
       this.effectMarks = [];
       const frame = this.state.frame;
       const concealBySide = new Map();
+      const concealRearBySide = new Map();
       for (const s of combat.sides || []) {
         const die = s.die;
-        if (!die) continue;
-        const rk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position);
-        concealBySide.set(s.side, {
-          score: this.sequencer.isDieScoreConcealed(rk, die),
-          outcome: this.sequencer.isDieOutcomeConcealed(rk, die),
-        });
+        if (die) {
+          const rk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.die_number ?? die.position, 'front');
+          concealBySide.set(s.side, {
+            score: this.sequencer.isDieScoreConcealed(rk, die),
+            outcome: this.sequencer.isDieOutcomeConcealed(rk, die),
+          });
+        }
+        const rDie = s.rear?.die;
+        if (rDie) {
+          const rrk = combatRollKey(frame.turn, combat.kind, combat.duel_number, combat.round_id, s.side, s.rear.die_number ?? rDie.position, 'rear');
+          concealRearBySide.set(s.side, {
+            score: this.sequencer.isDieScoreConcealed(rrk, rDie),
+            outcome: this.sequencer.isDieOutcomeConcealed(rrk, rDie),
+          });
+        }
       }
       this.tabletop.setState({
         duels: this.tabletop.duels,
         activeIndex: this.tabletop.activeIndex,
         combat,
         concealBySide,
+        concealRearBySide,
         isPlacement: false,
         overview: false,
         activeSide: this.state.active_side || 1,
@@ -2677,7 +2814,7 @@ export class GameDirector {
     } else {
       legalSet = new Set(
         this.state.mode === 'placement'
-          ? this.state.legal_cards
+          ? [...(this.state.legal_cards || []), ...(this.state.legal_rear_cards || [])]
           : [...(this.state.legal_attack_cards || []), ...(this.state.legal_intercept_cards || [])]
       );
       attackSet = new Set(this.state.legal_attack_cards || []);
@@ -3686,9 +3823,18 @@ export class GameDirector {
           }
         }
       }
-      // 2. Drop onto regular duel lane -> execute field duel attack
+      // 2. Drop onto rear drop slot or regular duel lane -> execute field rear placement / duel attack
       const vp = this.duelViewport;
       if (vp && y >= vp.top - 12 && y <= vp.bottom + 12) {
+        for (const [, r] of (this.tabletop?.rearSlotRects || new Map()).entries()) {
+          if (r.visible && r.side === d.side && x >= r.x - 10 && x <= r.x + r.w + 10 && y >= r.y - 8 && y <= r.y + r.h + 8) {
+            const pr = entries.find((entry) => entry.kind === 'place_rear' && entry.opt.duel_number === r.duelNumber);
+            if (pr) {
+              this._pickFieldOption(pr.idx);
+              return;
+            }
+          }
+        }
         for (const [num, r] of this.regularLaneRects.entries()) {
           if (r.visible && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
             const atk = entries.find((entry) => entry.kind === 'attack' && entry.opt.duel_number === num);
@@ -3699,10 +3845,12 @@ export class GameDirector {
           }
         }
       }
-      // 3. Drop onto open battlefield -> execute single direct place / custom / intercept
+      // 3. Drop onto open battlefield -> execute single direct place / place_rear / custom / intercept
       const { battleX, battleW, arenaTop, stageBottom } = this.layout;
       if (x >= battleX - 16 && x <= battleX + battleW + 16 && y >= arenaTop - 24 && y <= stageBottom + 16) {
+        const rearEntries = entries.filter((entry) => entry.kind === 'place_rear');
         const direct = entries.find((entry) => entry.kind === 'place')
+          || (rearEntries.length === 1 ? rearEntries[0] : null)
           || entries.find((entry) => entry.kind === 'custom')
           || entries.find((entry) => entry.kind === 'intercept');
         if (direct) {
@@ -3722,8 +3870,14 @@ export class GameDirector {
         this._syncSelectedCardIntent();
         return;
       }
-      if (this.selectedHandCardId === actKey) this._placeCard(actKey);
-      else {
+      if (this.selectedHandCardId === actKey) {
+        if ((this.state.legal_cards || []).includes(actKey)) {
+          this._placeCard(actKey);
+        } else {
+          const rts = this.state.rear_targets?.[actKey] || [];
+          if (rts.length === 1) this._placeRearCard(actKey, rts[0]);
+        }
+      } else {
         this.selectedHandCardId = actKey;
         this._rebuildDynamicBoard();
         this._syncSelectedCardIntent();
@@ -3770,10 +3924,26 @@ export class GameDirector {
     }
 
     if (this.state.mode === 'placement') {
+      const rearLegalNums = new Set(this.state.rear_targets?.[actKey] || []);
+      if (rearLegalNums.size > 0 && this.tabletop?.rearSlotRects) {
+        for (const num of rearLegalNums) {
+          const r = this.tabletop.rearSlotRects.get(`${num}:${d.side}`);
+          if (r && r.visible !== false && x >= r.x - 10 && x <= r.x + r.w + 10 && y >= r.y - 10 && y <= r.y + r.h + 10) {
+            this._placeRearCard(actKey, num);
+            return;
+          }
+        }
+      }
       const { battleX, battleW, arenaTop, stageBottom } = this.layout;
       if (x >= battleX - 16 && x <= battleX + battleW + 16 && y >= arenaTop - 24 && y <= stageBottom + 16) {
-        this._placeCard(actKey);
-        return;
+        if ((this.state.legal_cards || []).includes(actKey)) {
+          this._placeCard(actKey);
+          return;
+        }
+        if (rearLegalNums.size === 1) {
+          this._placeRearCard(actKey, [...rearLegalNums][0]);
+          return;
+        }
       }
     } else if (this.state.mode === 'pre_attack' || this.state.mode === 'intercept') {
       if (d.canIntercept) {
@@ -4076,10 +4246,30 @@ export class GameDirector {
     await this._sendAction('place', { card_id: cardId });
   }
 
+  async _placeRearCard(cardId, duelNumber) {
+    const side = this.state?.active_side;
+    const view = this.handCardViews.get(`hand_${side}_${cardId}`);
+    if (view?.bodyEntry?.body && this.tabletop) {
+      const b = view.bodyEntry.body;
+      this.tabletop.registerPlacementLaunch(cardId, {
+        fromX: b.position.x,
+        fromY: b.position.y,
+        vx: (b.velocity?.x || 0) * 55,
+        vy: Math.min(-260, (b.velocity?.y || 0) * 55 - 180),
+        rot0: b.angle || 0,
+        scale0: view.bodyEntry.scale || 0.85,
+        color: this._resolveCharColor(view.card?.character_id, side),
+      });
+    }
+    this.audio.cardSlide();
+    this.selectedHandCardId = null;
+    await this._sendAction('place_rear', { card_id: cardId, duel_number: duelNumber });
+  }
+
   async _sendAction(action, payload = {}) {
     // Strict Roll-First Gate: NEVER send backend settlement/progression actions while 3D dice are rolling/colliding!
     const rollBlocked = new Set([
-      'next', 'place', 'pass', 'end', 'attack', 'end_attack',
+      'next', 'place', 'place_rear', 'pass', 'end', 'attack', 'end_attack',
       'intercept', 'let_through', 'use_special', 'draw_bottom',
     ]);
     if (this.sequencer.isRollAnimating && rollBlocked.has(action)) {

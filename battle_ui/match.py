@@ -265,8 +265,16 @@ class BattleMatch:
         intercepts = [hand_key(c) for c in early.intercept_cards(player)] if private_pre else []
         legal_cards = {"pre_attack": attacks, "intercept": intercepts}.get(self.mode, [])
         staged_keys = {entry["card_id"] for entry in self._pre_reveal_plans.get(side, ())} if side in (1, 2) else set()
+        legal_rear_cards = []
+        rear_targets = {}
         if self.mode == "placement":
             legal_cards = [hand_key(c) for c in self._legal_cards() if hand_key(c) not in staged_keys]
+            rear_map = self.game.legal_rear_placements()
+            for c, idxs in rear_map.items():
+                rk = hand_key(c)
+                if rk not in staged_keys:
+                    legal_rear_cards.append(rk)
+                    rear_targets[rk] = [i + 1 for i in idxs]
         pre_reveal_claimed = bool(self._pre_reveal_claimed.get(side, False)) if deciding and side in (1, 2) else False
         pre_reveal_plan = self._validate_pre_reveal_plans(player) if deciding and player is not None and self.mode in ("placement", "pre_attack", "intercept") else []
         pre_eligible_cards = []
@@ -318,6 +326,20 @@ class BattleMatch:
                 for num, slot in enumerate(self.game.duelspace.space, 1)
                 for p in self.game.players
             },
+            "duels_rear": {
+                f"{num}:{p.side}": [
+                    {
+                        "character_id": c.character.id,
+                        "printed_id": c.character.data.get("id"),
+                        "character_name": c.character.name,
+                        "character_color": self._character_colors.get(c.character.id) or self._character_colors.get(c.character.data.get("id")),
+                        "card_back": self._character_card_backs.get(c.character.id) or self._character_card_backs.get(c.character.data.get("id")),
+                    }
+                    for c in slot.get_rear_content(p.side)
+                ]
+                for num, slot in enumerate(self.game.duelspace.space, 1)
+                for p in self.game.players
+            },
             "pre_reveal": {
                 f"{num}:{p.side}": [
                     {
@@ -359,7 +381,8 @@ class BattleMatch:
             "frame": frame,
             "catalog": self._views[None].catalog(),
             "choices": [dict(c) for c in self.choices],
-            "legal_cards": legal_cards, "legal_attack_cards": attacks, "legal_intercept_cards": intercepts,
+            "legal_cards": legal_cards, "legal_rear_cards": legal_rear_cards, "rear_targets": rear_targets,
+            "legal_attack_cards": attacks, "legal_intercept_cards": intercepts,
             "pre_reveal_claimed": pre_reveal_claimed,
             "pre_reveal_plan": pre_reveal_plan,
             "pre_reveal_eligible_cards": pre_eligible_cards,
@@ -420,8 +443,8 @@ class BattleMatch:
             self._draw_bottom_action(card_ids)
         elif self.mode in ("reveal", "combat", "turn_end", "timing") and action == "next":
             self._advance()
-        elif self.mode == "placement" and action in ("place", "pass", "end"):
-            self._place_action(action, card_id)
+        elif self.mode == "placement" and action in ("place", "place_rear", "pass", "end"):
+            self._place_action(action, card_id, duel_number=duel_number)
         elif self.mode == "placement" and action in ("claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal"):
             self._pre_reveal_plan_action(action, self.game.placing, card_id, target)
         elif self.mode in ("placement", "pre_attack", "intercept") and action == "trigger_table_action":
@@ -509,6 +532,8 @@ class BattleMatch:
         # Face-down placements and replacements must remain hidden in the public log.
         if move.kind == "place":
             message = "特殊置卡"
+        elif move.kind == "place_rear":
+            message = f"在常规交锋 {move.duel_index + 1} 置入后置交锋"
         elif move.kind == "replace":
             message = "替换技能"
             if succeeded is not False:
@@ -589,7 +614,7 @@ class BattleMatch:
         char_budget = {c.id: int(c.available_cost) for c in player.characters}
         char_statuses = {c.id: dict(c.statuses) for c in player.characters}
         for slot in self.game.board_slots():
-            for card in slot.get_content(player.side):
+            for card in slot.all_side_cards(player.side):
                 if getattr(card, "used", False) or getattr(card, "destroyed", False) or getattr(card, "skipped", False):
                     continue
                 c_cost = max(0, int(card.cost))
@@ -869,7 +894,7 @@ class BattleMatch:
             if slot.ready and timing["answered_at_ms"] is None:
                 timing["answered_at_ms"] = max(now, timing["declared_at_ms"])
 
-    def _place_action(self, action, card_id):
+    def _place_action(self, action, card_id, *, duel_number=None):
         game = self.game
         player = game.placing
         if action == "place":
@@ -877,12 +902,18 @@ class BattleMatch:
             if card is None:
                 raise ValueError("这张手牌当前无法扣置。")
             game.submit_placement(player, card)
+        elif action == "place_rear":
+            rear_map = game.legal_rear_placements()
+            card = next((c for c in rear_map if hand_key(c) == card_id), None)
+            if card is None or type(duel_number) is not int:
+                raise ValueError("这张手牌当前无法扣置到后置交锋。")
+            game.submit_placement(player, card, rear_duel_index=duel_number - 1)
         else:
             game.submit_placement(player, after=action)
         if game.is_over:
             self._finish()
             return
-        if game.placing is player and game.placed_this_window and self._legal_cards():
+        if game.placing is player and game.placed_this_window and (self._legal_cards() or game.legal_rear_placements()):
             return
         self._open_window(previous=player)
         if game.placing is None:
@@ -892,6 +923,7 @@ class BattleMatch:
         game = self.game
         # The terminal automatically ends a player's placement when no card fits.
         while (game.placing is not None and not self._legal_cards()
+               and not game.legal_rear_placements()
                and not game.special.ability_options(game.placing)):
             game.submit_placement(game.placing, after="end")
         if game.placing is not None:
@@ -982,8 +1014,8 @@ class BattleMatch:
     def _pause_at_timing(self):
         return bool(special_seats(self.game))
 
-    def _roll_key(self, combat, side_num, die_number):
-        return (self.game.turn_number, combat["kind"], combat["duel_number"], combat["round_id"], side_num, die_number)
+    def _roll_key(self, combat, side_num, die_number, lane="front"):
+        return (self.game.turn_number, combat["kind"], combat["duel_number"], combat["round_id"], side_num, lane, die_number)
 
     def _emit_unannounced_rolls(self, combat, *, sides_filter=None):
         game = self.game
@@ -991,33 +1023,38 @@ class BattleMatch:
         for side, player in zip(combat["sides"], game.players):
             if sides_filter is not None and player.side not in sides_filter:
                 continue
-            die = side["die"]
-            if not die or die.get("rolled_value") is None:
-                continue
-            die_num = side.get("die_number") or die.get("position")
-            key = self._roll_key(combat, player.side, die_num)
-            if key in self._emitted_dice_rolls:
-                continue
-            pipe = game.pipeline.side_pipelines[player.side]
-            character = pipe.card.character if pipe.card else next(
-                (c for c in player.characters if c.is_alive), player.characters[0])
-            self._emitted_dice_rolls.add(key)
-            rolled_sides.append({
-                "side": player.side,
-                "character_id": character.id,
-                "character_name": character.name,
-                "card_id": side["card_id"],
-                "die_number": die_num,
-                "range_deficit": side["range_deficit"],
-                **die,
-            })
+            lanes = [("front", side, game.pipeline.side_pipelines[player.side])]
+            if side.get("rear"):
+                lanes.append(("rear", side["rear"], game.pipeline.rear_side_pipelines[player.side]))
+            for lane, entry, pipe in lanes:
+                die = entry.get("die") if entry else None
+                if not die or die.get("rolled_value") is None:
+                    continue
+                die_num = entry.get("die_number") or die.get("position")
+                key = self._roll_key(combat, player.side, die_num, lane)
+                if key in self._emitted_dice_rolls:
+                    continue
+                character = pipe.card.character if pipe.card else next(
+                    (c for c in player.characters if c.is_alive), player.characters[0])
+                self._emitted_dice_rolls.add(key)
+                rolled_sides.append({
+                    "side": player.side,
+                    "lane": lane,
+                    "character_id": character.id,
+                    "character_name": character.name,
+                    "card_id": entry["card_id"],
+                    "die_number": die_num,
+                    "range_deficit": entry["range_deficit"],
+                    **die,
+                })
         if rolled_sides:
+            distinct_sides = {sd["side"] for sd in rolled_sides}
             self.presentation.emit(
                 "dice_roll",
                 duel_kind=combat["kind"],
                 duel_number=combat["duel_number"],
                 round_id=combat["round_id"],
-                one_sided=len(rolled_sides) == 1 and rolled_sides[0].get("result") is None,
+                one_sided=len(distinct_sides) == 1 and all(sd.get("result") is None for sd in rolled_sides),
                 sides=rolled_sides,
             )
         return rolled_sides
@@ -1026,28 +1063,33 @@ class BattleMatch:
         checkpoints = ("logic_duel_start", "logic_dice_clash", "before_dice_hit",
                        "on_clash_win", "on_clash_draw", "on_clash_lose",
                        "on_clash_skip", "after_dice_hit", "logic_skill_use")
-        if not any(node in checkpoints for node in nodes):
-            return False
         game = self.game
+        lane_nodes = game.pipeline.last_lane_step_nodes
+        all_nodes = [n for n in (*nodes, *lane_nodes.values()) if n is not None]
+        if not any(node in checkpoints for node in all_nodes):
+            return False
         combat = self._views[None].snapshot()["combat"]
         if combat is None:
             return False
         # Roll-first gate: pause strictly AFTER rolling and BEFORE clash resolution or hit damage!
-        if "logic_dice_clash" in nodes or "before_dice_hit" in nodes:
+        if "logic_dice_clash" in all_nodes or "before_dice_hit" in all_nodes:
             rolled = self._emit_unannounced_rolls(combat)
             if rolled:
                 prefix = {"pre_reveal": "开牌前交锋", "regular": "常规交锋", "instant": "即时交锋"}[combat["kind"]]
-                roll_summary = " · ".join(f"{sd['character_name']} 掷出 {sd['rolled_value']}" for sd in rolled)
+                roll_summary = " · ".join(
+                    f"{sd['character_name']}{'〔后置〕' if sd.get('lane') == 'rear' else ''} 掷出 {sd['rolled_value']}"
+                    for sd in rolled
+                )
                 self._history.append(f"{prefix} {combat['duel_number']}　{roll_summary}。")
                 return True
             if not any(n in ("logic_duel_start", "on_clash_win", "on_clash_draw", "on_clash_lose",
-                             "on_clash_skip", "after_dice_hit", "logic_skill_use") for n in nodes):
+                             "on_clash_skip", "after_dice_hit", "logic_skill_use") for n in all_nodes):
                 return False
         actions = []
         scores = []
-        pause = "logic_skill_use" in nodes and bool(combat["suspended"])
+        pause = "logic_skill_use" in all_nodes and bool(combat["suspended"])
         early = combat["kind"] == "pre_reveal"
-        if early and "logic_duel_start" in nodes:
+        if early and "logic_duel_start" in all_nodes:
             slot = game.pre_reveal.space.space[combat["duel_number"] - 1]
             if slot.target_duel_index is not None and slot.resolved_target is not None:
                 position = slot.target_duel_index + 1
@@ -1063,90 +1105,100 @@ class BattleMatch:
                     )
                 else:
                     actions.append(f"常规交锋 {position} 已空，转向原持牌人{slot.resolved_target.name}")
-        scored = any(n in ("on_clash_win", "on_clash_draw", "on_clash_lose") for n in nodes)
+        scored = any(n in ("on_clash_win", "on_clash_draw", "on_clash_lose") for n in all_nodes)
         clash_sides = []
-        for node, side, player in zip(nodes, combat["sides"], game.players):
-            pipe = game.pipeline.side_pipelines[player.side]
-            character = pipe.card.character if pipe.card else next(
-                (c for c in player.characters if c.is_alive), player.characters[0])
-            die = side["die"]
-            if node == "logic_skill_use":
-                payment = pipe.payment
-                if pipe.paid:
-                    price = f"{payment['cost']} 费"
-                    if resource := payment["resource_paid"]:
-                        price += f"、{resource['amount']} {resource['status']}"
-                    actions.append(f"{character.combat_name}使用 {pipe.card.name}（实付 {price}）")
-                else:
-                    actions.append(f"{character.combat_name}跳过「{pipe.card.name}」，{payment['failure_reason']}")
+        lane_results_count = len(game.pipeline.current_lane_clash_results or game.pipeline.current_clash_results)
+        for fallback_node, side, player in zip(nodes, combat["sides"], game.players):
+            lanes = [("front", side, game.pipeline.side_pipelines[player.side],
+                      lane_nodes.get((player.side, "front"), fallback_node))]
+            if side.get("rear") is not None or (player.side, "rear") in lane_nodes:
+                lanes.append(("rear", side.get("rear") or {}, game.pipeline.rear_side_pipelines[player.side],
+                              lane_nodes.get((player.side, "rear"))))
+            for lane, entry, pipe, node in lanes:
+                character = pipe.card.character if pipe.card else next(
+                    (c for c in player.characters if c.is_alive), player.characters[0])
+                die = entry.get("die")
+                lane_tag = "〔后置〕" if lane == "rear" else ""
+                if node == "logic_skill_use" and pipe.card is not None:
+                    payment = pipe.payment
+                    if pipe.paid:
+                        price = f"{payment['cost']} 费"
+                        if resource := payment["resource_paid"]:
+                            price += f"、{resource['amount']} {resource['status']}"
+                        actions.append(f"{character.combat_name}{lane_tag}使用 {pipe.card.name}（实付 {price}）")
+                    else:
+                        actions.append(f"{character.combat_name}{lane_tag}跳过「{pipe.card.name}」，{payment['failure_reason']}")
+                        pause = True
+                    if pipe.paid and entry.get("range_deficit"):
+                        actions.append(f"{pipe.card.name}处于 {entry['range_deficit']} 级远程劣势")
+                elif scored and die and die["result"] in ("win", "lose", "draw"):
+                    if pipe.card and pipe.card.temporary and lane == "front":
+                        key = (combat["kind"], combat["duel_number"], player.side, pipe.card)
+                        self._temporary_clashes[key] = _visible_card(pipe.card)
+                    result = {"win": "胜", "draw": "平", "lose": "负"}[die["result"]]
+                    if die["win_branch_skipped"]:
+                        result += "，跳过拼赢分支"
+                    if lane_results_count == 1:
+                        scores.append(f"空白轮，{character.combat_name}{lane_tag}（{result}）")
+                    else:
+                        scores.append(f"{character.combat_name}{lane_tag}「{pipe.card.name}」第{die['position']}骰 "
+                                      f"{die['clash_score']}（{result}）")
+                    clash_sides.append({
+                        "side": player.side,
+                        "lane": lane,
+                        "character_id": character.id,
+                        "character_name": character.name,
+                        "card_id": entry.get("card_id"),
+                        "die_number": entry.get("die_number") or die.get("position"),
+                        "range_deficit": entry.get("range_deficit", 0),
+                        **die,
+                    })
                     pause = True
-                if pipe.paid and side["range_deficit"]:
-                    actions.append(f"{pipe.card.name}处于 {side['range_deficit']} 级远程劣势")
-            elif scored and die and die["result"] in ("win", "lose", "draw"):
-                if pipe.card.temporary:
-                    key = (combat["kind"], combat["duel_number"], player.side, pipe.card)
-                    self._temporary_clashes[key] = _visible_card(pipe.card)
-                result = {"win": "胜", "draw": "平", "lose": "负"}[die["result"]]
-                if die["win_branch_skipped"]:
-                    result += "，跳过拼赢分支"
-                if len(game.pipeline.current_clash_results) == 1:
-                    scores.append(f"空白轮，{character.combat_name}（{result}）")
-                else:
-                    scores.append(f"{character.combat_name}「{pipe.card.name}」第{die['position']}骰 "
-                                  f"{die['clash_score']}（{result}）")
-                clash_sides.append({
-                    "side": player.side,
-                    "character_id": character.id,
-                    "character_name": character.name,
-                    "card_id": side["card_id"],
-                    "die_number": side.get("die_number") or die.get("position"),
-                    "range_deficit": side["range_deficit"],
-                    **die,
-                })
-                pause = True
-            elif node == "on_clash_skip" and die:
-                actions.append(f"{character.combat_name}的{TYPE_NAMES[die['type']]}跳过拼点")
-                clash_sides.append({
-                    "side": player.side,
-                    "character_id": character.id,
-                    "character_name": character.name,
-                    "card_id": side["card_id"],
-                    "die_number": side.get("die_number") or die.get("position"),
-                    "range_deficit": side["range_deficit"],
-                    "skipped": True,
-                    **die,
-                })
-                pause = True
-            elif node == "after_dice_hit" and die:
-                self._emit_unannounced_rolls(combat, sides_filter={player.side})
-                target = pipe.target or next((c for c in next(
-                    p for p in game.players if p is not player).characters if c.is_alive), None)
-                attack = "单方面攻击" if die["result"] is None else "进攻"
-                if target is not None:
-                    actions.append(
-                        f"{character.combat_name}{attack}，{target.combat_name}生命 {target.hp}/{target.max_hp}，"
-                        f"完整度 {target.lightcore_hp}/{target.max_lightcore_hp}"
-                    )
-                    self.presentation.emit(
-                        "combat_strike",
-                        attacker_side=player.side,
-                        attacker_id=character.id,
-                        attacker_name=character.name,
-                        target_side=target.player.side,
-                        target_id=target.id,
-                        target_name=target.name,
-                        die_type=die["type"],
-                        die_number=side.get("die_number"),
-                        one_sided=die["result"] is None,
-                        card_id=side["card_id"],
-                        card_name=pipe.card.name if pipe.card else None,
-                    )
-                else:
-                    actions.append(f"{character.combat_name}{attack}")
-                pause = True
+                elif node == "on_clash_skip" and die:
+                    actions.append(f"{character.combat_name}的{TYPE_NAMES[die['type']]}跳过拼点")
+                    clash_sides.append({
+                        "side": player.side,
+                        "lane": lane,
+                        "character_id": character.id,
+                        "character_name": character.name,
+                        "card_id": entry.get("card_id"),
+                        "die_number": entry.get("die_number") or die.get("position"),
+                        "range_deficit": entry.get("range_deficit", 0),
+                        "skipped": True,
+                        **die,
+                    })
+                    pause = True
+                elif node == "after_dice_hit" and die:
+                    self._emit_unannounced_rolls(combat, sides_filter={player.side})
+                    target = pipe.target or next((c for c in next(
+                        p for p in game.players if p is not player).characters if c.is_alive), None)
+                    attack = "单方面攻击" if die["result"] is None else "进攻"
+                    if target is not None:
+                        actions.append(
+                            f"{character.combat_name}{lane_tag}{attack}，{target.combat_name}生命 {target.hp}/{target.max_hp}，"
+                            f"完整度 {target.lightcore_hp}/{target.max_lightcore_hp}"
+                        )
+                        self.presentation.emit(
+                            "combat_strike",
+                            attacker_side=player.side,
+                            lane=lane,
+                            attacker_id=character.id,
+                            attacker_name=character.name,
+                            target_side=target.player.side,
+                            target_id=target.id,
+                            target_name=target.name,
+                            die_type=die["type"],
+                            die_number=entry.get("die_number"),
+                            one_sided=die["result"] is None,
+                            card_id=entry.get("card_id"),
+                            card_name=pipe.card.name if pipe.card else None,
+                        )
+                    else:
+                        actions.append(f"{character.combat_name}{lane_tag}{attack}")
+                    pause = True
         if clash_sides:
             rolled_keys = [
-                self._roll_key(combat, sd["side"], sd.get("die_number") or sd.get("position"))
+                self._roll_key(combat, sd["side"], sd.get("die_number") or sd.get("position"), sd.get("lane", "front"))
                 for sd in clash_sides
                 if not sd.get("skipped") and sd.get("rolled_value") is not None
             ]
@@ -1157,7 +1209,7 @@ class BattleMatch:
                 duel_kind=combat["kind"],
                 duel_number=combat["duel_number"],
                 round_id=combat["round_id"],
-                blank_round=scored and len(game.pipeline.current_clash_results) == 1,
+                blank_round=scored and lane_results_count == 1,
                 already_rolled=already_rolled,
                 sides=clash_sides,
             )

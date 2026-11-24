@@ -113,22 +113,34 @@ export function createPresentationFx(env) {
       remaining -= 1;
       if (remaining === 0) onNumbersRevealed?.();
     };
+    const distinctSides = new Set(sidesList.map((s) => s.side));
+    const isPaired = distinctSides.size === 2;
+    const bySideCount = {
+      1: sidesList.filter((s) => s.side === 1).length,
+      2: sidesList.filter((s) => s.side === 2).length,
+    };
+    const seenBySide = { 1: 0, 2: 0 };
     for (const sd of sidesList) {
       const isP1 = sd.side === 1;
+      const idxOnSide = seenBySide[sd.side] || 0;
+      seenBySide[sd.side] = idxOnSide + 1;
+      const multiSide = (bySideCount[sd.side] || 1) > 1;
+      const offY = multiSide ? (idxOnSide === 0 ? -28 : 28) : 0;
       const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
       const displayVal = sd.clash_score ?? sd.final_score ?? sd.rolled_value ?? '—';
-      const isPaired = sidesList.length === 2;
+      const laneTag = sd.lane === 'rear' ? '后置 ' : '';
       three.launchDie({
         side: sd.side,
+        lane: sd.lane || 'front',
         sides,
         dieType: sd.type || 'blank',
         rolledValue: displayVal,
-        subLabel: `1~${sides}`,
+        subLabel: `${laneTag}1~${sides}`,
         startX: cx + (isP1 ? -240 : 240),
-        startY: cy + 28,
+        startY: cy + 28 + offY,
         targetX: isPaired ? cx + (isP1 ? -86 : 86) : cx + (isP1 ? 30 : -30),
-        targetY: cy,
-        radius: 28,
+        targetY: cy + offY,
+        radius: multiSide ? 24 : 28,
         lifetime: isPaired ? 2.2 : 1.35,
         willClash: isPaired,
         onReveal: onOne,
@@ -170,20 +182,24 @@ export function createPresentationFx(env) {
     const center = env.getClashCenter ? env.getClashCenter() : { x: arenaX + arenaW * 0.5, y: arenaTop + 132 };
     const cx = center.x;
     const cy = center.y;
-    const p1 = (ev.sides || []).find((s) => s.side === 1);
-    const p2 = (ev.sides || []).find((s) => s.side === 2);
+    const p1List = (ev.sides || []).filter((s) => s.side === 1 && !s.skipped);
+    const p2List = (ev.sides || []).filter((s) => s.side === 2 && !s.skipped);
 
     const alreadyRolled = !needsNumberReveal;
     const revealDelay = needsNumberReveal ? 0.26 : 0;
-    if (p1 && p2 && !p1.skipped && !p2.skipped) {
-      const outcome = p1.result === 'win' ? 'left_win' : p2.result === 'win' ? 'right_win' : 'draw';
-      const winDie = p1.result === 'win' ? p1 : p2.result === 'win' ? p2 : null;
+    if (p1List.length > 0 && p2List.length > 0) {
+      const p1Wins = p1List.some((d) => d.result === 'win');
+      const p2Wins = p2List.some((d) => d.result === 'win');
+      const outcome = p1Wins && !p2Wins ? 'left_win' : p2Wins && !p1Wins ? 'right_win' : 'draw';
+      const winDie = [...p1List, ...p2List].find((d) => d.result === 'win') || null;
       const winColor = winDie ? (DIE_STYLE[winDie.type]?.color || INK.gold) : INK.gold;
       // Collision radius = 34 matches outer 1.13x ink silhouette + polyhedron corners -> ZERO clipping (0穿模)!
       const group = physics.createClashDicePair({
         cx,
         cy,
         radius: 34,
+        leftCount: p1List.length,
+        rightCount: p2List.length,
         outcome,
         winnerColor: winColor,
         lungeDelay: needsNumberReveal ? 0.34 : 0.22,
@@ -195,36 +211,45 @@ export function createPresentationFx(env) {
       });
       group.winDieType = winDie?.type || null;
 
-      let remaining = 2;
+      const pairs = [
+        ...p1List.map((sd, i) => [sd, group.leftBodies[i] || group.leftBody]),
+        ...p2List.map((sd, i) => [sd, group.rightBodies[i] || group.rightBody]),
+      ];
+      let remaining = pairs.length;
       const onOneNum = () => {
         remaining -= 1;
         if (remaining === 0) onNumbersRevealed?.();
       };
-      for (const [sd, body] of [[p1, group.leftBody], [p2, group.rightBody]]) {
+      for (const [sd, body] of pairs) {
         const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
         const displayVal = sd.clash_score ?? sd.rolled_value ?? '—';
+        const lane = sd.lane || 'front';
+        const subLabel = `${lane === 'rear' ? '后置 ' : ''}1~${sides}`;
         if (alreadyRolled && three.attachClashBody?.(sd.side, {
+          lane,
           physicsBody: body,
           rolledValue: displayVal,
-          subLabel: `1~${sides}`,
+          subLabel,
           dieType: sd.type || 'blank',
           lifetime: 1.75,
           onReveal: onOneNum,
         })) {
           continue;
         }
+        const multiSide = (sd.side === 1 ? p1List.length : p2List.length) > 1;
         three.launchDie({
           side: sd.side,
+          lane,
           sides,
           dieType: sd.type || 'blank',
           rolledValue: displayVal,
-          subLabel: `1~${sides}`,
+          subLabel,
           startX: body.position.x,
           startY: body.position.y,
           targetX: cx,
-          targetY: cy,
+          targetY: cy + (body._offsetY || 0),
           physicsBody: body,
-          radius: 28,
+          radius: multiSide ? 24 : 28,
           lifetime: 1.75,
           revealDelay,
           alreadyRolled,
@@ -251,8 +276,9 @@ export function createPresentationFx(env) {
       }
     };
     for (const sd of sidesList) {
-      // Never spawn a duplicate die on top of an already-rolled live die for this side (e.g. skipped/destroyed clash)!
-      if (alreadyRolled && three.hasActiveDieForSide?.(sd.side)) {
+      const lane = sd.lane || 'front';
+      // Never spawn a duplicate die on top of an already-rolled live die for this side & lane!
+      if (alreadyRolled && three.hasActiveDieForSide?.(sd.side, lane)) {
         onOne();
         continue;
       }
@@ -260,10 +286,11 @@ export function createPresentationFx(env) {
       const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
       three.launchDie({
         side: sd.side,
+        lane,
         sides,
         dieType: sd.type || 'blank',
         rolledValue: sd.skipped ? '跳过' : (sd.clash_score ?? sd.rolled_value ?? '—'),
-        subLabel: sd.skipped ? '跳过' : `1~${sides}`,
+        subLabel: sd.skipped ? '跳过' : `${lane === 'rear' ? '后置 ' : ''}1~${sides}`,
         startX: cx + (isP1 ? -240 : 240),
         startY: cy + 32,
         targetX: cx + (isP1 ? -86 : 86),

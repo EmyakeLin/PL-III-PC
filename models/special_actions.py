@@ -132,7 +132,7 @@ class SpecialActions:
         return True
 
     def _valid_candidates(self, decision):
-        board = {card for slot in self.game.board_slots() for cards in slot.content.values() for card in cards}
+        board = {card for slot in self.game.board_slots() for card in slot.all_cards()}
         cards = []
         for card in decision.candidates:
             actor, in_hand = decision.origins[card]
@@ -375,7 +375,7 @@ class SpecialActions:
                     enemy = self.game.pre_reveal.opponent(player)
                     choices.extend(replace(choice, duel_index=i, target_card=c)
                                    for i, slot in enumerate(self.game.duelspace.space)
-                                   for c in slot.get_content(enemy.side) if c.state == CardState.PLACED_FACE_DOWN)
+                                   for c in slot.all_side_cards(enemy.side) if c.state == CardState.PLACED_FACE_DOWN)
         return choices
 
     def _use_ability(self, action):
@@ -421,6 +421,22 @@ class SpecialActions:
         owner = card.character
         return owner.used_duels < owner.max_duels and (
             "place" in card.data.get("anytime_play", ()) or owner.ability_permission("place") is not None)
+
+    def may_place_rear(self, card, duel_index):
+        owner = card.character
+        space = self.game.duelspace
+        if not (space.current_duel_index <= duel_index < len(space.space)):
+            return False
+        slot = space.space[duel_index]
+        side = card.player.side
+        if not self.game.pipeline.can_join(slot) or not slot.can_accept_rear(side):
+            return False
+        if not any(c.character is owner for c in slot.all_side_cards(side)) and owner.used_duels >= owner.max_duels:
+            return False
+        return (
+            "rear_duel" in card.data.get("anytime_play", ())
+            or owner.ability_permission("rear_duel") is not None
+        )
 
     @staticmethod
     def printed_replace(card, target):
@@ -481,6 +497,9 @@ class SpecialActions:
             modes = card.data.get("anytime_play", ())
             if self.may_place(card):
                 choices.append(SpecialAction("place", card, duel_index=self.first_open_slot(player.side)))
+            for idx in range(game.duelspace.current_duel_index, len(game.duelspace.space)):
+                if self.may_place_rear(card, idx):
+                    choices.append(SpecialAction("place_rear", card, duel_index=idx))
             if "attack" in modes or card.data.get("before_duel_attack") and self.window_open("before_duel"):
                 choices.extend(SpecialAction("attack", card, character=c) for c in enemy.characters if c.is_alive)
                 choices.extend(SpecialAction("attack", card, duel_index=index)
@@ -491,7 +510,7 @@ class SpecialActions:
             if (card.data.get("anytime_replace") or card.data.get("replace_targets")
                     or card.character.ability_permission("replace") is not None):
                 for slot in game.board_slots():
-                    for target in slot.get_content(player.side):
+                    for target in slot.all_side_cards(player.side):
                         if self.may_replace(card, slot, target):
                             choices.append(SpecialAction("replace", card, target_card=target))
         return choices
@@ -517,6 +536,10 @@ class SpecialActions:
             if not game.place_in_duel(player.side, card, action.duel_index, special=True):
                 return False
             game.context.record("special_placement", player=player.name, number=action.duel_index + 1)
+        elif action.kind == "place_rear":
+            if not game.place_in_duel(player.side, card, action.duel_index, special=True, rear=True):
+                return False
+            game.context.record("special_rear_placement", player=player.name, number=action.duel_index + 1)
         elif action.kind == "replace":
             with game.context.binding(source=card.character, side=player.side):
                 return game.context.eval_block([card, action.target_card, OpCode.REPLACE_SKILL])
@@ -587,7 +610,7 @@ class SpecialActions:
                 or card not in hand.content or not card.character.is_alive or card.destroyed
                 or card.state == CardState.NEGATED or old.player is not player):
             return False
-        slot = next((s for s in self.game.board_slots() if old in s.get_content(player.side)), None)
+        slot = next((s for s in self.game.board_slots() if old in s.all_side_cards(player.side)), None)
         if slot is None or not self.may_replace(card, slot, old):
             return False
         if not self.printed_replace(card, old):
@@ -595,12 +618,12 @@ class SpecialActions:
             if not owner.spend_ability_effect(owner.ability_permission("replace")):
                 return False
             if (not owner.is_alive or card.destroyed or old.destroyed or card not in hand.content
-                    or old not in slot.get_content(player.side) or self.is_locked(old)
+                    or old not in slot.all_side_cards(player.side) or self.is_locked(old)
                     or not self.game.pipeline.before_use(slot, old)):
                 return False
         record_card_play(card)
         self.game.pipeline.withdraw_skill(slot, old)
-        cards = slot.get_content(player.side)
+        cards = slot.get_content(player.side) if old in slot.get_content(player.side) else slot.get_rear_content(player.side)
         cards[cards.index(old)] = card
         if old.temporary:
             hand.content.remove(card)

@@ -195,8 +195,12 @@ class Dice:
         opponent = self.card.range_opponent if self.card else None
         if opponent is None:
             return self.effective_range
-        opposing_die = self.game.context.active_dice.get(opponent.player.side)
-        opposing_range = (opposing_die.effective_range if getattr(opposing_die, "card", None) is opponent
+        opposing_die = next(
+            (d for d in self.game.context.side_active_dice(opponent.player.side)
+             if getattr(d, "card", None) is opponent),
+            None,
+        )
+        opposing_range = (opposing_die.effective_range if opposing_die is not None
                           else opponent.effective_range)
         return self.card.paired_ranges(opponent, self.effective_range, opposing_range)[0]
 

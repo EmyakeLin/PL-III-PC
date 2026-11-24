@@ -1,5 +1,29 @@
 # 当前设计与工作记录
 
+## 后置交锋（Rear Duel）双轨内核、桥接与 2.5D/3D 牌桌演出（2026-11-24）
+
+### 已确认规则与语义
+- **附属关系、权限与容量**：后置交锋附属在己方已有合法前置卡的交锋槽位之后，单边默认容量为 `1`（可通过 `OpCode.REAR_CAPACITY` 读取、`OpCode.SET_REAR_CAPACITY` 改写）。仅具备后置权限的角色/技能（`card.data["rear_duel"]`、`character.data["rear_duel"]`、`character.ability_permission("rear_duel")`、`anytime_play` 含 `"rear_duel"`）或词条显式插入（`INSERT_SKILL` 锚点 `"rear_duel"`）可置入后置交锋。前置技能 `on_skill_use` 动态插入的后置卡（如以 `2 * cost` 能源预付 `{"prepaid": true}`，无需占用置卡机会）自第 1 轮起即与前置首骰同轮参战。
+- **统一拼点与目标公式（`1v1 / 1v2 / 2v1 / 2v2` 完全同构）**：设本轮参战的前置骰为 `F`、后置骰为 `R`（缺席或已耗尽记为 `0`）：
+  - **任意前置骰 `F`**：拼点阈值对比 **`enemy_F + enemy_R`**，受击目标为 `enemy_F` 所属角色（仅当 `enemy_F` 已自然耗尽时退回 `enemy_R` 所属角色）。
+  - **任意后置骰 `R`**：拼点阈值对比 **`enemy_F`**（仅当 `enemy_F` 已自然耗尽时对比 `enemy_R`），受击目标同为 `enemy_F` 所属角色（或 `enemy_R`）。
+  - 自然支持三骰/四骰同输（如 `5+6` 对 `8`）、多胜者同轮依次命中（如 `7+6` 对 `5`，或 `2v2` 中 `R1 > F2`）、拼点逆转及某轨骰子提前耗尽后平滑转入 `1v2 / 1v1`。
+- **特殊骰子（`skip` / `block` / `evade`）**：印刷 `skip` 骰仅在前置轨触发整轮跳过并结算前置 `on_clash_skip`（参战后置骰同步记为 `skip` 并推位，不触发后置 `on_clash_skip`）；后置轨的印刷 `skip` 骰不触发、不跳过整轮，仅本轮轮空推位。防御/闪避骰的无对位轮空跳过（`on_clash_skip`）与分裂拼点命中仅对前置轨生效；参拼的后置守备骰正常掷点计入 `F + R`。
+- **连坐作废 vs 自然耗尽**：当前置卡被摧毁（`DESTROY`）、无效化（`NEGATE_SKILL`）、移走/牵制、持牌人阵亡或因未付清费用而跳过时，`DuelSlot.sync_rear_validity` 立即撤回并作废（`CardState.NEGATED`）同侧后置卡，发布 `on_skill_disabled(reason="rear_anchor_lost")`；已正常付费并自然打完骰子的前置卡保留有效锚点，后置剩余骰子继续交锋。
+
+### 执行路径与前端桥接
+- **内核与管线**（`models/opcode.py`、`models/opcodes.py`、`models/duel.py`、`models/character.py`、`models/dice.py`、`models/special_actions.py`、`context/context.py`、`game.py`、`pipeline/combat_steps.py`、`pipeline/pipeline.py`）：
+  - 新增 `OpCode.REAR_SLOT_CARDS`、`OpCode.REAR_CAPACITY`、`OpCode.SET_REAR_CAPACITY`；`SLOT_CARDS` 与 `REMAINING_CARDS` 统一涵盖有效后置卡。
+  - `CombatFrame` 与 `Pipeline` 支持 `(side, lane)` 双轨 `SidePipeline`，后置轨使用 `REAR_DUEL`（不重复触发 `duel_start` / `duel_end`）；`_play_slot` 先令前置技能入场付费并结算 `on_skill_use`，再接纳后置技能进入第 1 轮配对。`ClashPair.clash_check()` 统一产出 `lane_results`；`_resolve_results` 支持 `0 / 1 / 2+` 名胜者依次结算并完整消费 `CAN_HIT`。
+- **顶层桥接与纯画布表现**（`displayer.py`、`battle_ui/match.py`、`battle_ui/session.py`、`card_print.js`、`timeline_sequencer.js`、`physics.js`、`three_world.js`、`presentation_fx.js`、`combat_tabletop.js`、`field_action_workspace.js`、`game_director.js`）：
+  - 快照与桥接暴露 `duels[].sides[].rear_cards`、`rear_capacity`、`card_owners.duels_rear`、`legal_rear_cards`、`rear_targets`、`place_rear`、`combat.sides[].rear` 及带 `lane` 标识的 `dice_roll` / `dice_clash` / `combat_strike` 事件。
+  - 2.5D 牌桌在前置牌外侧对称渲染平放后置实体牌（左 P1 / 右 P2，`rotation = 0`）与金色「后置」角标、置卡期及场内行动期的 `⊕ 后置交锋` 落点槽、扣置后置牌角色卡背、战斗焦点悬停抬升查阅、双行（`前` + `后` + `合 X`）对撞勋章，以及 Matter.js + Three.js `1v2 / 2v1 / 2v2` 多骰同轮投掷与物理对撞。
+
+### 验证记录
+- 新增区分性专测 `tests/test_rear_duel.py`（7 大组场景）并接入 `tests/entry_semantics.py`，逐项核对：置入权限/前置依赖/`SET_REAR_CAPACITY` 容量扩充；`1v2` 三骰皆输、敌前置胜伤严格命中前置角色、双胜连击；`2v2` 非对称拼点与自然耗尽转 `1v1`（且不重复派发 `duel_start/end`）；前后轨 `skip` 与无对位守备骰差异；前置摧毁/欠费/阵亡连坐作废；余晖巨像式 `on_skill_use` 双倍能源预付动态插入首轮参战（不耗置卡额度与团队费）；`BattleMatch` + `Displayer` 顶层置卡、归属与 `lane` 事件流。
+- Python：`python -m unittest tests.entry_semantics` **219/219 通过**；现代展示桥接与大厅对战回归套件（`test_displayer`、`test_room_pacing_and_dice_presentation`、`test_lan_qing`、`test_liu_yin`、`test_emyake`、`test_carrier_challenge`、`test_heris`、`test_mode_lobby`、`test_rear_duel`）**178/178 通过**。
+- 前端：全部 8 个改动 JS 模块通过 `node --check`；`node --import ./tests/frontend/register.mjs --test tests/frontend/test_game_stage.mjs tests/frontend/test_data_driven_display.mjs` **15/15 通过**。
+
 ## 林秋「分界」的摧毁候选（2026-11-24）
 
 测试修正见 `40811eb`。按现行卡面“敌方本回合仍在场的任意一张技能”，候选包含命中目标与其队友仍在场的技能。专测按交锋顺序取得三张候选，排除了已摧毁的牌。第一张候选离场后，提交该选择会被拒绝；随后选择第二个交锋中目标的技能，只有该牌被摧毁。专测通过，完整词条套件 212 项全部通过。

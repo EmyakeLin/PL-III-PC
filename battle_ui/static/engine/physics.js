@@ -65,7 +65,7 @@ export class TabletopPhysics {
       for (const pair of event.pairs) {
         const a = pair.bodyA;
         const b = pair.bodyB;
-        if (a._clashGroup && a._clashGroup === b._clashGroup && !a._clashGroup.collided) {
+        if (a._clashGroup && a._clashGroup === b._clashGroup && a._clashSide !== b._clashSide && !a._clashGroup.collided) {
           const group = a._clashGroup;
           group.collided = true;
           const support = pair.collision.supports?.[0] || {
@@ -74,21 +74,27 @@ export class TabletopPhysics {
           };
           const relVel = Vector.magnitude(Vector.sub(a.velocity, b.velocity));
 
-          const left = group.leftBody;
-          const right = group.rightBody;
-          if (group.outcome === 'left_win') {
-            Body.setVelocity(left, { x: 4.2, y: 0 });
-            Body.setVelocity(right, { x: 20.5, y: -3.8 });
-            Body.setAngularVelocity(right, 0.42);
-          } else if (group.outcome === 'right_win') {
-            Body.setVelocity(right, { x: -4.2, y: 0 });
-            Body.setVelocity(left, { x: -20.5, y: -3.8 });
-            Body.setAngularVelocity(left, -0.42);
-          } else {
-            Body.setVelocity(left, { x: -12.0, y: -1.8 });
-            Body.setVelocity(right, { x: 12.0, y: -1.8 });
-            Body.setAngularVelocity(left, -0.24);
-            Body.setAngularVelocity(right, 0.24);
+          for (const lb of group.leftBodies) {
+            if (group.outcome === 'left_win') {
+              Body.setVelocity(lb, { x: 4.2, y: (lb._offsetY || 0) * 0.04 });
+            } else if (group.outcome === 'right_win') {
+              Body.setVelocity(lb, { x: -20.5, y: -3.8 + (lb._offsetY || 0) * 0.06 });
+              Body.setAngularVelocity(lb, -0.42);
+            } else {
+              Body.setVelocity(lb, { x: -12.0, y: -1.8 + (lb._offsetY || 0) * 0.05 });
+              Body.setAngularVelocity(lb, -0.24);
+            }
+          }
+          for (const rb of group.rightBodies) {
+            if (group.outcome === 'right_win') {
+              Body.setVelocity(rb, { x: -4.2, y: (rb._offsetY || 0) * 0.04 });
+            } else if (group.outcome === 'left_win') {
+              Body.setVelocity(rb, { x: 20.5, y: -3.8 + (rb._offsetY || 0) * 0.06 });
+              Body.setAngularVelocity(rb, 0.42);
+            } else {
+              Body.setVelocity(rb, { x: 12.0, y: -1.8 + (rb._offsetY || 0) * 0.05 });
+              Body.setAngularVelocity(rb, 0.24);
+            }
           }
 
           const impact = { x: support.x, y: support.y, speed: relVel, group };
@@ -148,31 +154,49 @@ export class TabletopPhysics {
   }
 
   /**
-   * Create two colliding Matter.js bodies directly bound to the two clashing 3D dice.
+   * Create colliding Matter.js bodies directly bound to clashing 3D dice (supports 1v1, 1v2, 2v1, 2v2).
    */
-  createClashDicePair({ cx, cy, radius = 26, outcome = 'draw', winnerColor = 0xe89b32, lungeDelay = 0.34, alreadyRolled = false, onImpact = null }) {
+  createClashDicePair({ cx, cy, radius = 26, leftCount = 1, rightCount = 1, outcome = 'draw', winnerColor = 0xe89b32, lungeDelay = 0.34, alreadyRolled = false, onImpact = null }) {
     const { Bodies, Composite } = this.Matter;
     this.clearClashGroups();
 
     const spawnDx = alreadyRolled ? 78 : 210;
-    const spawnDy = alreadyRolled ? 0 : 45;
+    const spawnDy = alreadyRolled ? 0 : 32;
+    const makeSideBodies = (count, isLeft) => {
+      const n = Math.max(1, count);
+      const bodies = [];
+      for (let i = 0; i < n; i++) {
+        const offsetY = n === 1 ? 0 : (i === 0 ? -36 : 36);
+        const r = n > 1 ? Math.max(24, radius - 5) : radius;
+        const winSide = isLeft ? 'left_win' : 'right_win';
+        const body = Bodies.circle(
+          cx + (isLeft ? -spawnDx : spawnDx),
+          cy + offsetY + (n === 1 ? (isLeft ? spawnDy : -spawnDy) : 0),
+          r,
+          {
+            frictionAir: 0.055,
+            restitution: 0.72,
+            density: outcome === winSide ? 0.0045 : 0.0022,
+            collisionFilter: { category: CAT_DIE, mask: CAT_DIE },
+          }
+        );
+        body._offsetY = offsetY;
+        body._clashSide = isLeft ? 'left' : 'right';
+        bodies.push(body);
+      }
+      return bodies;
+    };
 
-    const leftBody = Bodies.circle(cx - spawnDx, cy + spawnDy, radius, {
-      frictionAir: 0.055,
-      restitution: 0.72,
-      density: outcome === 'left_win' ? 0.0045 : 0.0022,
-      collisionFilter: { category: CAT_DIE, mask: CAT_DIE },
-    });
-    const rightBody = Bodies.circle(cx + spawnDx, cy - spawnDy, radius, {
-      frictionAir: 0.055,
-      restitution: 0.72,
-      density: outcome === 'right_win' ? 0.0045 : 0.0022,
-      collisionFilter: { category: CAT_DIE, mask: CAT_DIE },
-    });
+    const leftBodies = makeSideBodies(leftCount, true);
+    const rightBodies = makeSideBodies(rightCount, false);
+    const allBodies = [...leftBodies, ...rightBodies];
 
     const group = {
-      leftBody,
-      rightBody,
+      leftBody: leftBodies[0],
+      rightBody: rightBodies[0],
+      leftBodies,
+      rightBodies,
+      allBodies,
       cx,
       cy,
       outcome,
@@ -185,9 +209,8 @@ export class TabletopPhysics {
       age: 0,
       life: 2.0,
     };
-    leftBody._clashGroup = group;
-    rightBody._clashGroup = group;
-    Composite.add(this.world, [leftBody, rightBody]);
+    for (const b of allBodies) b._clashGroup = group;
+    Composite.add(this.world, allBodies);
     this.clashGroups.push(group);
     return group;
   }
@@ -197,11 +220,11 @@ export class TabletopPhysics {
     for (const g of this.clashGroups) {
       // Zero velocity & angularVelocity on removal so any still-fading 3D die holding a reference
       // NEVER reads a frozen non-zero angularVelocity and spins infinitely!
-      Body.setVelocity(g.leftBody, { x: 0, y: 0 });
-      Body.setVelocity(g.rightBody, { x: 0, y: 0 });
-      Body.setAngularVelocity(g.leftBody, 0);
-      Body.setAngularVelocity(g.rightBody, 0);
-      Composite.remove(this.world, [g.leftBody, g.rightBody]);
+      for (const b of (g.allBodies || [g.leftBody, g.rightBody])) {
+        Body.setVelocity(b, { x: 0, y: 0 });
+        Body.setAngularVelocity(b, 0);
+      }
+      Composite.remove(this.world, g.allBodies || [g.leftBody, g.rightBody]);
     }
     this.clashGroups = [];
   }
@@ -290,26 +313,35 @@ export class TabletopPhysics {
         const delay = g.lungeDelay ?? 0.34;
         if (!g.lunged) {
           if (g.age < delay) {
-            // Mass-scaled spring pullback (F = m * a) so radius=34 heavier dice still pull all the way back to cx ± 175!
             const lx = g.cx - (g.alreadyRolled ? 175 : 138);
             const rx = g.cx + (g.alreadyRolled ? 175 : 138);
             const aGain = g.alreadyRolled ? 0.00055 : 0.00028;
-            Body.applyForce(g.leftBody, g.leftBody.position, {
-              x: (lx - g.leftBody.position.x) * aGain * g.leftBody.mass,
-              y: (g.cy - g.leftBody.position.y) * aGain * g.leftBody.mass,
-            });
-            Body.applyForce(g.rightBody, g.rightBody.position, {
-              x: (rx - g.rightBody.position.x) * aGain * g.rightBody.mass,
-              y: (g.cy - g.rightBody.position.y) * aGain * g.rightBody.mass,
-            });
+            for (const lb of g.leftBodies) {
+              const ty = g.cy + (lb._offsetY || 0);
+              Body.applyForce(lb, lb.position, {
+                x: (lx - lb.position.x) * aGain * lb.mass,
+                y: (ty - lb.position.y) * aGain * lb.mass,
+              });
+            }
+            for (const rb of g.rightBodies) {
+              const ty = g.cy + (rb._offsetY || 0);
+              Body.applyForce(rb, rb.position, {
+                x: (rx - rb.position.x) * aGain * rb.mass,
+                y: (ty - rb.position.y) * aGain * rb.mass,
+              });
+            }
           } else {
             g.lunged = true;
-            Body.setVelocity(g.leftBody, { x: 18.5, y: (g.cy - g.leftBody.position.y) * 0.08 });
-            Body.setVelocity(g.rightBody, { x: -18.5, y: (g.cy - g.rightBody.position.y) * 0.08 });
+            for (const lb of g.leftBodies) {
+              Body.setVelocity(lb, { x: 18.5, y: (g.cy + (lb._offsetY || 0) * 0.35 - lb.position.y) * 0.08 });
+            }
+            for (const rb of g.rightBodies) {
+              Body.setVelocity(rb, { x: -18.5, y: (g.cy + (rb._offsetY || 0) * 0.35 - rb.position.y) * 0.08 });
+            }
           }
         } else if (g.collided) {
           // Smoothly damp post-collision angular spin to zero so knocked-back dice never spin endlessly
-          for (const b of [g.leftBody, g.rightBody]) {
+          for (const b of g.allBodies) {
             if (Math.abs(b.angularVelocity) > 0.005) {
               Body.setAngularVelocity(b, b.angularVelocity * 0.90);
             } else if (b.angularVelocity !== 0) {
@@ -342,7 +374,7 @@ export class TabletopPhysics {
     for (let i = this.clashGroups.length - 1; i >= 0; i--) {
       if (this.clashGroups[i].age >= this.clashGroups[i].life) {
         const g = this.clashGroups[i];
-        Composite.remove(this.world, [g.leftBody, g.rightBody]);
+        Composite.remove(this.world, g.allBodies || [g.leftBody, g.rightBody]);
         this.clashGroups.splice(i, 1);
       }
     }

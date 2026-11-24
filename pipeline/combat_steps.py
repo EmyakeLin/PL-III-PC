@@ -30,6 +30,7 @@ def section(pack_type, *ids):
 DUEL_END = section(PackType.DUEL, "before_duel_end", "logic_duel_end", "on_duel_end", "after_duel_end", NEXT_DUEL)
 DUEL = section(PackType.DUEL, "before_duel_start", "logic_duel_start", "on_duel_start",
                "after_duel_start", NEXT_CARD) + DUEL_END
+REAR_DUEL = section(PackType.DUEL, NEXT_CARD, NEXT_DUEL)
 REMAINING_SKILL = section(PackType.SKILL, NEXT_DIE, "after_skill_use", NEXT_CARD)
 SKILL = section(PackType.SKILL, "before_skill_use", "logic_skill_use", "on_skill_use") + REMAINING_SKILL
 DICE = section(PackType.DICE, "before_dice_use", "logic_dice_use", "on_dice_use",

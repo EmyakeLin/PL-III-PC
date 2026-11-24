@@ -215,6 +215,7 @@ export class CombatTabletop {
     onCardLand,
     onHoverCard,
     onSlotTap,
+    onRearSlotTap,
     onAttackDuel,
     onInterceptDuel,
     onLetThrough,
@@ -228,6 +229,7 @@ export class CombatTabletop {
     this.onCardLand = onCardLand || null;
     this.onHoverCard = onHoverCard || null;
     this.onSlotTap = onSlotTap || null;
+    this.onRearSlotTap = onRearSlotTap || null;
     this.onAttackDuel = onAttackDuel || null;
     this.onInterceptDuel = onInterceptDuel || null;
     this.onLetThrough = onLetThrough || null;
@@ -257,11 +259,13 @@ export class CombatTabletop {
     this.activeIndex = 0;
     this.combat = null;
     this.concealBySide = new Map();
+    this.concealRearBySide = new Map();
     this.activeSide = 1;
     this.viewerSide = 1;
     this.cardsRevealed = false;
     this.pendingResponses = new Set();
     this.attackableDuels = new Set();
+    this.rearSlotTargets = new Set();
     this.canClickIntercept = false;
     this.canTapEmptySlot = false;
 
@@ -292,6 +296,7 @@ export class CombatTabletop {
     this.interactiveCardRects = []; // [{ cardKey, x, y, w, h, node, isInspecting }]
     this.combatCardRects = new Map();
     this.placementSlotRects = new Map();
+    this.rearSlotRects = new Map();
     this.regularLaneRects = new Map();
     this.preRevealSlotRects = new Map();
     this.depthSlotEntries = [];
@@ -417,13 +422,14 @@ export class CombatTabletop {
     for (const entry of this.depthSlotEntries) {
       if (entry.duel.kind !== 'regular') continue;
       for (const side of [1, 2]) {
-        const sw = entry.sideWidgets[side];
-        if (!sw?.cardMotion || !sw.card || sw.card.hidden) continue;
-        sw.cardMotion.revealFlip = {
-          delay: idx * 0.055,
-          age: 0,
-          duration: 0.28,
-        };
+        for (const sw of [entry.sideWidgets[side], entry.rearWidgets?.[side]]) {
+          if (!sw?.cardMotion || !sw.card || sw.card.hidden) continue;
+          sw.cardMotion.revealFlip = {
+            delay: idx * 0.055,
+            age: 0,
+            duration: 0.28,
+          };
+        }
       }
       idx += 1;
     }
@@ -434,6 +440,7 @@ export class CombatTabletop {
     activeIndex = 0,
     combat = null,
     concealBySide = new Map(),
+    concealRearBySide = new Map(),
     isPlacement = false,
     overview = false,
     activeSide = 1,
@@ -441,6 +448,7 @@ export class CombatTabletop {
     cardsRevealed = false,
     pendingResponses = null,
     attackableDuels = null,
+    rearSlotTargets = null,
     canClickIntercept = false,
     interceptableNumbers = null,
     canTapEmptySlot = false,
@@ -450,11 +458,13 @@ export class CombatTabletop {
     this.activeIndex = clamp(activeIndex, 0, Math.max(0, duels.length - 1));
     this.combat = combat;
     this.concealBySide = concealBySide;
+    this.concealRearBySide = concealRearBySide;
     this.activeSide = activeSide || 1;
     this.viewerSide = viewerSide ?? null;
     this.cardsRevealed = Boolean(cardsRevealed);
     this.pendingResponses = pendingResponses instanceof Set ? pendingResponses : new Set(pendingResponses || []);
     this.attackableDuels = attackableDuels instanceof Set ? attackableDuels : new Set(attackableDuels || []);
+    this.rearSlotTargets = rearSlotTargets instanceof Set ? rearSlotTargets : new Set(rearSlotTargets || []);
     this.canClickIntercept = Boolean(canClickIntercept);
     this.interceptableNumbers = interceptableNumbers || this.pendingResponses;
     this.canTapEmptySlot = Boolean(canTapEmptySlot);
@@ -695,6 +705,11 @@ export class CombatTabletop {
     return [...(se?.cards || []), ...(se?.resolved_cards || [])].filter(Boolean);
   }
 
+  _pickRearCards(duel, side) {
+    const se = (duel.sides || []).find((s) => s.side === side);
+    return [...(se?.rear_cards || [])].filter(Boolean);
+  }
+
   _resolveFrontCardIndex(duel, side, cards) {
     if (!cards.length) return -1;
     const stackKey = `${duel.key}:${side}`;
@@ -740,6 +755,7 @@ export class CombatTabletop {
 
       const row = new PIXI.Container();
       const sideWidgets = {};
+      const rearWidgets = {};
 
       const centerEmblem = new PIXI.Container();
       const isLive = duel.status === 'active' && this.phaseState === 'combat';
@@ -841,6 +857,121 @@ export class CombatTabletop {
 
       for (const side of [1, 2]) {
         const cards = this._pickSideCards(duel, side);
+        const rearCards = this._pickRearCards(duel, side);
+
+        // Build Rear Duel Widget FIRST so its container renders naturally behind the Front Card on `row`!
+        const canDropRearHere = duel.kind === 'regular' && cards.length > 0 && !rearCards.length
+          && side === this.activeSide && this.rearSlotTargets.has(duel.number);
+        if (rearCards.length > 0 || canDropRearHere) {
+          const rearContainer = new PIXI.Container();
+          row.addChild(rearContainer);
+          if (!rearCards.length) {
+            const ghost = new PIXI.Graphics();
+            ghost.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 8)
+              .fill({ color: INK.goldBg, alpha: 0.42 })
+              .stroke({ width: 1.8, color: INK.gold, alpha: 0.9 });
+            const lbl = new PIXI.Text({
+              text: '⊕ 后置交锋\n点击或拖入置卡',
+              style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '900', fill: INK.goldDeep, align: 'center', lineHeight: 16 },
+            });
+            lbl.anchor.set(0.5);
+            rearContainer.addChild(ghost, lbl);
+            if (this.onRearSlotTap) {
+              ghost.eventMode = 'static';
+              ghost.cursor = 'pointer';
+              ghost.on('pointertap', (e) => {
+                e.stopPropagation();
+                this.onRearSlotTap(duel.number, side);
+              });
+            }
+            rearWidgets[side] = {
+              container: rearContainer, homeRow: row, frontNode: null, cardKey: null, card: null,
+              cardMotion: null, screenRect: null, isDropGhost: true,
+            };
+          } else {
+            const rearIdx = rearCards.length - 1;
+            const rearCard = rearCards[rearIdx];
+            const isRearFaceDown = Boolean(
+              rearCard.hidden
+              || (duel.kind === 'regular' && !this.cardsRevealed && rearCard.state === 'placed_face_down' && side !== this.viewerSide),
+            );
+            const rearCardKey = isRearFaceDown
+              ? `${duel.key}:${side}:rear:hidden`
+              : `${duel.key}:${side}:rear:${rearCard.instance_id ?? rearCard.id}`;
+            const frontSpread = (this.metrics.pairGap * 0.5 + cardW * 0.5) * initPose.scale;
+            const rearStep = lerp(cardW * 0.88, cardW * 0.56, combatBlend) * initPose.scale;
+            const rearTargetX = this.metrics.centerX + (side === 1 ? -(frontSpread + rearStep) : (frontSpread + rearStep));
+            const rearAccent = isRearFaceDown
+              ? (SIDE_THEME[side]?.accent || INK.gold)
+              : this.resolveCharColor(rearCard.character_id, side);
+            const rcm = this._ensureCardMotion(rearCardKey, {
+              isFreshPlacement: isPlacement,
+              side,
+              card: rearCard,
+              targetX: rearTargetX,
+              targetY: initPose.y,
+              targetScale: initPose.scale,
+              accentColor: rearAccent,
+            });
+            if (isRearFaceDown) {
+              const ownerInfo = this.resolveCardOwner?.('regular_rear', duel.number, side, rearIdx) || null;
+              const ownerId = ownerInfo?.characterId || rearCard.character_id || null;
+              const ownerName = ownerInfo?.characterName || (ownerId ? this.getCharName(ownerId) : '');
+              const ownerColor = ownerInfo?.color != null
+                ? ownerInfo.color
+                : (ownerId ? this.resolveCharColor(ownerId, side) : SIDE_THEME[side]?.accent);
+              const cardBackCfg = ownerInfo?.cardBack ?? (ownerId ? this.resolveCardBack?.(ownerId) : null) ?? null;
+              const backNode = buildCardBack(side, {
+                width: cardW, height: cardH, accentColor: ownerColor, pattern: cardBackCfg,
+              });
+              backNode.rotation = 0;
+              rearContainer.addChild(backNode);
+              this.markEffectTarget?.(rearContainer, duel.kind, duel.number, side, rearIdx + 1, -cardW / 2, -cardH / 2, cardW, cardH, 'rear');
+              rearWidgets[side] = {
+                container: rearContainer, homeRow: row, frontNode: backNode, cardKey: rearCardKey,
+                card: { ...rearCard, hidden: true, character_id: ownerId },
+                ownerId, ownerName, ownerColor, cardMotion: rcm, screenRect: null, lane: 'rear',
+              };
+            } else {
+              const cs = isLive ? (this.combat?.sides || []).find((s) => s.side === side) : null;
+              const rcs = cs?.rear || null;
+              const isRearLiveExecuting = Boolean(
+                isLive && rcs && (rcs.card_instance_id != null
+                  ? rcs.card_instance_id === rearCard.instance_id
+                  : rcs.card_id === rearCard.id),
+              );
+              const conceal = isRearLiveExecuting ? (this.concealRearBySide.get(side) || {}) : {};
+              const statusBadge = this._cardStatusBadge(duel, side, rearCard, isRearLiveExecuting);
+              const savedScroll = this.cardScrollByKey.has(rearCardKey) ? this.cardScrollByKey.get(rearCardKey) : null;
+              const rearNode = buildUniformCard(rearCard, {
+                side,
+                accentColor: rearAccent,
+                ownerName: this.getCharName(rearCard.character_id) || '',
+                showOwner: true,
+                width: cardW,
+                height: cardH,
+                centered: true,
+                activeCard: isRearLiveExecuting,
+                activeDieNumber: isRearLiveExecuting ? (rcs?.die?.position ?? rcs?.die_number ?? null) : null,
+                concealActiveScore: Boolean(conceal.score),
+                concealActiveOutcome: Boolean(conceal.outcome),
+                rangeDeficit: (isRearLiveExecuting ? rcs?.range_deficit : 0) || rearCard.range_deficit || 0,
+                playMode: 'rear',
+                statusBadge,
+                initialScrollY: savedScroll,
+              });
+              rearNode.rotation = 0;
+              rearNode.eventMode = 'none';
+              rearContainer.addChild(rearNode);
+              this.markEffectTarget?.(rearContainer, duel.kind, duel.number, side, rearIdx + 1, -cardW / 2, -cardH / 2, cardW, cardH, 'rear');
+              rearWidgets[side] = {
+                container: rearContainer, homeRow: row, frontNode: rearNode, cardKey: rearCardKey,
+                card: rearCard, cardMotion: rcm, tabWidgets: [], screenRect: null, lane: 'rear',
+              };
+            }
+          }
+        }
+
         const sideContainer = new PIXI.Container();
         row.addChild(sideContainer);
 
@@ -1115,7 +1246,7 @@ export class CombatTabletop {
       }
 
       this.depthLayer.addChild(row);
-      this.depthSlotEntries.push({ duel, index, row, centerEmblem, forceEmblemVisible, sideWidgets, duelMotion: dm });
+      this.depthSlotEntries.push({ duel, index, row, centerEmblem, forceEmblemVisible, sideWidgets, rearWidgets, duelMotion: dm });
     });
     if (isPlacement && this.duels.length > 0) {
       this._hasRenderedInitialPlacement = true;
@@ -1157,43 +1288,47 @@ export class CombatTabletop {
     for (const entry of this.depthSlotEntries) {
       if (!entry.row.visible) continue;
       for (const side of [1, 2]) {
-        const sw = entry.sideWidgets[side];
-        const r = sw?.screenRect;
-        if (!r || !sw.cardMotion || sw.cardMotion.inspectSpring.value <= 0.01) continue;
-        if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
-          hitCardKey = sw.cardKey;
-          hitCardMeta = { characterId: sw.card?.character_id || null, side, duelKind: entry.duel.kind, duelNumber: entry.duel.number };
-          break;
+        for (const sw of [entry.sideWidgets[side], entry.rearWidgets?.[side]]) {
+          const r = sw?.screenRect;
+          if (!r || !sw.cardMotion || sw.cardMotion.inspectSpring.value <= 0.01) continue;
+          if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+            hitCardKey = sw.cardKey;
+            hitCardMeta = { characterId: sw.card?.character_id || null, side, lane: sw.lane || 'front', duelKind: entry.duel.kind, duelNumber: entry.duel.number };
+            break;
+          }
         }
+        if (hitCardKey) break;
       }
       if (hitCardKey) break;
     }
 
-    // Pass 2: check non-lifted visible cards inside stage clip (front-to-back by |d|)
+    // Pass 2: check non-lifted visible cards inside stage clip (front-to-back by |d|, front card before rear card)
     if (!hitCardKey && inStageClip) {
       let bestDist = Infinity;
       for (const entry of this.depthSlotEntries) {
         if (!entry.row.visible) continue;
         const ad = Math.abs(entry.index - focusVal);
         for (const side of [1, 2]) {
-          const sw = entry.sideWidgets[side];
-          const r = sw?.screenRect;
-          if (!r || !sw.card || !sw.cardMotion || sw.cardMotion.state === 'airborne') continue;
-          if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
-            if (ad < bestDist) {
-              bestDist = ad;
-              hitCardKey = sw.cardKey;
-              hitCardMeta = {
-                hidden: Boolean(sw.card.hidden),
-                characterId: sw.ownerId || sw.card?.character_id || null,
-                characterName: sw.ownerName || '',
-                color: sw.ownerColor ?? null,
-                anchorX: r.x + r.w * 0.5,
-                anchorY: r.y - 12,
-                side,
-                duelKind: entry.duel.kind,
-                duelNumber: entry.duel.number,
-              };
+          for (const sw of [entry.sideWidgets[side], entry.rearWidgets?.[side]]) {
+            const r = sw?.screenRect;
+            if (!r || !sw.card || !sw.cardMotion || sw.cardMotion.state === 'airborne') continue;
+            if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+              if (ad < bestDist) {
+                bestDist = ad;
+                hitCardKey = sw.cardKey;
+                hitCardMeta = {
+                  hidden: Boolean(sw.card.hidden),
+                  characterId: sw.ownerId || sw.card?.character_id || null,
+                  characterName: sw.ownerName || '',
+                  color: sw.ownerColor ?? null,
+                  anchorX: r.x + r.w * 0.5,
+                  anchorY: r.y - 12,
+                  side,
+                  lane: sw.lane || 'front',
+                  duelKind: entry.duel.kind,
+                  duelNumber: entry.duel.number,
+                };
+              }
             }
           }
         }
@@ -1237,116 +1372,116 @@ export class CombatTabletop {
       }
 
       for (const side of [1, 2]) {
-        const sw = entry.sideWidgets[side];
-        const cm = sw?.cardMotion;
-        if (!cm || !sw.card) continue;
+        for (const sw of [entry.sideWidgets[side], entry.rearWidgets?.[side]]) {
+          const cm = sw?.cardMotion;
+          if (!cm || !sw.card) continue;
 
-        // Tick placement cooldown so freshly placed cards NEVER immediately zoom up under the releasing cursor!
-        if (cm.enterCooldown > 0) {
-          cm.enterCooldown = Math.max(0, cm.enterCooldown - dtSec);
-        }
-
-        // Evaluate stacked-card tab state machines
-        for (const tw of sw.tabWidgets || []) {
-          const tm = tw.tabMotion;
-          if (tm.hovered) {
-            tm.dwellTimer += dtSec;
-            if (tm.dwellTimer >= TAB_DWELL_THRESHOLD && tm.state !== 'promoted') {
-              tm.state = 'promoted';
-              this.hoveredStackChoice.set(tw.stackKey, tw.otherKey);
-              needsPoolRebuild = true;
-            } else if (tm.state === 'peeking') {
-              tm.state = 'hover_dwell';
-            }
+          // Tick placement cooldown so freshly placed cards NEVER immediately zoom up under the releasing cursor!
+          if (cm.enterCooldown > 0) {
+            cm.enterCooldown = Math.max(0, cm.enterCooldown - dtSec);
           }
-        }
 
-        const restingState = sw.card.destroyed ? 'destroyed'
-          : (entry.duel.status === 'active' && this.phaseState === 'combat') ? 'active'
-            : (sw.card.used || entry.duel.status === 'completed') ? 'settled'
-              : 'idle';
-
-        // Sync deterministic hover flag from AABB hit-test
-        cm.hovered = Boolean(sw.cardKey && sw.cardKey === hitCardKey);
-
-        // Phase 1: Airborne Hermite ballistic flight (hand/edge -> exact slot)
-        if (cm.state === 'airborne' && cm.flight) {
-          cm.inspectSpring.setTarget(0);
-          cm.flight.age += dtSec;
-          if (cm.flight.age >= cm.flight.duration) {
-            const { centerX, cardW, cardH, pairGap } = this.metrics;
-            const landScale = Math.max(0.2, dm.scaleSpring.value);
-            const landSpread = (pairGap * 0.5 + cardW * 0.5) * landScale;
-            const landX = centerX + (side === 1 ? -landSpread : landSpread);
-            const landY = dm.ySpring.value;
-            const accentCol = cm.flight.accentColor;
-
-            cm.flight = null;
-            cm.state = 'impact';
-            cm.enterCooldown = 0.28;
-            // Conservation of vertical touchdown momentum -> underdamped compression impulse
-            cm.impactSpring.impulse(-4.4);
-            this.impactRipples.push({
-              x: landX,
-              y: landY,
-              w: cardW * landScale,
-              h: cardH * landScale,
-              color: accentCol,
-              age: 0,
-              duration: 0.38,
-            });
-            this.onCardLand?.({ x: landX, y: landY, side, color: accentCol, card: sw.card });
-          }
-          continue;
-        }
-
-        // Phase 2: Underdamped touchdown compression & cooldown (blocks instant hover-zoom on release)
-        if (cm.state === 'impact') {
-          cm.inspectSpring.setTarget(0);
-          if (cm.impactSpring.settled && cm.enterCooldown <= 0) {
-            cm.state = restingState;
-          }
-          continue;
-        }
-
-        const eligibleToInspect = !sw.card.hidden && (pose.scale < 0.96 || Math.abs(d) > 0.25);
-        if (cm.hovered && eligibleToInspect && cm.enterCooldown <= 0) {
-          if (cm.state === 'inspecting') {
-            cm.inspectSpring.setTarget(1, { omega: 42.0, zeta: 0.72 });
-            this._lastInspectEndedAt = nowMs;
-          } else {
-            cm.state = 'hover_dwell';
-            if (isChainedInspect) {
-              cm.dwellTimer = DWELL_THRESHOLD;
-            } else if (this._pointerSpeed <= FLICK_SPEED) {
-              cm.dwellTimer += dtSec;
-            }
-            if (cm.dwellTimer >= DWELL_THRESHOLD) {
-              cm.state = 'inspecting';
-              cm.inspectSpring.setTarget(1, { omega: 42.0, zeta: 0.72 });
-              // Crisp physical lift-off impulse so Frame 1 immediately pops off the tabletop!
-              if (cm.inspectSpring.value < 0.25) {
-                cm.inspectSpring.impulse(6.5);
+          // Evaluate stacked-card tab state machines
+          for (const tw of sw.tabWidgets || []) {
+            const tm = tw.tabMotion;
+            if (tm.hovered) {
+              tm.dwellTimer += dtSec;
+              if (tm.dwellTimer >= TAB_DWELL_THRESHOLD && tm.state !== 'promoted') {
+                tm.state = 'promoted';
+                this.hoveredStackChoice.set(tw.stackKey, tw.otherKey);
+                needsPoolRebuild = true;
+              } else if (tm.state === 'peeking') {
+                tm.state = 'hover_dwell';
               }
-              this._lastInspectEndedAt = nowMs;
             }
           }
-        } else {
-          cm.dwellTimer = 0;
-          if (cm.state === 'inspecting') {
-            this._lastInspectEndedAt = nowMs;
-            cm.state = 'returning';
-            cm.inspectSpring.setTarget(0, { omega: 52.0, zeta: 0.92 });
-            // Crisp downward tuck impulse so put-down snaps cleanly back to the felt
-            if (cm.inspectSpring.value > 0.4) {
-              cm.inspectSpring.impulse(-4.5);
+
+          const restingState = sw.card.destroyed ? 'destroyed'
+            : (entry.duel.status === 'active' && this.phaseState === 'combat') ? 'active'
+              : (sw.card.used || entry.duel.status === 'completed') ? 'settled'
+                : 'idle';
+
+          // Sync deterministic hover flag from AABB hit-test
+          cm.hovered = Boolean(sw.cardKey && sw.cardKey === hitCardKey);
+
+          // Phase 1: Airborne Hermite ballistic flight (hand/edge -> exact slot)
+          if (cm.state === 'airborne' && cm.flight) {
+            cm.inspectSpring.setTarget(0);
+            cm.flight.age += dtSec;
+            if (cm.flight.age >= cm.flight.duration) {
+              const { centerX, cardW, cardH, pairGap } = this.metrics;
+              const landScale = Math.max(0.2, dm.scaleSpring.value);
+              const landFrontSpread = (pairGap * 0.5 + cardW * 0.5) * landScale;
+              const landRearStep = sw.lane === 'rear' ? lerp(cardW * 0.88, cardW * 0.56, combatBlend) * landScale : 0;
+              const landSpread = landFrontSpread + landRearStep;
+              const landX = centerX + (side === 1 ? -landSpread : landSpread);
+              const landY = dm.ySpring.value;
+              const accentCol = cm.flight.accentColor;
+
+              cm.flight = null;
+              cm.state = 'impact';
+              cm.enterCooldown = 0.28;
+              cm.impactSpring.impulse(-4.4);
+              this.impactRipples.push({
+                x: landX,
+                y: landY,
+                w: cardW * landScale,
+                h: cardH * landScale,
+                color: accentCol,
+                age: 0,
+                duration: 0.38,
+              });
+              this.onCardLand?.({ x: landX, y: landY, side, color: accentCol, card: sw.card });
             }
-          } else if (cm.state === 'returning') {
-            cm.inspectSpring.setTarget(0, { omega: 52.0, zeta: 0.92 });
-            if (cm.inspectSpring.settled) cm.state = restingState;
+            continue;
+          }
+
+          // Phase 2: Underdamped touchdown compression & cooldown (blocks instant hover-zoom on release)
+          if (cm.state === 'impact') {
+            cm.inspectSpring.setTarget(0);
+            if (cm.impactSpring.settled && cm.enterCooldown <= 0) {
+              cm.state = restingState;
+            }
+            continue;
+          }
+
+          const eligibleToInspect = !sw.card.hidden && (sw.lane === 'rear' || pose.scale < 0.96 || Math.abs(d) > 0.25);
+          if (cm.hovered && eligibleToInspect && cm.enterCooldown <= 0) {
+            if (cm.state === 'inspecting') {
+              cm.inspectSpring.setTarget(1, { omega: 42.0, zeta: 0.72 });
+              this._lastInspectEndedAt = nowMs;
+            } else {
+              cm.state = 'hover_dwell';
+              if (isChainedInspect) {
+                cm.dwellTimer = DWELL_THRESHOLD;
+              } else if (this._pointerSpeed <= FLICK_SPEED) {
+                cm.dwellTimer += dtSec;
+              }
+              if (cm.dwellTimer >= DWELL_THRESHOLD) {
+                cm.state = 'inspecting';
+                cm.inspectSpring.setTarget(1, { omega: 42.0, zeta: 0.72 });
+                if (cm.inspectSpring.value < 0.25) {
+                  cm.inspectSpring.impulse(6.5);
+                }
+                this._lastInspectEndedAt = nowMs;
+              }
+            }
           } else {
-            cm.inspectSpring.setTarget(0, { omega: 52.0, zeta: 0.92 });
-            cm.state = restingState;
+            cm.dwellTimer = 0;
+            if (cm.state === 'inspecting') {
+              this._lastInspectEndedAt = nowMs;
+              cm.state = 'returning';
+              cm.inspectSpring.setTarget(0, { omega: 52.0, zeta: 0.92 });
+              if (cm.inspectSpring.value > 0.4) {
+                cm.inspectSpring.impulse(-4.5);
+              }
+            } else if (cm.state === 'returning') {
+              cm.inspectSpring.setTarget(0, { omega: 52.0, zeta: 0.92 });
+              if (cm.inspectSpring.settled) cm.state = restingState;
+            } else {
+              cm.inspectSpring.setTarget(0, { omega: 52.0, zeta: 0.92 });
+              cm.state = restingState;
+            }
           }
         }
       }
@@ -1369,6 +1504,7 @@ export class CombatTabletop {
       this.interactiveCardRects = [];
       this.combatCardRects.clear();
       this.placementSlotRects.clear();
+      this.rearSlotRects.clear();
       this.regularLaneRects.clear();
       this.preRevealSlotRects.clear();
     }
@@ -1444,167 +1580,158 @@ export class CombatTabletop {
       }
 
       for (const side of [1, 2]) {
-        const sw = entry.sideWidgets[side];
-        if (!sw) continue;
-        const cm = sw.cardMotion;
-        const isAirborne = Boolean(cm && cm.state === 'airborne' && cm.flight);
-        const impactVal = cm ? cm.impactSpring.value : 0;
-        // Allow slight natural underdamped overshoot (>1.0) on inspectT for tactile physical pop!
-        const inspectT = cm ? clamp(cm.inspectSpring.value, 0, 1.08) : 0;
-        const isLifted = !isAirborne && inspectT > 0.01;
+        const rearStep = lerp(cardW * 0.88, cardW * 0.56, combatBlend) * baseScale;
+        const widgets = [
+          { sw: entry.rearWidgets?.[side], isRear: true, spread: baseSpread + rearStep },
+          { sw: entry.sideWidgets[side], isRear: false, spread: baseSpread },
+        ];
+        for (const { sw, isRear, spread } of widgets) {
+          if (!sw) continue;
+          const cm = sw.cardMotion;
+          const isAirborne = Boolean(cm && cm.state === 'airborne' && cm.flight);
+          const impactVal = cm ? cm.impactSpring.value : 0;
+          const inspectT = cm ? clamp(cm.inspectSpring.value, 0, 1.08) : 0;
+          const isLifted = !isAirborne && inspectT > 0.01;
 
-        // Resting world coordinates on the tabletop
-        const restX = centerX + (side === 1 ? -baseSpread : baseSpread);
-        const restY = rowY;
+          const restX = centerX + (side === 1 ? -spread : spread);
+          const restY = rowY;
 
-        // Update stacked-card tab springs cleanly
-        for (const tw of sw.tabWidgets || []) {
-          const slide = tw.tabMotion.slideSpring.value;
-          tw.tab.position.set(tw.baseOffset + tw.dir * slide * 8, 0);
-        }
-
-        let curScale;
-        let curWorldX;
-        let curWorldY;
-
-        if (isAirborne) {
-          const fl = cm.flight;
-          const u = clamp(fl.age / fl.duration, 0, 1);
-          const { s, ds } = flightTimeWarp(u);
-          // Dynamically target LIVE (restX, restY) so spline lands with 0.0px error even if tabletop scrolls!
-          const hx = evalHermite1D(fl.fromX, fl.m0x, restX, fl.m1x, s);
-          const hy = evalHermite1D(fl.fromY, fl.m0y, restY, fl.m1y, s);
-          const velX = (hx.deriv * ds) / fl.duration;
-          // Asymmetric ballistic altitude: z(u) = peakZ * (27/4) * u * (1 - u)^2 (peaks at u = 1/3, zero at u = 0,1)
-          const altitude = fl.peakZ * 6.75 * u * (1 - u) * (1 - u);
-          const perspFactor = 1 + altitude / 520;
-          curScale = lerp(fl.scale0, baseScale, s) * perspFactor;
-          curWorldX = hx.val;
-          curWorldY = hy.val - altitude * 0.22;
-          // Aerodynamic banking yaw decaying cleanly to exact 0.000 rad at touchdown (u = 1)
-          const aeroYaw = fl.rot0 * (1 - s) * (1 - s) + clamp(velX / 3200, -0.15, 0.15) * Math.sin(Math.PI * u);
-
-          // Projected physical altitude drop-shadow on the tabletop beneath the flying card
-          const shW = cardW * lerp(fl.scale0, baseScale, s) * (1 + altitude * 0.0005);
-          const shH = cardH * lerp(fl.scale0, baseScale, s) * (1 + altitude * 0.0005);
-          const shAlpha = 0.28 / (1 + altitude * 0.0055);
-          this.flightShadowLayer
-            .roundRect(hx.val + altitude * 0.10 - shW / 2, hy.val + altitude * 0.22 - shH / 2, shW, shH, 8)
-            .fill({ color: INK.shadow, alpha: shAlpha });
-
-          if (sw.container.parent !== this.liftedLayer) {
-            this.liftedLayer.addChild(sw.container);
+          for (const tw of sw.tabWidgets || []) {
+            const slide = tw.tabMotion.slideSpring.value;
+            tw.tab.position.set(tw.baseOffset + tw.dir * slide * 8, 0);
           }
-          sw.container.position.set(curWorldX, curWorldY);
-          sw.container.scale.set(curScale);
-          sw.container.rotation = aeroYaw;
-          sw.container.alpha = 1;
-        } else {
-          // Uniform card-center physical lift with slight tactile overshoot & projected tabletop shadow
-          const clampT = clamp(inspectT, 0, 1);
-          const impactScale = 1 + impactVal * 0.038;
-          // Allow the ~3.8% underdamped overshoot to express naturally on scale!
-          const unimpactedScale = baseScale + (1.0 - baseScale) * inspectT;
-          curScale = unimpactedScale * impactScale;
 
-          const viewW = typeof window !== 'undefined' ? window.innerWidth : (arenaX + arenaW + 240);
-          const viewH = typeof window !== 'undefined' ? window.innerHeight : (stageTop + stageH + 160);
-          // Use constant final 1.0x half-extents so viewport clamping never suddenly "hits a wall" mid-zoom
-          const finalHalfW = cardW * 0.5 + 8;
-          const finalHalfH = cardH * 0.5 + 8;
-          const targetX = clamp(restX, finalHalfW, Math.max(finalHalfW, viewW - finalHalfW));
-          const targetY = clamp(restY, finalHalfH, Math.max(finalHalfH, viewH - finalHalfH));
-          const rawX = lerp(restX, targetX, clampT);
-          const rawY = lerp(restY, targetY, clampT) - clampT * 4;
-          // Only pixel-snap when settled so mid-animation motion is silky GPU-filtered with zero 1px staircases!
-          const settled = !cm || cm.inspectSpring.settled;
-          curWorldX = settled ? Math.round(rawX) : rawX;
-          curWorldY = settled ? Math.round(rawY) : rawY;
+          let curScale;
+          let curWorldX;
+          let curWorldY;
 
-          // Reparent THE ACTUAL physical card to unclipped `liftedLayer` while lifted, and return it to
-          // `homeRow` once settled back — ZERO duplicate popover card!
-          if (isLifted) {
-            // Projected soft elevation shadow beneath the lifted card -> genuine tabletop lift depth!
-            const shW = cardW * curScale * 1.02;
-            const shH = cardH * curScale * 1.02;
-            const shOffY = 10 * clampT;
+          if (isAirborne) {
+            const fl = cm.flight;
+            const u = clamp(fl.age / fl.duration, 0, 1);
+            const { s, ds } = flightTimeWarp(u);
+            const hx = evalHermite1D(fl.fromX, fl.m0x, restX, fl.m1x, s);
+            const hy = evalHermite1D(fl.fromY, fl.m0y, restY, fl.m1y, s);
+            const velX = (hx.deriv * ds) / fl.duration;
+            const altitude = fl.peakZ * 6.75 * u * (1 - u) * (1 - u);
+            const perspFactor = 1 + altitude / 520;
+            curScale = lerp(fl.scale0, baseScale, s) * perspFactor;
+            curWorldX = hx.val;
+            curWorldY = hy.val - altitude * 0.22;
+            const aeroYaw = fl.rot0 * (1 - s) * (1 - s) + clamp(velX / 3200, -0.15, 0.15) * Math.sin(Math.PI * u);
+
+            const shW = cardW * lerp(fl.scale0, baseScale, s) * (1 + altitude * 0.0005);
+            const shH = cardH * lerp(fl.scale0, baseScale, s) * (1 + altitude * 0.0005);
+            const shAlpha = 0.28 / (1 + altitude * 0.0055);
             this.flightShadowLayer
-              .roundRect(curWorldX - shW / 2, curWorldY + shOffY - shH / 2, shW, shH, 9)
-              .fill({ color: INK.shadow, alpha: 0.24 * clampT });
+              .roundRect(hx.val + altitude * 0.10 - shW / 2, hy.val + altitude * 0.22 - shH / 2, shW, shH, 8)
+              .fill({ color: INK.shadow, alpha: shAlpha });
 
             if (sw.container.parent !== this.liftedLayer) {
               this.liftedLayer.addChild(sw.container);
             }
             sw.container.position.set(curWorldX, curWorldY);
-            sw.container.alpha = lerp(rowAlpha, 1.0, clampT);
-          } else {
-            if (sw.container.parent !== sw.homeRow) {
-              sw.homeRow.addChild(sw.container);
-            }
-            const localX = restX - centerX;
-            sw.container.position.set(settled && rowSettled ? Math.round(localX) : localX, 0);
+            sw.container.scale.set(curScale);
+            sw.container.rotation = aeroYaw;
             sw.container.alpha = 1;
-          }
-          // In-place 2.5D horizontal cosine flip during `cards_reveal`
-          let flipScaleX = 1;
-          if (cm?.revealFlip) {
-            const rf = cm.revealFlip;
-            const elapsed = Math.max(0, rf.age - rf.delay);
-            const p = clamp(elapsed / rf.duration, 0, 1);
-            flipScaleX = Math.max(0.06, Math.abs(Math.cos(Math.PI * p)));
-          }
-          sw.container.scale.set(curScale * flipScaleX, curScale);
-          sw.container.rotation = 0;
-        }
+          } else {
+            const clampT = clamp(inspectT, 0, 1);
+            const impactScale = 1 + impactVal * 0.038;
+            const unimpactedScale = baseScale + (1.0 - baseScale) * inspectT;
+            curScale = unimpactedScale * impactScale;
 
-        // Always keep live screen-space AABB updated for deterministic hover hit-testing
-        const worldW = cardW * curScale;
-        const worldH = cardH * curScale;
-        sw.screenRect = {
-          x: curWorldX - worldW / 2,
-          y: curWorldY - worldH / 2,
-          w: worldW,
-          h: worldH,
-        };
+            const viewW = typeof window !== 'undefined' ? window.innerWidth : (arenaX + arenaW + 240);
+            const viewH = typeof window !== 'undefined' ? window.innerHeight : (stageTop + stageH + 160);
+            const finalHalfW = cardW * 0.5 + 8;
+            const finalHalfH = cardH * 0.5 + 8;
+            const targetX = clamp(restX, finalHalfW, Math.max(finalHalfW, viewW - finalHalfW));
+            const targetY = clamp(restY, finalHalfH, Math.max(finalHalfH, viewH - finalHalfH));
+            const rawX = lerp(restX, targetX, clampT);
+            const rawY = lerp(restY, targetY, clampT) - clampT * 4;
+            const settled = !cm || cm.inspectSpring.settled;
+            curWorldX = settled ? Math.round(rawX) : rawX;
+            curWorldY = settled ? Math.round(rawY) : rawY;
 
-        if (updateRects) {
-          if (entry.duel.kind === 'regular') {
-            this.placementSlotRects.set(`${entry.duel.number}:${side}`, {
-              x: restX - (cardW * baseScale) / 2,
-              y: restY - (cardH * baseScale) / 2,
-              w: cardW * baseScale,
-              h: cardH * baseScale,
-              cx: restX,
-              cy: restY,
-              visible: restY + (cardH * baseScale) / 2 > stageTop && restY - (cardH * baseScale) / 2 < stageTop + stageH,
-            });
+            if (isLifted) {
+              const shW = cardW * curScale * 1.02;
+              const shH = cardH * curScale * 1.02;
+              const shOffY = 10 * clampT;
+              this.flightShadowLayer
+                .roundRect(curWorldX - shW / 2, curWorldY + shOffY - shH / 2, shW, shH, 9)
+                .fill({ color: INK.shadow, alpha: 0.24 * clampT });
+
+              if (sw.container.parent !== this.liftedLayer) {
+                this.liftedLayer.addChild(sw.container);
+              }
+              sw.container.position.set(curWorldX, curWorldY);
+              sw.container.alpha = lerp(rowAlpha, 1.0, clampT);
+            } else {
+              if (sw.container.parent !== sw.homeRow) {
+                if (isRear) sw.homeRow.addChildAt(sw.container, 0);
+                else sw.homeRow.addChild(sw.container);
+              }
+              const localX = restX - centerX;
+              sw.container.position.set(settled && rowSettled ? Math.round(localX) : localX, 0);
+              sw.container.alpha = 1;
+            }
+            let flipScaleX = 1;
+            if (cm?.revealFlip) {
+              const rf = cm.revealFlip;
+              const elapsed = Math.max(0, rf.age - rf.delay);
+              const p = clamp(elapsed / rf.duration, 0, 1);
+              flipScaleX = Math.max(0.06, Math.abs(Math.cos(Math.PI * p)));
+            }
+            sw.container.scale.set(curScale * flipScaleX, curScale);
+            sw.container.rotation = 0;
           }
-          if (sw.frontNode && !sw.card?.hidden && (isLifted || (combatBlend > 0.7 && ad < 0.35))) {
-            // Put lifted cards first so wheel routing prioritizes the card currently lifted by the player
-            const rectItem = {
-              side,
-              cardKey: sw.cardKey,
-              x: curWorldX - worldW / 2,
-              y: curWorldY - worldH / 2,
-              w: worldW,
-              h: worldH,
-              node: sw.frontNode,
-              isInspecting: isLifted,
-            };
-            if (isLifted) this.interactiveCardRects.unshift(rectItem);
-            else this.interactiveCardRects.push(rectItem);
-          }
-          if (sw.frontNode && entry.index === this.activeIndex) {
-            this.combatCardRects.set(side, {
-              x: curWorldX - worldW / 2,
-              y: curWorldY - worldH / 2,
-              w: worldW,
-              h: worldH,
-              cx: curWorldX,
-              cy: curWorldY,
-              cardId: sw.card.id,
-              instanceId: sw.card.instance_id,
-            });
+
+          const worldW = cardW * curScale;
+          const worldH = cardH * curScale;
+          sw.screenRect = {
+            x: curWorldX - worldW / 2,
+            y: curWorldY - worldH / 2,
+            w: worldW,
+            h: worldH,
+          };
+
+          if (updateRects) {
+            if (entry.duel.kind === 'regular') {
+              const slotMap = isRear ? this.rearSlotRects : this.placementSlotRects;
+              slotMap.set(`${entry.duel.number}:${side}`, {
+                x: restX - (cardW * baseScale) / 2,
+                y: restY - (cardH * baseScale) / 2,
+                w: cardW * baseScale,
+                h: cardH * baseScale,
+                cx: restX,
+                cy: restY,
+                visible: restY + (cardH * baseScale) / 2 > stageTop && restY - (cardH * baseScale) / 2 < stageTop + stageH,
+              });
+            }
+            if (sw.frontNode && !sw.card?.hidden && (isLifted || (combatBlend > 0.7 && ad < 0.35))) {
+              const rectItem = {
+                side,
+                cardKey: sw.cardKey,
+                x: curWorldX - worldW / 2,
+                y: curWorldY - worldH / 2,
+                w: worldW,
+                h: worldH,
+                node: sw.frontNode,
+                isInspecting: isLifted,
+              };
+              if (isLifted) this.interactiveCardRects.unshift(rectItem);
+              else this.interactiveCardRects.push(rectItem);
+            }
+            if (!isRear && sw.frontNode && entry.index === this.activeIndex) {
+              this.combatCardRects.set(side, {
+                x: curWorldX - worldW / 2,
+                y: curWorldY - worldH / 2,
+                w: worldW,
+                h: worldH,
+                cx: curWorldX,
+                cy: curWorldY,
+                cardId: sw.card.id,
+                instanceId: sw.card.instance_id,
+              });
+            }
           }
         }
       }
@@ -1637,24 +1764,25 @@ export class CombatTabletop {
       if (dm.alphaSpring.step(dtSec)) dirty = true;
       if (dm.markAlphaSpring.step(dtSec)) dirty = true;
       for (const side of [1, 2]) {
-        const sw = entry.sideWidgets[side];
-        if (!sw) continue;
-        if (sw.cardMotion) {
-          if (sw.cardMotion.state === 'airborne') dirty = true;
-          if (sw.cardMotion.revealFlip) {
-            sw.cardMotion.revealFlip.age += dtSec;
-            dirty = true;
-            if (sw.cardMotion.revealFlip.age >= sw.cardMotion.revealFlip.delay + sw.cardMotion.revealFlip.duration) {
-              sw.cardMotion.revealFlip = null;
+        for (const sw of [entry.sideWidgets[side], entry.rearWidgets?.[side]]) {
+          if (!sw) continue;
+          if (sw.cardMotion) {
+            if (sw.cardMotion.state === 'airborne') dirty = true;
+            if (sw.cardMotion.revealFlip) {
+              sw.cardMotion.revealFlip.age += dtSec;
+              dirty = true;
+              if (sw.cardMotion.revealFlip.age >= sw.cardMotion.revealFlip.delay + sw.cardMotion.revealFlip.duration) {
+                sw.cardMotion.revealFlip = null;
+              }
             }
+            if (sw.cardMotion.impactSpring.step(dtSec)) dirty = true;
+            if (sw.cardMotion.inspectSpring.step(dtSec)) dirty = true;
           }
-          if (sw.cardMotion.impactSpring.step(dtSec)) dirty = true;
-          if (sw.cardMotion.inspectSpring.step(dtSec)) dirty = true;
+          for (const tw of sw.tabWidgets || []) {
+            if (tw.tabMotion.slideSpring.step(dtSec)) dirty = true;
+          }
+          if (sw.frontNode && !sw.frontNode.destroyed) sw.frontNode.tick?.(dtSec);
         }
-        for (const tw of sw.tabWidgets || []) {
-          if (tw.tabMotion.slideSpring.step(dtSec)) dirty = true;
-        }
-        if (sw.frontNode && !sw.frontNode.destroyed) sw.frontNode.tick?.(dtSec);
       }
     }
 

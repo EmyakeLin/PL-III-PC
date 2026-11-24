@@ -30,6 +30,8 @@ class Context:
         self.turn_entry_uses = {}
         self.active_cards = {}
         self.active_dice = {}
+        self.rear_active_cards = {}
+        self.rear_active_dice = {}
         self.hit_modifiers = {}
         self.roll_adjustments = {}
         self.scheduled_effects = []
@@ -96,10 +98,10 @@ class Context:
         if opcode == OpCode.ENTRY:
             return self.range_blocks_target(fields.get("execution"))
         if opcode == OpCode.CLASH:
-            return any(self.range_blocks_target(die) for die in fields["clash_pair"].dice_dict.values())
+            return any(self.range_blocks_target(die) for die in fields["clash_pair"].all_dice())
         if opcode in (OpCode.SPLIT_CLASH, OpCode.SKIP_ROUND):
             pair = self.game.pipeline.current_clash_pair
-            return pair is not None and any(self.range_blocks_target(die) for die in pair.dice_dict.values())
+            return pair is not None and any(self.range_blocks_target(die) for die in pair.all_dice())
         if opcode in (OpCode.VALUE_CEILING, OpCode.VALUE_FLOOR):
             return self.range_blocks_target(self.event.get("die") or self.event.get("card"))
         operands = OPERANDS.get(opcode, ())
@@ -111,6 +113,12 @@ class Context:
                 return self.range_blocks_target(target)
         return False
 
+    def side_active_cards(self, side):
+        return tuple(c for c in (self.active_cards.get(side), self.rear_active_cards.get(side)) if c is not None)
+
+    def side_active_dice(self, side):
+        return tuple(d for d in (self.active_dice.get(side), self.rear_active_dice.get(side)) if d is not None)
+
     def has_no_hit_carrier(self, target):
         """Use the recipient's own active skill and die, even when the die shows blank."""
         if isinstance(target, EntryExecution):
@@ -119,13 +127,14 @@ class Context:
         if actor is None:
             return False
         side = actor.player.side
-        card = self.active_cards.get(side)
-        die = self.active_dice.get(side)
-        if (card and card.character is actor and (target in (actor, card) or getattr(target, "card", None) is card)
-                and (card.data.get("no_hit_carrier") or card.use_state.get("no_hit_carrier"))):
-            return True
-        return bool(die and die.card.character is actor and target in (actor, die, die.card)
-                    and die.data.get("no_hit_carrier"))
+        for card in self.side_active_cards(side):
+            if (card.character is actor and (target in (actor, card) or getattr(target, "card", None) is card)
+                    and (card.data.get("no_hit_carrier") or card.use_state.get("no_hit_carrier"))):
+                return True
+        for die in self.side_active_dice(side):
+            if die.card.character is actor and target in (actor, die, die.card) and die.data.get("no_hit_carrier"):
+                return True
+        return False
 
     def _protected_op(self, opcode, fields):
         if self._range_blocks_op(opcode, fields):
@@ -533,17 +542,17 @@ class Context:
         side = getattr(player, "side", None)
         if entry.scope == "die":
             return (owner is event.get("die") or owner is event.get("target")
-                    or owner is self.active_dice.get(side))
+                    or owner in self.side_active_dice(side))
         if entry.scope == "card":
             return card is not None and (card is event.get("card") or card is event.get("target")
-                                         or card is self.active_cards.get(side))
+                                         or card in self.side_active_cards(side))
         if entry.scope == "next_skill":
             return entry.next_card is not None and entry.next_card is event.get("card")
         if entry.scope == "duel" and card is not None:
             duel = event.get("duel")
             if entry in self._lasting_entries:
                 return self._lasting_entries[entry][0] is duel
-            return duel is not None and card in duel.content.get(side, ())
+            return duel is not None and card in duel.all_side_cards(side)
         if entry.scope == "turn" and card is not None:
             return entry.turn_active
         return True
@@ -700,6 +709,9 @@ class Context:
 
     def dispatch_pipeline(self, node_id, *, valid=None, **fields):
         side, card, die = fields.get("side"), fields.get("card"), fields.get("die")
+        lane = fields.get("lane", "front")
+        cards_map = self.rear_active_cards if lane == "rear" else self.active_cards
+        dice_map = self.rear_active_dice if lane == "rear" else self.active_dice
         if node_id == "before_turn_end":
             self.game.turn_ending = True
             self.dispatch_pipeline("on_turn_closing", **fields)
@@ -710,9 +722,9 @@ class Context:
         if valid is not None and not valid():
             return
         if node_id == "before_skill_use":
-            self.active_cards[side] = card
+            cards_map[side] = card
         if node_id == "before_dice_use":
-            self.active_dice[side] = die
+            dice_map[side] = die
         if node_id == "before_dice_hit":
             self.hit_modifiers[die] = []
         if die in self.hit_modifiers:
@@ -747,9 +759,9 @@ class Context:
                     if not e.blanked and (e.owner is card or getattr(e.owner, "card", None) is card):
                         e.next_armed = True
             if node_id == "after_skill_use":
-                self.active_cards.pop(side, None)
+                cards_map.pop(side, None)
             if node_id in ("after_dice_use", "on_clash_skip", "after_skill_use"):
-                self.active_dice.pop(side, None)
+                dice_map.pop(side, None)
             if node_id in ("after_dice_hit", "after_dice_use"):
                 self.hit_modifiers.pop(die, None)
                 self.roll_adjustments.pop(die, None)
@@ -758,7 +770,7 @@ class Context:
                 self.hit_modifiers.clear()
                 self.roll_adjustments.clear()
             if node_id in ("after_duel_end", "after_turn_end"):
-                for active in (self.active_cards, self.active_dice):
+                for active in (self.active_cards, self.active_dice, self.rear_active_cards, self.rear_active_dice):
                     if side is None:
                         active.clear()
                     else:
@@ -775,18 +787,21 @@ class Context:
 
     def close_cancelled_use(self, side, card=None, die=None):
         if card is not None:
-            if self.active_cards.get(side) is card:
-                self.active_cards.pop(side, None)
-            if getattr(self.active_dice.get(side), "card", None) is card:
-                die = self.active_dice.get(side)
+            for cards_map in (self.active_cards, self.rear_active_cards):
+                if cards_map.get(side) is card:
+                    cards_map.pop(side, None)
+            for dice_map in (self.active_dice, self.rear_active_dice):
+                if getattr(dice_map.get(side), "card", None) is card and die is None:
+                    die = dice_map.get(side)
             for entry in self.entries[:]:
                 if entry.next_card is card:
                     entry.next_card = None
                     if entry.detached:
                         self.entries.remove(entry)
         if die is not None:
-            if self.active_dice.get(side) is die:
-                self.active_dice.pop(side, None)
+            for dice_map in (self.active_dice, self.rear_active_dice):
+                if dice_map.get(side) is die:
+                    dice_map.pop(side, None)
             self.hit_modifiers.pop(die, None)
             self.roll_adjustments.pop(die, None)
 
