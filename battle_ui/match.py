@@ -370,7 +370,11 @@ class BattleMatch:
             "special_options": special_options,
             "table_actions": table_actions,
             "special_pending": self.game.special.pending_attack is not None or self.game.special.decision_owner is not None,
-            "card_choice": self.game.special.card_decision is not None or self.game.special.option_decision is not None,
+            "card_choice": (
+                self.game.special.card_decision is not None
+                or self.game.special.option_decision is not None
+                or self.game.special.character_decision is not None
+            ),
             "effect_choice": self._views[side].effect_choice() if mode == "special" else None,
             "queued_placement": self.game.special.placement_owner is not None,
             "special_timing": self._timing,
@@ -559,6 +563,8 @@ class BattleMatch:
             message = "依词条选择技能" if move.kind == "choose_card" else "放弃此次选牌"
         elif move.kind in ("choose_option", "decline_option"):
             message = f"选择「{move.label}」" if move.kind == "choose_option" else "放弃此次选择"
+        elif move.kind in ("choose_character", "decline_character"):
+            message = f"选择角色「{move.label}」" if move.kind == "choose_character" else "放弃此次选择"
         else:
             message = f"打出{move.card.name}"
         suffix = "受阻" if succeeded is False else ""
@@ -575,7 +581,8 @@ class BattleMatch:
             self._special_open = False
             self._interrupt_returns.append((self.mode, self._timing, old_space))
             self._advance()
-        elif move.kind in ("choose_card", "choose_slot", "choose_option", "decline_card", "decline_option") and self.mode == "combat":
+        elif move.kind in ("choose_card", "choose_slot", "choose_option", "choose_character",
+                           "decline_card", "decline_option", "decline_character") and self.mode == "combat":
             self._special_open = False
             self._advance()
         else:
@@ -952,7 +959,12 @@ class BattleMatch:
             if game.special.decision_owner is not None:
                 self._special_open = True
                 self._special_seat = None
-                self._timing = "选择技能" if game.special.card_decision else "选择交锋"
+                self._timing = (
+                    "选择角色" if game.special.character_decision
+                    else "选择技能" if game.special.card_decision
+                    else "选择效果" if game.special.option_decision
+                    else "选择交锋"
+                )
                 self.mode = "combat"
                 return
             if self._interrupt_returns:

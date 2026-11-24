@@ -1499,11 +1499,13 @@ export function buildEffectChoice(w, h, {
   const theme = SIDE_THEME[side];
   const isSlot = choice.selection === 'slot';
   const isOption = choice.selection === 'option';
-  const task = isOption ? '选择效果' : isSlot ? '选择交锋' : choice.selection === 'hand' ? '选择手牌' : '选择技能';
+  const isCharacter = choice.selection === 'character';
+  const isTileChoice = isOption || isCharacter;
+  const task = isOption ? '选择效果' : isCharacter ? '选择角色' : isSlot ? '选择交锋' : choice.selection === 'hand' ? '选择手牌' : '选择技能';
   const candidates = options
     .map((option, index) => ({ option, index }))
-    .filter(({ option }) => option.kind !== 'decline_card' && option.kind !== 'decline_option');
-  const decline = options.findIndex((option) => option.kind === 'decline_card' || option.kind === 'decline_option');
+    .filter(({ option }) => option.kind !== 'decline_card' && option.kind !== 'decline_option' && option.kind !== 'decline_character');
+  const decline = options.findIndex((option) => option.kind === 'decline_card' || option.kind === 'decline_option' || option.kind === 'decline_character');
   const gap = 12;
   const panelW = Math.min(w - 24, 1060);
   const innerW = panelW - 32;
@@ -1511,15 +1513,15 @@ export function buildEffectChoice(w, h, {
   const heading = choiceText(title, 16, theme.accent, innerW, true);
   const description = choiceText(choice.description || '', 13, INK.primary, innerW);
   const headerH = 19 + heading.height + (choice.description ? description.height + 4 : 0);
-  const cardW = isOption ? Math.min(230, Math.max(168, Math.floor((innerW - gap * Math.max(0, candidates.length - 1)) / Math.max(1, Math.min(4, candidates.length)))))
+  const cardW = isTileChoice ? Math.min(230, Math.max(168, Math.floor((innerW - gap * Math.max(0, candidates.length - 1)) / Math.max(1, Math.min(4, candidates.length)))))
     : isSlot ? 164 : Math.min(202, Math.max(144, Math.floor(w * 0.19)));
   const perPage = Math.max(1, Math.floor((innerW + gap) / (cardW + gap)));
   const pages = Math.max(1, Math.ceil(candidates.length / perPage));
   const footerH = w < 520 && pages > 1 ? 86 : 48;
   const roomForCard = h - safeTop - headerH - footerH - 22;
   const compact = roomForCard < 188;
-  const captionH = onReady || isSlot || isOption || compact ? 0 : 44;
-  const faceH = onReady ? 0 : isOption ? 94 : isSlot ? 46
+  const captionH = onReady || isSlot || isTileChoice || compact ? 0 : 44;
+  const faceH = onReady ? 0 : isTileChoice ? 94 : isSlot ? 46
     : Math.max(48, Math.min(compact ? 78 : 244, roomForCard - captionH));
   const panelH = headerH + faceH + captionH + footerH + 12;
   const panelX = (w - panelW) / 2;
@@ -1612,11 +1614,12 @@ export function buildEffectChoice(w, h, {
       item.hitArea = new PIXI.Rectangle(0, 0, cardW, faceH + captionH);
       body.addChild(item);
       const known = card && !card.hidden;
-      if (isOption) {
+      if (isTileChoice) {
+        const accent = (isCharacter && option.character_id && colors[option.character_id]) || theme.accent;
         const surface = new PIXI.Graphics().roundRect(0, 0, cardW, faceH, 8)
           .fill(INK.paperSoft).stroke({ width: 1.35, color: theme.border });
-        surface.roundRect(1, 1, cardW - 2, 4, 3).fill({ color: theme.accent, alpha: 0.85 });
-        const optTitle = choiceText(option.label, 13.5, theme.accent, cardW - 20, true);
+        surface.roundRect(1, 1, cardW - 2, 4, 3).fill({ color: accent, alpha: 0.85 });
+        const optTitle = choiceText(option.label, 13.5, accent, cardW - 20, true);
         optTitle.anchor.set(0.5, 0);
         optTitle.position.set(cardW / 2, option.description ? 14 : Math.round((faceH - optTitle.height) / 2));
         item.addChild(surface, optTitle);

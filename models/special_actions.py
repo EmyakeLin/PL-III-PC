@@ -71,6 +71,19 @@ class PromptDecision:
 
 
 @dataclass
+class CharacterDecision:
+    player: object
+    candidates: tuple
+    optional: bool
+    title: str | None
+    description: str | None
+    operation: object
+    invocation: object
+    event: dict
+    specification: dict
+
+
+@dataclass
 class CardDecision:
     player: object
     candidates: tuple
@@ -104,6 +117,7 @@ class SpecialActions:
         self._slot_choices = []
         self._card_choices = []
         self._option_choices = []
+        self._character_choices = []
 
     @staticmethod
     def own_hand_skills(actor):
@@ -229,11 +243,70 @@ class SpecialActions:
             ctx.executions.pop()
         return True
 
+    def choose_character(self, ctx, candidates, spec):
+        """Suspend a printed choice until its controller picks one living character."""
+        if not ctx.executions or self.game.is_over or not isinstance(spec, dict) or "then" not in spec:
+            return False
+        invocation = ctx.executions[-1]
+        actor = character_of(invocation.entry.owner)
+        chooser = ctx.event.get("target") if spec.get("chooser") == "target" else actor
+        if chooser is None or not chooser.is_alive:
+            return False
+        chars = tuple(dict.fromkeys(c for c in candidates if isinstance(c, Character) and c.is_alive))
+        if not chars:
+            return False
+        event = ctx.event.copy()
+        event["bindings"] = {**event.get("bindings", {}), **spec.get("bindings", {})}
+        self._character_choices.append(CharacterDecision(
+            player=chooser.player,
+            candidates=chars,
+            optional=bool(spec.get("optional")),
+            title=spec.get("title"),
+            description=spec.get("description"),
+            operation=spec["then"],
+            invocation=invocation,
+            event=event,
+            specification=spec,
+        ))
+        return True
+
+    @staticmethod
+    def _valid_character_candidates(decision):
+        return [character for character in decision.candidates if character.is_alive]
+
+    @property
+    def character_decision(self):
+        while self._character_choices:
+            choice = self._character_choices[0]
+            actor = character_of(choice.invocation.entry.owner)
+            if (actor is not None and actor.is_alive and not choice.invocation.cancelled
+                    and not choice.invocation.entry.blanked and self._valid_character_candidates(choice)):
+                return choice
+            self._character_choices.pop(0)
+        return None
+
+    def _resolve_character_choice(self, action):
+        decision = self._character_choices.pop(0)
+        if action.kind == "decline_character":
+            return True
+        ctx = self.game.context
+        fields = dict(decision.event, chosen_character=action.character)
+        ctx.executions.append(decision.invocation)
+        try:
+            with ctx.binding(**fields):
+                run_effect(ctx, decision.invocation.entry, decision.operation)
+        finally:
+            ctx.executions.pop()
+        return True
+
     @property
     def decision_owner(self):
         opt = self.option_decision
         if opt:
             return opt.player
+        char_choice = self.character_decision
+        if char_choice:
+            return char_choice.player
         decision = self.card_decision
         return decision.player if decision else self.placement_owner
 
@@ -408,6 +481,7 @@ class SpecialActions:
         self._slot_choices.clear()
         self._card_choices.clear()
         self._option_choices.clear()
+        self._character_choices.clear()
 
     def first_open_slot(self, side):
         space = self.game.duelspace
@@ -471,6 +545,17 @@ class SpecialActions:
             if opt_decision.optional:
                 choices.append(SpecialAction("decline_option"))
             return choices
+        char_decision = self.character_decision
+        if char_decision:
+            if player is not char_decision.player:
+                return []
+            choices = [
+                SpecialAction("choose_character", character=c, label=c.name)
+                for c in self._valid_character_candidates(char_decision)
+            ]
+            if char_decision.optional:
+                choices.append(SpecialAction("decline_character"))
+            return choices
         decision = self.card_decision
         if decision:
             if player is not decision.player:
@@ -526,6 +611,8 @@ class SpecialActions:
         game, card = self.game, action.card
         if action.kind in ("choose_option", "decline_option"):
             return self._resolve_option_choice(action)
+        if action.kind in ("choose_character", "decline_character"):
+            return self._resolve_character_choice(action)
         if action.kind in ("choose_card", "decline_card"):
             return self._resolve_card_choice(action)
         if action.kind == "choose_slot":

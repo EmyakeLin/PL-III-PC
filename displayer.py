@@ -419,6 +419,8 @@ def special_action_label(action):
         return "放弃此次选牌"
     if action.kind == "decline_option":
         return "放弃此次选择"
+    if action.kind == "decline_character":
+        return "放弃此次选择"
     if action.kind == "choose_slot":
         location = f"{_DUEL_NAMES[action.duel_kind]} {action.duel_index + 1}"
         return f"{action.card.name} · {location}" if action.card else location
@@ -483,6 +485,17 @@ def seat_action_view(action, player):
                 details["description"] = opt.description
             if opt.preview:
                 details["preview"] = opt.preview
+    if action.kind == "choose_character" and action.character is not None:
+        char = action.character
+        shield_parts = [f"{char.shield} 护盾"] if char.shield else []
+        if char.reinforced_shield:
+            shield_parts.append(f"{char.reinforced_shield} 强化护盾")
+        if char.concept_shield:
+            shield_parts.append(f"{char.concept_shield} 概念护盾")
+        status_text = " · ".join([f"生命 {char.hp}/{char.max_hp}", *shield_parts])
+        details["description"] = status_text
+        details["hp"] = char.hp
+        details["max_hp"] = char.max_hp
     return {"kind": action.kind, **details,
             "card_id": hand_key(action.card) if action.card else None, "ability_id": action.ability_id,
             "target_card_id": target_id, "character_id": action.character.id if action.character else None,
@@ -588,22 +601,25 @@ class Displayer:
         if self._viewer is None or special.decision_owner is not self._viewer:
             return None
         opt_choice = special.option_decision
-        card_choice = None if opt_choice else special.card_decision
-        choice = opt_choice or card_choice or special.slot_decision
-        selection = "option" if opt_choice else "slot"
+        char_choice = None if opt_choice else special.character_decision
+        card_choice = None if (opt_choice or char_choice) else special.card_decision
+        choice = opt_choice or char_choice or card_choice or special.slot_decision
+        selection = "option" if opt_choice else "character" if char_choice else "slot"
         if card_choice:
             selection = "hand" if all(in_hand for _, in_hand in choice.origins.values()) else "board"
         entry = choice.invocation.entry
         source = entry.owning_card
         visible = source is None or source.player is self._viewer or source.state == CardState.PLACED_FACE_UP
-        description = (choice.description if opt_choice and choice.description else None) or (entry.choice_prompt if visible else None)
+        prompt_choice = opt_choice or char_choice
+        description = (choice.description if prompt_choice and choice.description else None) or (entry.choice_prompt if visible else None)
         fallback = (
             "请选择一项效果。" if selection == "option"
+            else "请选择一名角色。" if selection == "character"
             else "选择要追加技能的交锋。" if selection == "slot"
             else "选择一张技能牌。"
         )
-        name = (choice.title if opt_choice and choice.title else None) or getattr(entry.owner, "name", "技能效果")
-        if source and not (opt_choice and choice.title):
+        name = (choice.title if prompt_choice and choice.title else None) or getattr(entry.owner, "name", "技能效果")
+        if source and not (prompt_choice and choice.title):
             name = source.name if visible else "扣置技能"
         return {
             "selection": selection, "optional": getattr(choice, "optional", False),

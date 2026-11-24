@@ -9,7 +9,10 @@ const kinds = {
     special_place: "特殊置卡", special_replace: "替换技能", special_attack: "即时进攻",
     special_intercept: "迎击即时交锋", special_pass_intercept: "放行即时交锋",
     special_custom: "按牌面打出", special_ability: "使用能力", special_choose_card: "依词条选牌",
-    special_decline_card: "放弃此次选牌", special_choose_slot: "依词条选择交锋", decline: "让过此次机会"
+    special_decline_card: "放弃此次选牌", special_choose_slot: "依词条选择交锋",
+    special_choose_option: "依词条选择效果", special_decline_option: "放弃此次选择",
+    special_choose_character: "依词条选择角色", special_decline_character: "放弃此次选择",
+    decline: "让过此次机会"
 };
 const phaseNames = {setup: "准备阶段", turn_start: "回合开始", draw: "抽牌", placement: "常规置卡",
     pre_reveal: "开牌前交锋", reveal: "统一开牌", combat: "交锋结算", turn_end: "回合结束", finished: "终局"};

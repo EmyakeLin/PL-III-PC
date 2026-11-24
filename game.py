@@ -82,6 +82,8 @@ class Game:
             return "wait_draw_choice"
         if self.special.option_decision is not None and not self.is_over:
             return "wait_option_choice"
+        if self.special.character_decision is not None and not self.is_over:
+            return "wait_character_choice"
         if self.special.card_decision is not None and not self.is_over:
             return "wait_card_choice"
         if self.special.placement_owner is not None and not self.is_over:

@@ -1,5 +1,14 @@
 # 当前设计与工作记录
 
+## 通用角色选择原语 `CHOOSE_CHARACTER`（2026-11-24）
+
+- **已确认语义**：
+  - 新增 `OpCode.CHOOSE_CHARACTER`（操作数 `candidates, specification`）与 `CharacterDecision`（`models/opcode.py`、`models/opcodes.py`、`models/special_actions.py`、`game.py`），沿用与 `CHOOSE_OPTION` / `CHOOSE_CARD` 同一套 `decision_owner` 挂起与续体机制：支持任意词条或 `CHOOSE_OPTION` 分支链式弹出存活角色选择面板，去重并过滤阵亡角色；提交 `choose_character` 后绑定 `$event.chosen_character` 执行 `specification.then`，或通过 `decline_character` 放弃可选点名；当唯一候选角色在等待期间阵亡时决策队列自动清理。
+  - 全端桥接同步投影（`displayer.py`、`battle_ui/match.py`、`battle_ui/session.py`、`battle_mcp/engine.py`、`battle_mcp/declarations.py`、`battle_mcp/static/app.js`、`special_actions_cli.py`、`battle_ui/static/engine/table_overlays.js`）：`effect_choice` 投影 `selection = "character"`，选项附上角色名称与实时 `生命/护盾` 描述；Web 2.5D 战桌复用选项卡板渲染角色候选与可选放弃按钮；MCP 房间以 `special_choose_character` / `special_decline_character`（含 `choice_key` 与精简字段匹配）及 CLI 同步接入。
+- **验证结果**：
+  - 新增 [角色选择专测](tests/test_choose_character.py)（3 项，覆盖 `CHOOSE_OPTION -> CHOOSE_CHARACTER` 链式选择与精准作用对象对照、可选放弃与候选阵亡自动失效、`Displayer`/`BattleMatch`/`ArenaEngine` 桥接投影与提交），接入 `tests.entry_semantics`。
+  - `python -m unittest tests.entry_semantics tests.test_displayer` **243/243 通过**，`node --check battle_ui/static/engine/table_overlays.js` 通过。
+
 ## 显式转火原语 `REDIRECT_ATTACK` 与攻击目标确认时点（2026-11-24）
 
 - **已确认语义**：

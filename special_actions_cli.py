@@ -49,7 +49,8 @@ def offer_actions(bridge):
                 if choice and index is None:
                     if not choice["optional"]:
                         continue
-                    index = next(i for i, action in enumerate(actions) if action.kind == "decline_card")
+                    index = next(i for i, action in enumerate(actions)
+                                 if action.kind in ("decline_card", "decline_option", "decline_character"))
                 if index is not None:
                     old_space = game.pipeline.interrupt_space
                     bridge.execute(game.special.apply, player, actions[index])

@@ -207,7 +207,7 @@ class BattleSession:
                 self.match.act("use_special", rev, option=idx)
                 return True
             if snap.get("effect_choice") and options:
-                non_decline = [i for i, o in enumerate(options) if o.get("kind") not in ("decline_card", "decline_option")]
+                non_decline = [i for i, o in enumerate(options) if o.get("kind") not in ("decline_card", "decline_option", "decline_character")]
                 idx = self._rng.choice(non_decline) if non_decline else 0
                 self.match.act("use_special", rev, option=idx)
                 return True

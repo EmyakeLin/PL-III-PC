@@ -114,6 +114,7 @@ class OpCode(Enum):
     SKIP_ROUND = auto()
     CHOOSE_CARD = auto()
     CHOOSE_OPTION = auto()
+    CHOOSE_CHARACTER = auto()
     INSERT_SKILL = auto()
     ROUND_TRIGGER_COUNT = auto()
     RECORD_ROUND_TRIGGER = auto()

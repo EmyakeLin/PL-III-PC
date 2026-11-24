@@ -7,8 +7,9 @@ from displayer import board_location_label, hand_key, seat_action_view
 
 
 def action_fields(move):
-    """Private card faces and cost estimates describe a choice without identifying it."""
-    return {k: v for k, v in move.items() if k not in ("label", "effect_target", "use_preview")}
+    """Private card faces, descriptions and cost estimates describe a choice without identifying it."""
+    ignored = ("label", "effect_target", "use_preview", "description", "preview", "hp", "max_hp")
+    return {k: v for k, v in move.items() if k not in ignored}
 
 
 def hand_card_label(card):
@@ -134,7 +135,8 @@ class ArenaEngine(BattleMatch):
             move = seat_action_view(action, player)
             option = {k: v for k, v in move.items() if v is not None}
             kind = action.kind
-            if kind in ("choose_card", "decline_card", "choose_slot"):
+            if kind in ("choose_card", "decline_card", "choose_slot", "choose_option",
+                        "decline_option", "choose_character", "decline_character"):
                 # Only the chooser can act; a new prompt must invalidate the previous positions.
                 option["choice_key"] = f"{self.revision}.{index}"
             elif kind == "replace":
