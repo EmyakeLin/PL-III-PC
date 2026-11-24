@@ -67,15 +67,19 @@ class Context:
             self.op_stack[-1] = value
 
     def cancel_op(self, authority=None, *, frame=-1):
-        if (self.op_stack and not self._range_blocks_op(self.op_stack[frame], self._op_events[frame])
+        if (self.op_stack and not self._protected_op(self.op_stack[frame], self._op_events[frame])
                 and (authority is None or authority >= self._op_events[frame].get("authority", 0))):
             self.op_stack[frame] = None
 
-    def range_blocks_target(self, target, *, card=None):
+    def range_blocks_target(self, target, *, card=None, die=None):
         """Use the actual originating skill; character and status passives remain independent."""
-        if card is None and self.executions:
-            card = self.executions[-1].entry.owning_card
-        if card is None or not card.range_deficit or card.range_opponent is None:
+        if die is None and card is None and self.executions:
+            entry = self.executions[-1].entry
+            card = entry.owning_card
+            die = entry.owner if getattr(entry.owner, "card", None) is not None else None
+        if die is not None:
+            card = die.card
+        if card is None or card.range_opponent is None or not (die or card).range_deficit:
             return False
         if isinstance(target, EntryExecution):
             target = target.entry.owner
@@ -85,7 +89,7 @@ class Context:
     def _range_blocks_op(self, opcode, fields):
         if opcode == OpCode.DAMAGE and fields.get("damage_die") is not None:
             target = self.event.get("target") if fields["target"] == "target" else fields["target"]
-            if self.range_blocks_target(target, card=fields["damage_die"].card):
+            if self.range_blocks_target(target, die=fields["damage_die"]):
                 return True
         if not self.executions:
             return False
@@ -105,6 +109,55 @@ class Context:
                 if target == "target":
                     target = self.event.get("target")
                 return self.range_blocks_target(target)
+        return False
+
+    def has_no_hit_carrier(self, target):
+        """Use the recipient's own active skill and die, even when the die shows blank."""
+        if isinstance(target, EntryExecution):
+            target = target.entry.owner
+        actor = character_of(target)
+        if actor is None:
+            return False
+        side = actor.player.side
+        card = self.active_cards.get(side)
+        die = self.active_dice.get(side)
+        if (card and card.character is actor and (target in (actor, card) or getattr(target, "card", None) is card)
+                and (card.data.get("no_hit_carrier") or card.use_state.get("no_hit_carrier"))):
+            return True
+        return bool(die and die.card.character is actor and target in (actor, die, die.card)
+                    and die.data.get("no_hit_carrier"))
+
+    def _protected_op(self, opcode, fields):
+        if self._range_blocks_op(opcode, fields):
+            return True
+        issuer = (self.executions[-1].entry.owner if self.executions
+                  else getattr(self.event.get("scheduled"), "source", None))
+        if issuer is None and not self.executions:
+            if opcode not in (OpCode.DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE):
+                return False
+            issuer = fields.get("source") or self.event.get("source")
+        source = character_of(issuer)
+        # Selection and inspection do not apply an effect to the selected object.
+        if opcode in (OpCode.CAPTURE_SKILL_DIE, OpCode.SELECT_ENEMY_CHARACTER, OpCode.SELECT_SKILL_TARGET,
+                      OpCode.STAGE_PRE_ATTACK, OpCode.ROUTE_DIE_ATTACK,
+                      OpCode.QUEUE_TARGET_HIT, OpCode.RESOLVE_HIT):
+            keys = ("die",) if opcode in (OpCode.ROUTE_DIE_ATTACK, OpCode.QUEUE_TARGET_HIT) else ()
+        elif opcode == OpCode.ENTRY:
+            keys = ("execution",)
+        elif opcode in (OpCode.VALUE_FLOOR, OpCode.VALUE_CEILING):
+            fields, keys = self.event, ("die", "card")
+        else:
+            keys = OPERANDS.get(opcode, ())
+        for key in keys:
+            if key not in ("die", "card", "target", "pool", "execution", "receiving_card"):
+                continue
+            recipient = fields.get(key)
+            if recipient == "target":
+                recipient = self.event.get("target")
+            if isinstance(recipient, EntryExecution):
+                recipient = recipient.entry.owner
+            if character_of(recipient) is not source and self.has_no_hit_carrier(recipient):
+                return True
         return False
 
     def push(self, value):
@@ -293,8 +346,9 @@ class Context:
             fields["activation_die_type"] = getattr(fields["activation_die"], "type", None)
         if opcode == OpCode.CHECK_DEATH:
             fields.setdefault("lethal", False)
-        if self._range_blocks_op(opcode, fields) or (
-                opcode == OpCode.RESOLVE_HIT and getattr(fields["die"].card, "range_deficit", 0)):
+        if self._protected_op(opcode, fields) or (
+                opcode == OpCode.RESOLVE_HIT and (fields["die"].range_deficit
+                                                  or self.has_no_hit_carrier(fields["target"]))):
             del self.stack[mark:]
             return None
         if originating_entry is not None:
@@ -398,7 +452,8 @@ class Context:
 
     def register_entries(self, owner, specs):
         """Instantiate a character's passives, a card's entries or a die's entries."""
-        if getattr(owner, "type", None) == "blank" and kind_of(owner) == "die":
+        if (getattr(owner, "type", None) == "blank" and kind_of(owner) == "die"
+                and not getattr(owner, "blanked_by_range", False)):
             return []
         registered = []
         for spec in specs or ():
@@ -621,7 +676,7 @@ class Context:
                 # BEFORE programs can edit pending operands directly (e.g. a fee or
                 # a score). A protected skill still lets the listener act on its own caster.
                 protected_operands = (self.stack.copy() if self.event.get("timing") == "BEFORE"
-                                      and self._range_blocks_op(self.current_op, self.event) else None)
+                                      and self._protected_op(self.current_op, self.event) else None)
                 try:
                     run_effect(self, entry, entry.compiled_operation)
                 finally:

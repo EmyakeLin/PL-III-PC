@@ -1013,33 +1013,11 @@
               "trigger": "on_place",
               "operation": {
                 "op": "program",
-                "code": ["$event.card", "折影交织", true, "SET_SKILL_STATE"]
+                "code": ["$event.card", "折影交织", true, "SET_SKILL_STATE",
+                         "$event.card", "no_hit_carrier", true, "SET_SKILL_STATE"]
               },
               "when": [
                 {"left": "$event.bindings.折影交织", "op": "eq", "right": true}
-              ],
-              "hidden": true
-            },
-            {
-              "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
-              "trigger": "BEFORE RESOLVE_HIT",
-              "operation": {
-                "op": "program",
-                "code": [
-                  "$event.opponent_card", "$owner", "IS",
-                  [
-                    {"op": "cancel"}
-                  ],
-                  "WHEN"
-                ]
-              },
-              "subject": "target",
-              "when": [
-                {
-                  "left": {"field": "$event.opponent_card.use_state", "key": "折影交织", "default": false},
-                  "op": "eq",
-                  "right": true
-                }
               ],
               "hidden": true
             }
@@ -1048,27 +1026,9 @@
             {
               "type": "evade",
               "level": 6,
+              "no_hit_carrier": true,
               "printed_text": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
               "entries": [
-                {
-                  "description": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
-                  "trigger": "BEFORE RESOLVE_HIT",
-                  "operation": {
-                    "op": "program",
-                    "code": [
-                      "$event.opponent_die", "$owner", "IS",
-                      [
-                        {"op": "cancel"}
-                      ],
-                      "WHEN"
-                    ]
-                  },
-                  "subject": "target",
-                  "when": [
-                    {"left": "$event.opponent_die.position", "op": "eq", "right": 1},
-                    {"left": "$event.opponent_card.id", "op": "eq", "right": "emyake_flash"}
-                  ]
-                },
                 {
                   "description": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
                   "trigger": "on_dice_use",

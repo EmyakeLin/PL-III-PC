@@ -3,7 +3,7 @@
 from entry.effects import GRADE_NAMES, damage_part, independent_damage_part
 from entry.predicates import compile_value, read_value
 from game import Game
-from models.card import CardState, allows_interception, describe_entry, describe_range_traits
+from models.card import CardState, allows_interception, describe_entry, describe_range_traits, range_trait
 from models.dice import Dice
 from models.opcode import OpCode
 from pipeline import pipeline_steps
@@ -105,6 +105,7 @@ def _printed_die(spec):
     damage_parts, rule_entries = _split_die_entries(die.entries)
     return {
         "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
+        "no_hit_carrier": spec.get("no_hit_carrier", False),
         "roll_max": None if die.type == "skip" else die.roll_max, "base_value": die.base_value,
         "range_traits": [*describe_range_traits(spec), *die.score_traits(),
                          *(["被动激活"] if spec.get("passive_activation") else [])],
@@ -167,12 +168,16 @@ def _passives(specs):
 
 def _visible_card(card):
     details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
+    for printed, spec in zip(details["dice"], card.dice):
+        printed["ignore_range"] = (0 if card.use_state.get("blank_skill") else
+                                   max(card.effective_ignore_range, range_trait(spec, "ignore_range", card)))
     inst = [die for die in (card.instantiated_dice or ()) if die is not None]
     destroyed = sorted({die.position for die in inst if die.destroyed})
     live_dice = [_live_die(die) for die in inst]
     used = bool(card.use_effects_resolved and not card.has_next_die())
     return {
         **details,
+        "no_hit_carrier": bool(card.data.get("no_hit_carrier") or card.use_state.get("no_hit_carrier")),
         "pre_reveal": card.can_open_pre_reveal,
         "character_id": card.character.id,
         "borrowed": card.printed_owner is not card.character,
@@ -182,7 +187,7 @@ def _visible_card(card):
         "temporary": bool(card.temporary),
         "range_deficit": card.range_deficit,
         "used": used,
-        "skipped": card.state == CardState.NEGATED,
+        "skipped": card.state == CardState.NEGATED and not card.destroyed,
         "dissolved": bool(card.temporary and used),
         "instance_id": card.instance_id,
         "cost": card.cost,

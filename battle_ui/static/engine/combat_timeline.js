@@ -87,7 +87,7 @@ function buildDuelPeek(item, { cardW, charNames, resolveCharColor, onHoverCard }
 
   for (const side of [1, 2]) {
     const se = (item.duel?.sides || []).find((s) => s.side === side);
-    (se?.cards || []).forEach((card, cIdx) => {
+    [...(se?.cards || []), ...(se?.resolved_cards || [])].forEach((card, cIdx) => {
       const accent = resolveCharColor(card.character_id, side);
       const node = card.hidden
         ? buildCardBack(side, { width: cardW, height: cardH, accentColor: accent })

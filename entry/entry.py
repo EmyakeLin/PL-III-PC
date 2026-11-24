@@ -44,8 +44,7 @@ class Entry:
 
     @property
     def blanked(self):
-        return (getattr(self.owner, "type", None) == "blank"
-                or getattr(self.owning_card, "blanked", False))
+        return getattr(self.owner, "blanked", False)
 
     def __init__(self, owner, trigger_type, trigger, operation, timing="AFTER", *,
                  scope="global", subject="any", target=None, authority=0, when=None,

@@ -891,9 +891,10 @@ class Pipeline:
         attempted_responses = set()
         response = self._pending_response_die(ready[0]) if solo else None
         for pipe in ready:
-            blanks = pipe.card.blanked or solo and pipe.card.range_deficit >= 2
-            if blanks and response is None:
+            if pipe.card.use_state.get("blank_skill"):
                 pipe.die.make_blank()
+            else:
+                pipe.die.blanked_by_range = response is None and pipe.die.range_deficit >= (2 if solo else 3)
         for pipe in ready:
             if pipe.die.is_attack and (len(ready) == 2 or solo) and self._die_live(pipe):
                 with self._die_range(pipe.die, response):
@@ -901,8 +902,8 @@ class Pipeline:
         routed = any(p.die.attack_redirected for p in ready)
         if routed:
             for pipe in ready:
-                if pipe.card.range_deficit >= 2 and pipe.die.is_attack and not self._reserved_target(pipe):
-                    pipe.die.make_blank()
+                if pipe.die.range_deficit >= 2 and pipe.die.is_attack and not self._reserved_target(pipe):
+                    pipe.die.blanked_by_range = True
         if solo and ready[0].die.can_attack_alone:
             attacker = ready[0]
             target = self._response_target(attacker)
@@ -1042,8 +1043,10 @@ class Pipeline:
                 pipe.card.set_range_opponent(other.card, own_range=pipe.die.effective_range,
                                              opposing_range=other.die.effective_range,
                                              ignore_range=pipe.die.effective_ignore_range)
-                if pipe.card.blanked:
+                if pipe.card.use_state.get("blank_skill"):
                     pipe.die.make_blank()
+                else:
+                    pipe.die.blanked_by_range = pipe.die.range_deficit >= 3
             self.game.context.record("skill_intercept" if skill else "reserved_intercept",
                                      target=target.combat_name, card=reply.card.name, position=die.position)
             starters = participants if start_attacker else [reply]
@@ -1079,8 +1082,8 @@ class Pipeline:
         target = self._response_target(pipe)
         if target and (yield from self._contest_solo(pipe, target, attempted=attempted)):
             return
-        if pipe.card.range_deficit >= 2 and pipe.die.is_attack:
-            pipe.die.make_blank()
+        if pipe.die.range_deficit >= 2 and pipe.die.is_attack:
+            pipe.die.blanked_by_range = True
         if not pipe.die.can_attack_alone:
             pipe.die.clash_result = "skip"
             pipe.push_pack(steps.PASSIVE_SKIP)
@@ -1138,8 +1141,8 @@ class Pipeline:
                             target = self._response_target(p)
                             if target and (yield from self._contest_solo(p, target)):
                                 continue
-                            if p.card.range_deficit >= 2 and p.die.is_attack:
-                                p.die.make_blank()
+                            if p.die.range_deficit >= 2 and p.die.is_attack:
+                                p.die.blanked_by_range = True
                             yield from self._hit(p)
                     results = None
                 live = [p for p in live if self._die_live(p)]
@@ -1157,7 +1160,7 @@ class Pipeline:
     def _resolve_results(self, live, results):
         self._frame.results = results
         winner = next((p for p in live if results[p.side] == "win"), None)
-        if winner and winner.card.range_deficit >= 2:
+        if winner and winner.die.range_deficit >= 2:
             winner.die.win_branch_skipped = True
             if len(live) == 1:
                 self.game.context.record("clash_win_suppressed", actor=winner.card.character.combat_name)
@@ -1186,7 +1189,7 @@ class Pipeline:
 
     def _hit(self, pipe, *, automatic=True):
         split = self.current_clash_pair and self.current_clash_pair.split
-        if (not self._die_live(pipe) or pipe.card.range_deficit
+        if (not self._die_live(pipe) or pipe.die.range_deficit
                 or not (pipe.die.is_attack or split and pipe.die.is_passive)):
             return
         if pipe.die.attack_redirected:
@@ -1208,7 +1211,7 @@ class Pipeline:
             while die.queued_hits and self._die_live(pipe) and not self.game.is_over:
                 die.hit_mode, die.hit_origin, *recipient = die.queued_hits.popleft()
                 die.hit_target = recipient[0] if recipient else target
-                if not die.hit_target.is_alive:
+                if not die.hit_target.is_alive or self.game.context.has_no_hit_carrier(die.hit_target):
                     continue
                 die.hit_index = die.landed_hits + 1
                 pipe.push_pack(steps.HIT)

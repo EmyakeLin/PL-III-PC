@@ -37,6 +37,7 @@ import {
   formatDamagePart,
   resolveDieDamageParts,
   drawDieIcon,
+  dieOutcomeColor,
   drawUnifiedDieFrame,
   drawStatusIcon,
   mountStatusIcon,
@@ -230,6 +231,13 @@ export function buildCardBack(side = 1, { width = 82, height = 104, accentColor 
   return root;
 }
 
+function dieShowsBlank(die, live, deficit) {
+  if (live && (live.type === 'blank' || live.result != null || live.rolled_value != null)) {
+    return live.type === 'blank';
+  }
+  return deficit >= 3 && (die.ignore_range ?? 0) < 3;
+}
+
 /**
  * Razor-sharp 1:1 Strictly VERTICAL Portrait Board Mini-Card (W : H = 1 : 1.40, NEVER horizontal!):
  * Shares the exact vertical anatomy & physical card-stock craft of buildFullCard:
@@ -309,8 +317,8 @@ export function buildBoardCardTag(card, {
 
   // Strictly vertical dice stack (1 die per row, matching buildFullCard's vertical anatomy!)
   const dice = card.dice || [];
-  const traits = isBlanked ? [] : exactSkillTraits(card);
-  const hasFooter = !isBlanked && ((card.entries && card.entries.length > 0) || traits.length > 0);
+  const traits = exactSkillTraits(card, isBlanked);
+  const hasFooter = traits.length > 0 || (!isBlanked && card.entries?.length > 0);
   const footerH = hasFooter ? 16 : 12;
   const maxRows = Math.min(dice.length, 5);
   const availH = Math.max(20, H - footerH - cursorY - 2);
@@ -322,11 +330,13 @@ export function buildBoardCardTag(card, {
   for (let i = 0; i < maxRows; i++) {
     const die = dice[i];
     const ry = cursorY + i * rowH;
-    const dType = isBlanked ? 'blank' : die.type;
+    const live = card.live_dice?.findLast(d => d?.position === i + 1);
+    const blankDie = dieShowsBlank(die, live, rangeDeficit);
+    const dType = blankDie ? 'blank' : die.type;
     const ds = DIE_STYLE[dType] || DIE_STYLE.blank;
-    const dmgParts = isBlanked ? [] : resolveDieDamageParts(die);
+    const dmgParts = blankDie ? [] : resolveDieDamageParts(die);
     const badge = dmgParts[0] || null;
-    const restEntries = isBlanked ? [] : (die.entries || []).filter(Boolean);
+    const restEntries = blankDie ? (die.no_hit_carrier ? ['无受击载体'] : []) : (die.entries || []).filter(Boolean);
 
     if (activeDieNumber === i + 1) {
       rowG.roundRect(padX - 2, ry + 1, W - padX * 2 + 4, rowH - 2, 3).fill({ color: INK.goldBg, alpha: 0.95 })
@@ -336,11 +346,12 @@ export function buildBoardCardTag(card, {
     if (i < maxRows - 1) {
       rowG.moveTo(padX + 4, ry + rowH).lineTo(W - padX, ry + rowH).stroke({ width: 0.75, color: INK.hairline });
     }
-    drawUnifiedDieFrame(rowG, dType, padX + 11, ry + rowH / 2, Math.min(4.6, rowH * 0.24));
+    drawUnifiedDieFrame(rowG, dType, padX + 11, ry + rowH / 2, Math.min(4.6, rowH * 0.24),
+      { result: live?.result, destroyed: live?.destroyed });
 
     const rngTxt = new PIXI.Text({
       text: formatDieRange(die),
-      style: { fontFamily: FONT_NUM, fontSize: W < 108 ? 9.8 : 10.6, fontWeight: '900', fill: ds.color },
+      style: { fontFamily: FONT_NUM, fontSize: W < 108 ? 9.8 : 10.6, fontWeight: '900', fill: dieOutcomeColor(live?.result, ds.color) },
     });
     rngTxt.anchor.set(0, 0.5);
     rngTxt.position.set(padX + 20, ry + rowH / 2);
@@ -370,7 +381,7 @@ export function buildBoardCardTag(card, {
   if (hasFooter) {
     const fBits = [];
     if (traits.length) fBits.push(traits[0].length > 6 ? traits[0].slice(0, 4) : traits[0]);
-    if (card.entries && card.entries.length) fBits.push(`◆${card.entries.length}条`);
+    if (!isBlanked && card.entries?.length) fBits.push(`◆${card.entries.length}条`);
     const ft = new PIXI.Text({
       text: fBits.join(' · '),
       style: { fontFamily: FONT_UI, fontSize: 8.6, fontWeight: '700', fill: INK.secondary },
@@ -441,17 +452,19 @@ export function buildFullCard(card, {
     const addDie = (die, idx) => {
       const position = idx + 1;
       const active = activeDieNumber === position;
+      const live = card.live_dice?.findLast(d => d?.position === position);
       const destroyed = !active && (card.destroyed_die_positions || []).includes(position);
       const row = buildUnifiedDieRow(die, {width: targetInnerW, active, destroyed,
         spent: destroyed || (activeDieNumber !== null && position < activeDieNumber),
-        dense, compact, showDivider: idx < dice.length - 1, isBlanked});
+        dense, compact, showDivider: idx < dice.length - 1,
+        liveResult: live?.result ?? null, isBlanked: dieShowsBlank(die, live, rangeDeficit)});
       row.position.set(0, y);
       box.addChild(row);
       y += row._height + (idx < dice.length - 1 ? 1 : 0);
     };
 
     // 1. Exact Skill Trait Strip directly from structured card fields (ONLY if present)
-    const traitNode = isBlanked ? null : buildTraitPills(card, targetInnerW, { compact: tight });
+    const traitNode = buildTraitPills(card, targetInnerW, { compact: tight, blanked: isBlanked });
     if (traitNode && traitNode._height > 0) {
       traitNode.position.set(0, y);
       box.addChild(traitNode);
@@ -769,7 +782,7 @@ export function buildUniformCard(card, {
   const dieRowBounds = new Map(); // position -> { y, h }
   let cursorY = 0;
 
-  const traitNode = isBlanked ? null : buildTraitPills(card, innerW, { compact: true });
+  const traitNode = buildTraitPills(card, innerW, { compact: true, blanked: isBlanked });
   if (traitNode && traitNode._height > 0) {
     traitNode.position.set(0, cursorY);
     content.addChild(traitNode);
@@ -815,7 +828,7 @@ export function buildUniformCard(card, {
       destroyed: isDestroyedDie,
       dense: true,
       showDivider: idx < dice.length - 1,
-      isBlanked,
+      isBlanked: dieShowsBlank(die, liveDie, effectiveDeficit),
       liveScore,
       liveResult,
     });

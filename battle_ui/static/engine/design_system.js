@@ -462,12 +462,13 @@ export function formatDieRange(die) {
   return range;
 }
 
-export function exactSkillTraits(card) {
-  return exactSkillTraitSpecs(card).map(({ label }) => label);
+export function exactSkillTraits(card, blanked = false) {
+  return exactSkillTraitSpecs(card, blanked).map(({ label }) => label);
 }
 
-export function exactSkillTraitSpecs(card) {
-  const specs = [];
+export function exactSkillTraitSpecs(card, blanked = false) {
+  const specs = card.no_hit_carrier ? [{ label: '无受击载体', style: TRAIT_STYLE.anytime }] : [];
+  if (blanked) return specs;
   const rangeTraits = card.range_traits || [
     card.range_level && RANGE_LABELS[card.range_level],
     card.ignore_range && `无视 ${card.ignore_range} 级远程`,
@@ -662,14 +663,18 @@ export function drawDieIcon(g, type, cx, cy, r, colorOverride = null) {
   }
 }
 
+export function dieOutcomeColor(result, fallback) {
+  return ({ win: INK.goldDeep, lose: 0xb83a2a, draw: DIE_STYLE.evade.color, skip: INK.muted })[result] ?? fallback;
+}
+
 export function drawUnifiedDieFrame(g, type, cx, cy, r, { muted = false, active = false, result = null, destroyed = false } = {}) {
   const ds = DIE_STYLE[type] || DIE_STYLE.blank;
   const isWin = !destroyed && result === 'win';
   const isLose = !destroyed && result === 'lose';
   const isDraw = !destroyed && result === 'draw';
   const isSkip = !destroyed && result === 'skip';
-  const effectiveMuted = destroyed || isLose || isSkip || (muted && !isWin && !isDraw);
-  const col = destroyed ? 0xb83a2a : isWin ? INK.goldDeep : isDraw ? INK.secondary : effectiveMuted ? INK.muted : ds.color;
+  const effectiveMuted = destroyed || isSkip || (muted && !isWin && !isDraw && !isLose);
+  const col = destroyed ? 0xb83a2a : dieOutcomeColor(result, effectiveMuted ? INK.muted : ds.color);
   const fill = destroyed ? 0xfdece9 : isWin ? INK.goldBg : effectiveMuted ? INK.paperSoft : ds.bg;
   const fr = r * 1.32;
 
@@ -1053,8 +1058,8 @@ export function buildRichVerbatimText(text, {
 
 // ── Clean Editorial Trait Strip, Damage Spec, Die Row, Entry Plate & Skill Row ──
 
-export function buildTraitPills(card, maxWidth, { compact = false } = {}) {
-  const specs = exactSkillTraitSpecs(card);
+export function buildTraitPills(card, maxWidth, { compact = false, blanked = false } = {}) {
+  const specs = exactSkillTraitSpecs(card, blanked);
   const root = new PIXI.Container();
   if (!specs.length) {
     root._height = 0;
@@ -1210,7 +1215,7 @@ export function buildUnifiedDieRow(die, {
     dmgNode._height = dy + maxRowH;
   }
 
-  const dieRules = isBlanked ? [] : [...(die.range_traits || [])];
+  const dieRules = isBlanked ? (die.no_hit_carrier ? ['无受击载体'] : []) : [...(die.range_traits || [])];
   if (!isBlanked && die.resource_cost) {
     dieRules.push(`消耗${die.resource_cost.amount}${die.resource_cost.status}。`);
   }
@@ -1255,7 +1260,7 @@ export function buildUnifiedDieRow(die, {
   const rngX = slim ? 24 : 28;
   const baseRangeText = formatDieRange(die);
   const rangeDisplay = (liveScore !== null && liveScore !== undefined)
-    ? `${baseRangeText}→${liveScore}`
+    ? `${baseRangeText}→${liveScore}${liveResult === 'draw' ? ' 平' : ''}`
     : baseRangeText;
   const rngTxt = new PIXI.Text({
     text: rangeDisplay,
@@ -1263,7 +1268,7 @@ export function buildUnifiedDieRow(die, {
       fontFamily: FONT_NUM,
       fontSize: slim ? 11.2 : tight ? 12.2 : 13.5,
       fontWeight: '900',
-      fill: spent ? INK.muted : ds.color,
+      fill: dieOutcomeColor(liveResult, spent ? INK.muted : ds.color),
     },
   });
   const maxRngW = Math.max(24, leftColW - rngX + 1);

@@ -692,7 +692,7 @@ export class CombatTabletop {
 
   _pickSideCards(duel, side) {
     const se = (duel.sides || []).find((s) => s.side === side);
-    return (se?.cards || []).filter(Boolean);
+    return [...(se?.cards || []), ...(se?.resolved_cards || [])].filter(Boolean);
   }
 
   _resolveFrontCardIndex(duel, side, cards) {

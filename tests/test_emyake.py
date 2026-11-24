@@ -3,6 +3,8 @@ import random
 import unittest
 from unittest.mock import patch
 
+from battle_mcp.challenges import CHALLENGES
+from battle_ui.match import BattleMatch
 from displayer import Displayer
 from entry.entry import Entry
 from game import Game
@@ -316,6 +318,121 @@ class EmyakeTests(unittest.TestCase):
             self.assertEqual([e['card'] for k,e in self.events if k=='skill_used'].count('闪回识破'),1)
             self.assertNotIn('折影交织',[e['card'] for k,e in self.events if k=='skill_used'])
             self.assertEqual(self.enemy.hp,97)
+
+    def test_flash_evade_and_weave_skill_keep_their_own_hit_carrier_scope(self):
+        for woven, enemy_range, expected in ((False, 0, [2]), (False, 3, [2]), (True, 3, [])):
+            with self.subTest(woven=woven, enemy_range=enemy_range):
+                self.setUp()
+                card = self.cards["折影交织" if woven else "闪回识破"]
+                foe = self.opposition([100, 100], range_level=enemy_range)
+                hit_attempts = []
+                self.ctx.register_entries(self.enemy, [{"trigger": "before_dice_hit",
+                    "operation": lambda ctx: hit_attempts.append(ctx.event["die"].position)}])
+                for die in foe.dice:
+                    die["entries"] = [
+                        "1超穿甲",
+                        {"trigger": "on_dice_hit", "operation": {"op": "program",
+                         "code": ["$event.target", "受击标记", 1, "STATUS"]}},
+                        {"trigger": "on_clash_win", "operation": {"op": "program",
+                         "code": ["$event.target", "外来效果", 1, "STATUS", "$self", "拼胜收益", 1, "STATUS"]}},
+                    ]
+                self.assertTrue(self.game.place_in_duel(1, card, 0))
+                self.assertTrue(self.game.place_in_duel(2, foe, 0))
+                self.start_duel()
+                self.assertEqual([d.position for d in foe.instantiated_dice if d.landed_hits], expected)
+                self.assertEqual(hit_attempts, expected)
+                self.assertEqual(self.actor.hp, 12 - len(expected))
+                self.assertEqual(self.actor.statuses.get("受击标记", 0), len(expected))
+                self.assertEqual(self.actor.statuses.get("外来效果", 0), len(expected))
+                self.assertEqual(self.enemy.statuses["拼胜收益"], 2)
+                self.assertEqual(self.actor.statuses.get("羽流·反制", 0), int(woven or not enemy_range))
+
+    def test_gaining_ignore_range_restores_the_same_die_but_not_an_explicit_blank(self):
+        for explicit, expected in ((False, "slash"), (True, "blank")):
+            with self.subTest(explicit=explicit):
+                self.setUp()
+                spec = dict(type="slash", level=1, calc_formula="50", entries=[
+                            "2超穿甲", {"trigger": "on_clash_win", "operation": {"op": "program",
+                                       "code": ["$self", "复原词条", 1, "STATUS"]}}],
+                            ignore_range_amount={"value": {"field": "$event.card.use_state",
+                                                           "key": "无视", "default": 0}})
+                card = Card(self.left, dict(id="scope", name="测试", cost=0, dice=[spec]), self.actor)
+                observed = []
+                def grant(ctx):
+                    die = ctx.event["die"]
+                    observed.append((die, die.type))
+                    if explicit:
+                        ctx.eval_block([die, OpCode.BLANK_DIE])
+                    ctx.eval_block([card, "无视", 3, OpCode.SET_SKILL_STATE])
+                    observed.append((die, die.type))
+                self.ctx.register_entries(self.actor, [dict(trigger="before_dice_use", operation=grant)])
+                self.game.place_in_duel(1, card, 0)
+                self.game.place_in_duel(2, self.opposition([1], range_level=3), 0)
+                self.start_duel()
+                die, = card.instantiated_dice
+                self.assertEqual(observed, [(die, "blank"), (die, expected)])
+                self.assertEqual(die.landed_hits, int(not explicit))
+                self.assertEqual(self.enemy.hp, 100 if explicit else 98)
+                self.assertEqual(self.actor.statuses.get("复原词条", 0), int(not explicit))
+
+    def test_weave_against_carrier_brand_keeps_both_public_clashes_after_flash_dissolves(self):
+        for route in ("regular", "intercept", "pull"):
+            for first in (1, 2):
+                with self.subTest(route=route, first=first):
+                    match = BattleMatch([["emyake_lin_yu"], ["structured_carrier"]], seed=151,
+                                        extra_packs=CHALLENGES["carrier"].packs, open_rosters=True)
+                    game = match.game
+                    left, right = game.players
+                    actor, boss = left.characters[0], right.characters[0]
+                    game.first_player = game.players[first - 1]
+                    game.start_turn()
+                    weave = next(c for c in actor.skills if c.name == "折影交织")
+                    brand = next(c for c in boss.skills if c.name == "威压烙印")
+                    if route != "intercept":
+                        self.assertTrue(game.place_in_duel(1, weave, 0))
+                    if route == "regular":
+                        self.assertTrue(game.place_in_duel(2, brand, 0))
+                        game.reveal_cards()
+                        game.pipeline.start_duel_combat()
+                    else:
+                        phase = game.pre_reveal
+                        slot = phase.stage_attack(brand, actor if route == "intercept" else None,
+                                                  0 if route == "pull" else None, right.cardspace.draw)
+                        if route == "intercept":
+                            if weave not in left.cardspace.hand.content:
+                                left.cardspace.draw.move_card_to(weave, left.cardspace.hand)
+                            phase.phase = "intercept"
+                            phase.intercept(weave, 1)
+                        slot.ready = True
+                        phase.phase = "ready"
+                        phase.begin_resolution()
+                    rolls = []
+                    for _ in range(500):
+                        if not game.pipeline.in_duel_phase:
+                            break
+                        if player := game.special.decision_owner:
+                            options = game.special.options(player)
+                            game.special.apply(player, next((o for o in options if o.kind.startswith("decline")), options[0]))
+                            continue
+                        nodes = game.next_step()
+                        if isinstance(nodes, tuple) and match._combat_stop(nodes) and "logic_dice_clash" in nodes:
+                            sides = match.snapshot()["frame"]["combat"]["sides"]
+                            rolls.append([(s["card_id"], s["die_number"]) for s in sides])
+                    else:
+                        self.fail("迎击未结算完毕")
+                    self.assertEqual(rolls, [[("emyake_flash", n), ("carrier_brand", n)] for n in (1, 2)])
+                    self.assertIn(weave, left.cardspace.hand.content)
+                    self.assertEqual(left.turn_cost_adjustment, 3)
+                    frame = match.snapshot()["frame"]
+                    slot, = frame["duels"] if route == "regular" else frame["pre_reveal"]["duels"]
+                    resolved, = slot["sides"][0]["resolved_cards"]
+                    self.assertEqual(resolved["name"], "闪回识破")
+                    self.assertTrue(resolved["no_hit_carrier"])
+                    self.assertEqual([d["no_hit_carrier"] for d in resolved["dice"]], [True, False])
+                    self.assertEqual([d["position"] for d in resolved["live_dice"]], [1, 2])
+                    self.assertTrue(all(d["result"] in ("win", "lose", "draw") for d in resolved["live_dice"]))
+                    self.assertEqual(slot["sides"][0]["cards"], [])
+                    self.assertFalse(slot["sides"][1]["cards"][0]["skipped"])
 
     def test_weave_bursts_at_24_after_increases_in_either_initiative(self):
         for first in (1,2):

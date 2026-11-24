@@ -206,6 +206,7 @@ class BattleMatch:
         self._special_seat = None
         self._interrupt_returns = []
         self._emitted_dice_rolls = set()
+        self._temporary_clashes = {}
         self.game.pipeline.pause_on_clash_scores = True
         self._timing = ""
         self.revision = 0
@@ -292,6 +293,16 @@ class BattleMatch:
             if deciding:
                 special_options = self._views[side].special_actions()
         frame = self._views[side if deciding else None].snapshot()
+        for (kind, number, seat, card), settled in self._temporary_clashes.items():
+            if not card.destroyed:
+                continue
+            slots = {"regular": frame["duels"], "pre_reveal": frame["pre_reveal"]["duels"],
+                     "instant": frame["special_duels"]}[kind]
+            if not 1 <= number <= len(slots):
+                continue
+            row = next(item for item in slots[number - 1]["sides"] if item["side"] == seat)
+            if not any(item.get("instance_id") == card.instance_id for item in row["cards"]):
+                row.setdefault("resolved_cards", []).append({**settled, "dissolved": True, "used": True})
         card_owners = {
             "duels": {
                 f"{num}:{p.side}": [
@@ -897,6 +908,8 @@ class BattleMatch:
                 self._timing = "返回原交锋"
                 return
             self._timing = timing_label(node)
+            if node == "before_turn_start":
+                self._temporary_clashes.clear()
             if node == "logic_draw_cards" and game.pending_draw:
                 self._draw_seat = game.pending_draw.player
                 self.mode = "handoff" if self._require_handoff else "draw_select"
@@ -1047,13 +1060,17 @@ class BattleMatch:
                 if pipe.paid and side["range_deficit"]:
                     actions.append(f"{pipe.card.name}处于 {side['range_deficit']} 级远程劣势")
             elif scored and die and die["result"] in ("win", "lose", "draw"):
+                if pipe.card.temporary:
+                    key = (combat["kind"], combat["duel_number"], player.side, pipe.card)
+                    self._temporary_clashes[key] = _visible_card(pipe.card)
                 result = {"win": "胜", "draw": "平", "lose": "负"}[die["result"]]
                 if die["win_branch_skipped"]:
                     result += "，跳过拼赢分支"
                 if len(game.pipeline.current_clash_results) == 1:
                     scores.append(f"空白轮，{character.combat_name}（{result}）")
                 else:
-                    scores.append(f"{character.combat_name} {die['clash_score']}（{result}）")
+                    scores.append(f"{character.combat_name}「{pipe.card.name}」第{die['position']}骰 "
+                                  f"{die['clash_score']}（{result}）")
                 clash_sides.append({
                     "side": player.side,
                     "character_id": character.id,

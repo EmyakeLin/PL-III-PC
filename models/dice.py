@@ -74,7 +74,8 @@ class Dice:
         kind = data["type"]
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
-        self.type = dice_type_map[kind].name.lower()
+        self._type = dice_type_map[kind].name.lower()
+        self.blanked_by_range = False
         self._printed_level = DiceLevel(1 if self.type == "skip" else data["level"])
         self._printed_roll_max = data.get("roll_max", dice_value_range[self._printed_level][1])
         if type(self._printed_roll_max) is not int or self._printed_roll_max < 1:
@@ -102,7 +103,7 @@ class Dice:
         self.final_bonus = data.get("final_bonus", 0)
         self.multiplier = data.get("multiplier", 1)
         self.calc_formula = data.get("calc_formula") or data.get("calc_fomula", "+")
-        self.entries = data.get("entries", [])
+        self._entries = data.get("entries", [])
         self._value = 0
         self.final_score = None
         self.clash_score = None
@@ -111,6 +112,29 @@ class Dice:
         self.destroyed = False
         self.keep_position = False
         self.critical = False
+
+    @property
+    def type(self):
+        if self.blanked_by_range and self.effective_ignore_range < 3:
+            return "blank"
+        return self._type
+
+    @type.setter
+    def type(self, value):
+        self._type = value
+
+    @property
+    def entries(self):
+        return [] if self.type == "blank" else self._entries
+
+    @property
+    def range_deficit(self):
+        return self.card.range_deficit if self.card and self.effective_ignore_range < 3 else 0
+
+    @property
+    def blanked(self):
+        return (self.type == "blank" or self.range_deficit >= 3
+                or bool(self.card and self.card.use_state.get("blank_skill")))
 
     @property
     def is_passive(self):
@@ -123,7 +147,7 @@ class Dice:
     def pay_use_cost(self):
         """Pay once, after insertions have resolved and before this use is paired."""
         cost = self.data.get("resource_cost")
-        if not cost or self.resource_paid or self.card.blanked:
+        if not cost or self.resource_paid or self.blanked:
             return True
         actor = self.card.character
         ctx = self.game.context
@@ -134,12 +158,12 @@ class Dice:
 
     def can_afford_use(self):
         cost = self.data.get("resource_cost")
-        return (not cost or self.resource_paid or self.card.blanked
+        return (not cost or self.resource_paid or self.blanked
                 or self.card.character.spendable_status(cost["status"]) >= cost["amount"])
 
     def register_entries(self):
         if not self.destroyed and not self.entries_registered:
-            self.game.context.register_entries(self, self.entries)
+            self.game.context.register_entries(self, self._entries)
             self.entries_registered = True
 
     @property
@@ -177,7 +201,7 @@ class Dice:
     def make_blank(self):
         """Only this use changes. The printed die remains available on redraw."""
         self.type = "blank"
-        self.entries = []
+        self._entries = []
         self.repeat_requested = False
         self.queued_hits.clear()
         self.attack_redirected = False

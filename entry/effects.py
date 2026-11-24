@@ -101,7 +101,7 @@ def run_effect(ctx, entry, operation):
             if "credit" in data:
                 owner = select_entity(ctx, data["credit"], entry.owner)
                 if (owner is None or character_of(owner) is not source
-                        or ctx.range_blocks_target(target, card=getattr(owner, "card", None))):
+                        or ctx.range_blocks_target(target, die=owner if getattr(owner, "card", None) else None)):
                     return
             ctx.stack.extend((target, status))
             return ctx.execute_op(OpCode.ACTIVATE_STATUS, source=source, side=source.player.side,

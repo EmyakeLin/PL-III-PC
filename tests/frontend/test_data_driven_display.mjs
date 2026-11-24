@@ -17,13 +17,40 @@ const {
   buildRichVerbatimText,
   buildUnifiedDieRow,
 } = await import(new URL('design_system.js', ENGINE));
-const { buildFullCard, buildBoardCardTag } = await import(new URL('card_print.js', ENGINE));
+const { buildFullCard, buildBoardCardTag, buildUniformCard } = await import(new URL('card_print.js', ENGINE));
+const { CombatTabletop } = await import(new URL('combat_tabletop.js', ENGINE));
 
 const collectTexts = (node, out = []) => {
   if (node instanceof Text) out.push({ text: node.text, fill: node.style?.fill });
   for (const c of node.children || []) collectTexts(c, out);
   return out;
 };
+
+test('settled clash dice retain win/loss colors on the table, in the detail view and in duel history', () => {
+  const card = {
+    name: '闪回识破', cost: 0, used: true, dissolved: true,
+    dice: [
+      { type: 'evade', roll_max: 20, no_hit_carrier: true, entries: ['仅非空白骰可见'] },
+      { type: 'slash', roll_max: 20, ignore_range: 3, entries: ['施加2裂伤'] },
+    ],
+    live_dice: [
+      { position: 1, type: 'blank', result: 'lose', clash_score: 4 },
+      { position: 2, type: 'slash', result: 'win', clash_score: 11 },
+    ],
+  };
+  const slot = { sides: [{ side: 1, cards: [], resolved_cards: [card] }] };
+  assert.deepEqual(CombatTabletop.prototype._pickSideCards(slot, 1), [card]);
+  for (const builder of [buildUniformCard, buildFullCard, buildBoardCardTag]) {
+    const texts = collectTexts(builder(card, { width: 240, height: 320, rangeDeficit: 3 }));
+    assert.ok(texts.some(t => t.text.startsWith('1~20') && t.fill === 0xb83a2a));
+    assert.ok(texts.some(t => t.text.startsWith('1~20') && t.fill === INK.goldDeep));
+    if (builder !== buildBoardCardTag) {
+      assert.ok(texts.some(t => t.text === '无受击载体'));
+      assert.ok(texts.some(t => t.text === '施加2裂伤'));
+      assert.ok(!texts.some(t => t.text === '仅非空白骰可见'));
+    }
+  }
+});
 
 test('trigger series classification covers all 5 canonical color rules', () => {
   // 使用系列 -> 蓝色
