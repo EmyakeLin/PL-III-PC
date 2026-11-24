@@ -422,6 +422,57 @@ class CangFengTests(unittest.TestCase):
         self.assertIn(fireworks, left.cardspace.out_of_combat.content)
         self.assertEqual(enemy.hp, 34)
 
+    def test_core_command_cancel_refunds_per_turn_and_returns_to_placement(self):
+        self.enterContext(redirect_stdout(io.StringIO()))
+        match = BattleMatch(roster=("cang_feng_he_lian", "plan_b_annolin"), seed=1, initial_handoff=False)
+        snap = match.snapshot()
+        # Complete initial draw selections if present
+        while snap["mode"] in ("draw_select", "timing", "handoff"):
+            if snap["mode"] == "draw_select":
+                ds = snap["draw_select"]
+                picks = [c["action_key"] for c in ds["candidates"][:ds["discard_count"]]]
+                snap = match.act("draw_bottom", snap["revision"], card_ids=picks)
+            elif snap["mode"] == "timing":
+                snap = match.act("next", snap["revision"])
+            else:
+                snap = match.act("ready", snap["revision"])
+
+        self.assertEqual(snap["mode"], "placement")
+        idx = next(i for i, a in enumerate(snap["table_actions"]) if a["ability_id"] == "he_lian_core_command")
+
+        # 1. Open 重城·烛芯 and immediately cancel with decline_option -> returns to placement without spending per_turn
+        snap = match.act("trigger_table_action", snap["revision"], option=idx)
+        self.assertEqual(snap["mode"], "special")
+        self.assertTrue(snap["effect_choice"]["optional"])
+        decline_opt = next(i for i, o in enumerate(snap["special_options"]) if o["kind"] == "decline_option")
+        snap = match.act("use_special", snap["revision"], option=decline_opt)
+        self.assertEqual(snap["mode"], "placement")
+        self.assertIsNone(snap["effect_choice"])
+        self.assertTrue(any(a["ability_id"] == "he_lian_core_command" for a in snap["table_actions"]))
+
+        # 2. Re-open 重城·烛芯 -> pick 投掷重剑壳 -> cancel target selection -> still refunds per_turn & cost!
+        cost_before = match.game.players[0].available_cost + match.game.players[0].characters[0].available_cost
+        idx = next(i for i, a in enumerate(snap["table_actions"]) if a["ability_id"] == "he_lian_core_command")
+        snap = match.act("trigger_table_action", snap["revision"], option=idx)
+        throw_opt = next(i for i, o in enumerate(snap["special_options"]) if o.get("option_id") == "throw_shell")
+        snap = match.act("use_special", snap["revision"], option=throw_opt)
+        self.assertEqual(snap["effect_choice"]["selection"], "character")
+        self.assertTrue(snap["effect_choice"]["optional"])
+        decline_char = next(i for i, o in enumerate(snap["special_options"]) if o["kind"] == "decline_character")
+        snap = match.act("use_special", snap["revision"], option=decline_char)
+        self.assertEqual(snap["mode"], "placement")
+        self.assertEqual(match.game.players[0].available_cost + match.game.players[0].characters[0].available_cost, cost_before)
+        self.assertTrue(any(a["ability_id"] == "he_lian_core_command" for a in snap["table_actions"]))
+
+        # 3. Actually commit 进入拔芯 -> per_turn IS consumed
+        idx = next(i for i, a in enumerate(snap["table_actions"]) if a["ability_id"] == "he_lian_core_command")
+        snap = match.act("trigger_table_action", snap["revision"], option=idx)
+        enter_opt = next(i for i, o in enumerate(snap["special_options"]) if o.get("option_id") == "enter_core")
+        snap = match.act("use_special", snap["revision"], option=enter_opt)
+        self.assertEqual(snap["mode"], "placement")
+        self.assertEqual(match.game.players[0].characters[0].statuses.get("拔芯", 0), 1)
+        self.assertFalse(any(a["ability_id"] == "he_lian_core_command" for a in snap["table_actions"]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,7 @@ class SpecialActions:
         self._card_choices = []
         self._option_choices = []
         self._character_choices = []
+        self._pending_ability_commits = {}
 
     @staticmethod
     def own_hand_skills(actor):
@@ -231,14 +232,39 @@ class SpecialActions:
             self._option_choices.pop(0)
         return None
 
+    def _has_pending_for(self, invocation):
+        return any(
+            choice.invocation is invocation
+            for queue in (self._option_choices, self._character_choices, self._card_choices, self._slot_choices)
+            for choice in queue
+        )
+
+    def _pending_invocation_for_entry(self, entry):
+        for queue in (self._option_choices, self._character_choices, self._card_choices, self._slot_choices):
+            for choice in queue:
+                if choice.invocation.entry is entry:
+                    return choice.invocation
+        return None
+
+    def _commit_pending_ability(self, invocation):
+        meta = self._pending_ability_commits.pop(invocation, None)
+        if meta is None:
+            return
+        actor, key, ability_name = meta
+        self.ability_uses[key] = self.ability_uses.get(key, 0) + 1
+        self.game.context.record("ability_used", actor=actor.name, ability=ability_name)
+
     def _resolve_option_choice(self, action):
         decision = self._option_choices.pop(0)
         if action.kind == "decline_option":
+            if not self._has_pending_for(decision.invocation):
+                self._pending_ability_commits.pop(decision.invocation, None)
             return True
         chosen = next((o for o in decision.options if o.id == action.option_id), None)
         if chosen is None:
             return False
         ctx = self.game.context
+        before_mutations = ctx.mutation_serial
         bindings = {**decision.event.get("bindings", {}), **chosen.bindings}
         fields = dict(decision.event, bindings=bindings, chosen_option=chosen.id)
         ctx.executions.append(decision.invocation)
@@ -247,6 +273,8 @@ class SpecialActions:
                 run_effect(ctx, decision.invocation.entry, chosen.operation)
         finally:
             ctx.executions.pop()
+        if ctx.mutation_serial != before_mutations or not self._has_pending_for(decision.invocation):
+            self._commit_pending_ability(decision.invocation)
         return True
 
     def choose_character(self, ctx, candidates, spec):
@@ -293,8 +321,11 @@ class SpecialActions:
     def _resolve_character_choice(self, action):
         decision = self._character_choices.pop(0)
         if action.kind == "decline_character":
+            if not self._has_pending_for(decision.invocation):
+                self._pending_ability_commits.pop(decision.invocation, None)
             return True
         ctx = self.game.context
+        before_mutations = ctx.mutation_serial
         fields = dict(decision.event, chosen_character=action.character)
         ctx.executions.append(decision.invocation)
         try:
@@ -302,6 +333,8 @@ class SpecialActions:
                 run_effect(ctx, decision.invocation.entry, decision.operation)
         finally:
             ctx.executions.pop()
+        if ctx.mutation_serial != before_mutations or not self._has_pending_for(decision.invocation):
+            self._commit_pending_ability(decision.invocation)
         return True
 
     @property
@@ -318,8 +351,11 @@ class SpecialActions:
     def _resolve_card_choice(self, action):
         decision = self._card_choices.pop(0)
         if action.kind == "decline_card":
+            if not self._has_pending_for(decision.invocation):
+                self._pending_ability_commits.pop(decision.invocation, None)
             return True
         ctx = self.game.context
+        before_mutations = ctx.mutation_serial
         fields = dict(decision.event, chosen_card=action.target_card)
         ctx.executions.append(decision.invocation)
         try:
@@ -327,6 +363,8 @@ class SpecialActions:
                 run_effect(ctx, decision.invocation.entry, decision.operation)
         finally:
             ctx.executions.pop()
+        if ctx.mutation_serial != before_mutations or not self._has_pending_for(decision.invocation):
+            self._commit_pending_ability(decision.invocation)
         return True
 
     def insert_skill(self, use, anchor, ctx):
@@ -396,13 +434,17 @@ class SpecialActions:
         choice = self._slot_choices.pop(0)
         slot = self._slot_options(choice)[action]
         ctx = self.game.context
+        before_mutations = ctx.mutation_serial
         fields = dict(choice.event, choice_subject=choice.subject, chosen_slot=slot)
         ctx.executions.append(choice.invocation)
         try:
             with ctx.binding(**fields):
-                return execute_program_block(ctx, choice.continuation) is not False
+                succeeded = execute_program_block(ctx, choice.continuation) is not False
         finally:
             ctx.executions.pop()
+        if ctx.mutation_serial != before_mutations or not self._has_pending_for(choice.invocation):
+            self._commit_pending_ability(choice.invocation)
+        return succeeded
 
     def is_locked(self, card):
         return self.window_open("placement") and card in self.locked_cards
@@ -465,9 +507,14 @@ class SpecialActions:
             if not ctx.pay_action_costs(actor, spec.get("ability_cost", {}), spec.get("cost", {})):
                 return False
             key = actor, action.ability_id
-            self.ability_uses[key] = self.ability_uses.get(key, 0) + 1
-            ctx.record("ability_used", actor=actor.name, ability=spec["name"])
-            ctx._invoke(Entry(actor, TriggerType.PIPELINE, "on_player_action", spec["operation"]))
+            entry = Entry(actor, TriggerType.PIPELINE, "on_player_action", spec["operation"])
+            ctx._invoke(entry)
+            pending = self._pending_invocation_for_entry(entry)
+            if pending is None:
+                self.ability_uses[key] = self.ability_uses.get(key, 0) + 1
+                ctx.record("ability_used", actor=actor.name, ability=spec["name"])
+            else:
+                self._pending_ability_commits[pending] = (actor, key, spec["name"])
         return True
 
     @property
@@ -487,6 +534,7 @@ class SpecialActions:
         self._card_choices.clear()
         self._option_choices.clear()
         self._character_choices.clear()
+        self._pending_ability_commits.clear()
 
     def first_open_slot(self, side):
         space = self.game.duelspace

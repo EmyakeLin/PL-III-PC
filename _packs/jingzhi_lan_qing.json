@@ -201,7 +201,7 @@
                 "literal": {
                   "title": "深秋工作室",
                   "description": "回合开始至声称置卡结束时期，选择触发一项：",
-                  "optional": false,
+                  "optional": true,
                   "options": [
                     {
                       "id": "shield",
@@ -220,7 +220,7 @@
                           ["$event.item.destroyed", "NOT", "$event.item.character.is_alive", "AND"], "FILTER",
                           {
                             "literal": {
-                              "optional": false,
+                              "optional": true,
                               "then": {
                                 "op": "program",
                                 "code": [
@@ -246,7 +246,7 @@
                           ["$event.item.destroyed", "NOT", "$event.item.character.is_alive", "AND"], "FILTER",
                           {
                             "literal": {
-                              "optional": false,
+                              "optional": true,
                               "then": {"op": "program", "code": ["$event.chosen_card", 1, "SKILL_LEVEL_ADD"]}
                             }
                           },

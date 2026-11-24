@@ -839,8 +839,9 @@ class BattleMatch:
         move = options[option]
         ability_name = next(s["name"] for s in move.character.action_specs() if s["id"] == move.ability_id)
         succeeded = self.game.special.apply(player, move)
-        suffix = "受阻" if succeeded is False else ""
-        self._history.append(f"{player.name}发动{ability_name}{suffix}。")
+        if self.game.special.decision_owner is None:
+            suffix = "受阻" if succeeded is False else ""
+            self._history.append(f"{player.name}发动{ability_name}{suffix}。")
         if self.game.is_over:
             self._finish()
 

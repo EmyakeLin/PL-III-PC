@@ -1,5 +1,15 @@
 # 当前设计与工作记录
 
+## 主动能力弹窗可取消与未提交不扣次数修复（2026-11-24）
+
+- **已确认语义**：
+  - `Context.mutation_serial` 统计非纯查询/选择指令（排除了 `_NON_MUTATING_OPCODES` 中的流程与选择指令）。
+  - `SpecialActions._use_ability` 若触发挂起决策（`CHOOSE_OPTION` / `CHOOSE_CHARACTER` / `CHOOSE_CARD` / `CHOOSE_SLOT`），将 `ability_uses[key]`（`per_turn` 次数）与 `ability_used` 事实延迟至真正产生副作用或最深层非放弃选择完成时再提交；若玩家点击「放弃 · Esc」（包括从 `重城·烛芯` 进 `投掷重剑壳 -> CHOOSE_CHARACTER` 后点击 `decline_character`），则清理待提交记录并无损退回原置卡/开牌前窗口，次数不消耗。
+  - 为 [重城·烛芯](_packs/waa_cang_feng.json)（外层 `CHOOSE_OPTION` 与内层 `投掷重剑壳` `CHOOSE_CHARACTER`）和 [深秋工作室](_packs/jingzhi_lan_qing.json)（外层 `CHOOSE_OPTION` 与 `已置卡 +1 远程`/`+1 骰级` `CHOOSE_CARD`）开启 `"optional": true`；`BattleMatch._trigger_table_action` 仅在非挂起即时完成时提前记录发动日志，避免放弃选择时误记一次发动。
+- **验证结果**：
+  - [藏锋事务所专测](tests/test_cang_feng.py) 新增 `test_core_command_cancel_refunds_per_turn_and_returns_to_placement`（覆盖 `BattleMatch` 下点开 `重城·烛芯 -> 放弃`、进 `投掷重剑壳 -> 放弃选人` 均返还次数/费用并回到 `placement`，以及确认执行 `enter_core` 后正常扣除当回合次数）。
+  - `python -m unittest tests.entry_semantics` **238/238 通过**，`python -m unittest tests.entry_semantics tests.test_displayer` **251/251 通过**。
+
 ## 「藏锋事务所」卡包、系统状态 `爆燃` 与烧伤/致命失衡规则实装（2026-11-24）
 
 - **已确认语义与内核补充**：

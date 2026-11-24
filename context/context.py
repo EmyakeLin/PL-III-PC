@@ -12,6 +12,20 @@ from models.values import ValueBounds
 from pipeline.pipeline_errors import PipelineSystemError, StackUnderflowError
 
 
+_NON_MUTATING_OPCODES = frozenset({
+    OpCode.ENTRY, OpCode.CHOOSE_CARD, OpCode.CHOOSE_OPTION, OpCode.CHOOSE_CHARACTER, OpCode.CHOOSE_SLOT,
+    OpCode.OPPONENT, OpCode.BOARD_SLOTS, OpCode.ZONE_CARDS, OpCode.SLOT_CARDS, OpCode.REMAINING_CARDS,
+    OpCode.REAR_SLOT_CARDS, OpCode.REAR_CAPACITY, OpCode.SLOT_AT_OFFSET, OpCode.SKILL_RESTRICTED,
+    OpCode.CAN_JOIN_DUEL, OpCode.NEXT_PLANNED_DIE, OpCode.DIE_VALUE, OpCode.SIZE, OpCode.ALL_IN,
+    OpCode.FILTER, OpCode.MAP, OpCode.FLATTEN, OpCode.FIRST, OpCode.LOOKUP, OpCode.EACH,
+    OpCode.FIRST_IN_ORDER, OpCode.COALESCE, OpCode.WITH_BINDINGS, OpCode.SKILL_USE_COUNT,
+    OpCode.CLASH_COUNT, OpCode.DUEL_OFFSET, OpCode.ROUND_TRIGGER_COUNT, OpCode.WINDOW_OPEN,
+    OpCode.FLOOR_DIV, OpCode.MIN, OpCode.MAX, OpCode.DIVIDE, OpCode.LT, OpCode.LE, OpCode.GT, OpCode.GE,
+    OpCode.EQ, OpCode.IS, OpCode.AND, OpCode.OR, OpCode.NOT, OpCode.WHEN, OpCode.IF_ELSE,
+    OpCode.CLAMP, OpCode.DUP, OpCode.POP, OpCode.SWAP, OpCode.PAIR,
+})
+
+
 class Context:
     def __init__(self, parent=None, game=None):
         self.parent = parent
@@ -39,6 +53,7 @@ class Context:
         # Entries whose printed duration outlives the physical card's return to hand.
         self._lasting_entries = {}
         self._fact_collections = []
+        self.mutation_serial = 0
 
     def observe_facts(self, collection=None):
         """Create a reader-owned queue for the lifetime of this context."""
@@ -469,6 +484,8 @@ class Context:
                     event["result"] = None
                     return event
                 return None
+            if executed_op not in _NON_MUTATING_OPCODES:
+                self.mutation_serial += 1
             event["result"] = result
             self.dispatch_opcode(executed_op, "AFTER")
             return event if result_field is None else event.get(result_field)

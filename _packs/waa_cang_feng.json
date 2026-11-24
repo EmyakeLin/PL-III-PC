@@ -595,6 +595,7 @@
                 "literal": {
                   "title": "重城·烛芯",
                   "description": "选择本回合「重城·烛芯」战术动作：",
+                  "optional": true,
                   "options": [
                     {
                       "id": "enter_core",
@@ -629,6 +630,7 @@
                             "literal": {
                               "title": "投掷重剑壳",
                               "description": "选择 1 名敌方角色承受剑壳撞击与镇压。",
+                              "optional": true,
                               "then": {
                                 "op": "program",
                                 "code": [
