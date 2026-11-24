@@ -10,6 +10,7 @@ from . import combat_steps as steps
 from .pipeline_errors import PipelineFinished
 
 
+BEFORE_ATTACK_TARGET = "before_attack_target"
 BEFORE_ONE_SIDED_ATTACK = "before_one_sided_attack"
 
 
@@ -1034,6 +1035,11 @@ class Pipeline:
         sides_present = {p.side for p in ready}
         solo_side = len(sides_present) == 1
         solo = solo_side and len(ready) == 1 and ready[0].die.can_attack_alone
+        if solo:
+            solo_target = yield from self._resolve_attack_target(ready[0])
+            if not self._die_live(ready[0]) or not ready[0].die.can_attack_alone or (
+                    ready[0].die.attack_redirected and solo_target is None):
+                solo = False
         one_sided = solo_side and any(p.die.can_attack_alone for p in ready)
         attempted_responses = set()
         response = self._pending_response_die(ready[0]) if solo else None
@@ -1100,6 +1106,27 @@ class Pipeline:
                     yield from self._solo(pipe, attempted=attempted_responses if solo else None)
         if active:
             yield from self._run_to(active, steps.NEXT_DIE)
+
+    def _resolve_attack_target(self, attacker):
+        if attacker.die.attack_redirected:
+            target = attacker.die.attack_target
+        elif attacker.target is not None and attacker.target.is_alive:
+            target = attacker.target
+        else:
+            target = self.resolve_skill_target(attacker.card)
+        if target is not None and not target.is_alive:
+            target = None
+        ctx = self.game.context
+        if (not attacker.die.use_state.get("attack_target_resolved")
+                and any(e.trigger == BEFORE_ATTACK_TARGET for e in ctx.entries)):
+            attacker.die.use_state["attack_target_resolved"] = True
+            ctx.dispatch_pipeline(BEFORE_ATTACK_TARGET, **dict(self._event(attacker), target=target))
+            if self.game.special.decision_owner:
+                yield tuple(BEFORE_ATTACK_TARGET if p is self.game.special.decision_owner else None
+                            for p in self.game.players)
+            if attacker.die.attack_redirected:
+                target = attacker.die.attack_target
+        return target if target and target.is_alive else None
 
     def _reserved_target(self, pipe):
         def eligible(actor):
@@ -1240,9 +1267,13 @@ class Pipeline:
                 reply.card._release_dice()
 
     def _solo(self, pipe, *, attempted=None):
-        target = self._response_target(pipe)
-        if target and (yield from self._contest_solo(pipe, target, attempted=attempted)):
-            return
+        if pipe.die.can_attack_alone:
+            resolved = yield from self._resolve_attack_target(pipe)
+            if pipe.die.attack_redirected and resolved is None:
+                return
+            target = self._response_target(pipe)
+            if target and (yield from self._contest_solo(pipe, target, attempted=attempted)):
+                return
         if pipe.die.range_deficit >= 2 and pipe.die.is_attack:
             pipe.die.blanked_by_range = True
         if not pipe.die.can_attack_alone:

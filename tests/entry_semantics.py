@@ -17,6 +17,7 @@ MODULES = (
     "tests.test_shared_status_entries",
     "tests.test_rear_duel",
     "tests.test_shield_defense",
+    "tests.test_attack_redirect",
 )
 
 

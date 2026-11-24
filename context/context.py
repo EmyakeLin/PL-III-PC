@@ -158,7 +158,7 @@ class Context:
         else:
             keys = OPERANDS.get(opcode, ())
         for key in keys:
-            if key not in ("die", "card", "target", "pool", "execution", "receiving_card"):
+            if key not in ("die", "card", "target", "new_target", "pool", "execution", "receiving_card"):
                 continue
             recipient = fields.get(key)
             if recipient == "target":
@@ -408,6 +408,16 @@ class Context:
             fields.update(source=actor, side=actor.player.side if actor else None)
             if "die" in fields:
                 fields["card"] = part.card
+        elif opcode == OpCode.REDIRECT_ATTACK:
+            die = fields["die"]
+            issuer = originating_entry.entry.owner if originating_entry else character_of(die)
+            actor = character_of(issuer) or character_of(die)
+            fields.update(
+                card=getattr(die, "card", None),
+                attacker=character_of(die),
+                source=actor,
+                side=actor.player.side if actor else None,
+            )
         elif opcode in (OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD):
             fields.setdefault("source", self.event.get("source") or fields["target"])
             fields["side"] = fields["source"].player.side

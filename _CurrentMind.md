@@ -1,5 +1,15 @@
 # 当前设计与工作记录
 
+## 显式转火原语 `REDIRECT_ATTACK` 与攻击目标确认时点（2026-11-24）
+
+- **已确认语义**：
+  - 保留 `respond_to_die` 的纯净边界（仅允许当前攻击的受击目标本人发起单方面迎击），不把“改换目标”与“迎击响应”混写在同一分支。
+  - 新增显式转火指令 `OpCode.REDIRECT_ATTACK`（操作数 `die, new_target`），用于更新进攻骰的目标指向并发布 `attack_redirected` 事实（保留 `$event.target` 为原目标、`$event.new_target` 为新目标，支持 `None` 目标失落、`preserve_target` 与 `BEFORE REDIRECT_ATTACK` 话语权/防转火取消）。
+  - 在 `pipeline/pipeline.py`（`_pair_dice` 与 `_solo`）新增 `before_attack_target` 时点，先解析出初始预定目标，允许通过 `decision_owner` 挂起交互选择，再将最终目标交由 `BEFORE_ONE_SIDED_ATTACK` 与命中结算；友方援护拦截（如转火后由自身 `respond_to_die` 迎击）、嘲讽与隐匿均复用同一条转火路径。
+- **验证结果**：
+  - 新增 [攻击转火专测](tests/test_attack_redirect.py)（4 项，覆盖友方转火接 `respond_to_die` 迎击正反对照、嘲讽拉走拼点骰且不迎击、隐匿转火队友及单人隐匿脱靶、防转火取消及同阵营/阵亡无效目标拦截），接入 `tests.entry_semantics`。
+  - `python -m unittest tests.entry_semantics` **227/227 通过**。
+
 ## 通用护盾防卫通道 `ADD_SHIELD_DEFENSE`（2026-11-24）
 
 - **已确认语义**：

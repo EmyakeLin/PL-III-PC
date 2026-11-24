@@ -825,6 +825,33 @@ def handle_route_die_attack(ctx):
     return True
 
 
+def handle_redirect_attack(ctx):
+    new_target, die = ctx.pop(), ctx.pop()
+    if die is None or not die.is_attack or not _usable_component(die):
+        return False
+    attacker = character_of(die)
+    if new_target is not None and (
+        not getattr(new_target, "is_alive", False)
+        or getattr(new_target, "player", None) is getattr(attacker, "player", None)
+    ):
+        return False
+    duel = ctx.event.get("duel")
+    if getattr(duel, "preserve_target", False) and duel.attack_card is die.card:
+        if new_target is not duel.resolved_target and not ctx.event.get("authority", 0):
+            return False
+    old_target = die.attack_target if die.attack_redirected else ctx.event.get("target")
+    die.attack_redirected = True
+    die.attack_target = new_target
+    ctx.event["target"] = new_target
+    ctx.record(
+        "attack_redirected",
+        actor=getattr(attacker, "combat_name", None),
+        old_target=getattr(old_target, "combat_name", None),
+        target=getattr(new_target, "combat_name", None),
+    )
+    return True
+
+
 def handle_select_skill_target(ctx):
     card = ctx.pop()
     ctx.push(ctx.game.pipeline.resolve_skill_target(card))
@@ -1451,6 +1478,7 @@ DISPATCH_TABLE = {
     OpCode.DRAW: handle_draw, OpCode.PLACE: handle_place, OpCode.ROLL: handle_roll,
     OpCode.REPLACE_SKILL: handle_replace_skill,
     OpCode.MOVE_CARD: handle_move_card, OpCode.ROUTE_DIE_ATTACK: handle_route_die_attack,
+    OpCode.REDIRECT_ATTACK: handle_redirect_attack,
     OpCode.SELECT_SKILL_TARGET: handle_select_skill_target,
     OpCode.FOR_EACH_TARGET: handle_for_each_target,
     OpCode.RESET_COST: handle_reset_cost, OpCode.PAY_COST: handle_pay_cost,
@@ -1550,6 +1578,7 @@ OPERANDS = {
     OpCode.PLACE: ("side", "duel_index", "card"), OpCode.ROLL: ("low", "high", "bonus", "die"),
     OpCode.REPLACE_SKILL: ("card", "target"),
     OpCode.MOVE_CARD: ("card", "zone"), OpCode.ROUTE_DIE_ATTACK: ("die", "target"),
+    OpCode.REDIRECT_ATTACK: ("die", "new_target"),
     OpCode.SELECT_SKILL_TARGET: ("card",),
     OpCode.FOR_EACH_TARGET: ("targets", "block"),
     OpCode.DAMAGE: ("target", "amount", "penetration", "attack_type"),
