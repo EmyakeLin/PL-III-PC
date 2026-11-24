@@ -5,7 +5,7 @@ from itertools import islice
 import random
 import time
 
-from displayer import Displayer, _passives, _printed_skill, _visible_card, hand_key, special_seats, timing_label
+from displayer import Displayer, _passives, _printed_skill, _visible_card, hand_key, seat_action_view, special_seats, timing_label
 from game import Game
 from loader import PACKS, load_characters_from_packs
 from models.character import Character
@@ -333,12 +333,16 @@ class BattleMatch:
                 for p in self.game.players
             },
         }
+        table_actions = []
+        if deciding and player is not None and not self._special_open and self.mode in ("placement", "pre_attack", "intercept"):
+            table_actions = [seat_action_view(a, player) for a in self.game.special.ability_options(player)]
         return {
             "mode": mode, "revision": self.revision, "active_side": side,
             "special_available": bool(seats) and self.mode != "draw_select",
             "special_options": special_options,
+            "table_actions": table_actions,
             "special_pending": self.game.special.pending_attack is not None or self.game.special.decision_owner is not None,
-            "card_choice": self.game.special.card_decision is not None,
+            "card_choice": self.game.special.card_decision is not None or self.game.special.option_decision is not None,
             "effect_choice": self._views[side].effect_choice() if mode == "special" else None,
             "queued_placement": self.game.special.placement_owner is not None,
             "special_timing": self._timing,
@@ -420,6 +424,9 @@ class BattleMatch:
             self._place_action(action, card_id)
         elif self.mode == "placement" and action in ("claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal"):
             self._pre_reveal_plan_action(action, self.game.placing, card_id, target)
+        elif self.mode in ("placement", "pre_attack", "intercept") and action == "trigger_table_action":
+            actor_player = self.game.placing if self.mode == "placement" else self._pre_seat
+            self._trigger_table_action(actor_player, option)
         elif self.mode in ("pre_attack", "intercept"):
             if action == "switch_side":
                 others = [p for p in self.game.pre_reveal.eligible_players() if p is not self._pre_seat]
@@ -438,7 +445,7 @@ class BattleMatch:
         owner = self.game.special.decision_owner
         if owner is not None and not self._special_open:
             self._special_open = True
-            self._special_seat = None
+            self._special_seat = owner if action == "trigger_table_action" else None
         self.revision += 1
         return self.snapshot()
 
@@ -519,6 +526,8 @@ class BattleMatch:
             message = "依词条选择交锋"
         elif move.kind in ("choose_card", "decline_card"):
             message = "依词条选择技能" if move.kind == "choose_card" else "放弃此次选牌"
+        elif move.kind in ("choose_option", "decline_option"):
+            message = f"选择「{move.label}」" if move.kind == "choose_option" else "放弃此次选择"
         else:
             message = f"打出{move.card.name}"
         suffix = "受阻" if succeeded is False else ""
@@ -535,7 +544,7 @@ class BattleMatch:
             self._special_open = False
             self._interrupt_returns.append((self.mode, self._timing, old_space))
             self._advance()
-        elif move.kind in ("choose_card", "choose_slot", "decline_card") and self.mode == "combat":
+        elif move.kind in ("choose_card", "choose_slot", "choose_option", "decline_card", "decline_option") and self.mode == "combat":
             self._special_open = False
             self._advance()
         else:
@@ -782,6 +791,20 @@ class BattleMatch:
                 self._advance()
             else:
                 self.mode = self._pre_mode() if phase.actor is player else "handoff"
+
+    def _trigger_table_action(self, player, option):
+        if player is None:
+            raise ValueError("当前没有可操作席位。")
+        options = self.game.special.ability_options(player)
+        if type(option) is not int or not 0 <= option < len(options):
+            raise ValueError("该主动能力当前不可用。")
+        move = options[option]
+        ability_name = next(s["name"] for s in move.character.action_specs() if s["id"] == move.ability_id)
+        succeeded = self.game.special.apply(player, move)
+        suffix = "受阻" if succeeded is False else ""
+        self._history.append(f"{player.name}发动{ability_name}{suffix}。")
+        if self.game.is_over:
+            self._finish()
 
     def _pre_mode(self):
         phase = self.game.pre_reveal

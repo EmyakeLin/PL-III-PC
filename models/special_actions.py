@@ -23,6 +23,7 @@ class SpecialAction:
     ability_id: str | None = None
     label: str | None = field(default=None, compare=False)
     duel_kind: str | None = None
+    option_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,28 @@ class SkillUse:
         self.card.use_state["use_discount"] = max(0, self.discount)
         if self.prepaid:
             self.card.use_state["cost_prepaid"] = True
+
+
+@dataclass(frozen=True)
+class PromptOption:
+    id: str
+    label: str
+    operation: object
+    description: str | None = None
+    bindings: dict = field(default_factory=dict)
+    preview: dict | None = None
+
+
+@dataclass
+class PromptDecision:
+    player: object
+    options: tuple
+    optional: bool
+    title: str | None
+    description: str | None
+    invocation: object
+    event: dict
+    specification: dict
 
 
 @dataclass
@@ -80,6 +103,7 @@ class SpecialActions:
         self.locked_cards = set()
         self._slot_choices = []
         self._card_choices = []
+        self._option_choices = []
 
     @staticmethod
     def own_hand_skills(actor):
@@ -134,8 +158,82 @@ class SpecialActions:
             self._card_choices.pop(0)
         return None
 
+    def choose_option(self, ctx, spec):
+        """Suspend an entry execution until its controller picks one modular branch option."""
+        if not ctx.executions or self.game.is_over or not isinstance(spec, dict):
+            return False
+        invocation = ctx.executions[-1]
+        actor = character_of(invocation.entry.owner)
+        chooser = ctx.event.get("target") if spec.get("chooser") == "target" else actor
+        if chooser is None or not chooser.is_alive:
+            return False
+        event = ctx.event.copy()
+        event["bindings"] = {**event.get("bindings", {}), **spec.get("bindings", {})}
+        options = []
+        for idx, raw in enumerate(spec.get("options", ())):
+            if not isinstance(raw, dict) or "then" not in raw:
+                continue
+            when_specs = raw.get("when", ())
+            if when_specs:
+                tests = compile_when(when_specs, None, None)
+                if not all(test.evaluate(actor, event) for test in tests):
+                    continue
+            options.append(PromptOption(
+                id=str(raw.get("id", idx)),
+                label=str(raw.get("label", f"选项 {idx + 1}")),
+                operation=raw["then"],
+                description=raw.get("description"),
+                bindings=dict(raw.get("bindings", {})),
+                preview=dict(raw["preview"]) if isinstance(raw.get("preview"), dict) else None,
+            ))
+        if not options:
+            return False
+        self._option_choices.append(PromptDecision(
+            player=chooser.player,
+            options=tuple(options),
+            optional=bool(spec.get("optional")),
+            title=spec.get("title"),
+            description=spec.get("description"),
+            invocation=invocation,
+            event=event,
+            specification=spec,
+        ))
+        return True
+
+    @property
+    def option_decision(self):
+        while self._option_choices:
+            choice = self._option_choices[0]
+            actor = character_of(choice.invocation.entry.owner)
+            if (actor is not None and actor.is_alive and not choice.invocation.cancelled
+                    and not choice.invocation.entry.blanked and choice.options):
+                return choice
+            self._option_choices.pop(0)
+        return None
+
+    def _resolve_option_choice(self, action):
+        decision = self._option_choices.pop(0)
+        if action.kind == "decline_option":
+            return True
+        chosen = next((o for o in decision.options if o.id == action.option_id), None)
+        if chosen is None:
+            return False
+        ctx = self.game.context
+        bindings = {**decision.event.get("bindings", {}), **chosen.bindings}
+        fields = dict(decision.event, bindings=bindings, chosen_option=chosen.id)
+        ctx.executions.append(decision.invocation)
+        try:
+            with ctx.binding(**fields):
+                run_effect(ctx, decision.invocation.entry, chosen.operation)
+        finally:
+            ctx.executions.pop()
+        return True
+
     @property
     def decision_owner(self):
+        opt = self.option_decision
+        if opt:
+            return opt.player
         decision = self.card_decision
         return decision.player if decision else self.placement_owner
 
@@ -309,6 +407,7 @@ class SpecialActions:
         self.locked_cards.clear()
         self._slot_choices.clear()
         self._card_choices.clear()
+        self._option_choices.clear()
 
     def first_open_slot(self, side):
         space = self.game.duelspace
@@ -345,6 +444,17 @@ class SpecialActions:
         game = self.game
         if game.is_over or player not in game.players:
             return []
+        opt_decision = self.option_decision
+        if opt_decision:
+            if player is not opt_decision.player:
+                return []
+            choices = [
+                SpecialAction("choose_option", option_id=o.id, label=o.label)
+                for o in opt_decision.options
+            ]
+            if opt_decision.optional:
+                choices.append(SpecialAction("decline_option"))
+            return choices
         decision = self.card_decision
         if decision:
             if player is not decision.player:
@@ -395,6 +505,8 @@ class SpecialActions:
         if action not in choices:
             raise ValueError("这个特殊置卡或换卡操作在当前时点无效。")
         game, card = self.game, action.card
+        if action.kind in ("choose_option", "decline_option"):
+            return self._resolve_option_choice(action)
         if action.kind in ("choose_card", "decline_card"):
             return self._resolve_card_choice(action)
         if action.kind == "choose_slot":

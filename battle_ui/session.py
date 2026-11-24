@@ -196,7 +196,7 @@ class BattleSession:
                 self.match.act("use_special", rev, option=idx)
                 return True
             if snap.get("effect_choice") and options:
-                non_decline = [i for i, o in enumerate(options) if o.get("kind") != "decline_card"]
+                non_decline = [i for i, o in enumerate(options) if o.get("kind") not in ("decline_card", "decline_option")]
                 idx = self._rng.choice(non_decline) if non_decline else 0
                 self.match.act("use_special", rev, option=idx)
                 return True
@@ -253,6 +253,7 @@ class BattleSession:
                 if action not in ("place", "end", "pass", "ready", "next",
                                   "attack", "end_attack", "intercept", "let_through", "switch_side",
                                   "claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal", "commit_pre_reveal_plan",
+                                  "trigger_table_action",
                                   "open_special", "leave_special", "use_special",
                                   "draw_bottom", "set_default_target"):
                     raise ValueError("未知的对战操作。")

@@ -80,6 +80,8 @@ class Game:
     def next_step(self):
         if self.pending_draw is not None and not self.is_over:
             return "wait_draw_choice"
+        if self.special.option_decision is not None and not self.is_over:
+            return "wait_option_choice"
         if self.special.card_decision is not None and not self.is_over:
             return "wait_card_choice"
         if self.special.placement_owner is not None and not self.is_over:

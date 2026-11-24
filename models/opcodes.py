@@ -191,6 +191,11 @@ def handle_choose_card(ctx):
     return ctx.game.special.choose_card(ctx, candidates, specification)
 
 
+def handle_choose_option(ctx):
+    specification = ctx.pop()
+    return ctx.game.special.choose_option(ctx, specification)
+
+
 def handle_insert_skill(ctx):
     anchor, use = ctx.pop(), ctx.pop()
     return ctx.game.special.insert_skill(use, anchor, ctx)
@@ -1299,7 +1304,8 @@ DISPATCH_TABLE = {
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.SET_TURN_STATE: handle_set_character_state,
     OpCode.SET_SUSTAINED_STACKS: handle_set_sustained_stacks,
-    OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
+    OpCode.CHOOSE_CARD: handle_choose_card, OpCode.CHOOSE_OPTION: handle_choose_option,
+    OpCode.INSERT_SKILL: handle_insert_skill,
     OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
     OpCode.QUEUE_TARGET_HIT: handle_queue_hit, OpCode.DRAW_CLASH: handle_draw_clash, OpCode.SET_UNOPPOSED_RESULT: handle_unopposed_result,
     OpCode.SCHEDULE_EFFECT: schedule_effect,
@@ -1381,7 +1387,8 @@ OPERANDS = {
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.SET_TURN_STATE: ("target", "key", "value"),
     OpCode.SET_SUSTAINED_STACKS: ("target", "status", "grant_source", "amount"),
-    OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
+    OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.CHOOSE_OPTION: ("specification",),
+    OpCode.INSERT_SKILL: ("use", "anchor"),
     OpCode.QUEUE_HIT: ("die", "mode", "origin"), OpCode.SKIP_ROUND: ("die",),
     OpCode.QUEUE_TARGET_HIT: ("die", "mode", "origin", "target"),
     OpCode.DRAW_CLASH: ("die",), OpCode.SET_UNOPPOSED_RESULT: ("die", "result_value"),

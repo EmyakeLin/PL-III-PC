@@ -3021,6 +3021,46 @@ export class GameDirector {
       this.controlsLayer.addChild(btn);
       cursorBottom = by - gap;
     }
+
+    // Proactive character-anchored table actions (e.g. 澜清「深秋工作室」 — 1 click opens its PromptDecision!)
+    const tableActions = this.state?.table_actions || [];
+    if (tableActions.length && !this._isFieldActionMode() && !this.state?.effect_choice) {
+      const { arenaX, arenaW } = this.layout;
+      const activeSide = this.state.active_side || 1;
+      const seen = new Set();
+      const perCharRank = new Map();
+      tableActions.forEach((opt, idx) => {
+        if (opt.effect_target || opt.target_card_id) return;
+        const cid = opt.character_id || '';
+        const key = `${cid}:${opt.ability_id || opt.label}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        const rank = perCharRank.get(cid) || 0;
+        perCharRank.set(cid, rank + 1);
+        const title = String(opt.label || '主动能力').split(' · ').slice(-1)[0];
+        const accent = this._resolveCharColor(cid, activeSide);
+        const rect = this.charRects.get(this._characterKey(cid, activeSide));
+        const sigilW = Math.max(108, Math.min(148, title.length * 12 + 32));
+        const anchorX = rect
+          ? (activeSide === 1 ? Math.min(arenaX - 6, rect.x + rect.w + 4) : Math.max(arenaX + arenaW - sigilW + 6, rect.x - sigilW - 4))
+          : (activeSide === 1 ? arenaX - sigilW - 8 : arenaX + arenaW + 8);
+        const anchorY = rect ? Math.max(58, Math.min(h - 180, rect.y + 8 + rank * 38)) : (120 + rank * 38);
+        const sigil = makeSealButton(`✦ ${title}`, {
+          width: sigilW,
+          height: 30,
+          accent,
+          solid: false,
+          fontSize: 12,
+          radius: 15,
+          onClick: () => {
+            this.audio.cardPlace();
+            this._sendAction('trigger_table_action', { option: idx });
+          },
+        });
+        sigil.position.set(Math.max(12, Math.min(w - sigilW - 12, anchorX)), anchorY);
+        this.controlsLayer.addChild(sigil);
+      });
+    }
   }
 
   _rebuildOverlay() {
@@ -3032,7 +3072,7 @@ export class GameDirector {
 
     if (this.rosterModal) {
       const m = this.rosterModal;
-      const cap = m.maxPerSide ?? 10;
+      const cap = m.maxPerSide ?? Infinity;
       const leaveSetup = !this.state.started && this.returnToLobby;
       const roomLobby = this.transport.isRoom ? {
         editableSides: this.state.editable_sides,
@@ -3041,8 +3081,6 @@ export class GameDirector {
         returnLabel: leaveSetup ? '返回大厅' : null,
         sideNames: this.state.bot_side ? { 1: '我的角色', 2: this.state.challenge ? '挑战对手' : '电脑对手' } : null,
         openTeams: Boolean(this.state.bot_side),
-        quantity: m.quantity,
-        quantityInput: m.quantityInput,
       } : this.state.open_rosters ? {
         editableSides: this.state.challenge ? [1] : [1, 2],
         title: this.state.challenge || '单人对战',
@@ -3118,13 +3156,7 @@ export class GameDirector {
           const idx = own.indexOf(cid);
           if (roomLobby?.openTeams) {
             const slot = `team${m.assignSide}`;
-            try {
-              m[slot] = own.concat(Array(m.quantity).fill(cid));
-            } catch (error) {
-              if (!(error instanceof RangeError)) throw error;
-              this.showToast('当前浏览器无法分配这么多出战位置。', INK.gold, 2.5);
-              return;
-            }
+            m[slot] = own.concat([cid]);
           }
           else if (idx >= 0) own.splice(idx, 1);
           else if (roomLobby) {
@@ -3393,9 +3425,7 @@ export class GameDirector {
       assignSide: room?.side || 1,
       hoveredChar: catalog.find((c) => c.id === (room?.side === 2 ? t2[0] : t1[0])) || catalog[0] || null,
       factionFilter: null,
-      maxPerSide: room?.bot_side ? Infinity : room ? 1 : Math.max(10, t1.length, t2.length),
-      quantity: 1,
-      quantityInput: null,
+      maxPerSide: room && !room.bot_side ? 1 : Infinity,
       galleryScrollY: 0,
       inspectScrollY: 0,
       galleryMaxScroll: 0,

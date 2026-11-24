@@ -180,6 +180,92 @@
               }
             }
           ]
+        },
+        {
+          "name": "深秋工作室",
+          "description": "回合开始至声称置卡结束时期，选择触发：\n1. 获得2护盾\n2. 为1张已置卡赋予+1远程等级\n3. 为1张已置卡提升1级骰子等级\n4. 本回合+1交锋并+1费用",
+          "entries": []
+        }
+      ],
+      "actions": [
+        {
+          "id": "lan_qing_autumn_studio",
+          "name": "深秋工作室",
+          "window": "placement",
+          "target": "self",
+          "per_turn": 1,
+          "operation": {
+            "op": "program",
+            "code": [
+              {
+                "literal": {
+                  "title": "深秋工作室",
+                  "description": "回合开始至声称置卡结束时期，选择触发一项：",
+                  "optional": false,
+                  "options": [
+                    {
+                      "id": "shield",
+                      "label": "获得 2 护盾",
+                      "description": "自身获得 2 点普通护盾。",
+                      "then": {"op": "program", "code": ["$self", "normal", 2, "SHIELD"]}
+                    },
+                    {
+                      "id": "range",
+                      "label": "已置卡 +1 远程",
+                      "description": "为 1 张已置卡赋予 +1 远程等级。",
+                      "then": {
+                        "op": "program",
+                        "code": [
+                          "BOARD_SLOTS", ["$event.item", "$player.side", "SLOT_CARDS"], "MAP", "FLATTEN",
+                          ["$event.item.destroyed", "NOT", "$event.item.character.is_alive", "AND"], "FILTER",
+                          {
+                            "literal": {
+                              "optional": false,
+                              "then": {
+                                "op": "program",
+                                "code": [
+                                  "$event.chosen_card", "range_bonus",
+                                  "$event.chosen_card.use_state", "range_bonus", 0, "LOOKUP", 1, "ADD",
+                                  "SET_SKILL_STATE"
+                                ]
+                              }
+                            }
+                          },
+                          "CHOOSE_CARD"
+                        ]
+                      }
+                    },
+                    {
+                      "id": "level",
+                      "label": "已置卡 +1 骰级",
+                      "description": "为 1 张已置卡提升 1 级骰子等级。",
+                      "then": {
+                        "op": "program",
+                        "code": [
+                          "BOARD_SLOTS", ["$event.item", "$player.side", "SLOT_CARDS"], "MAP", "FLATTEN",
+                          ["$event.item.destroyed", "NOT", "$event.item.character.is_alive", "AND"], "FILTER",
+                          {
+                            "literal": {
+                              "optional": false,
+                              "then": {"op": "program", "code": ["$event.chosen_card", 1, "SKILL_LEVEL_ADD"]}
+                            }
+                          },
+                          "CHOOSE_CARD"
+                        ]
+                      }
+                    },
+                    {
+                      "id": "duel_cost",
+                      "label": "+1 交锋 · +1 费用",
+                      "description": "本回合 +1 交锋并 +1 费用。",
+                      "then": {"op": "program", "code": ["$self", 1, "TURN_DUELS_ADD", "$player", 1, "TURN_COST_ADD"]}
+                    }
+                  ]
+                }
+              },
+              "CHOOSE_OPTION"
+            ]
+          }
         }
       ],
       "skills": [

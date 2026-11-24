@@ -1496,9 +1496,12 @@ export function buildEffectChoice(w, h, {
   root.on('pointertap', (event) => event.stopPropagation());
   const theme = SIDE_THEME[side];
   const isSlot = choice.selection === 'slot';
-  const task = isSlot ? '选择交锋' : choice.selection === 'hand' ? '选择手牌' : '选择技能';
-  const candidates = options.map((option, index) => ({ option, index })).filter(({ option }) => option.kind !== 'decline_card');
-  const decline = options.findIndex((option) => option.kind === 'decline_card');
+  const isOption = choice.selection === 'option';
+  const task = isOption ? '选择效果' : isSlot ? '选择交锋' : choice.selection === 'hand' ? '选择手牌' : '选择技能';
+  const candidates = options
+    .map((option, index) => ({ option, index }))
+    .filter(({ option }) => option.kind !== 'decline_card' && option.kind !== 'decline_option');
+  const decline = options.findIndex((option) => option.kind === 'decline_card' || option.kind === 'decline_option');
   const gap = 12;
   const panelW = Math.min(w - 24, 1060);
   const innerW = panelW - 32;
@@ -1506,14 +1509,15 @@ export function buildEffectChoice(w, h, {
   const heading = choiceText(title, 16, theme.accent, innerW, true);
   const description = choiceText(choice.description || '', 13, INK.primary, innerW);
   const headerH = 19 + heading.height + (choice.description ? description.height + 4 : 0);
-  const cardW = isSlot ? 164 : Math.min(202, Math.max(144, Math.floor(w * 0.19)));
+  const cardW = isOption ? Math.min(230, Math.max(168, Math.floor((innerW - gap * Math.max(0, candidates.length - 1)) / Math.max(1, Math.min(4, candidates.length)))))
+    : isSlot ? 164 : Math.min(202, Math.max(144, Math.floor(w * 0.19)));
   const perPage = Math.max(1, Math.floor((innerW + gap) / (cardW + gap)));
   const pages = Math.max(1, Math.ceil(candidates.length / perPage));
   const footerH = w < 520 && pages > 1 ? 86 : 48;
   const roomForCard = h - safeTop - headerH - footerH - 22;
   const compact = roomForCard < 188;
-  const captionH = onReady || isSlot || compact ? 0 : 44;
-  const faceH = onReady ? 0 : isSlot ? 46
+  const captionH = onReady || isSlot || isOption || compact ? 0 : 44;
+  const faceH = onReady ? 0 : isOption ? 94 : isSlot ? 46
     : Math.max(48, Math.min(compact ? 78 : 244, roomForCard - captionH));
   const panelH = headerH + faceH + captionH + footerH + 12;
   const panelX = (w - panelW) / 2;
@@ -1606,7 +1610,21 @@ export function buildEffectChoice(w, h, {
       item.hitArea = new PIXI.Rectangle(0, 0, cardW, faceH + captionH);
       body.addChild(item);
       const known = card && !card.hidden;
-      if (isSlot) {
+      if (isOption) {
+        const surface = new PIXI.Graphics().roundRect(0, 0, cardW, faceH, 8)
+          .fill(INK.paperSoft).stroke({ width: 1.35, color: theme.border });
+        surface.roundRect(1, 1, cardW - 2, 4, 3).fill({ color: theme.accent, alpha: 0.85 });
+        const optTitle = choiceText(option.label, 13.5, theme.accent, cardW - 20, true);
+        optTitle.anchor.set(0.5, 0);
+        optTitle.position.set(cardW / 2, option.description ? 14 : Math.round((faceH - optTitle.height) / 2));
+        item.addChild(surface, optTitle);
+        if (option.description) {
+          const optDesc = choiceText(option.description, 11.5, INK.primary, cardW - 20, false);
+          optDesc.anchor.set(0.5, 0);
+          optDesc.position.set(cardW / 2, 18 + optTitle.height);
+          item.addChild(optDesc);
+        }
+      } else if (isSlot) {
         const targetLabel = choiceText(option.label, 13, theme.accent, cardW - 14, true);
         const slot = new PIXI.Graphics().roundRect(0, 0, cardW, faceH, 6)
           .fill(INK.paperSoft).stroke({ width: 1, color: theme.border });
@@ -1761,16 +1779,14 @@ export function buildRosterOverlay(w, h, {
     ? Math.max(10, team1.length, team2.length)
     : Math.max(1, maxPerSide, team1.length, team2.length);
 
-  // ── 1. TOP CONFRONTATIONAL VS SQUAD FORMATION STAGE (1v1 / 3v3 / 5v5 / 10v10+ SCALABLE!) ──
+  // ── 1. TOP CONFRONTATIONAL VS SQUAD FORMATION STAGE (Clean Organic Pedestals, ZERO Preset/Batch Clutter!) ──
   const topY = 12;
-  const topH = 132;
-  const centerW = 208;
+  const topH = 122;
+  const centerW = 196;
   const wingW = Math.floor((w - pad * 2 - centerW - 22) / 2);
 
   const wingsHost = new PIXI.Container();
   root.addChild(wingsHost);
-  const presetHost = new PIXI.Container();
-  root.addChild(presetHost);
 
   function bindOccupiedSlot(slot, removeIcon, iconX, iconY, side, ch, editable) {
     const remove = () => onRemoveFromSide ? onRemoveFromSide(side, ch.id) : onToggleChar(ch.id);
@@ -1818,7 +1834,7 @@ export function buildRosterOverlay(w, h, {
         bg: isEditing ? t.warmTint : INK.paper,
         radius: 12,
         edgeDepth: 3,
-        shadowAlpha: isEditing ? 0.28 : 0.16,
+        shadowAlpha: isEditing ? 0.28 : 0.14,
         topRibbonH: 25,
         ribbonFill: isEditing ? t.softBg : INK.paperSoft,
         cornerDiamonds: true,
@@ -1826,24 +1842,23 @@ export function buildRosterOverlay(w, h, {
       });
       wing.addChild(wg);
 
-      const capLabel = isUnlimited ? `${list.length}人` : `${list.length}/${activeCap}`;
       const wTitle = new PIXI.Text({
-        text: `${sideName} · ${capLabel}`,
+        text: list.length ? `${sideName} · ${list.length}人` : sideName,
         style: { fontFamily: FONT_UI, fontSize: 12.2, fontWeight: '900', fill: t.accent },
       });
       wTitle.position.set(side === 1 ? 14 : wingW - 14 - wTitle.width, 5);
       wing.addChild(wTitle);
 
-      if (openTeams && editable && list.length) {
+      if (editable && list.length && onClearSide) {
         const clearButton = makeSealButton('清空', {
-          width: 42, height: 20, fontSize: 10, radius: 5, accent: t.accent,
+          width: 42, height: 19, fontSize: 10, radius: 5, accent: INK.secondary,
           onClick: () => onClearSide(side),
         });
-        clearButton.position.set(side === 1 ? wingW - 57 : 14, 3);
+        clearButton.position.set(side === 1 ? wingW - 56 : 14, 3);
         wing.addChild(clearButton);
       } else if (isEditing && editable) {
         const edTxt = new PIXI.Text({
-          text: '◆ 当前编队',
+          text: '◆ 正在编队',
           style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '800', fill: INK.goldDeep },
         });
         edTxt.position.set(side === 1 ? wingW - 14 - edTxt.width : 14, 6);
@@ -1859,81 +1874,80 @@ export function buildRosterOverlay(w, h, {
         });
       }
 
-      // Dynamic Formation Rack Geometry:
-      // - displayCount <= 5: single lush row of living pedestals
-      // - 6 <= displayCount <= 10: 2-row x 5-col compact tactical formation (ALL 10 visible at once!)
-      // - displayCount > 10: 2-row horizontal scrollable formation rack with draggable scrollbar!
-      const displayCount = openTeams ? Math.max(1, displayed.length) : Math.max(list.length, activeCap);
+      // Organic Dynamic Squad Rack:
+      //  - 0 picked: single clean invitation zone
+      //  - 1..5 picked: spacious horizontal living pedestals (centered/anchored cleanly, no 10 empty boxes!)
+      //  - 6+ picked: compact 2-row tactical formation rack
       const rackX = 10;
       const rackY = 30;
       const rackW = wingW - 20;
       const rackH = topH - 36;
 
-      if (displayCount <= 5) {
-        const slotGap = 7;
-        const slotW = Math.floor((rackW - slotGap * (displayCount - 1)) / displayCount);
+      if (displayed.length === 0) {
+        const emptyG = new PIXI.Graphics();
+        emptyG.roundRect(rackX, rackY, rackW, rackH - 2, 9)
+          .fill({ color: INK.paperSoft, alpha: isEditing ? 0.85 : 0.55 })
+          .stroke({ width: isEditing ? 1.4 : 1.0, color: isEditing ? t.border : INK.line, alpha: 0.85 });
+        wing.addChild(emptyG);
+        const hint = new PIXI.Text({
+          text: isEditing ? '点击下方角色加入编队' : '点击此处切换至本方编队',
+          style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: isEditing ? t.accent : INK.muted },
+        });
+        hint.anchor.set(0.5);
+        hint.position.set(rackX + rackW / 2, rackY + (rackH - 2) / 2);
+        wing.addChild(hint);
+      } else if (displayed.length <= 5) {
+        const slotGap = 8;
+        const maxCardW = Math.min(132, Math.floor((rackW - slotGap * Math.max(0, displayed.length - 1)) / displayed.length));
+        const slotW = Math.max(76, maxCardW);
         const slotH = rackH - 2;
-        for (let i = 0; i < displayCount; i++) {
-          const visualIdx = side === 1 ? i : displayCount - 1 - i;
-          const sx = rackX + visualIdx * (slotW + slotGap);
+        const totalRowW = displayed.length * slotW + (displayed.length - 1) * slotGap;
+        const startX = side === 1 ? rackX : (rackX + rackW - totalRowW);
+
+        for (let i = 0; i < displayed.length; i++) {
+          const visualIdx = side === 1 ? i : displayed.length - 1 - i;
+          const sx = startX + visualIdx * (slotW + slotGap);
           const cid = displayed[i];
-          const ch = cid ? charById.get(cid) : null;
+          const ch = charById.get(cid);
+          if (!ch) continue;
           const slot = new PIXI.Container();
           slot.position.set(sx, rackY);
 
           const sg = new PIXI.Graphics();
-          if (ch) {
-            const pal = actorPalette(ch, side);
-            sg.roundRect(0, 0, slotW, slotH, 9)
-              .fill({ color: pal.highlight })
-              .stroke({ width: 1.6, color: t.accent });
-            sg.ellipse(slotW / 2, slotH - 22, Math.min(36, slotW * 0.34), 7)
-              .fill({ color: INK.paper, alpha: 0.78 })
-              .stroke({ width: 0.9, color: pal.primary, alpha: 0.35 });
-            slot.addChild(sg);
+          const pal = actorPalette(ch, side);
+          sg.roundRect(0, 0, slotW, slotH, 9)
+            .fill({ color: pal.highlight })
+            .stroke({ width: 1.6, color: t.accent });
+          sg.ellipse(slotW / 2, slotH - 20, Math.min(34, slotW * 0.34), 6.5)
+            .fill({ color: INK.paper, alpha: 0.78 })
+            .stroke({ width: 0.9, color: pal.primary, alpha: 0.35 });
+          slot.addChild(sg);
 
-            const rad = Math.min(22, Math.max(15, Math.floor(slotW * 0.22)));
-            const actor = createCharacterActor(ch, side, { radius: rad });
-            actor.position.set(slotW / 2, Math.round(slotH * 0.42));
-            slot.addChild(actor);
-            wingActors.push({ actor, ch });
+          const rad = Math.min(20, Math.max(14, Math.floor(slotW * 0.21)));
+          const actor = createCharacterActor(ch, side, { radius: rad });
+          actor.position.set(slotW / 2, Math.round(slotH * 0.42));
+          slot.addChild(actor);
+          wingActors.push({ actor, ch });
 
-            const nm = new PIXI.Text({
-              text: grouped ? `${ch.name} ×${counts.get(cid)}` : ch.name,
-              style: { fontFamily: FONT_UI, fontSize: slotW < 92 || ch.name.length > 4 ? 10.2 : 11.5, fontWeight: '800', fill: INK.strong },
-            });
-            nm.anchor.set(0.5);
-            nm.position.set(slotW / 2, slotH - 11);
-            slot.addChild(nm);
+          const nm = new PIXI.Text({
+            text: grouped ? `${ch.name} ×${counts.get(cid)}` : ch.name,
+            style: { fontFamily: FONT_UI, fontSize: slotW < 92 || ch.name.length > 4 ? 10.2 : 11.5, fontWeight: '800', fill: INK.strong },
+          });
+          nm.anchor.set(0.5);
+          nm.position.set(slotW / 2, slotH - 10);
+          slot.addChild(nm);
 
-            const rx = side === 1 ? slotW - 11 : 11;
-            const rmBg = new PIXI.Graphics();
-            rmBg.circle(rx, 11, 7).fill({ color: INK.paper, alpha: 0.94 }).stroke({ width: 1.1, color: INK.secondary, alpha: 0.65 });
-            rmBg.moveTo(rx - 2.8, 8.2).lineTo(rx + 2.8, 13.8).stroke({ width: 1.4, color: 0xcf4932 });
-            rmBg.moveTo(rx + 2.8, 8.2).lineTo(rx - 2.8, 13.8).stroke({ width: 1.4, color: 0xcf4932 });
-            bindOccupiedSlot(slot, rmBg, rx, 11, side, ch, editable);
-          } else {
-            sg.roundRect(0, 0, slotW, slotH, 9)
-              .fill({ color: INK.paperSoft, alpha: 0.78 })
-              .stroke({ width: 1.1, color: isEditing ? t.border : INK.line, alpha: 0.8 });
-            sg.moveTo(slotW / 2 - 6, slotH / 2 - 4).lineTo(slotW / 2 + 6, slotH / 2 - 4)
-              .stroke({ width: 1.6, color: INK.muted, alpha: 0.65 });
-            sg.moveTo(slotW / 2, slotH / 2 - 10).lineTo(slotW / 2, slotH / 2 + 2)
-              .stroke({ width: 1.6, color: INK.muted, alpha: 0.65 });
-            slot.addChild(sg);
-
-            const idxTxt = new PIXI.Text({
-              text: roomLobby?.title && !list.length && i === 0 ? '选角色后点编入' : `${i + 1}号位`,
-              style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '700', fill: INK.muted },
-            });
-            idxTxt.anchor.set(0.5);
-            idxTxt.position.set(slotW / 2, slotH - 12);
-            slot.addChild(idxTxt);
-          }
+          const rx = side === 1 ? slotW - 11 : 11;
+          const rmBg = new PIXI.Graphics();
+          rmBg.circle(rx, 11, 7).fill({ color: INK.paper, alpha: 0.94 }).stroke({ width: 1.1, color: INK.secondary, alpha: 0.65 });
+          rmBg.moveTo(rx - 2.8, 8.2).lineTo(rx + 2.8, 13.8).stroke({ width: 1.4, color: 0xcf4932 });
+          rmBg.moveTo(rx + 2.8, 8.2).lineTo(rx - 2.8, 13.8).stroke({ width: 1.4, color: 0xcf4932 });
+          bindOccupiedSlot(slot, rmBg, rx, 11, side, ch, editable);
           wing.addChild(slot);
         }
       } else {
-        // 6..10+ Compact 2-Row Tactical Formation Rack (with horizontal scroll if >10!)
+        // 6+ Compact 2-Row Tactical Formation Rack
+        const displayCount = displayed.length;
         const rows = 2;
         const colsPerView = 5;
         const totalCols = Math.ceil(displayCount / rows);
@@ -1960,61 +1974,49 @@ export function buildRosterOverlay(w, h, {
           const sx = c * (cellW + gapX);
           const sy = r * (cellH + gapY);
           const cid = displayed[i];
-          const ch = cid ? charById.get(cid) : null;
+          const ch = charById.get(cid);
+          if (!ch) continue;
 
           const slot = new PIXI.Container();
           slot.position.set(sx, sy);
           const sg = new PIXI.Graphics();
-          if (ch) {
-            const pal = actorPalette(ch, side);
-            sg.roundRect(0, 0, cellW, cellH, 7)
-              .fill({ color: pal.highlight })
-              .stroke({ width: 1.4, color: t.accent });
-            sg.circle(17, cellH / 2, 12).fill({ color: INK.paper, alpha: 0.85 })
-              .stroke({ width: 1, color: pal.primary, alpha: 0.5 });
-            slot.addChild(sg);
+          const pal = actorPalette(ch, side);
+          sg.roundRect(0, 0, cellW, cellH, 7)
+            .fill({ color: pal.highlight })
+            .stroke({ width: 1.4, color: t.accent });
+          sg.circle(17, cellH / 2, 12).fill({ color: INK.paper, alpha: 0.85 })
+            .stroke({ width: 1, color: pal.primary, alpha: 0.5 });
+          slot.addChild(sg);
 
-            const miniActor = createCharacterActor(ch, side, { radius: 11 });
-            miniActor.position.set(17, cellH / 2 + 1);
-            slot.addChild(miniActor);
-            wingActors.push({ actor: miniActor, ch });
+          const miniActor = createCharacterActor(ch, side, { radius: 11 });
+          miniActor.position.set(17, cellH / 2 + 1);
+          slot.addChild(miniActor);
+          wingActors.push({ actor: miniActor, ch });
 
-            const shortName = ch.name.length > 4 ? `${ch.name.slice(0, 4)}` : ch.name;
-            const nm = new PIXI.Text({
-              text: shortName,
-              style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '800', fill: INK.strong },
-            });
-            nm.anchor.set(0, 0.5);
-            nm.position.set(32, cellH / 2 - 5);
-            slot.addChild(nm);
+          const shortName = ch.name.length > 4 ? `${ch.name.slice(0, 4)}` : ch.name;
+          const nm = new PIXI.Text({
+            text: shortName,
+            style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '800', fill: INK.strong },
+          });
+          nm.anchor.set(0, 0.5);
+          nm.position.set(32, cellH / 2 - 4);
+          slot.addChild(nm);
 
+          if (grouped) {
             const idxTag = new PIXI.Text({
-              text: grouped ? `×${counts.get(cid)}` : `#${i + 1}`,
+              text: `×${counts.get(cid)}`,
               style: { fontFamily: FONT_NUM, fontSize: 9.2, fontWeight: '800', fill: t.accent },
             });
             idxTag.anchor.set(0, 0.5);
             idxTag.position.set(32, cellH / 2 + 8);
             slot.addChild(idxTag);
-
-            const rmBg = new PIXI.Graphics();
-            rmBg.circle(cellW - 9, 9, 5.5).fill({ color: INK.paper, alpha: 0.92 }).stroke({ width: 0.9, color: INK.secondary, alpha: 0.6 });
-            rmBg.moveTo(cellW - 11.2, 6.8).lineTo(cellW - 6.8, 11.2).stroke({ width: 1.2, color: 0xcf4932 });
-            rmBg.moveTo(cellW - 6.8, 6.8).lineTo(cellW - 11.2, 11.2).stroke({ width: 1.2, color: 0xcf4932 });
-            bindOccupiedSlot(slot, rmBg, cellW - 9, 9, side, ch, editable);
-          } else {
-            sg.roundRect(0, 0, cellW, cellH, 7)
-              .fill({ color: INK.paperSoft, alpha: 0.72 })
-              .stroke({ width: 0.95, color: isEditing ? t.border : INK.line, alpha: 0.72 });
-            slot.addChild(sg);
-
-            const idxTxt = new PIXI.Text({
-              text: `+ ${i + 1}`,
-              style: { fontFamily: FONT_NUM, fontSize: 10.2, fontWeight: '800', fill: INK.muted },
-            });
-            idxTxt.anchor.set(0.5);
-            idxTxt.position.set(cellW / 2, cellH / 2);
-            slot.addChild(idxTxt);
           }
+
+          const rmBg = new PIXI.Graphics();
+          rmBg.circle(cellW - 9, 9, 5.5).fill({ color: INK.paper, alpha: 0.92 }).stroke({ width: 0.9, color: INK.secondary, alpha: 0.6 });
+          rmBg.moveTo(cellW - 11.2, 6.8).lineTo(cellW - 6.8, 11.2).stroke({ width: 1.2, color: 0xcf4932 });
+          rmBg.moveTo(cellW - 6.8, 6.8).lineTo(cellW - 11.2, 11.2).stroke({ width: 1.2, color: 0xcf4932 });
+          bindOccupiedSlot(slot, rmBg, cellW - 9, 9, side, ch, editable);
           rackBody.addChild(slot);
         }
 
@@ -2041,94 +2043,38 @@ export function buildRosterOverlay(w, h, {
     syncLiveActors();
   };
 
-  // Center VS Crest + Preset Scale Pills (1v1 / 3v3 / 5v5 / 10v10) + Start / Cancel Seals
+  // Clean Center VS Medallion + Start / Cancel Seals (ZERO 1v1/3v3/5v5 or batch ×N clutter!)
   const cx = w / 2;
   const vsG = new PIXI.Graphics();
   if (!roomLobby?.title) {
-    drawHeraldicCompass(vsG, cx, topY + 20, 20, INK.gold, INK.line);
-    drawLightStar(vsG, cx, topY + 20, 15, INK.gold, 0.92);
+    drawHeraldicCompass(vsG, cx, topY + 24, 22, INK.gold, INK.line);
+    drawLightStar(vsG, cx, topY + 24, 16, INK.gold, 0.92);
   }
   root.addChild(vsG);
   const vsTxt = new PIXI.Text({
     text: roomLobby?.title || 'VS',
-    style: { fontFamily: roomLobby?.title ? FONT_UI : FONT_NUM, fontSize: roomLobby?.title ? 18 : 13.5,
+    style: { fontFamily: roomLobby?.title ? FONT_UI : FONT_NUM, fontSize: roomLobby?.title ? 17 : 14,
       fontWeight: '900', fill: INK.strong, letterSpacing: 1 },
   });
   vsTxt.anchor.set(0.5);
-  vsTxt.position.set(cx, topY + 20);
+  vsTxt.position.set(cx, topY + 24);
   root.addChild(vsTxt);
 
-  const renderPresets = () => {
-    const oldPresets = presetHost.removeChildren();
-    for (const child of oldPresets) child.destroy({ children: true });
-    if (openTeams) {
-      const quickCounts = [1, 2, 3, 4, 5];
-      const startX = cx - 102;
-      for (const count of quickCounts) {
-        const selected = roomLobby.quantity === count && roomLobby.quantityInput == null;
-        const button = makeSealButton(String(count), {
-          width: 22, height: 22, fontSize: 10.2, radius: 5, accent: INK.gold, solid: selected,
-          onClick: () => onQuantity(count),
-        });
-        button.position.set(startX + (count - 1) * 25, topY + 42);
-        presetHost.addChild(button);
-      }
-      const editing = roomLobby.quantityInput != null;
-      const batchText = editing ? `${roomLobby.quantityInput.slice(-9) || '数量'}▏` : `批量 ×${roomLobby.quantity}`;
-      const batchButton = makeSealButton(batchText, {
-        width: 80, height: 22, fontSize: 10.2, radius: 5, accent: INK.gold, solid: editing,
-        onClick: () => onQuantity(null),
-      });
-      batchButton.position.set(startX + 125, topY + 42);
-      presetHost.addChild(batchButton);
-      return;
-    }
-    if (roomLobby) return;
-    const pillGap = 4;
-    const pillW = 46;
-    const totalPW = ROSTER_PRESETS.length * pillW + (ROSTER_PRESETS.length - 1) * pillGap;
-    const startPX = cx - totalPW / 2;
-    ROSTER_PRESETS.forEach((n, idx) => {
-      const isAct = activeCap === n;
-      const pBtn = makeSealButton(`${n}v${n}`, {
-        width: pillW,
-        height: 22,
-        accent: isAct ? INK.gold : INK.secondary,
-        fill: INK.paperSoft,
-        solid: isAct,
-        fontSize: 10.2,
-        radius: 6,
-        onClick: () => {
-          activeCap = Math.max(n, team1.length, team2.length);
-          if (onSetMaxPerSide) {
-            onSetMaxPerSide(n);
-          } else {
-            renderPresets();
-            renderWingRacks();
-          }
-        },
-      });
-      pBtn.position.set(startPX + idx * (pillW + pillGap), topY + 41);
-      presetHost.addChild(pBtn);
-    });
-  };
-
-  renderPresets();
   renderWingRacks();
 
   const valid = team1.length >= 1 && team2.length >= 1;
   const startLabel = roomLobby?.sideNames ? '开战' : roomLobby ? '准备' : '开始对局';
   const startBtn = makeSealButton(startLabel, {
-    width: 164, height: 36, accent: valid ? 0x1c8a64 : INK.muted, solid: valid, disabled: !valid, fontSize: 14, radius: 18,
+    width: 164, height: 38, accent: valid ? 0x1c8a64 : INK.muted, solid: valid, disabled: !valid, fontSize: 14.5, radius: 19,
     onClick: () => onStart([team1.slice(), team2.slice()]),
   });
-  startBtn.position.set(cx - 82, topY + 69);
+  startBtn.position.set(cx - 82, topY + 52);
   root.addChild(startBtn);
 
   const cancelBtn = makeSealButton(roomLobby?.returnLabel || '返回', {
     width: 106, height: 24, accent: INK.secondary, fontSize: 11.2, radius: 12, onClick: onCancel,
   });
-  cancelBtn.position.set(cx - 53, topY + 109);
+  cancelBtn.position.set(cx - 53, topY + 96);
   root.addChild(cancelBtn);
 
   // ── 2. LEFT HALF: INFINITE-ROSTER FACTION RIBBON + O(1) SMOOTH PORTRAIT GALLERY ──
@@ -2299,12 +2245,11 @@ export function buildRosterOverlay(w, h, {
       card.addChild(rTxt);
     }
 
-    // Team ownership wax ribbon (top-right, scales to #10, #12, etc.)
+    // Team ownership wax ribbon (top-right)
     if (ownerSide) {
-      const slotNum = (ownerSide === 1 ? in1 : in2) + 1;
-      const badgeLabel = openTeams
-        ? `P${ownerSide}×${teamCounts[ownerSide - 1].get(char.id)}` : `P${ownerSide}#${slotNum}`;
-      const bw = Math.max(42, badgeLabel.length * 7.5 + 12);
+      const cnt = teamCounts[ownerSide - 1].get(char.id);
+      const badgeLabel = openTeams && cnt > 1 ? `P${ownerSide}×${cnt}` : `P${ownerSide}`;
+      const bw = Math.max(34, badgeLabel.length * 8 + 12);
       const tg = new PIXI.Graphics();
       tg.roundRect(cellW - bw - 5, 6, bw, 18, 5).fill({ color: SIDE_THEME[ownerSide].accent });
       card.addChild(tg);
@@ -2493,11 +2438,13 @@ export function buildRosterOverlay(w, h, {
     const activeName = roomLobby?.sideNames?.[assignSide] || activeTheme.name;
     const inActive = (assignSide === 1 ? in1 : in2) >= 0;
     const inOther = (assignSide === 1 ? in2 : in1) >= 0;
-    const actLabel = openTeams ? `编入 ×${roomLobby.quantity}` : inActive
-      ? `移出${activeName}`
-      : inOther && !(onInspectChar && target.mirror_allowed)
-        ? `调入${activeName}`
-        : `+ 编入${activeName}`;
+    const actLabel = openTeams
+      ? `+ 编入${activeName}`
+      : inActive
+        ? `移出${activeName}`
+        : inOther && !(onInspectChar && target.mirror_allowed)
+          ? `调入${activeName}`
+          : `+ 编入${activeName}`;
     if ((!roomLobby || roomLobby.editableSides.includes(assignSide)) && !roomLobby?.lockedIds?.includes(target.id)) {
       const actBtn = makeSealButton(actLabel, {
         width: 118,

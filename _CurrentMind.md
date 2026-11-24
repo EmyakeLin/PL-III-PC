@@ -49,6 +49,29 @@
 - [角色专测](tests/test_emyake.py) 共 22 项，全数通过。完整入口 `python -m unittest tests.entry_semantics` 为 202/203；改动前基线为 180/181。两次均只有林秋「分界」的实体候选集断言失败。另行对照的六组历史模块共 64 项，改动前后失败的 33 个用例相同。三个调整过的桌面对战 JavaScript 模块通过语法检查。
 - 本次实现复用了工作区已有的选择暂停。该功能在验收时仍是另一项未提交改动；单独移植林羽提交时需要同时具备这项依赖。
 
+## WAA东部4科三人卡包移植到新版（2026-11-24）
+
+- **已确认文义与迁移范围**：
+  - 在不改动任何内核文件的前提下，将 `_packs_legacy/waa_east_four.json` 完整移植至新版 `_packs/waa_east_four.json`（阵营 `WAA东部四科`，含莱克 `waa_lake`、格罗琳娜 `waa_grolina`、厄尔克斯 `waa_erkes`，各 3 张技能），补齐 `充能`、`纯能`、`能源封印` 三项 `status_rules` 与 `polarity`，并统一全部词条 `description` 为 `【触发器】` 及 `{N}点{等级}伤害` 规范格式。
+- **执行路径迁移要点**：
+  - 阵营被动「WAA东部四科」的 `on_hand_changed` 使用 `$event.previous_count` / `$event.hand_count` 与 `$player.characters` 筛选存活友方施加 `充能`；`能源封印` 的 `BEFORE SPEND_STATUS` 保留 `["POP", 0]` 以维持封印阻止消耗时返回 `0`（而非取消为 `None`）的原有语义。
+  - 莱克「突击」与格罗琳娜「推进输出」分别通过 `0 DUEL_OFFSET 1 null LOOKUP 0 EQ` / `0 GT` 与 `$player "lose" -1 DUEL_OFFSET CLASH_COUNT 0 EQ` 精确识别当前交锋序列的首场与上一交锋拼点失败数（开牌前与常规互不混算）；「应变」使用 `CLASH_COUNT` 统计本回合胜场。
+  - 格罗琳娜「快速行动」与「阻滞」使用 `$player.speed` 与 `$player OPPONENT {"field":"speed"}` 比较速度；「借机」使用显式 `ADD_DAMAGE_MODIFIER` 与 `SPEND_STATUS` 回执；全部延迟施加（`QUEUE_STATUS` / `NEXT_TEAM_STATUS`）改写为标准 `schedule`（`on_turn_prepared`）。
+  - 厄尔克斯「自发增压武器」使用 `$event.damage_status` / `$event.target $self IS` 与 `$pending.amount`；「武器增压迸发」通过卡面隐藏的 `AFTER SPEND_STATUS` 词条累计本技能实际消耗的 `充能` 至 `$owner.use_state["spent_charge"]` 供第二骰读取，并通过 `on_dice_use` 登记 `burst_repeats` 控制末骰至多重复 3 次。
+- **验证结果**：
+  - 新增专测 `tests/test_waa_east_four.py`（5 项）并接入 `tests/entry_semantics.py`，`tests.test_waa_east_four`（5/5）与 `tests.test_displayer`（12/12）全部通过；`tests.entry_semantics` 180/181 通过（唯一失败项仍为改动前工作区既有的 `test_boundary_declares_candidates_and_revalidates_the_chosen_physical_card`）。
+
+## 统一决策原语 CHOOSE_OPTION 与选角色界面重设计（2026-11-24）
+
+- **统一内核决策原语 `PromptDecision` + `OpCode.CHOOSE_OPTION`**（`models/opcode.py`、`models/opcodes.py`、`models/special_actions.py`、`game.py`）：
+  - 新增 `PromptOption`、`PromptDecision` 与 `OpCode.CHOOSE_OPTION`，与 `CHOOSE_CARD` / `CHOOSE_SLOT` 共用同一条 `decision_owner` 挂起与续体执行机制，支持任意词条在任意时点或主动动作中弹出多分支选项，并可在分支 `then` 内继续链式嵌套 `CHOOSE_CARD` / `CHOOSE_OPTION`（无需为单个功能在底层加特例字段）。
+  - 顶层桥接（`displayer.py`、`battle_ui/match.py`、`battle_ui/session.py`）将 `option_decision` 统一投影为 `effect_choice.selection = "option"`，并在开放阶段（置卡/开牌前）投影 `table_actions` 供前端在角色旁挂载主动印章，通过 `trigger_table_action` 一键触发。
+  - 前端 `table_overlays.js`（`buildEffectChoice`）新增 `selection === "option"` 纯分支选项卡片渲染；`game_director.js` 在角色旁渲染开放窗口的主动能力印章。
+- **澜清被动「深秋工作室」**（`_packs/jingzhi_lan_qing.json`）：
+  - 以单条声明式主动入口动作 `lan_qing_autumn_studio`（`window: "placement"`, `target: "self"`, `per_turn: 1`）+ `CHOOSE_OPTION` 四选一实现：1. 获得 2 护盾；2. 链式 `CHOOSE_CARD` 为 1 张己方已置卡赋予 `range_bonus +1`；3. 链式 `CHOOSE_CARD` 为 1 张己方已置卡执行 `SKILL_LEVEL_ADD +1`；4. 本回合 `TURN_DUELS_ADD +1` 并 `TURN_COST_ADD +1`。
+- **选角色界面精简重设计**（`table_overlays.js`、`game_director.js`）：
+  - 移除 `1v1/3v3/5v5/10v10` 规模预设、`1~5 / 批量×N / 编入×1` 批量控件与 10 个空编号占位格，改为按实际已选人数自然排布的顶部编队台。
+
 ## 2.5D 活牌桌转正、开牌前交锋重做、扣置卡背与规则修正（2026-11-24）
 
 ### 已确认规则与内核修正
@@ -69,6 +92,20 @@
   - 保留严格队列阻塞（上一批骰子未自然消失不放下一批）、不穿模半径与静息高度、原版爆发式拼点对撞；以 `ENABLE_CLASH_Z_BOUNCE = false` 保留但禁用对撞 3D 纵深落地回弹分支（注释明确记录其为悬空与无限翻滚根源），并修复摧毁/跳过骰子补生成重影与拼后无限翻滚。
   - 按 DCC 严格对跖截球体（8 对平行圆形平面 + 光滑球面腰带）完成粗勾边三渲二风格化与单例缓存实装，替换原双八棱锥 d16。
 - **收尾清理**：前置安全存档提交 `6af94a8` 后，删除冗余目录 `battle_ui/static/mock_clash/` 与 `game_director.js` 中旧牌桌死代码（`preDuelPage`、`_combatRail`、`_duelScrollCtl`、`buildBoardCardTag` 等）。本次收口按作者要求未运行自动化测试，均经实机对战与代码路径核对。
+
+## PlanB S级条目·萨（焦黄风暴）卡包移植到新版（2026-11-24）
+
+- **已确认文义与迁移范围**：
+  - 将 `_packs_legacy/yellow_storm.json` 完整移植至新版 `_packs/yellow_storm.json`（角色 ID `plan_b_sa`，`PlanB` 阵营，`BOSS` 级，15 生命，7 张常规技能），保留全部 4 项专属状态（`崩析`/`崩裂`/`弥合`/`崩离`）、6 项被动（`S级条目`/`Plan B`/`焦黄风暴`/`弥合裂隙`/`狂暴毁灭`/`崩析灭除`）及 7 张技能牌与《正式规则书》中的反震、追伤、引爆优先级与回收裁定。
+  - 所有专属状态补齐 `polarity`（`崩析`/`崩裂`/`崩离` 为 `negative`，`弥合` 为 `positive`）；全部词条 `description` 统一规范为 `【触发器】` 标注与 `{N}点{等级}伤害` 格式；自定义直伤段（「闪进解离」末骰、「黄风漫天」首骰群伤）声明结构化 `damage_part` 以直读投影；纯内部状态/锁层/追伤辅助钩子标记 `hidden: true`。
+- **执行路径迁移要点**：
+  - 所有旧字段别名（`$original_max_hp`、`$in_turn_end`、`$damage_die_is_attack`、`$is_attack`、`$did_deal_damage`、`$target_alive`、`$printed_level`、`$enemies`、`$next_duel_target`、`$next_duel_enemy_skills`、`$skill_target` 等）全部改写为显式路径与集合指令（`$self.original_max_hp`、`$game.turn_ending`、`$event.die.is_attack`、`SLOT_AT_OFFSET` + `REMAINING_CARDS` + `FILTER` + `FIRST` + `CHARACTER_OF`、`SELECT_SKILL_TARGET` 等）。
+  - 旧 `when` 字典改为显式比较列表（含 `BEFORE STATUS` 中使用 `$pending.amount`）；旧 `QUEUE_STATUS` 改为标准 `schedule`（`on_turn_prepared`、`after_turns: 1`、`through_turns: 1`、`uses: 1`、`require_source_alive: false`、`require_target_alive: true`）。
+  - 旧 `DIE_STATE`/`SKILL_STATE` 改为 `$event.die.use_state` / `$owner.use_state` / `$event.card.use_state` + `LOOKUP`；旧 `USED_SKILL_THIS_TURN` 与 `FIND_SKILL` 改为 `SKILL_USE_COUNT` 与 `ZONE_CARDS` + `FILTER`（按 `character IS $self` 精确筛选）+ `FIRST`。
+  - 旧 `{"op": "damage", ..., "from_die": true}` 改为 `"credit": "die"`；旧 `{"op": "damage_add", "amount": 1}` 改为 `ADD_DAMAGE_MODIFIER`；无返回值调用 `ACTIVATE_STATUS` / `SPEND_STATUS` 直接执行不额外 `POP`，需要返回值时（「分崩离析」末骰）显式使用 `{"call": "ACTIVATE_STATUS", "result": "result", "default": false}`。
+- **验证结果**：
+  - 新增专测 `tests/test_plan_b_sa.py`（12 项）并接入 `tests/entry_semantics.py`，覆盖全卡包编译、四项状态边界与阈值对照、`S级条目`/`Plan B`/`弥合裂隙` 阈值对、全部 7 张技能牌、「闪进解离」跨交锋/无下一交锋追伤、「分崩离析」末骰引爆优先级与远程压制、以及「黄风漫天」高低崩析分支与组合回收正反对照。
+  - `tests.test_plan_b_sa`（12/12）与 `tests.test_displayer`（12/12，含全卡包结构化 `damage_parts` 与 `【触发器】` 全检）全部通过；`tests.entry_semantics` 175/176 通过（唯一失败项 `test_boundary_declares_candidates_and_revalidates_the_chosen_physical_card` 为改动前工作区既有未提交改动所致）。
 
 ## 流阴技能组打磨：逆流溯源触发条件与重打覆盖（2026-11-24）
 

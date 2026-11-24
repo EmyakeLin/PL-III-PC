@@ -5,6 +5,8 @@ Run with python -m unittest tests.entry_semantics.
 MODULES = (
     "tests.test_emyake",
     "tests.test_liu_yin",
+    "tests.test_plan_b_sa",
+    "tests.test_waa_east_four",
     "tests.test_carrier_challenge.CarrierTests",
     "tests.test_lan_qing",
     "tests.test_entry_authoring_contract",
