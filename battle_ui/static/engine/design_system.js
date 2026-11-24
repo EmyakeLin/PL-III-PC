@@ -1397,7 +1397,54 @@ export function buildUnifiedEntryPlate({
 }
 
 /**
- * Clean Architectural Horizontal Skill Strip (Cost Crystal + Name + Clean Die Range Chips).
+ * Structured Dual-Form resolver (ZERO text guessing — reads `dual_forms` / `forms` directly).
+ */
+export function resolveDualForms(card) {
+  if (!card) return null;
+  if (Array.isArray(card.dual_forms) && card.dual_forms.length >= 2) {
+    return card.dual_forms;
+  }
+  if (Array.isArray(card.forms) && card.forms.length >= 1) {
+    return [
+      {
+        ...card,
+        forms: [],
+        dual_forms: [],
+        form_key: null,
+        form_label: '常态',
+        is_active_form: card.active_form == null,
+      },
+      ...card.forms.map((f, i) => ({
+        ...f,
+        forms: [],
+        dual_forms: [],
+        form_key: f.form_key ?? `form_${i}`,
+        form_label: f.form_label || f.name || '第二形态',
+        is_active_form: card.active_form != null && card.active_form === f.form_key,
+      })),
+    ];
+  }
+  return null;
+}
+
+export function dualFormBadgeLabel(card) {
+  const forms = resolveDualForms(card);
+  if (!forms) return null;
+  const active = forms.find((f) => f.is_active_form) || forms[0];
+  const other = forms.find((f) => f !== active) || forms[1];
+  if (card.active_form != null) {
+    return active.form_label && active.form_label !== '常态'
+      ? `◆${active.form_label}`
+      : `⇄${other?.name || '常态'}`;
+  }
+  if (other && other.name && other.name !== active.name) {
+    return `⇄${other.name}`;
+  }
+  return `⇄${other?.form_label || '双形态'}`;
+}
+
+/**
+ * Clean Architectural Horizontal Skill Strip (Cost Crystal + Name + Dual-Form Tag + Clean Die Range Chips).
  */
 export function buildUnifiedSkillRow(skill, {
   width = 460,
@@ -1433,6 +1480,28 @@ export function buildUnifiedSkillRow(skill, {
   nTxt.position.set(40, rowH / 2);
   root.addChild(nTxt);
 
+  let leftStopX = 44 + nTxt.width;
+  const dfBadge = dualFormBadgeLabel(skill);
+  if (dfBadge) {
+    const bt = new PIXI.Text({
+      text: dfBadge,
+      style: { fontFamily: FONT_UI, fontSize: 9.6, fontWeight: '800', fill: INK.goldDeep },
+    });
+    const bw = Math.ceil(bt.width) + 10;
+    const bx = Math.round(44 + nTxt.width + 4);
+    if (bx + bw < width - 16) {
+      g.roundRect(bx, rowH / 2 - 8, bw, 16, 4)
+        .fill({ color: INK.goldBg })
+        .stroke({ width: 0.9, color: INK.gold, alpha: 0.85 });
+      bt.anchor.set(0.5);
+      bt.position.set(bx + bw / 2, rowH / 2);
+      root.addChild(bt);
+      leftStopX = bx + bw + 4;
+    } else {
+      bt.destroy();
+    }
+  }
+
   let dx = width - 8;
   const dice = skill.dice || [];
   for (let i = dice.length - 1; i >= 0; i--) {
@@ -1444,7 +1513,10 @@ export function buildUnifiedSkillRow(skill, {
     });
     const capW = Math.ceil(rt.width) + 22;
     const capX = dx - capW;
-    if (capX < 44 + nTxt.width + 8) break;
+    if (capX < leftStopX + 8) {
+      rt.destroy();
+      break;
+    }
     drawUnifiedDieFrame(g, d.type, capX + 9, rowH / 2, 5.2);
     rt.anchor.set(0, 0.5);
     rt.position.set(capX + 18, rowH / 2);

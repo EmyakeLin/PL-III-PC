@@ -3,7 +3,7 @@
 from entry.effects import GRADE_NAMES, damage_part, independent_damage_part
 from entry.predicates import compile_value, read_value
 from game import Game
-from models.card import CardState, allows_interception, describe_entry, describe_range_traits, range_trait
+from models.card import COMPARISON_SIGNS, CardState, allows_interception, describe_entry, describe_range_traits, range_trait
 from models.dice import Dice
 from models.opcode import OpCode
 from pipeline import pipeline_steps
@@ -117,7 +117,53 @@ def _printed_die(spec):
     }
 
 
+def _form_label(base_data, form_key):
+    if form_key is None:
+        return "常态"
+    condition = base_data.get("form_when")
+    if isinstance(condition, dict) and condition.get("form") == form_key and condition.get("status"):
+        status = condition["status"]
+        if "op" in condition:
+            return f"{status}{COMPARISON_SIGNS[condition['op']]}{condition['value']}"
+        if status.endswith("·活化"):
+            return "活化态"
+        return f"持有{status}"
+    if form_key == "active":
+        return "活化态"
+    key_str = str(form_key)
+    return f"{key_str}态" if len(key_str) <= 2 and not key_str.endswith("态") else key_str
+
+
+def _strip_forms(data):
+    return {k: v for k, v in data.items() if k != "forms"}
+
+
+def _build_dual_forms(base_data, *, active_key=None):
+    raw_forms = base_data.get("forms")
+    if not raw_forms:
+        return []
+    clean_base = _strip_forms(base_data)
+    result = [
+        {
+            **_printed_skill(clean_base, include_forms=False),
+            "form_key": None,
+            "form_label": _form_label(base_data, None),
+            "is_active_form": active_key is None,
+        }
+    ]
+    for key, form_spec in raw_forms.items():
+        merged = {**clean_base, **form_spec}
+        result.append({
+            **_printed_skill(merged, include_forms=False),
+            "form_key": key,
+            "form_label": _form_label(base_data, key),
+            "is_active_form": active_key == key,
+        })
+    return result
+
+
 def _printed_skill(data, *, include_forms=False):
+    raw_forms = data.get("forms") or {}
     return {
         "id": data["id"], "name": data["name"], "cost": data["cost"],
         "pre_reveal": data.get("pre_reveal", False),
@@ -127,7 +173,11 @@ def _printed_skill(data, *, include_forms=False):
         "pre_reveal_bind": data.get("pre_reveal_bind", "slot"),
         "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
         "requires_status": dict(data.get("requires_status", {})),
-        "forms": [_printed_skill({**data, **form}) for form in data.get("forms", {}).values()] if include_forms else [],
+        "forms": [
+            {**_printed_skill({**_strip_forms(data), **form}), "form_key": key, "form_label": _form_label(data, key)}
+            for key, form in raw_forms.items()
+        ] if include_forms else [],
+        "dual_forms": _build_dual_forms(data, active_key=None) if include_forms and raw_forms else [],
         "anytime_play": list(data.get("anytime_play", [])),
         "anytime_replace": data.get("anytime_replace", False),
         "interceptable": allows_interception(data, pre_reveal=True),
@@ -167,7 +217,7 @@ def _passives(specs):
 
 
 def _visible_card(card):
-    details = _printed_skill({**card.data, "name": card.name, "dice": card.dice})
+    details = _printed_skill({**_strip_forms(card.data), "name": card.name, "dice": card.dice})
     for printed, spec in zip(details["dice"], card.dice):
         printed["ignore_range"] = (0 if card.use_state.get("blank_skill") else
                                    max(card.effective_ignore_range, range_trait(spec, "ignore_range", card)))
@@ -175,8 +225,22 @@ def _visible_card(card):
     destroyed = sorted({die.position for die in inst if die.destroyed})
     live_dice = [_live_die(die) for die in inst]
     used = bool(card.use_effects_resolved and not card.has_next_die())
+    has_forms = bool(card.printed_data.get("forms"))
+    active_form = card._form if has_forms else None
+    active_form_label = _form_label(card.printed_data, active_form) if has_forms else None
+    dual_forms = _build_dual_forms(card.printed_data, active_key=active_form) if has_forms else []
+    for form_view in dual_forms:
+        if form_view.get("is_active_form"):
+            form_view["cost"] = card.cost
+            form_view["name"] = card.name
+            form_view["dice"] = [dict(d) for d in details["dice"]]
+            form_view["live_dice"] = [dict(d) if d else None for d in live_dice]
+            form_view["destroyed_die_positions"] = list(destroyed)
     return {
         **details,
+        "dual_forms": dual_forms,
+        "active_form": active_form,
+        "active_form_label": active_form_label,
         "no_hit_carrier": bool(card.data.get("no_hit_carrier") or card.use_state.get("no_hit_carrier")),
         "pre_reveal": card.can_open_pre_reveal,
         "character_id": card.character.id,

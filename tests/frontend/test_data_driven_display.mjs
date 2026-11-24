@@ -16,8 +16,17 @@ const {
   resolveDieDamageParts,
   buildRichVerbatimText,
   buildUnifiedDieRow,
+  buildUnifiedSkillRow,
+  resolveDualForms,
+  dualFormBadgeLabel,
 } = await import(new URL('design_system.js', ENGINE));
-const { buildFullCard, buildBoardCardTag, buildUniformCard } = await import(new URL('card_print.js', ENGINE));
+const {
+  buildFullCard,
+  buildBoardCardTag,
+  buildUniformCard,
+  buildCompanionFormCard,
+  buildDualFormSpread,
+} = await import(new URL('card_print.js', ENGINE));
 const { CombatTabletop } = await import(new URL('combat_tabletop.js', ENGINE));
 
 const collectTexts = (node, out = []) => {
@@ -242,4 +251,129 @@ test('buildFullCard and buildBoardCardTag read card.name, card.cost, and dice da
   assert.ok(fullTexts.some((t) => t.text === '[ 拼点胜利 ]' && t.fill === TRIGGER_STYLE.clash_win.color));
   assert.ok(fullTexts.some((t) => t.text === '[ 拼点失败 ]' && t.fill === TRIGGER_STYLE.clash_lose.color));
   assert.ok(fullTexts.some((t) => t.text === '3 超穿甲' && t.fill === DAMAGE_GRADE_STYLE.concept.color));
+});
+
+test('dual-form skills render side-by-side without vertical scrolling and distinguish base vs transformed badges', () => {
+  // 1. Liu Yin ultimate: 战甲塑造 ⇄ 肃清引信
+  const liuBase = {
+    id: 'liu_armor',
+    name: '战甲塑造',
+    cost: 5,
+    active_form: null,
+    active_form_label: '常态',
+    entries: ['【使用时】获得3战甲。'],
+    dice: [{ type: 'block', printed_level: 5, roll_max: 16, damage_parts: [], entries: [] }],
+    dual_forms: [
+      {
+        id: 'liu_armor',
+        name: '战甲塑造',
+        cost: 5,
+        form_key: null,
+        form_label: '常态',
+        is_active_form: true,
+        entries: ['【使用时】获得3战甲。'],
+        dice: [{ type: 'block', printed_level: 5, roll_max: 16, damage_parts: [], entries: [] }],
+      },
+      {
+        id: 'liu_armor',
+        name: '肃清引信',
+        cost: 5,
+        form_key: 'armored',
+        form_label: '战甲≥1',
+        is_active_form: false,
+        entries: [],
+        dice: [
+          { type: 'skip', damage_parts: [], entries: [] },
+          {
+            type: 'blunt',
+            printed_level: 1,
+            roll_max: 4,
+            multiplier: 2,
+            damage_parts: [{ amount: '目标生命上限1/3（向上取整）', grade: 'concept', text: '目标生命上限1/3（向上取整） 超穿甲' }],
+            entries: ['本骰子最终点数+领域洞悉'],
+          },
+        ],
+      },
+    ],
+  };
+
+  assert.equal(resolveDualForms(liuBase).length, 2);
+  assert.equal(dualFormBadgeLabel(liuBase), '⇄肃清引信');
+
+  const liuTransformed = {
+    ...liuBase,
+    name: '肃清引信',
+    active_form: 'armored',
+    active_form_label: '战甲≥1',
+    dual_forms: [
+      { ...liuBase.dual_forms[0], is_active_form: false },
+      { ...liuBase.dual_forms[1], is_active_form: true },
+    ],
+  };
+  assert.equal(dualFormBadgeLabel(liuTransformed), '◆战甲≥1');
+
+  // 2. Lan Qing skill: 电叉·回环舞 (常态 ⇄ 活化态)
+  const lanDance = {
+    id: 'lan_dance_2',
+    name: '电叉·回环舞',
+    cost: 2,
+    active_form: null,
+    dual_forms: [
+      {
+        id: 'lan_dance_2',
+        name: '电叉·回环舞',
+        cost: 2,
+        form_key: null,
+        form_label: '常态',
+        is_active_form: true,
+        entries: [],
+        dice: [{ type: 'slash', roll_max: 8, damage_parts: [{ amount: 1, grade: 'normal', text: '1' }], entries: ['【命中时】施加1电击。'] }],
+      },
+      {
+        id: 'lan_dance_2',
+        name: '电叉·回环舞',
+        cost: 2,
+        form_key: 'active',
+        form_label: '活化态',
+        is_active_form: false,
+        entries: ['【使用时】本次使用活化态，消耗同名技能共享的1次活化。'],
+        dice: [{ type: 'block', roll_max: 20, damage_parts: [], entries: ['【拼点胜利】施加3电击。'] }],
+      },
+    ],
+  };
+  assert.equal(dualFormBadgeLabel(lanDance), '⇄活化态');
+
+  // Resting single-card views & skill row show the dual-form badge
+  for (const node of [
+    buildFullCard(liuBase, { width: 220 }),
+    buildUniformCard(liuBase, { width: 220, height: 308 }),
+    buildUnifiedSkillRow(liuBase, { width: 420 }),
+  ]) {
+    assert.ok(collectTexts(node).some((t) => t.text === '⇄肃清引信'));
+  }
+
+  // Side-by-side spread: strictly horizontal (x0 === 0, x1 === 216 + 18, y0 === y1 === 0), ZERO vertical scroll!
+  const spread = buildDualFormSpread(liuTransformed, { side: 1, cardWidth: 216, gap: 18, liveContext: true });
+  assert.equal(spread._boxWidth, 216 * 2 + 18);
+  assert.equal(spread.maxScroll, undefined);
+  const cardColumns = spread.children.filter((ch) => ch._boxWidth === 216);
+  assert.equal(cardColumns.length, 2);
+  assert.equal(cardColumns[0].x, 0);
+  assert.equal(cardColumns[1].x, 234);
+  assert.equal(cardColumns[0].y, 0);
+  assert.equal(cardColumns[1].y, 0);
+  assert.equal(cardColumns[0]._boxHeight, cardColumns[1]._boxHeight);
+
+  const spreadTexts = collectTexts(spread).map((t) => t.text);
+  assert.ok(spreadTexts.includes('战甲塑造'));
+  assert.ok(spreadTexts.includes('肃清引信'));
+  assert.ok(spreadTexts.includes('⇄ 另一形态 · 常态'));
+  assert.ok(spreadTexts.includes('◆ 当前生效 · 战甲≥1'));
+  assert.ok(spreadTexts.includes('⇄'));
+
+  const comp = buildCompanionFormCard(lanDance.dual_forms[1], { width: 208, crestLabel: '⇄ 另一形态 · 活化态' });
+  const compTexts = collectTexts(comp).map((t) => t.text);
+  assert.ok(compTexts.includes('⇄ 另一形态 · 活化态'));
+  assert.ok(compTexts.includes('电叉·回环舞'));
+  assert.ok(compTexts.includes('1~20'));
 });

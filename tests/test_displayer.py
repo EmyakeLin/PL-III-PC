@@ -334,3 +334,53 @@ class DisplayerTests(unittest.TestCase):
             "entries": [{"description": "低层钩子1"}, {"description": "低层钩子2"}],
         }])
         self.assertEqual(passives[0]["display_lines"], ["第一行原文", "【回合开始】第二行触发"])
+
+    def test_dual_form_skills_project_both_forms_and_track_active_form_across_live_and_roster_views(self):
+        from battle_ui.match import BattleMatch
+
+        chars = load_characters_from_packs()
+        liu_spec = next(c for c in chars if c["name"] == "流阴")
+        lan_spec = next(c for c in chars if c["name"] == "澜清")
+
+        match = BattleMatch(roster=[[liu_spec["id"]], [lan_spec["id"]]], seed=19, initial_handoff=False)
+        roster_by_id = {c["id"]: c for c in match.table_assets()["roster_catalog"]}
+        roster_armor = next(s for s in roster_by_id[liu_spec["id"]]["skills"] if s["id"] == "liu_armor")
+        self.assertEqual([f["name"] for f in roster_armor["dual_forms"]], ["战甲塑造", "肃清引信"])
+        self.assertEqual([f["form_label"] for f in roster_armor["dual_forms"]], ["常态", "战甲≥1"])
+
+        roster_dance = next(s for s in roster_by_id[lan_spec["id"]]["skills"] if s["id"] == "lan_dance_2")
+        self.assertEqual([f["form_label"] for f in roster_dance["dual_forms"]], ["常态", "活化态"])
+        self.assertEqual(len(roster_dance["dual_forms"][0]["dice"]), 2)
+        self.assertEqual(len(roster_dance["dual_forms"][1]["dice"]), 3)
+
+        # Verify live _visible_card preserves BOTH forms before and after status transformation!
+        game = Game([Player(1, "甲"), Player(2, "乙")])
+        liu = Character(liu_spec, game.players[0])
+        lan = Character(lan_spec, game.players[1])
+        game.players[0].characters.append(liu)
+        game.players[1].characters.append(lan)
+        liu.init_cards()
+        lan.init_cards()
+        armor_card = next(c for c in liu.skills if c.id == "liu_armor")
+        dance_card = next(c for c in lan.skills if c.id == "lan_dance_2")
+        game.players[0].cardspace.hand.add_card(armor_card)
+        game.players[1].cardspace.hand.add_card(dance_card)
+
+        v1_before = Displayer(game, viewer_side=1).snapshot()["players"][0]["hand"][0]
+        self.assertEqual((v1_before["name"], v1_before["active_form"], v1_before["active_form_label"]),
+                         ("战甲塑造", None, "常态"))
+        self.assertEqual([(f["name"], f["is_active_form"]) for f in v1_before["dual_forms"]],
+                         [("战甲塑造", True), ("肃清引信", False)])
+
+        liu.add_status("战甲", 1)
+        v1_after = Displayer(game, viewer_side=1).snapshot()["players"][0]["hand"][0]
+        self.assertEqual((v1_after["name"], v1_after["active_form"], v1_after["active_form_label"]),
+                         ("肃清引信", "armored", "战甲≥1"))
+        self.assertEqual([(f["name"], f["is_active_form"]) for f in v1_after["dual_forms"]],
+                         [("战甲塑造", False), ("肃清引信", True)])
+
+        lan.add_status("电叉·回环舞·活化", 1)
+        v2_after = Displayer(game, viewer_side=2).snapshot()["players"][1]["hand"][0]
+        self.assertEqual((v2_after["active_form"], v2_after["active_form_label"]), ("active", "活化态"))
+        self.assertEqual([f["is_active_form"] for f in v2_after["dual_forms"]], [False, True])
+        self.assertEqual([len(f["dice"]) for f in v2_after["dual_forms"]], [2, 3])

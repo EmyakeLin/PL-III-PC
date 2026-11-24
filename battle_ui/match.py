@@ -5,7 +5,10 @@ from itertools import islice
 import random
 import time
 
-from displayer import Displayer, _passives, _printed_skill, _visible_card, hand_key, seat_action_view, special_seats, timing_label
+from displayer import (
+    Displayer, _build_dual_forms, _form_label, _passives, _printed_skill, _strip_forms, _visible_card,
+    hand_key, seat_action_view, special_seats, timing_label,
+)
 from game import Game
 from loader import PACKS, load_characters_from_packs
 from models.character import Character
@@ -142,7 +145,7 @@ def _roster_preview(spec, color=None, sprite_url=None):
         "sprite_url": sprite_url,
         "passives": _passives(spec.get("passive_skills", ())),
         "faction_passives": _passives(spec.get("faction_passives", ())),
-        "skills": [_printed_skill(skill) for skill in spec.get("skills", ())],
+        "skills": [_printed_skill(skill, include_forms=True) for skill in spec.get("skills", ())],
     }
 
 
@@ -233,7 +236,10 @@ class BattleMatch:
             "discard_count": pending.discard_count,
             "candidates": [
                 {
-                    **_printed_skill(c.data),
+                    **_printed_skill(_strip_forms(c.data)),
+                    "dual_forms": _build_dual_forms(c.printed_data, active_key=c._form) if c.printed_data.get("forms") else [],
+                    "active_form": c._form if c.printed_data.get("forms") else None,
+                    "active_form_label": _form_label(c.printed_data, c._form) if c.printed_data.get("forms") else None,
                     "action_key": key,
                     "character_id": c.character.id,
                     "character_name": c.character.name,

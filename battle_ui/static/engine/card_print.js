@@ -52,6 +52,8 @@ import {
   buildUnifiedDieRow,
   buildUnifiedEntryPlate,
   buildUnifiedSkillRow,
+  resolveDualForms,
+  dualFormBadgeLabel,
 } from './design_system.js';
 
 export {
@@ -98,6 +100,8 @@ export {
   buildUnifiedDieRow,
   buildUnifiedEntryPlate,
   buildUnifiedSkillRow,
+  resolveDualForms,
+  dualFormBadgeLabel,
 };
 
 /**
@@ -425,6 +429,8 @@ export function buildFullCard(card, {
   activeDieNumber = null,
   rangeDeficit = 0,
   playMode = null,
+  suppressFormBadge = false,
+  onToggleForm = null,
 } = {}) {
   const pal = deriveCardPalette(accentColor, side);
   const W = width;
@@ -589,6 +595,37 @@ export function buildFullCard(card, {
     tagT.position.set(rightCursor - tw / 2, cy);
     sheet.addChild(tagBg, tagT);
     rightCursor -= tw + 6;
+  }
+
+  const dfLabel = !suppressFormBadge ? dualFormBadgeLabel(card) : null;
+  if (dfLabel) {
+    const isTransformed = card.active_form != null;
+    const fTag = new PIXI.Container();
+    const fTxt = new PIXI.Text({
+      text: dfLabel,
+      style: { fontFamily: FONT_UI, fontSize: 9.0, fontWeight: '800', fill: isTransformed ? INK.paper : INK.goldDeep },
+    });
+    const fw = Math.ceil(fTxt.width) + 10;
+    const fBg = new PIXI.Graphics();
+    fBg.roundRect(0, -8, fw, 16, 4)
+      .fill({ color: isTransformed ? INK.gold : INK.goldBg })
+      .stroke({ width: 0.9, color: INK.gold, alpha: 0.9 });
+    fTxt.anchor.set(0.5);
+    fTxt.position.set(fw / 2, 0);
+    fTag.addChild(fBg, fTxt);
+    fTag.position.set(rightCursor - fw, cy);
+    if (onToggleForm) {
+      fTag.eventMode = 'static';
+      fTag.cursor = 'pointer';
+      fTag.hitArea = new PIXI.Rectangle(-2, -10, fw + 4, 20);
+      fTag.on('pointerdown', (e) => e.stopPropagation());
+      fTag.on('pointertap', (e) => {
+        e.stopPropagation();
+        onToggleForm();
+      });
+    }
+    sheet.addChild(fTag);
+    rightCursor -= fw + 5;
   }
 
   if ((showOwner || !dense) && ownerName) {
@@ -866,6 +903,12 @@ export function buildUniformCard(card, {
     addHeaderPill(posTag, INK.goldBg, INK.goldDeep);
   }
 
+  const uniformFormLabel = dualFormBadgeLabel(card);
+  if (uniformFormLabel) {
+    const isTransformed = card.active_form != null;
+    addHeaderPill(uniformFormLabel, isTransformed ? INK.gold : INK.goldBg, isTransformed ? INK.paper : INK.goldDeep);
+  }
+
   if (showOwner && ownerName) {
     const owTxt = new PIXI.Text({
       text: ownerName,
@@ -1009,5 +1052,149 @@ export function buildUniformCard(card, {
       applyScroll(targetScrollY);
     }
   };
+  return root;
+}
+
+/**
+ * Companion Single-Form Card with Top Architectural Crest Banner (ZERO vertical scroll!).
+ * Used right beside a lifted Hand or Battlefield card so BOTH forms stand side-by-side in full view.
+ */
+export function buildCompanionFormCard(formCard, {
+  side = 1,
+  accentColor = null,
+  ownerName = '',
+  showOwner = false,
+  width = 212,
+  fixedCardHeight = 0,
+  minCardHeight = 0,
+  crestLabel = '⇄ 另一形态',
+  active = false,
+} = {}) {
+  const pal = deriveCardPalette(accentColor, side);
+  const crownH = 22;
+  const crownGap = 5;
+  const root = new PIXI.Container();
+
+  const cardNode = buildFullCard(formCard, {
+    side,
+    accentColor,
+    ownerName,
+    showOwner,
+    width,
+    fixedHeight: fixedCardHeight,
+    minHeight: minCardHeight,
+    dense: true,
+    centered: false,
+    legal: true,
+    selected: active,
+    suppressFormBadge: true,
+  });
+  cardNode.position.set(0, crownH + crownGap);
+
+  const crest = new PIXI.Graphics();
+  const crestTxt = new PIXI.Text({
+    text: crestLabel,
+    style: {
+      fontFamily: FONT_UI,
+      fontSize: 10.6,
+      fontWeight: '900',
+      fill: active ? INK.paper : INK.goldDeep,
+    },
+  });
+  const cw = Math.min(width, Math.max(96, Math.ceil(crestTxt.width) + 20));
+  const cx = Math.round((width - cw) / 2);
+  crest.roundRect(cx + 1, 2, cw, crownH, 6).fill({ color: INK.shadow, alpha: 0.18 });
+  crest.roundRect(cx, 0, cw, crownH, 6)
+    .fill({ color: active ? pal.accent : INK.goldBg, alpha: 0.98 })
+    .stroke({ width: 1.2, color: active ? pal.accent : INK.gold });
+  crestTxt.anchor.set(0.5);
+  crestTxt.position.set(width / 2, crownH / 2);
+
+  root.addChild(crest, crestTxt, cardNode);
+  root._boxWidth = width;
+  root._boxHeight = crownH + crownGap + cardNode._boxHeight;
+  return root;
+}
+
+/**
+ * Side-by-Side Dual-Form Physical Spread (NEVER vertically stacked, ZERO vertical scroll!).
+ * Displays all forms of a dual-form skill side-by-side (`[常态] ⇄ [第二形态]`) at matched heights.
+ */
+export function buildDualFormSpread(card, {
+  side = 1,
+  accentColor = null,
+  ownerName = '',
+  showOwner = false,
+  cardWidth = 216,
+  fixedCardHeight = 0,
+  gap = 20,
+  liveContext = false,
+} = {}) {
+  const forms = resolveDualForms(card);
+  if (!forms || forms.length < 2) {
+    return buildFullCard(card, {
+      side, accentColor, ownerName, showOwner,
+      width: cardWidth, fixedHeight: fixedCardHeight, dense: true, centered: false,
+    });
+  }
+
+  const pal = deriveCardPalette(accentColor, side);
+  const crownH = 22;
+  const crownGap = 5;
+
+  // Measure natural height of each form so both side-by-side cards share a crisp matched height!
+  const measuredHeights = forms.map((f) => {
+    const probe = buildFullCard(f, {
+      side, accentColor, ownerName, showOwner,
+      width: cardWidth, fixedHeight: fixedCardHeight, dense: true, centered: false, suppressFormBadge: true,
+    });
+    const h = probe._boxHeight;
+    probe.destroy({ children: true });
+    return h;
+  });
+  const unifiedCardH = fixedCardHeight > 0 ? fixedCardHeight : Math.max(...measuredHeights);
+
+  const root = new PIXI.Container();
+  const ROMAN = ['I', 'II', 'III', 'IV'];
+
+  forms.forEach((f, idx) => {
+    const isActive = Boolean(liveContext && f.is_active_form);
+    const labelText = liveContext
+      ? (isActive ? `◆ 当前生效 · ${f.form_label || '常态'}` : `⇄ 另一形态 · ${f.form_label || '第二形态'}`)
+      : `形态 ${ROMAN[idx] || (idx + 1)} · ${f.form_label || (idx === 0 ? '常态' : '第二形态')}`;
+    const col = buildCompanionFormCard(f, {
+      side,
+      accentColor,
+      ownerName,
+      showOwner,
+      width: cardWidth,
+      fixedCardHeight: fixedCardHeight > 0 ? unifiedCardH : 0,
+      minCardHeight: fixedCardHeight > 0 ? 0 : unifiedCardH,
+      crestLabel: labelText,
+      active: isActive,
+    });
+    col.position.set(idx * (cardWidth + gap), 0);
+    root.addChild(col);
+
+    // Subtle brass `⇄` clasp linking adjacent form cards
+    if (idx < forms.length - 1) {
+      const midX = (idx + 1) * cardWidth + idx * gap + gap / 2;
+      const midY = crownH + crownGap + unifiedCardH * 0.5;
+      const clasp = new PIXI.Graphics();
+      clasp.circle(midX, midY, 12)
+        .fill({ color: INK.paper, alpha: 0.98 })
+        .stroke({ width: 1.4, color: INK.gold });
+      const sym = new PIXI.Text({
+        text: '⇄',
+        style: { fontFamily: FONT_UI, fontSize: 12.5, fontWeight: '900', fill: INK.goldDeep },
+      });
+      sym.anchor.set(0.5);
+      sym.position.set(midX, midY - 0.5);
+      root.addChild(clasp, sym);
+    }
+  });
+
+  root._boxWidth = forms.length * cardWidth + (forms.length - 1) * gap;
+  root._boxHeight = crownH + crownGap + unifiedCardH;
   return root;
 }

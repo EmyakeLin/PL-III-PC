@@ -25,6 +25,8 @@ import {
   drawLightStar,
   buildCardBack,
   buildFullCard,
+  buildDualFormSpread,
+  resolveDualForms,
   buildRichVerbatimText,
   buildVerbatimCardPanel,
   buildUnifiedEntryPlate,
@@ -2536,33 +2538,57 @@ export function buildRosterOverlay(w, h, {
         let rowH = 0;
         for (let c = 0; c < skCols && i + c < skills.length; c++) {
           const sk = skills[i + c];
-          const cardSpr = buildFullCard(sk, {
-            side: previewSide,
-            accentColor: parseHexColor(target.color, pal.primary),
-            ownerName: target.name,
-            showOwner: false,
-            width: skW,
-            fixedHeight: skMinH,
-            dense: true,
-            centered: false,
-            legal: true,
-          });
-          cardSpr.position.set(c * (skW + skGapX), cy);
-          cardSpr._itemTop = cy;
-          cardSpr._itemBottom = cy + cardSpr._boxHeight;
-          if (onHoverCard) {
-            cardSpr._interactiveItem = true;
-            cardSpr.eventMode = 'static';
-            cardSpr.cursor = 'pointer';
-            cardSpr.on('pointerover', (e) => {
-              if (!pointerInsideLocalRect(root, e.global, svx, svy, svw, svh)) return;
-              const gp = cardSpr.getGlobalPosition();
-              onHoverCard(sk, previewSide, target.name, gp.x + skW / 2, gp.y + cardSpr._boxHeight / 2, cardSpr._boxHeight, cardSpr);
+          const dualForms = resolveDualForms(sk);
+          let curFormIdx = 0;
+          const slotHost = new PIXI.Container();
+          slotHost.position.set(c * (skW + skGapX), cy);
+
+          const renderSlotCard = () => {
+            for (const chNode of slotHost.removeChildren()) chNode.destroy({ children: true });
+            const shownCard = dualForms
+              ? {
+                  ...dualForms[curFormIdx],
+                  dual_forms: dualForms.map((f, idx) => ({ ...f, is_active_form: idx === curFormIdx })),
+                  active_form: curFormIdx === 0 ? null : (dualForms[curFormIdx].form_key ?? `form_${curFormIdx}`),
+                }
+              : sk;
+            const cardSpr = buildFullCard(shownCard, {
+              side: previewSide,
+              accentColor: parseHexColor(target.color, pal.primary),
+              ownerName: target.name,
+              showOwner: false,
+              width: skW,
+              fixedHeight: skMinH,
+              dense: true,
+              centered: false,
+              legal: true,
+              onToggleForm: dualForms ? () => {
+                curFormIdx = (curFormIdx + 1) % dualForms.length;
+                renderSlotCard();
+              } : null,
             });
-            cardSpr.on('pointerout', () => onHoverCard(null));
+            slotHost.addChild(cardSpr);
+            slotHost._boxHeight = cardSpr._boxHeight;
+            return cardSpr;
+          };
+
+          const firstSpr = renderSlotCard();
+          slotHost._itemTop = cy;
+          slotHost._itemBottom = cy + firstSpr._boxHeight;
+          if (onHoverCard) {
+            slotHost._interactiveItem = true;
+            slotHost.eventMode = 'static';
+            slotHost.cursor = 'pointer';
+            slotHost.hitArea = new PIXI.Rectangle(0, 0, skW, firstSpr._boxHeight);
+            slotHost.on('pointerover', (e) => {
+              if (!pointerInsideLocalRect(root, e.global, svx, svy, svw, svh)) return;
+              const gp = slotHost.getGlobalPosition();
+              onHoverCard(sk, previewSide, target.name, gp.x + skW / 2, gp.y + slotHost._boxHeight / 2, slotHost._boxHeight, dualForms ? null : slotHost);
+            });
+            slotHost.on('pointerout', () => onHoverCard(null));
           }
-          sBody.addChild(cardSpr);
-          rowH = Math.max(rowH, cardSpr._boxHeight);
+          sBody.addChild(slotHost);
+          rowH = Math.max(rowH, firstSpr._boxHeight);
         }
         cy += rowH + skGapY;
       }
@@ -2787,20 +2813,43 @@ export function buildCodexOverlay(w, h, {
         }
         const chAccent = characterColors[ch.id] || null;
         const skList = ch.skills || [];
-        for (let i = 0; i < skList.length; i += 2) {
-          const leftCard = buildVerbatimCardPanel(skList[i], { side: pl.side, accentColor: chAccent, ownerName: ch.name, width: cardW, compact: true });
+        let sIdx = 0;
+        while (sIdx < skList.length) {
+          const curSk = skList[sIdx];
+          if (resolveDualForms(curSk)) {
+            const spread = buildDualFormSpread(curSk, {
+              side: pl.side,
+              accentColor: chAccent,
+              ownerName: ch.name,
+              showOwner: true,
+              cardWidth: cardW,
+              gap: colGap,
+              liveContext: false,
+            });
+            spread.position.set(4, y);
+            spread._itemTop = y;
+            spread._itemBottom = y + spread._boxHeight;
+            body.addChild(spread);
+            y += spread._boxHeight + 12;
+            sIdx += 1;
+            continue;
+          }
+          const leftCard = buildVerbatimCardPanel(curSk, { side: pl.side, accentColor: chAccent, ownerName: ch.name, width: cardW, compact: true });
           leftCard.position.set(4, y);
           leftCard._itemTop = y;
           leftCard._itemBottom = y + leftCard._boxHeight;
           body.addChild(leftCard);
           let rowH = leftCard._boxHeight;
-          if (i + 1 < skList.length) {
-            const rightCard = buildVerbatimCardPanel(skList[i + 1], { side: pl.side, accentColor: chAccent, ownerName: ch.name, width: cardW, compact: true });
+          if (sIdx + 1 < skList.length && !resolveDualForms(skList[sIdx + 1])) {
+            const rightCard = buildVerbatimCardPanel(skList[sIdx + 1], { side: pl.side, accentColor: chAccent, ownerName: ch.name, width: cardW, compact: true });
             rightCard.position.set(4 + cardW + colGap, y);
             rightCard._itemTop = y;
             rightCard._itemBottom = y + rightCard._boxHeight;
             body.addChild(rightCard);
             rowH = Math.max(rowH, rightCard._boxHeight);
+            sIdx += 2;
+          } else {
+            sIdx += 1;
           }
           y += rowH + 10;
         }
@@ -2908,6 +2957,7 @@ export function buildPileOverlay(w, h, {
   characterColors = {},
   scrollY = 0,
   onScrollChange = null,
+  onHoverCard = null,
   onClose,
 }) {
   const root = new PIXI.Container();
@@ -2998,25 +3048,58 @@ export function buildPileOverlay(w, h, {
       let rowH = 0;
       for (let c = 0; c < rowCount; c++) {
         const card = cards[i + c];
-        const spr = buildFullCard(card, {
-          side,
-          accentColor: characterColors[card.character_id] || null,
-          ownerName: charNames[card.character_id] || '',
-          showOwner: true,
-          width: cardW,
-          fixedHeight: portraitH,
-          dense: true,
-          centered: false,
-          legal: true,
-        });
-        spr.position.set(startX + c * (cardW + gap), cy);
-        spr._itemTop = cy;
-        spr._itemBottom = cy + spr._boxHeight;
-        spr._interactiveItem = true;
-        spr.eventMode = 'static';
-        spr.on('pointertap', (e) => e.stopPropagation());
-        body.addChild(spr);
-        rowH = Math.max(rowH, spr._boxHeight);
+        const dualForms = resolveDualForms(card);
+        let curFormIdx = dualForms ? Math.max(0, dualForms.findIndex((f) => f.is_active_form)) : 0;
+        const slotHost = new PIXI.Container();
+        slotHost.position.set(startX + c * (cardW + gap), cy);
+
+        const renderPileCard = () => {
+          for (const chNode of slotHost.removeChildren()) chNode.destroy({ children: true });
+          const shownCard = dualForms
+            ? {
+                ...dualForms[curFormIdx],
+                dual_forms: dualForms.map((f, idx) => ({ ...f, is_active_form: idx === curFormIdx })),
+                active_form: curFormIdx === 0 ? null : (dualForms[curFormIdx].form_key ?? `form_${curFormIdx}`),
+              }
+            : card;
+          const spr = buildFullCard(shownCard, {
+            side,
+            accentColor: characterColors[card.character_id] || null,
+            ownerName: charNames[card.character_id] || '',
+            showOwner: true,
+            width: cardW,
+            fixedHeight: portraitH,
+            dense: true,
+            centered: false,
+            legal: true,
+            onToggleForm: dualForms ? () => {
+              curFormIdx = (curFormIdx + 1) % dualForms.length;
+              renderPileCard();
+            } : null,
+          });
+          slotHost.addChild(spr);
+          slotHost._boxHeight = spr._boxHeight;
+          return spr;
+        };
+
+        const firstSpr = renderPileCard();
+        slotHost._itemTop = cy;
+        slotHost._itemBottom = cy + firstSpr._boxHeight;
+        slotHost._interactiveItem = true;
+        slotHost.eventMode = 'static';
+        slotHost.cursor = dualForms ? 'pointer' : 'default';
+        slotHost.hitArea = new PIXI.Rectangle(0, 0, cardW, firstSpr._boxHeight);
+        slotHost.on('pointertap', (e) => e.stopPropagation());
+        if (onHoverCard && dualForms) {
+          slotHost.on('pointerover', (e) => {
+            if (!pointerInsideLocalRect(root, e.global, vx, vy, innerW, vh)) return;
+            const gp = slotHost.getGlobalPosition();
+            onHoverCard(card, side, charNames[card.character_id] || '', gp.x + cardW / 2, gp.y + firstSpr._boxHeight / 2, firstSpr._boxHeight, null);
+          });
+          slotHost.on('pointerout', () => onHoverCard(null));
+        }
+        body.addChild(slotHost);
+        rowH = Math.max(rowH, firstSpr._boxHeight);
       }
       cy += rowH + gap;
     }

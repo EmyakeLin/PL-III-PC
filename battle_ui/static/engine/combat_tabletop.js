@@ -1293,7 +1293,23 @@ export class CombatTabletop {
           if (!r || !sw.cardMotion || sw.cardMotion.inspectSpring.value <= 0.01) continue;
           if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
             hitCardKey = sw.cardKey;
-            hitCardMeta = { characterId: sw.card?.character_id || null, side, lane: sw.lane || 'front', duelKind: entry.duel.kind, duelNumber: entry.duel.number };
+            hitCardMeta = {
+              hidden: Boolean(sw.card?.hidden),
+              card: sw.card?.hidden ? null : sw.card,
+              characterId: sw.ownerId || sw.card?.character_id || null,
+              characterName: sw.ownerName || '',
+              color: sw.ownerColor ?? null,
+              anchorX: r.x + r.w * 0.5,
+              anchorY: r.y - 12,
+              cardCenterX: r.x + r.w * 0.5,
+              cardCenterY: r.y + r.h * 0.5,
+              cardWidth: this.metrics.cardW,
+              cardHeight: this.metrics.cardH,
+              side,
+              lane: sw.lane || 'front',
+              duelKind: entry.duel.kind,
+              duelNumber: entry.duel.number,
+            };
             break;
           }
         }
@@ -1318,11 +1334,16 @@ export class CombatTabletop {
                 hitCardKey = sw.cardKey;
                 hitCardMeta = {
                   hidden: Boolean(sw.card.hidden),
+                  card: sw.card.hidden ? null : sw.card,
                   characterId: sw.ownerId || sw.card?.character_id || null,
                   characterName: sw.ownerName || '',
                   color: sw.ownerColor ?? null,
                   anchorX: r.x + r.w * 0.5,
                   anchorY: r.y - 12,
+                  cardCenterX: r.x + r.w * 0.5,
+                  cardCenterY: r.y + r.h * 0.5,
+                  cardWidth: this.metrics.cardW,
+                  cardHeight: this.metrics.cardH,
                   side,
                   lane: sw.lane || 'front',
                   duelKind: entry.duel.kind,

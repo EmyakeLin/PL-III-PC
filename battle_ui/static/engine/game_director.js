@@ -36,6 +36,9 @@ import {
   buildCardBack,
   buildCardFront,
   buildFullCard,
+  buildCompanionFormCard,
+  buildDualFormSpread,
+  resolveDualForms,
   buildVerbatimCardPanel,
   buildRichVerbatimText,
   buildUnifiedEntryPlate,
@@ -369,6 +372,7 @@ export class GameDirector {
           this.focusedSide = meta.side;
           this.focusedDuelNumber = meta.duelKind === 'regular' ? meta.duelNumber : { kind: meta.duelKind, number: meta.duelNumber };
           if (meta.hidden && (meta.characterName || meta.characterId)) {
+            if (this.hoveredCard?.source === 'board_companion') this.hoveredCard = null;
             this.hoveredInfo = {
               kind: 'card_owner',
               title: meta.characterName || this._charNameMap()[meta.characterId] || '未知角色',
@@ -378,17 +382,41 @@ export class GameDirector {
               anchorY: meta.anchorY,
             };
             this._renderInspection();
-          } else if (this.hoveredInfo?.kind === 'card_owner') {
-            this.hoveredInfo = null;
+          } else {
+            if (this.hoveredInfo?.kind === 'card_owner') {
+              this.hoveredInfo = null;
+            }
+            if (!meta.hidden && meta.card && resolveDualForms(meta.card)) {
+              const charNames = this._charNameMap();
+              this.hoveredCard = {
+                card: meta.card,
+                side: meta.side,
+                accentColor: this._resolveCharColor(meta.card.character_id, meta.side),
+                ownerName: charNames[meta.card.character_id] || '',
+                primaryX: meta.cardCenterX ?? meta.anchorX,
+                primaryY: meta.cardCenterY ?? meta.anchorY,
+                primaryW: meta.cardWidth || 224,
+                primaryH: meta.cardHeight || 314,
+                source: 'board_companion',
+              };
+            } else if (this.hoveredCard?.source === 'board_companion') {
+              this.hoveredCard = null;
+            }
             this._renderInspection();
           }
         } else if (!this.dragState && !this.selectedHandCardId) {
           this.focusedCharId = null;
           this.focusedDuelNumber = null;
+          let dirty = false;
           if (this.hoveredInfo?.kind === 'card_owner') {
             this.hoveredInfo = null;
-            this._renderInspection();
+            dirty = true;
           }
+          if (this.hoveredCard?.source === 'board_companion') {
+            this.hoveredCard = null;
+            dirty = true;
+          }
+          if (dirty) this._renderInspection();
         }
       },
       onSlotTap: () => {
@@ -2780,6 +2808,10 @@ export class GameDirector {
     this.handCardViews.clear();
     this.handFanOrder = [];
     this.hoveredHandKey = null;
+    if (this.hoveredCard?.source === 'hand_companion') {
+      this.hoveredCard = null;
+      this._renderInspection();
+    }
 
     const frame = this.state.frame;
     const viewerSide = frame.viewer_side ?? this.state.active_side;
@@ -2913,12 +2945,33 @@ export class GameDirector {
         }
         this._applyHandFanHoverLayout(cardKey);
         this._setCardIntent(viewerSide, card);
+        if (resolveDualForms(card)) {
+          this.hoveredCard = {
+            card,
+            side: viewerSide,
+            accentColor: this._resolveCharColor(card.character_id, viewerSide),
+            ownerName: charNames[card.character_id] || '',
+            primaryX: baseX,
+            primaryY: liftY,
+            primaryW: Math.round(handCardW * 1.12),
+            primaryH: Math.round(cardH * 1.12),
+            source: 'hand_companion',
+          };
+          this._renderInspection();
+        } else if (this.hoveredCard?.source === 'hand_companion') {
+          this.hoveredCard = null;
+          this._renderInspection();
+        }
       });
 
       spr.on('pointerout', () => {
         if (this.dragState?.cardKey === cardKey) return;
         if (this.hoveredHandKey === cardKey) {
           this._applyHandFanHoverLayout(null);
+        }
+        if (this.hoveredCard?.source === 'hand_companion') {
+          this.hoveredCard = null;
+          this._renderInspection();
         }
         if (this.selectedHandCardId) {
           this._syncSelectedCardIntent();
@@ -2933,6 +2986,10 @@ export class GameDirector {
       });
 
       spr.on('pointerdown', (e) => {
+        if (this.hoveredCard?.source === 'hand_companion') {
+          this.hoveredCard = null;
+          this._renderInspection();
+        }
         if (!isLegal) {
           this.showToast('该牌当前无法打出。', 0xc8452e, 1.8);
           return;
@@ -3401,7 +3458,28 @@ export class GameDirector {
         characterColors: this.state.character_colors || {},
         scrollY: m.scrollY || 0,
         onScrollChange: (val) => { m.scrollY = val; },
-        onClose: () => { this.pileModal = null; this._rebuildOverlay(); },
+        onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
+          this.hoveredCard = card
+            ? {
+                card,
+                side,
+                accentColor: this._resolveCharColor(card.character_id, side),
+                ownerName,
+                anchorX: cardX,
+                anchorY: cardY,
+                cardH: cardH || 240,
+                source: 'pile',
+                sourceSprite: spr,
+              }
+            : null;
+          this._renderInspection();
+        },
+        onClose: () => {
+          this.pileModal = null;
+          this.hoveredCard = null;
+          this._renderInspection();
+          this._rebuildOverlay();
+        },
       });
       m.maxScroll = ov._maxScroll || 0;
       m.node = ov;
@@ -3590,47 +3668,147 @@ export class GameDirector {
     const { w, h } = this.layout;
 
     if (this.hoveredCard) {
-      const { card, side, accentColor = null, ownerName, anchorX, anchorY, sourceSprite = null } = this.hoveredCard;
-      const W = this.hoveredCard.source === 'effect' ? Math.min(w - 32, 320) : 224;
-      const fixedH = Math.min(h - 72, Math.round(W * 1.40));
-      const panel = buildFullCard(card, {
-        side,
-        accentColor: accentColor ?? this._resolveCharColor(card.character_id, side),
-        ownerName,
-        showOwner: Boolean(ownerName),
-        width: W,
-        fixedHeight: fixedH,
-        dense: true,
-        centered: false,
-      });
-      const H = panel._boxHeight;
+      const {
+        card, side, accentColor = null, ownerName, anchorX, anchorY, sourceSprite = null,
+        source = null, primaryX = null, primaryY = null, primaryW = 212, primaryH = 296,
+      } = this.hoveredCard;
+      const resolvedAccent = accentColor ?? this._resolveCharColor(card.character_id, side);
+      const dualForms = resolveDualForms(card);
 
-      if (sourceSprite && !sourceSprite.destroyed) {
-        sourceSprite.alpha = 0;
-        this._hiddenHoverSprite = sourceSprite;
+      if ((source === 'hand_companion' || source === 'board_companion') && dualForms && dualForms.length >= 2) {
+        const activeForm = dualForms.find((f) => f.is_active_form) || dualForms[0];
+        const companionForm = dualForms.find((f) => f !== activeForm) || dualForms[1];
+        const compW = Math.min(220, Math.max(176, Math.round(primaryW * 0.96)));
+        const maxCardH = Math.max(220, h - 72);
+        const panel = buildCompanionFormCard(companionForm, {
+          side,
+          accentColor: resolvedAccent,
+          ownerName,
+          showOwner: Boolean(ownerName),
+          width: compW,
+          fixedCardHeight: Math.min(maxCardH, Math.round(primaryH * 0.96)),
+          crestLabel: `⇄ 另一形态 · ${companionForm.form_label || companionForm.name || '第二形态'}`,
+          active: false,
+        });
+        const W = panel._boxWidth;
+        const H = panel._boxHeight;
+        const cx = primaryX ?? w * 0.5;
+        const cy = primaryY ?? h * 0.5;
+        const rightX = Math.round(cx + primaryW * 0.5 + 14);
+        const leftX = Math.round(cx - primaryW * 0.5 - 14 - W);
+        const preferLeft = source === 'board_companion' && side === 2;
+        const rawX = preferLeft
+          ? (leftX >= 14 ? leftX : rightX)
+          : (rightX + W <= w - 14 ? rightX : leftX);
+        const px = Math.max(14, Math.min(w - W - 14, rawX));
+        const py = Math.max(20, Math.min(h - H - 14, Math.round(cy + primaryH * 0.5 - H)));
+
+        const wrap = new PIXI.Container();
+        wrap.eventMode = 'none';
+        panel.position.set(px, py);
+        wrap.addChild(panel);
+        wrap.pivot.set(px + W * 0.5, py + H * 0.5);
+        wrap.position.set(px + W * 0.5, py + H * 0.5);
+        wrap.scale.set(0.9);
+        wrap.alpha = 0.78;
+        this.inspectLayer.addChild(wrap);
+        this._inspectAnim = { node: wrap, age: 0, duration: 0.09, startScale: 0.9 };
+      } else if (dualForms && dualForms.length >= 2) {
+        const cardWidth = Math.min(220, Math.max(168, Math.floor((w - 56 - (dualForms.length - 1) * 18) / dualForms.length)));
+        const liveContext = Boolean(card.state || card.instance_id != null || card.active_form != null);
+        let panel = buildDualFormSpread(card, {
+          side,
+          accentColor: resolvedAccent,
+          ownerName,
+          showOwner: Boolean(ownerName),
+          cardWidth,
+          fixedCardHeight: 0,
+          gap: 18,
+          liveContext,
+        });
+        if (panel._boxHeight > h - 56) {
+          panel.destroy({ children: true });
+          panel = buildDualFormSpread(card, {
+            side,
+            accentColor: resolvedAccent,
+            ownerName,
+            showOwner: Boolean(ownerName),
+            cardWidth,
+            fixedCardHeight: Math.max(200, h - 84),
+            gap: 18,
+            liveContext,
+          });
+        }
+        const W = panel._boxWidth;
+        const H = panel._boxHeight;
+
+        if (sourceSprite && !sourceSprite.destroyed) {
+          sourceSprite.alpha = 0;
+          this._hiddenHoverSprite = sourceSprite;
+        }
+
+        const targetX = anchorX ?? w * 0.5;
+        const targetY = source === 'effect' ? anchorY - H / 2 : anchorY ?? h * 0.45;
+        const px = Math.max(16, Math.min(w - W - 16, targetX - W / 2));
+        const maxPy = source === 'board' && this.layout.hasHand
+          ? Math.max(48, this.layout.stageBottom - H - 4)
+          : h - H - 16;
+        const py = Math.max(24, Math.min(maxPy, targetY - H / 2));
+        const pivotX = Math.max(px + 24, Math.min(px + W - 24, targetX));
+        const pivotY = Math.max(py + 24, Math.min(py + H - 24, targetY));
+
+        const wrap = new PIXI.Container();
+        wrap.eventMode = 'none';
+        panel.position.set(px, py);
+        wrap.addChild(panel);
+        wrap.pivot.set(pivotX, pivotY);
+        wrap.position.set(pivotX, pivotY);
+        wrap.scale.set(0.88);
+        wrap.alpha = 0.76;
+        this.inspectLayer.addChild(wrap);
+        this._inspectAnim = { node: wrap, age: 0, duration: 0.1, startScale: 0.88 };
+      } else {
+        const W = source === 'effect' ? Math.min(w - 32, 320) : 224;
+        const fixedH = Math.min(h - 72, Math.round(W * 1.40));
+        const panel = buildFullCard(card, {
+          side,
+          accentColor: resolvedAccent,
+          ownerName,
+          showOwner: Boolean(ownerName),
+          width: W,
+          fixedHeight: fixedH,
+          dense: true,
+          centered: false,
+        });
+        const H = panel._boxHeight;
+
+        if (sourceSprite && !sourceSprite.destroyed) {
+          sourceSprite.alpha = 0;
+          this._hiddenHoverSprite = sourceSprite;
+        }
+
+        const targetX = anchorX ?? w * 0.5;
+        const targetY = source === 'effect' ? anchorY - H / 2 : anchorY ?? h * 0.45;
+        const px = Math.max(16, Math.min(w - W - 16, targetX - W / 2));
+        const maxPy = source === 'board' && this.layout.hasHand
+          ? Math.max(48, this.layout.stageBottom - H - 4)
+          : h - H - 16;
+        const py = Math.max(24, Math.min(maxPy, targetY - H / 2));
+        const pivotX = Math.max(px + 24, Math.min(px + W - 24, targetX));
+        const pivotY = Math.max(py + 24, Math.min(py + H - 24, targetY));
+
+        const wrap = new PIXI.Container();
+        wrap.eventMode = 'none';
+        panel.position.set(px, py);
+        wrap.addChild(panel);
+
+        wrap.pivot.set(pivotX, pivotY);
+        wrap.position.set(pivotX, pivotY);
+        wrap.scale.set(0.84);
+        wrap.alpha = 0.72;
+        this.inspectLayer.addChild(wrap);
+        this._inspectAnim = { node: wrap, age: 0, duration: 0.1, startScale: 0.84 };
       }
-
-      const targetX = anchorX ?? w * 0.5;
-      const targetY = this.hoveredCard.source === 'effect' ? anchorY - H / 2 : anchorY ?? h * 0.45;
-      const px = Math.max(16, Math.min(w - W - 16, targetX - W / 2));
-      const maxPy = this.hoveredCard.source === 'board' && this.layout.hasHand
-        ? Math.max(48, this.layout.stageBottom - H - 4)
-        : h - H - 16;
-      const py = Math.max(24, Math.min(maxPy, targetY - H / 2));
-      const pivotX = Math.max(px + 24, Math.min(px + W - 24, targetX));
-      const pivotY = Math.max(py + 24, Math.min(py + H - 24, targetY));
-
-      const wrap = new PIXI.Container();
-      wrap.eventMode = 'none';
-      panel.position.set(px, py);
-      wrap.addChild(panel);
-
-      wrap.pivot.set(pivotX, pivotY);
-      wrap.position.set(pivotX, pivotY);
-      wrap.scale.set(0.84);
-      wrap.alpha = 0.72;
-      this.inspectLayer.addChild(wrap);
-      this._inspectAnim = { node: wrap, age: 0, duration: 0.1, startScale: 0.84 };
     }
 
     if (this.hoveredInfo) {

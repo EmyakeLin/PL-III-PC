@@ -1,5 +1,17 @@
 # 当前设计与工作记录
 
+## 双形态技能并排卡面展示与结构化投影（2026-11-24）
+
+- **结构化双形态投影**（`displayer.py`、`battle_ui/match.py`）：
+  - 基于 `form_when` 与 `forms` 纯结构化字段（零正则猜文本）生成形态标签 `_form_label`（如流阴 `常态` / `战甲≥1`、澜清 `常态` / `活化态`、赫克 `常态` / `持有全开`、林羽 `常态` / `替换态`）与完整双形态列表 `dual_forms`（保留 `is_active_form` 与实时费用/骰面状态）。
+  - 统一覆盖 `_printed_skill(..., include_forms=True)`（图鉴/典籍与选人 `_roster_preview`）、`_visible_card`（手牌、场上已公开牌、弃牌堆、除外区与选牌界面）以及起手调度 `_current_draw_prompt`。
+- **横向并排双卡展示（严禁单卡内上下滚动堆叠）**（`design_system.js`、`card_print.js`、`combat_tabletop.js`、`table_overlays.js`、`game_director.js`）：
+  - 静息单卡（`buildFullCard`、`buildUniformCard`）与角色侧栏技能条（`buildUnifiedSkillRow`）显示精炼形态角标（常态显示 `⇄肃清引信` / `⇄活化态`，已切换形态高亮显示 `◆战甲≥1` / `◆活化态`）。
+  - 新增 `buildDualFormSpread` 与 `buildCompanionFormCard`：选人编队、角色侧栏、起手调度、选牌面板及弃牌堆悬停时直接展开左右等高并排双实体牌（`[形态 I] ⇄ [形态 II]`）；手牌扇区与 2.5D 战场牌悬停时在抬升主牌一侧并排浮现另一形态伴生实体牌；规则典籍双列排版中双形态技能直接横跨左右两列并排展示；选人与弃牌堆网格同时支持点击 `⇄` 角标原地切换形态。
+- **验证记录**：
+  - `tests.test_displayer`（13/13，新增流阴「战甲塑造 ⇄ 肃清引信」与澜清活化技能变身前后及选人预览双形态对照测试）与 `tests.entry_semantics`（219/219）共 **232/232 通过**。
+  - 5 个改动 JS 模块全部通过 `node --check`；Node 前端专测（`test_game_stage.mjs` + `test_data_driven_display.mjs`，新增横向并排坐标、零纵向滚动与形态徽章对照断言）**16/16 通过**。
+
 ## 后置交锋（Rear Duel）双轨内核、桥接与 2.5D/3D 牌桌演出（2026-11-24）
 
 ### 已确认规则与语义
