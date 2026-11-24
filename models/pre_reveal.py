@@ -21,7 +21,8 @@ class PreRevealDuel(DuelSlot):
         self.trigger_die = None
         self.trigger_name = None
         self.interceptable = allows_interception(attack_card.data, pre_reveal=pre_reveal)
-        self.ready = not self.interceptable
+        self.preserve_target = pre_reveal and attack_card.data.get("preserve_pre_reveal_target", False)
+        self.ready = not self.interceptable or self.preserve_target and duel_index is not None
 
     def play_mode(self, card):
         if card is not None:
@@ -127,10 +128,14 @@ class PreRevealPhase:
                  if not (occupied_only or bind_card) or next(slot.playable_cards(enemy.side), None) is not None]
         return characters + slots
 
-    def intercept_cards(self, player):
-        if self.game.is_over or not self.pending_for(player):
+    def intercept_cards(self, player, duel_number=None):
+        pending = self.pending_for(player)
+        numbers = pending if duel_number is None else [n for n in pending if n == duel_number]
+        if self.game.is_over or not numbers:
             return []
-        return self.playable_hand(player)
+        slots = [self.space.space[n - 1] for n in numbers]
+        return [card for card in self.playable_hand(player)
+                if any(not slot.preserve_target or slot.target_character is card.character for slot in slots)]
 
     def eligible_players(self):
         if self.game.is_over:
@@ -218,11 +223,14 @@ class PreRevealPhase:
 
     def intercept(self, card, duel_number=None):
         player = getattr(card, "player", None)
-        if card not in self.intercept_cards(player):
+        if card not in self.intercept_cards(player, duel_number):
             raise ValueError("这张牌当前不能拦截。")
         slot = self._pending_slot(player, duel_number)
+        if slot.preserve_target and slot.target_character is not card.character:
+            raise ValueError("此牌只能由原定目标角色迎击。")
         slot.intercept_card = card
-        slot.target_character = slot.target_duel_index = None
+        if not slot.preserve_target:
+            slot.target_character = slot.target_duel_index = None
         slot.ready = True
         self.game.context.record("intercepted", series="pre_reveal", number=self.space.space.index(slot) + 1,
                                  player=player.name, card=card.name)

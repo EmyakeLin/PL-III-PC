@@ -79,6 +79,7 @@ class Dice:
         self._printed_roll_max = data.get("roll_max", dice_value_range[self._printed_level][1])
         if type(self._printed_roll_max) is not int or self._printed_roll_max < 1:
             raise ValueError("变动点数上限必须是正整数")
+        self.positive_modifiers = {}
         self._level_bonus = 0
         self._resolved_level = None
         self.position = None
@@ -122,7 +123,7 @@ class Dice:
     def pay_use_cost(self):
         """Pay once, after insertions have resolved and before this use is paired."""
         cost = self.data.get("resource_cost")
-        if not cost or self.resource_paid or self.card.range_deficit >= 3:
+        if not cost or self.resource_paid or self.card.blanked:
             return True
         actor = self.card.character
         ctx = self.game.context
@@ -133,7 +134,7 @@ class Dice:
 
     def can_afford_use(self):
         cost = self.data.get("resource_cost")
-        return (not cost or self.resource_paid or self.card.range_deficit >= 3
+        return (not cost or self.resource_paid or self.card.blanked
                 or self.card.character.spendable_status(cost["status"]) >= cost["amount"])
 
     def register_entries(self):
@@ -147,10 +148,14 @@ class Dice:
 
     @property
     def effective_range(self):
+        if self.card and self.card.use_state.get("blank_skill"):
+            return 0
         return max(self.card.effective_range if self.card else 0, range_trait(self.data, "range_level", self.card))
 
     @property
     def effective_ignore_range(self):
+        if self.card and self.card.use_state.get("blank_skill"):
+            return 0
         return max(self.card.effective_ignore_range if self.card else 0, range_trait(self.data, "ignore_range", self.card))
 
     @property
@@ -183,10 +188,20 @@ class Dice:
         return self._printed_level
 
     @property
+    def increases_suppressed(self):
+        return bool(self.card and self.card.character and
+                    getattr(self.card.character, "turn_state", {}).get("suppress_dice_increases"))
+
+    def effective_modifier(self, component, field):
+        value = getattr(component, field)
+        return value - component.positive_modifiers.get(field, 0) if self.increases_suppressed else value
+
+    @property
     def modified_level(self):
         if self.fixed_scores:
             return self._printed_level.value
-        return self._printed_level.value + self._level_bonus + (self.card.level_bonus if self.card else 0)
+        return (self._printed_level.value + self.effective_modifier(self, "_level_bonus")
+                + (self.effective_modifier(self.card, "level_bonus") if self.card else 0))
 
     @property
     def level(self):
@@ -227,6 +242,7 @@ class Dice:
         return dice_value_range[level][1]
 
     def add_levels(self, amount):
+        self.positive_modifiers["_level_bonus"] = self.positive_modifiers.get("_level_bonus", 0) + max(0, amount)
         self._level_bonus += amount
         self.refresh_resolved_level()
 
@@ -254,14 +270,16 @@ class Dice:
         return self.calculate_final_score()
 
     def calculate_final_score(self):
+        base = self.effective_modifier(self, "base_value")
+        final = self.effective_modifier(self, "final_bonus")
         if self.calc_formula in ("+", "-", "(b + v) * m + f"):
-            value = (self.base_value + self.value) * self.multiplier + self.final_bonus
+            value = (base + self.value) * self.multiplier + final
         else:
             value = _evaluate(_formula_tree(self.calc_formula), {
-                "b": self.base_value, "v": self.value, "m": self.multiplier, "f": self.final_bonus,
+                "b": base, "v": self.value, "m": self.multiplier, "f": final,
             })
         if self.card is not None and not self.fixed_scores:
-            value += self.card.final_bonus
+            value += self.effective_modifier(self.card, "final_bonus")
             if self.card.character is not None and self.type != "blank":
                 value += self.card.character.status_modifier("final_score")
         return value
@@ -291,6 +309,8 @@ class Dice:
 
 
 def describe_die(data):
+    if "printed_text" in data:
+        return data["printed_text"]
     die = Dice(data)
     name = TYPE_NAMES[die.type]
     if die.type == "skip":

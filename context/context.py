@@ -299,7 +299,9 @@ class Context:
             return None
         if originating_entry is not None:
             fields["execution"] = originating_entry
-        if opcode == OpCode.RESOLVE_RANGE_DEFICIT:
+        if opcode == OpCode.RESOLVE_STATUS_AMOUNT:
+            fields["value_ref"] = ValueBounds()
+        elif opcode == OpCode.RESOLVE_RANGE_DEFICIT:
             card = fields["card"]
             fields.update(value_ref=ValueBounds(), source=card.character, side=card.player.side)
         elif opcode in VALUE_RESOLVERS:
@@ -575,6 +577,10 @@ class Context:
         for group in groups.values():
             ranks.setdefault(self._source_order(group[0]), []).append(group)
         rng = getattr(self.game, "rng", random)
+        die = self.event.get("die")
+        suppress_increases = (timing == "BEFORE" and trigger in (
+            OpCode.RESOLVE_DIE_LEVEL, OpCode.RESOLVE_ROLL_VALUE, OpCode.RESOLVE_FINAL_SCORE, OpCode.RESOLVE_CLASH_SCORE)
+            and getattr(die, "increases_suppressed", False))
         for key in sorted(ranks):
             tied = ranks[key]
             if len(tied) > 1:
@@ -585,7 +591,16 @@ class Context:
                         # Each listener sees the operand left by the preceding listener.
                         self.event.update(amount=self.peek(0), damage_amount=self.peek(0))
                     if entry in self.entries and self._matches(entry):
+                        if not suppress_increases:
+                            self._invoke(entry)
+                            continue
+                        before = self.peek(0)
+                        bounds = self.event.get("value_ref")
+                        floor = bounds.minimum if bounds else None
                         self._invoke(entry)
+                        self.stack[-1] = min(before, self.peek(0))
+                        if bounds:
+                            bounds.minimum = min(floor, bounds.minimum)
 
     def _invoke(self, entry):
         invocation = EntryExecution(entry)

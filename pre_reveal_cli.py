@@ -68,7 +68,7 @@ def run_declarations(bridge):
 
         bridge.begin_private_view(player)
         try:
-            cards = phase.attack_cards(player) if action == "attack" else phase.intercept_cards(player)
+            cards = phase.attack_cards(player) if action == "attack" else phase.intercept_cards(player, number)
             labels = [f"{c.character.name} · {c.describe()}　个人费 {c.character.available_cost}" for c in cards]
             print(f"{player.name}　通用费 {player.available_cost}")
             if action == "respond":

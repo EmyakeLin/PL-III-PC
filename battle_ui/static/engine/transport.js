@@ -90,6 +90,8 @@ export function roomTableState(room, assets) {
     legal_intercept_cards: [...new Set(intercepts.map(move => move.card_id))],
     attack_targets: attackTargets,
     pending_responses: pending.map(move => move.response_number),
+    intercepts_by_number: Object.fromEntries(pending.map(({ response_number: number }) =>
+      [number, intercepts.filter(move => move.response_number === number).map(move => move.card_id)])),
     can_pass: options.some(move => move.kind === 'pass'), can_end_attack: canEndAttack,
     is_paused_by_me: canLeaveSpecial,
     client_paced: Boolean(room.client_paced),

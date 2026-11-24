@@ -1,0 +1,2787 @@
+{
+  "status_rules": {
+    "羽流·势": {"description": "至多5。", "cap": 5},
+    "羽流·延攻": {"description": "羽流剑术状态，最大3；\n进攻型骰子最终点数+X；\n存储裂伤伤害时，存储的数额增加X*20%。", "cap": 3},
+    "羽流·反制": {"description": "羽流剑术状态，最大3；\n回合开始时，获得X/2（向上取整）次 置卡或换卡机会 与X个人费", "cap": 3},
+    "羽流·制衡": {
+      "description": "羽流剑术状态，最大3；\n施加的虚弱、束缚+X/2（向上取整）；施加的限制、造成的减费、弃卡效果的数值+X/2（向下取整）；\n即将拼点失败时，若差值不高于X，则改为拼点打平",
+      "cap": 3
+    },
+    "羽流·终": {"description": "羽流剑术状态；\n每回合开始时，使X层铭刻折影化（至多持有8层折影化铭刻）；"},
+    "铭刻": {"description": "铭刻X：用于特定效果。折影化时，会变为折影化铭刻。"},
+    "折影化铭刻": {"description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。", "cap": 8},
+    "裂伤": {
+      "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/4（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
+      "cap": 25,
+      "activation": {
+        "label": "裂伤爆发",
+        "remove_after": true,
+        "operation": {
+          "op": "program",
+          "code": [
+            "$event.target", "$event.target.rule_state", "裂伤存伤", 0, "LOOKUP", 99, "ADD", 100, "FLOOR_DIV",
+            "$event.burst_grade", "pierce", "COALESCE", "none", "DAMAGE", "$event.target", "裂伤存伤", 0,
+            "SET_CHARACTER_STATE"
+          ]
+        }
+      },
+      "global_entries": [
+        {
+          "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/4（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
+          "trigger": "on_status_changed",
+          "operation": {
+            "op": "program",
+            "code": ["$event.target", "裂伤存伤", 0, "SET_CHARACTER_STATE"]
+          },
+          "when": [
+            {"left": "$event.status", "op": "eq", "right": "裂伤"},
+            {"left": "$event.current_stacks", "op": "eq", "right": 0}
+          ]
+        },
+        {
+          "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/4（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
+          "trigger": "AFTER STATUS",
+          "operation": {
+            "op": "program",
+            "code": [
+              "$event.target",
+              {
+                "literal": ["holder"]
+              },
+              ["after_wound_applied", "$event.bindings", "PUBLISH"],
+              "WITH_BINDINGS"
+            ]
+          },
+          "when": [
+            {"left": "$event.status", "op": "eq", "right": "裂伤"},
+            {"left": "$event.current_stacks", "op": "eq", "right": 24}
+          ],
+          "subject": "any"
+        }
+      ]
+    },
+    "折影": {"description": "折影：对技能施加的状态效果；被施加此状态的技能被移出战斗，直到下一个技能被施加折影时，此技能重返战斗并回到所属方的牌堆底。"},
+    "裂伤拘束": {"description": "裂伤拘束X：在裂伤即将达到25层时，限制为24层，随后消耗一层裂伤拘束；一轮内至多消耗一层裂伤拘束。"},
+    "破甲": {"cap": 1, "description": "无视全部护甲且无法持有护盾"}
+  },
+  "status_entries": {
+    "羽流·延攻": [
+      {
+        "description": "进攻型骰子最终点数+X；",
+        "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+        "operation": {
+          "op": "program",
+          "code": ["$self", "羽流·延攻", "STATUS_COUNT", "ADD"]
+        },
+        "when": [
+          {"left": "$event.die.is_attack", "op": "eq", "right": true}
+        ],
+        "subject": "source"
+      }
+    ],
+    "羽流·反制": [
+      {
+        "description": "回合开始时，获得X/2（向上取整）次 置卡或换卡机会 与X个人费",
+        "trigger": "on_turn_start",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "置卡或换卡机会", "$self", "羽流·反制", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "ABILITY_EFFECT", "$self",
+            "$self", "羽流·反制", "STATUS_COUNT", "TURN_COST_ADD"
+          ]
+        }
+      }
+    ],
+    "羽流·制衡": [
+      {
+        "description": "即将拼点失败时，若差值不高于X，则改为拼点打平",
+        "trigger": "before_clash_result",
+        "operation": {
+          "op": "program",
+          "code": ["$event.die", "DRAW_CLASH"]
+        },
+        "when": [
+          {"left": "$event.prospective_result", "op": "eq", "right": "lose"},
+          {
+            "left": "$event.clash_difference",
+            "op": "le",
+            "right": {"field": "$self.statuses", "key": "羽流·制衡", "default": 0}
+          }
+        ]
+      },
+      {
+        "description": "施加的虚弱、束缚+X/2（向上取整）；施加的限制、造成的减费、弃卡效果的数值+X/2（向下取整）；",
+        "trigger": "BEFORE STATUS",
+        "operation": {
+          "op": "program",
+          "code": [
+            ["$self", "羽流·制衡", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV"],
+            "EVAL", "ADD"
+          ]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "虚弱"},
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "subject": "source"
+      },
+      {
+        "description": "施加的虚弱、束缚+X/2（向上取整）；施加的限制、造成的减费、弃卡效果的数值+X/2（向下取整）；",
+        "trigger": "BEFORE STATUS",
+        "operation": {
+          "op": "program",
+          "code": [
+            ["$self", "羽流·制衡", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV"],
+            "EVAL", "ADD"
+          ]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "束缚"},
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "subject": "source"
+      },
+      {
+        "description": "施加的虚弱、束缚+X/2（向上取整）；施加的限制、造成的减费、弃卡效果的数值+X/2（向下取整）；",
+        "trigger": "BEFORE STATUS",
+        "operation": {
+          "op": "program",
+          "code": [
+            ["$self", "羽流·制衡", "STATUS_COUNT", 2, "FLOOR_DIV"],
+            "EVAL", "ADD"
+          ]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "限制"},
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "subject": "source"
+      }
+    ],
+    "裂伤": [
+      {
+        "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/4（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
+        "trigger": "AFTER DAMAGE",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "裂伤存伤", "$self.rule_state", "裂伤存伤", 0, "LOOKUP", "$event.damage_amount", "$self", "裂伤",
+            "STATUS_COUNT", 4, "FLOOR_DIV", "MUL", 10, "$event.damage_die.card.character", "羽流·延攻", "STATUS_COUNT", 2,
+            "MUL", "ADD", "MUL", "ADD", "SET_CHARACTER_STATE"
+          ]
+        },
+        "when": [
+          {"left": "$event.damage_received", "op": "eq", "right": true},
+          {"left": "$event.damage_die", "op": "ne", "right": null}
+        ],
+        "subject": "target"
+      },
+      {
+        "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/4（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
+        "trigger": "on_status_changed",
+        "operation": {
+          "op": "program",
+          "code": ["$event.target", "裂伤", "ACTIVATE_STATUS"]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "裂伤"},
+          {"left": "$event.current_stacks", "op": "ge", "right": 25}
+        ]
+      }
+    ],
+    "裂伤拘束": [
+      {
+        "description": "裂伤拘束X：在裂伤即将达到25层时，限制为24层，随后消耗一层裂伤拘束；一轮内至多消耗一层裂伤拘束。",
+        "trigger": "BEFORE RESOLVE_STATUS_AMOUNT",
+        "operation": {
+          "op": "program",
+          "code": [
+            "DUP", "$event.value_ref.maximum", "MIN", "$self", "裂伤", "STATUS_COUNT", "ADD", 25, "GE",
+            [
+              "$event.value_ref", 24, "$self", "裂伤", "STATUS_COUNT", "SUB", 0, "MAX", "VALUE_CEILING",
+              {
+                "schedule": {
+                  "event": "after_wound_applied",
+                  "source": "$self",
+                  "target": "$self",
+                  "after_turns": 0,
+                  "through_turns": 0,
+                  "uses": 1,
+                  "require_source_alive": false,
+                  "require_target_alive": false,
+                  "then": [
+                    "$event.scheduled.target", "裂伤拘束", "ROUND_TRIGGER_COUNT", 1, "LT",
+                    [
+                      "$event.scheduled.target", "裂伤拘束", "RECORD_ROUND_TRIGGER", "$event.scheduled.target", "裂伤拘束", 1,
+                      "SPEND_STATUS"
+                    ],
+                    "WHEN"
+                  ],
+                  "when": [
+                    {"left": "$event.holder", "op": "eq", "right": "$event.scheduled.target"}
+                  ],
+                  "event_type": "event"
+                }
+              }
+            ],
+            "WHEN"
+          ]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "裂伤"},
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "subject": "target"
+      }
+    ],
+    "破甲": [
+      {
+        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
+        "operation": {
+          "op": "program",
+          "code": [
+            {"op": "cancel"}
+          ]
+        },
+        "when": [
+          {"left": "$event.kind", "op": "eq", "right": "armor"}
+        ],
+        "subject": "target"
+      },
+      {
+        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "trigger": "BEFORE SHIELD",
+        "operation": {
+          "op": "program",
+          "code": [
+            {"op": "cancel"}
+          ]
+        },
+        "when": [
+          {"left": "$pending.amount", "op": "gt", "right": 0}
+        ],
+        "subject": "target"
+      },
+      {
+        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
+        "operation": {
+          "op": "program",
+          "code": [
+            {"op": "cancel"}
+          ]
+        },
+        "when": [
+          {"left": "$event.kind", "op": "eq", "right": "damage_add"},
+          {"left": "$event.amount", "op": "lt", "right": 0},
+          {"left": "$event.issuer.owner", "op": "eq", "right": "$event.target"}
+        ],
+        "subject": "target"
+      },
+      {
+        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
+        "operation": {
+          "op": "program",
+          "code": [
+            {"op": "cancel"}
+          ]
+        },
+        "when": [
+          {"left": "$event.kind", "op": "eq", "right": "damage_multiply"},
+          {"left": "$event.amount", "op": "lt", "right": 1},
+          {"left": "$event.issuer.owner", "op": "eq", "right": "$event.target"}
+        ],
+        "subject": "target"
+      }
+    ],
+    "羽流·终": [
+      {
+        "description": "每回合开始时，使X层铭刻折影化（至多持有8层折影化铭刻）；",
+        "trigger": "on_turn_start",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "羽流·终", "STATUS_COUNT", 8, "$self", "折影化铭刻", "STATUS_COUNT", "SUB", "MIN", "$self", "铭刻",
+            "STATUS_COUNT", "$self.turn_state", "折影额度", 0, "LOOKUP", "SUB", 0, "MAX", "MIN", "转化", "STORE", "$local.转化",
+            0, "GT",
+            [
+              "$self", "折影化铭刻", "$local.转化",
+              {"call": "STATUS", "result": "actual_delta", "default": 0},
+              "新增", "STORE", "$self", "本回合新折影", "$local.新增", "SET_TURN_STATE", "$self", "折影额度", "$self.turn_state",
+              "折影额度", 0, "LOOKUP", "$local.新增", "ADD", "SET_TURN_STATE"
+            ],
+            "WHEN"
+          ]
+        }
+      }
+    ],
+    "折影化铭刻": [
+      {
+        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
+        "trigger": "on_turn_start",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "折影化铭刻", "STATUS_COUNT", "$self.turn_state", "本回合新折影", 0, "LOOKUP", "SUB", 0, "MAX", "旧折影",
+            "STORE", "$local.旧折影", 0, "GT",
+            [
+              "$self", "铭刻", "$local.旧折影",
+              {"call": "STATUS", "result": "actual_delta", "default": 0},
+              "补充", "STORE", "$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$local.补充", "ADD",
+              "SET_TURN_STATE"
+            ],
+            "WHEN"
+          ]
+        }
+      },
+      {
+        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
+        "trigger": "AFTER SPEND_STATUS",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$event.result", "SUB", 0, "MAX",
+            "SET_TURN_STATE"
+          ]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "铭刻"},
+          {"left": "$event.result", "op": "gt", "right": 0}
+        ],
+        "subject": "target"
+      },
+      {
+        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
+        "trigger": "AFTER STATUS",
+        "operation": {
+          "op": "program",
+          "code": ["$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$event.current_stacks", "MIN", "SET_TURN_STATE"]
+        },
+        "when": [
+          {"left": "$event.status", "op": "eq", "right": "铭刻"},
+          {"left": "$event.actual_delta", "op": "lt", "right": 0}
+        ],
+        "subject": "target"
+      },
+      {
+        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
+        "trigger": "on_character_turn_end",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self.turn_state", "折影额度", 0, "LOOKUP", 0, "GT",
+            [
+              "$self", "铭刻", 0, "$self.turn_state", "折影额度", 0, "LOOKUP", "SUB", "STATUS", "$self", "折影额度", 0,
+              "SET_TURN_STATE"
+            ],
+            "WHEN"
+          ]
+        }
+      }
+    ]
+  },
+  "turn_end_statuses": ["破甲"],
+  "ability_rules": {
+    "置卡或换卡机会": {
+      "permissions": ["place", "replace"],
+      "turn_end": true
+    }
+  },
+  "characters": [
+    {
+      "id": "emyake_lin_yu",
+      "name": "林羽",
+      "title": "Emyake",
+      "rank": "EMPOWERED_BOSS",
+      "max_hp": 12,
+      "retain_shields": true,
+      "passive_skills": [
+        {
+          "name": "剑术·羽流",
+          "description": "回合开始时，获得2羽流·势。\n使用费用等同于羽流·势层数的技能时，该技能骰子的变动点数+3且第一枚斩击骰子获得效果：\n-【拼点胜利】获得1层羽流·延攻并获得羽流·势层数一半（向上取整）层强壮\n-【拼点失败】获得1层羽流·反制并抽取羽流·势层数一半（向上取整）数量的卡牌\n-不属于上述两种情况：获得1层羽流·制衡并获得羽流·势层数一半（向上取整）数量的护盾\n成功触发上述效果并获取了羽流剑术状态后，消耗全部羽流·势。\n-若上述状态在获得时超出上限，则改为获取1层羽流·终",
+          "entries": [
+            {
+              "description": "回合开始时，获得2羽流·势。",
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "羽流·势", 2, "STATUS"]
+              }
+            },
+            {
+              "description": "使用费用等同于羽流·势层数的技能时，该技能骰子的变动点数+3且第一枚斩击骰子获得效果：",
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$event.card", "羽流用势", "$self", "羽流·势", "STATUS_COUNT", "SET_SKILL_STATE"]
+              },
+              "when": [
+                {
+                  "left": {"field": "$self.statuses", "key": "羽流·势", "default": 0},
+                  "op": "gt",
+                  "right": 0
+                },
+                {
+                  "left": {"field": "$self.statuses", "key": "羽流·势", "default": 0},
+                  "op": "eq",
+                  "right": "$event.card.cost"
+                }
+              ]
+            },
+            {
+              "description": "使用费用等同于羽流·势层数的技能时，该技能骰子的变动点数+3且第一枚斩击骰子获得效果：",
+              "trigger": "BEFORE RESOLVE_ROLL_VALUE",
+              "operation": {
+                "op": "program",
+                "code": [3, "ADD"]
+              },
+              "when": [
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
+                  "op": "gt",
+                  "right": 0
+                }
+              ],
+              "subject": "source"
+            },
+            {
+              "description": "-【拼点胜利】获得1层羽流·延攻并获得羽流·势层数一半（向上取整）层强壮",
+              "trigger": "on_clash_win",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card.dice",
+                  ["$event.item.type", "slash", "EQ"],
+                  "FILTER", "FIRST", "$event.die.data", "IS",
+                  [
+                    "$self", "羽流·延攻", "STATUS_COUNT", 3, "GE",
+                    ["羽流·终"],
+                    ["羽流·延攻"],
+                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
+                    {"call": "STATUS", "result": "actual_delta", "default": 0},
+                    0, "GT",
+                    [
+                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
+                      [
+                        "$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$self", "强壮", "$local.份数",
+                        "STATUS"
+                      ],
+                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.die.type", "op": "eq", "right": "slash"},
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
+                  "op": "gt",
+                  "right": 0
+                },
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
+                  "op": "eq",
+                  "right": false
+                }
+              ]
+            },
+            {
+              "description": "-【拼点失败】获得1层羽流·反制并抽取羽流·势层数一半（向上取整）数量的卡牌",
+              "trigger": "on_clash_lose",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card.dice",
+                  ["$event.item.type", "slash", "EQ"],
+                  "FILTER", "FIRST", "$event.die.data", "IS",
+                  [
+                    "$self", "羽流·反制", "STATUS_COUNT", 3, "GE",
+                    ["羽流·终"],
+                    ["羽流·反制"],
+                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
+                    {"call": "STATUS", "result": "actual_delta", "default": 0},
+                    0, "GT",
+                    [
+                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
+                      ["$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$player", "$local.份数", "DRAW"],
+                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.die.type", "op": "eq", "right": "slash"},
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
+                  "op": "gt",
+                  "right": 0
+                },
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
+                  "op": "eq",
+                  "right": false
+                }
+              ]
+            },
+            {
+              "description": "-不属于上述两种情况：获得1层羽流·制衡并获得羽流·势层数一半（向上取整）数量的护盾",
+              "trigger": "on_clash_draw",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card.dice",
+                  ["$event.item.type", "slash", "EQ"],
+                  "FILTER", "FIRST", "$event.die.data", "IS",
+                  [
+                    "$self", "羽流·制衡", "STATUS_COUNT", 3, "GE",
+                    ["羽流·终"],
+                    ["羽流·制衡"],
+                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
+                    {"call": "STATUS", "result": "actual_delta", "default": 0},
+                    0, "GT",
+                    [
+                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
+                      [
+                        "$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$self", "normal", "$local.份数",
+                        "SHIELD"
+                      ],
+                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.die.type", "op": "eq", "right": "slash"},
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
+                  "op": "gt",
+                  "right": 0
+                },
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
+                  "op": "eq",
+                  "right": false
+                }
+              ]
+            },
+            {
+              "description": "-不属于上述两种情况：获得1层羽流·制衡并获得羽流·势层数一半（向上取整）数量的护盾",
+              "trigger": "after_dice_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card.dice",
+                  ["$event.item.type", "slash", "EQ"],
+                  "FILTER", "FIRST", "$event.die.data", "IS",
+                  [
+                    "$self", "羽流·制衡", "STATUS_COUNT", 3, "GE",
+                    ["羽流·终"],
+                    ["羽流·制衡"],
+                    "IF_ELSE", "剑术", "STORE", "$self", "$local.剑术", 1,
+                    {"call": "STATUS", "result": "actual_delta", "default": 0},
+                    0, "GT",
+                    [
+                      "$self", "羽流·势", "STATUS_COUNT", 0, "GT",
+                      [
+                        "$self", "羽流·势", "STATUS_COUNT", 1, "ADD", 2, "FLOOR_DIV", "份数", "STORE", "$self", "normal", "$local.份数",
+                        "SHIELD"
+                      ],
+                      "WHEN", "$event.card", "羽流已结算", true, "SET_SKILL_STATE", "$self", "羽流·势", "all", "SPEND_STATUS"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.die.type", "op": "eq", "right": "slash"},
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流用势", "default": 0},
+                  "op": "gt",
+                  "right": 0
+                },
+                {
+                  "left": {"field": "$event.card.use_state", "key": "羽流已结算", "default": false},
+                  "op": "eq",
+                  "right": false
+                },
+                {"left": "$event.clash_result", "op": "eq", "right": null}
+              ]
+            },
+            {
+              "description": "-若上述状态在获得时超出上限，则改为获取1层羽流·终",
+              "trigger": "AFTER STATUS",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": ["羽流·延攻", "羽流·反制", "羽流·制衡"]
+                  },
+                  "$event.status", "CONTAINS",
+                  ["$self", "羽流·终", 1, "STATUS"],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.status_overflow", "op": "gt", "right": 0}
+              ],
+              "subject": "target"
+            }
+          ]
+        },
+        {
+          "name": "铭刻视界",
+          "description": "战斗开始时，获得3层铭刻。\n回合开始时，每有一种羽流剑术状态层数达到3，则获得1层铭刻（至多3）；每回合开始时都会额外获得1铭刻。\n自身护盾在回合结束时保留，消耗1层以回复1生命值。\n自身铭刻不高于12时，所有消耗铭刻的词条均选择性触发。\n即将受到单方面攻击时，消耗4铭刻以使用技能-闪回识破-迎击（每回合至多2次）",
+          "entries": [
+            {
+              "description": "战斗开始时，获得3层铭刻。",
+              "trigger": "on_battle_start",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "铭刻", 3, "STATUS"]
+              }
+            },
+            {
+              "description": "回合开始时，每有一种羽流剑术状态层数达到3，则获得1层铭刻（至多3）；每回合开始时都会额外获得1铭刻。",
+              "trigger": "on_turn_start",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "铭刻", "$self", "羽流·延攻", "STATUS_COUNT", 3, "GE",
+                  [1],
+                  [0],
+                  "IF_ELSE", "$self", "羽流·反制", "STATUS_COUNT", 3, "GE",
+                  [1],
+                  [0],
+                  "IF_ELSE", "ADD", "$self", "羽流·制衡", "STATUS_COUNT", 3, "GE",
+                  [1],
+                  [0],
+                  "IF_ELSE", "ADD", "$self", "羽流·终", "STATUS_COUNT", 3, "GE",
+                  [1],
+                  [0],
+                  "IF_ELSE", "ADD", 3, "MIN", 1, "ADD", "STATUS"
+                ]
+              }
+            },
+            {
+              "description": "自身护盾在回合结束时保留，消耗1层以回复1生命值。",
+              "trigger": "on_character_turn_end",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.shield", 0, "GT",
+                  ["$self", "normal", -1, "SHIELD", "$self", 1, "HEAL"],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "description": "即将受到单方面攻击时，消耗4铭刻以使用技能-闪回识破-迎击（每回合至多2次）",
+              "trigger": "before_one_sided_attack",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.turn_state", "纯粹之心迎击", false, "LOOKUP",
+                  [
+                    "$self", "纯粹之心迎击", false, "SET_TURN_STATE",
+                    {
+                      "literal": {
+                        "title": "【使用时】本回合下一次受到单方面攻击时可使用一次无消耗的不计次的额外的-闪回识破-迎击",
+                        "optional": false,
+                        "options": [
+                          {
+                            "id": "free",
+                            "label": "使用额外的闪回识破",
+                            "then": {
+                              "op": "program",
+                              "code": [
+                                "$self", "$self.skill_data",
+                                ["$event.item.id", "emyake_flash", "EQ"],
+                                "FILTER", "FIRST", "SKILL_COPY", "respond_to_die",
+                                {"call": "INSERT_SKILL", "result": "result", "default": false},
+                                "POP"
+                              ]
+                            }
+                          },
+                          {
+                            "id": "normal",
+                            "label": "按铭刻视界结算",
+                            "then": {
+                              "op": "program",
+                              "code": [
+                                "$self", "铭刻", "STATUS_COUNT", 4, "GE", "$self.turn_state", "闪回识破次数", 0, "LOOKUP", 2, "LT", "AND",
+                                [
+                                  "$self", "铭刻", "STATUS_COUNT", 12, "LE",
+                                  [
+                                    {
+                                      "literal": {
+                                        "title": "即将受到单方面攻击时，消耗4铭刻以使用技能-闪回识破-迎击（每回合至多2次）",
+                                        "optional": true,
+                                        "options": [
+                                          {
+                                            "id": "counter",
+                                            "label": "消耗4铭刻迎击",
+                                            "then": {
+                                              "op": "program",
+                                              "code": [
+                                                "$self", "铭刻", 4,
+                                                {
+                                                  "call": "SPEND_STATUS",
+                                                  "result": "result",
+                                                  "default": 0,
+                                                  "with": {"require_full": true}
+                                                },
+                                                4, "EQ",
+                                                [
+                                                  "$self", "$self.skill_data",
+                                                  ["$event.item.id", "emyake_flash", "EQ"],
+                                                  "FILTER", "FIRST", "SKILL_COPY", "respond_to_die",
+                                                  {"call": "INSERT_SKILL", "result": "result", "default": false},
+                                                  ["$self", "闪回识破次数", "$self.turn_state", "闪回识破次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE"],
+                                                  "WHEN"
+                                                ],
+                                                "WHEN"
+                                              ]
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "CHOOSE_OPTION"
+                                  ],
+                                  [
+                                    "$self", "铭刻", 4,
+                                    {
+                                      "call": "SPEND_STATUS",
+                                      "result": "result",
+                                      "default": 0,
+                                      "with": {"require_full": true}
+                                    },
+                                    4, "EQ",
+                                    [
+                                      "$self", "$self.skill_data",
+                                      ["$event.item.id", "emyake_flash", "EQ"],
+                                      "FILTER", "FIRST", "SKILL_COPY", "respond_to_die",
+                                      {"call": "INSERT_SKILL", "result": "result", "default": false},
+                                      ["$self", "闪回识破次数", "$self.turn_state", "闪回识破次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE"],
+                                      "WHEN"
+                                    ],
+                                    "WHEN"
+                                  ],
+                                  "IF_ELSE"
+                                ],
+                                "WHEN"
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "CHOOSE_OPTION"
+                  ],
+                  [
+                    "$self", "铭刻", "STATUS_COUNT", 4, "GE", "$self.turn_state", "闪回识破次数", 0, "LOOKUP", 2, "LT", "AND",
+                    [
+                      "$self", "铭刻", "STATUS_COUNT", 12, "LE",
+                      [
+                        {
+                          "literal": {
+                            "title": "即将受到单方面攻击时，消耗4铭刻以使用技能-闪回识破-迎击（每回合至多2次）",
+                            "optional": true,
+                            "options": [
+                              {
+                                "id": "counter",
+                                "label": "消耗4铭刻迎击",
+                                "then": {
+                                  "op": "program",
+                                  "code": [
+                                    "$self", "铭刻", 4,
+                                    {
+                                      "call": "SPEND_STATUS",
+                                      "result": "result",
+                                      "default": 0,
+                                      "with": {"require_full": true}
+                                    },
+                                    4, "EQ",
+                                    [
+                                      "$self", "$self.skill_data",
+                                      ["$event.item.id", "emyake_flash", "EQ"],
+                                      "FILTER", "FIRST", "SKILL_COPY", "respond_to_die",
+                                      {"call": "INSERT_SKILL", "result": "result", "default": false},
+                                      ["$self", "闪回识破次数", "$self.turn_state", "闪回识破次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE"],
+                                      "WHEN"
+                                    ],
+                                    "WHEN"
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "CHOOSE_OPTION"
+                      ],
+                      [
+                        "$self", "铭刻", 4,
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "result",
+                          "default": 0,
+                          "with": {"require_full": true}
+                        },
+                        4, "EQ",
+                        [
+                          "$self", "$self.skill_data",
+                          ["$event.item.id", "emyake_flash", "EQ"],
+                          "FILTER", "FIRST", "SKILL_COPY", "respond_to_die",
+                          {"call": "INSERT_SKILL", "result": "result", "default": false},
+                          ["$self", "闪回识破次数", "$self.turn_state", "闪回识破次数", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE"],
+                          "WHEN"
+                        ],
+                        "WHEN"
+                      ],
+                      "IF_ELSE"
+                    ],
+                    "WHEN"
+                  ],
+                  "IF_ELSE"
+                ]
+              },
+              "subject": "target"
+            },
+            {
+              "description": "自身铭刻不高于12时，所有消耗铭刻的词条均选择性触发。",
+              "trigger": "on_battle_start",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "铭刻选择上限", 12, "SET_CHARACTER_STATE"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "锋破间之心",
+          "description": "铭刻不低于8时，造成的裂伤+1。\n自身攻击即将使裂伤达到25时，使该次攻击至多使裂伤达到24（每回合1次，选择性触发）",
+          "entries": [
+            {
+              "description": "铭刻不低于8时，造成的裂伤+1。",
+              "trigger": "BEFORE STATUS",
+              "operation": {
+                "op": "program",
+                "code": [1, "ADD"]
+              },
+              "when": [
+                {"left": "$event.status", "op": "eq", "right": "裂伤"},
+                {"left": "$pending.amount", "op": "gt", "right": 0},
+                {
+                  "left": {"field": "$self.statuses", "key": "铭刻", "default": 0},
+                  "op": "ge",
+                  "right": 8
+                },
+                {"left": "$event.wound_adjusted", "op": "ne", "right": true}
+              ],
+              "subject": "source"
+            },
+            {
+              "description": "自身攻击即将使裂伤达到25时，使该次攻击至多使裂伤达到24（每回合1次，选择性触发）",
+              "trigger": "BEFORE RESOLVE_STATUS_AMOUNT",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "DUP", "$event.value_ref.maximum", "MIN", "$event.target", "裂伤", "STATUS_COUNT", "ADD", 25, "GE",
+                  [
+                    "DUP", "裂伤增量", "STORE",
+                    {
+                      "literal": {
+                        "title": "自身攻击即将使裂伤达到25时，使该次攻击至多使裂伤达到24（每回合1次，选择性触发）",
+                        "optional": false,
+                        "options": [
+                          {
+                            "id": "hold",
+                            "label": "使该次攻击至多使裂伤达到24",
+                            "then": {
+                              "op": "program",
+                              "code": [
+                                "$event.die", "锋破间之心命中", "$event.hit_index", 0, "COALESCE", "SET_DIE_STATE", "$event.die", "锋破间之心目标",
+                                "$event.target", "SET_DIE_STATE", "$event.target", "裂伤", 24, "$event.target", "裂伤", "STATUS_COUNT", "SUB",
+                                0, "MAX",
+                                {
+                                  "call": "STATUS",
+                                  "with": {"wound_adjusted": true}
+                                },
+                                "$self", "锋破间之心已用", true, "SET_TURN_STATE"
+                              ]
+                            }
+                          },
+                          {
+                            "id": "allow",
+                            "label": "照常施加裂伤",
+                            "then": {
+                              "op": "program",
+                              "code": [
+                                "$event.target", "裂伤", "$local.裂伤增量",
+                                {
+                                  "call": "STATUS",
+                                  "with": {"wound_adjusted": true}
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "CHOOSE_OPTION",
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "subject": "source",
+              "when": [
+                {"left": "$event.status", "op": "eq", "right": "裂伤"},
+                {"left": "$event.die.is_attack", "op": "eq", "right": true},
+                {"left": "$event.wound_adjusted", "op": "ne", "right": true},
+                {"left": "$event.die.card.character", "op": "eq", "right": "$self"},
+                {
+                  "left": {"field": "$self.turn_state", "key": "锋破间之心已用", "default": false},
+                  "op": "eq",
+                  "right": false
+                }
+              ]
+            },
+            {
+              "description": "自身攻击即将使裂伤达到25时，使该次攻击至多使裂伤达到24（每回合1次，选择性触发）",
+              "trigger": "BEFORE RESOLVE_STATUS_AMOUNT",
+              "operation": {
+                "op": "program",
+                "code": ["$event.value_ref", 24, "$event.target", "裂伤", "STATUS_COUNT", "SUB", 0, "MAX", "VALUE_CEILING"]
+              },
+              "subject": "source",
+              "when": [
+                {"left": "$event.status", "op": "eq", "right": "裂伤"},
+                {"left": "$event.die.is_attack", "op": "eq", "right": true},
+                {
+                  "left": {"field": "$event.die.use_state", "key": "锋破间之心目标", "default": null},
+                  "op": "eq",
+                  "right": "$event.target"
+                },
+                {
+                  "left": {"field": "$event.die.use_state", "key": "锋破间之心命中", "default": -1},
+                  "op": "eq",
+                  "right": {"field": "$event.hit_index", "default": 0}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "折影交织",
+          "hidden": true,
+          "entries": [
+            {
+              "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
+              "trigger": "before_skill_pair",
+              "operation": {
+                "op": "program",
+                "code": [
+                  true,
+                  {
+                    "literal": ["折影交织"]
+                  },
+                  [
+                    "$self", "$self.skill_data",
+                    ["$event.item.id", "emyake_flash", "EQ"],
+                    "FILTER", "FIRST", "SKILL_COPY", "$event.card", "replace_position", "INSERT_AT",
+                    {"call": "INSERT_SKILL", "result": "result", "default": false}
+                  ],
+                  "WITH_BINDINGS",
+                  [
+                    "$event.card", "hand",
+                    {
+                      "call": "MOVE_CARD",
+                      "with": {"allow_destroyed": true}
+                    },
+                    "$player", 3, "TURN_COST_ADD"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.card.id", "op": "eq", "right": "emyake_weave"},
+                {"left": "$event.opponent_card.effective_range", "op": "gt", "right": 0}
+              ],
+              "subject": "source"
+            },
+            {
+              "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
+              "trigger": "on_skill_disabled",
+              "operation": {
+                "op": "program",
+                "code": [
+                  true,
+                  {
+                    "literal": ["折影交织"]
+                  },
+                  [
+                    "$self", "$self.skill_data",
+                    ["$event.item.id", "emyake_flash", "EQ"],
+                    "FILTER", "FIRST", "SKILL_COPY", "$event.card", "replace_position", "INSERT_AT",
+                    {"call": "INSERT_SKILL", "result": "result", "default": false}
+                  ],
+                  "WITH_BINDINGS",
+                  [
+                    "$event.card", "hand",
+                    {
+                      "call": "MOVE_CARD",
+                      "with": {"allow_destroyed": true}
+                    },
+                    "$player", 3, "TURN_COST_ADD"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [
+                {"left": "$event.card.id", "op": "eq", "right": "emyake_weave"},
+                {"left": "$event.reason", "op": "eq", "right": "destroy"}
+              ],
+              "subject": "source"
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "emyake_flash",
+          "name": "闪回识破",
+          "cost": 0,
+          "description": "本技能仅用作特定效果触发",
+          "entries": [
+            {
+              "description": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
+              "trigger": "BEFORE DESTROY",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target",
+                  {"field": "card", "default": null},
+                  "$owner", "IS",
+                  [
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "subject": "any",
+              "when": [
+                {"left": "$event.target.position", "op": "eq", "right": 2},
+                {
+                  "left": {"field": "$event.target.card.use_state", "key": "识破后续骰", "default": false},
+                  "op": "eq",
+                  "right": true
+                }
+              ]
+            },
+            {
+              "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
+              "trigger": "on_place",
+              "operation": {
+                "op": "program",
+                "code": ["$event.card", "折影交织", true, "SET_SKILL_STATE"]
+              },
+              "when": [
+                {"left": "$event.bindings.折影交织", "op": "eq", "right": true}
+              ],
+              "hidden": true
+            },
+            {
+              "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
+              "trigger": "BEFORE RESOLVE_HIT",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.opponent_card", "$owner", "IS",
+                  [
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "subject": "target",
+              "when": [
+                {
+                  "left": {"field": "$event.opponent_card.use_state", "key": "折影交织", "default": false},
+                  "op": "eq",
+                  "right": true
+                }
+              ],
+              "hidden": true
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 6,
+              "printed_text": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
+              "entries": [
+                {
+                  "description": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
+                  "trigger": "BEFORE RESOLVE_HIT",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.opponent_die", "$owner", "IS",
+                      [
+                        {"op": "cancel"}
+                      ],
+                      "WHEN"
+                    ]
+                  },
+                  "subject": "target",
+                  "when": [
+                    {"left": "$event.opponent_die.position", "op": "eq", "right": 1},
+                    {"left": "$event.opponent_card.id", "op": "eq", "right": "emyake_flash"}
+                  ]
+                },
+                {
+                  "description": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
+                  "trigger": "on_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card", "识破后续骰", true, "SET_SKILL_STATE"]
+                  }
+                }
+              ],
+              "printed_effects": ["下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体"]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~20:1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡",
+              "entries": [
+                "1超穿甲",
+                {
+                  "description": "斩击 1~20:1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 2, "STATUS"]
+                  }
+                },
+                {
+                  "description": "斩击 1~20:1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡",
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "羽流·延攻", 1, "STATUS"]
+                  }
+                },
+                {
+                  "description": "斩击 1~20:1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡",
+                  "trigger": "on_clash_lose",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "羽流·反制", 1, "STATUS"]
+                  }
+                },
+                {
+                  "description": "斩击 1~20:1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡",
+                  "trigger": "on_clash_draw",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "羽流·制衡", 1, "STATUS"]
+                  }
+                },
+                {
+                  "description": "斩击 1~20:1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡",
+                  "trigger": "after_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "羽流·制衡", 1, "STATUS"]
+                  },
+                  "when": [
+                    {"left": "$event.clash_result", "op": "eq", "right": null}
+                  ]
+                },
+                {
+                  "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
+                  "trigger": "before_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "$event.hit_modifiers", "damage_add", 2, "concept", "ADD_DAMAGE_MODIFIER"]
+                  },
+                  "when": [
+                    {
+                      "left": {"field": "$event.card.use_state", "key": "折影交织", "default": false},
+                      "op": "eq",
+                      "right": true
+                    }
+                  ],
+                  "hidden": true
+                },
+                {
+                  "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.opponent_card", "DESTROY"]
+                  },
+                  "when": [
+                    {
+                      "left": {"field": "$event.card.use_state", "key": "折影交织", "default": false},
+                      "op": "eq",
+                      "right": true
+                    }
+                  ],
+                  "authority": "最高话语权",
+                  "hidden": true
+                }
+              ],
+              "printed_effects": ["1超穿甲；施加2裂伤；【拼点胜利】获得1层羽流·延攻；【拼点失败】获得1层羽流·反制；其他情况获得1层羽流·制衡"],
+              "ignore_range_amount": {
+                "value": {
+                  "if": {"field": "$event.card.use_state", "key": "折影交织", "default": false},
+                  "then": 3,
+                  "else": {
+                    "if": {"field": "$event.card.use_state", "key": "识破后续骰", "default": false},
+                    "then": 3,
+                    "else": 0
+                  }
+                }
+              }
+            }
+          ],
+          "out_of_combat": true
+        },
+        {
+          "id": "emyake_flicker",
+          "name": "铭刻闪动",
+          "cost": 1,
+          "description": "【远程技能】\n【使用时】获得1铭刻与1护盾",
+          "entries": [
+            {
+              "description": "【使用时】获得1铭刻与1护盾",
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "铭刻", 1, "STATUS", "$self", "normal", 1, "SHIELD"]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "printed_text": "斩击 1~6+1：抽1卡；获得1护盾",
+              "entries": [
+                {
+                  "description": "斩击 1~6+1：抽1卡；获得1护盾",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$player", 1, "DRAW", "$self", "normal", 1, "SHIELD"]
+                  }
+                }
+              ],
+              "final_bonus": 1,
+              "printed_effects": ["抽1卡；获得1护盾"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "printed_text": "斩击 1~8+1：获得1铭刻；施加1虚弱",
+              "entries": [
+                {
+                  "description": "斩击 1~8+1：获得1铭刻；施加1虚弱",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "铭刻", 1, "STATUS", "$event.target", "虚弱", 1, "STATUS"]
+                  }
+                }
+              ],
+              "final_bonus": 1,
+              "printed_effects": ["获得1铭刻；施加1虚弱"]
+            }
+          ],
+          "range_level": 1
+        },
+        {
+          "id": "emyake_guard",
+          "name": "刻刃护卫",
+          "cost": 1,
+          "description": "【使用时】持有的羽流剑术状态之和每有3，骰子等级提升1（至多3）",
+          "entries": [
+            {
+              "description": "【使用时】持有的羽流剑术状态之和每有3，骰子等级提升1（至多3）",
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "$self", "羽流·延攻", "STATUS_COUNT", "$self", "羽流·反制", "STATUS_COUNT", "ADD", "$self", "羽流·制衡",
+                  "STATUS_COUNT", "ADD", "$self", "羽流·终", "STATUS_COUNT", "ADD", 3, "FLOOR_DIV", 3, "MIN", "SKILL_LEVEL_ADD"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "printed_text": "斩击 1~8+1：施加1裂伤",
+              "entries": [
+                {
+                  "description": "斩击 1~8+1：施加1裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 1, "STATUS"]
+                  }
+                }
+              ],
+              "final_bonus": 1,
+              "printed_effects": ["施加1裂伤"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "printed_text": "斩击 1~8+1：施加1裂伤",
+              "entries": [
+                {
+                  "description": "斩击 1~8+1：施加1裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 1, "STATUS"]
+                  }
+                }
+              ],
+              "final_bonus": 1,
+              "printed_effects": ["施加1裂伤"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "printed_text": "斩击 1~8:0穿甲；远程骰子；消耗1铭刻以使伤害+1",
+              "entries": [
+                {
+                  "description": "斩击 1~8:0穿甲；远程骰子；消耗1铭刻以使伤害+1",
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die", "本次可消耗铭刻", 1, "SET_DIE_STATE", "$event.die", "本次选用铭刻", 0, "SET_DIE_STATE",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", 0, "GT", "$self", "铭刻", "STATUS_COUNT",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "GE", "AND",
+                      [
+                        "$self", "铭刻", "STATUS_COUNT", "$self.rule_state", "铭刻选择上限", -1, "LOOKUP", "LE",
+                        [
+                          {
+                            "literal": {
+                              "title": "斩击 1~8:0穿甲；远程骰子；消耗1铭刻以使伤害+1",
+                              "optional": true,
+                              "options": [
+                                {
+                                  "id": "pay",
+                                  "label": "消耗铭刻",
+                                  "then": {
+                                    "op": "program",
+                                    "code": ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "CHOOSE_OPTION"
+                        ],
+                        ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"],
+                        "IF_ELSE"
+                      ],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  },
+                  "when": [
+                    {"left": "$event.result", "op": "eq", "right": true}
+                  ]
+                },
+                {
+                  "description": "斩击 1~8:0穿甲；远程骰子；消耗1铭刻以使伤害+1",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die.use_state", "本次选用铭刻", 0, "LOOKUP", "n", "STORE", "$local.n", 0, "GT",
+                      [
+                        "$self", "铭刻", "$local.n",
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "result",
+                          "default": 0,
+                          "with": {"require_full": true}
+                        }
+                      ],
+                      [0],
+                      "IF_ELSE", "实付", "STORE", "$event.target", 0, "$local.实付", "ADD", "pierce", "$event.die.type", "DAMAGE"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ],
+              "range_level": 1,
+              "printed_effects": ["0穿甲；远程骰子；消耗1铭刻以使伤害+1"]
+            }
+          ]
+        },
+        {
+          "id": "emyake_devour",
+          "name": "折影吞噬",
+          "cost": 2,
+          "description": "【远程技能】在开牌前打出时，无法被牵制\n本技能持续期间，对方远程等级降低3级\n*封印交锋：在这个交锋中的技能变成空白技能",
+          "entries": [],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12×2：对目标当前技能施加折影；在下回合封印对方当前交锋（若未在常规交锋打出，则改为第一交锋）；回到手中。",
+              "entries": [
+                {
+                  "description": "斩击 1~12×2：对目标当前技能施加折影；在下回合封印对方当前交锋（若未在常规交锋打出，则改为第一交锋）；回到手中。",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$game.context.active_cards", "$event.target.player.side", null, "LOOKUP", "当前技能", "STORE", "$local.当前技能",
+                      {"field": "character", "default": null},
+                      "$event.target", "IS",
+                      [
+                        "$local.当前技能", "out_of_combat",
+                        {"call": "MOVE_CARD", "result": "result", "default": 0},
+                        [
+                          "$local.当前技能", "折影", true, "SET_SKILL_STATE", "折影施加",
+                          {
+                            "literal": {}
+                          },
+                          "PUBLISH",
+                          {
+                            "schedule": {
+                              "event": "折影施加",
+                              "source": "$self",
+                              "target": "$local.当前技能",
+                              "after_turns": 0,
+                              "through_turns": null,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": false,
+                              "then": [
+                                "$event.scheduled.target", "$event.scheduled.target.deck_name",
+                                {"call": "MOVE_CARD", "result": "result", "default": 0},
+                                ["$event.scheduled.target", "折影", false, "SET_SKILL_STATE"],
+                                "WHEN"
+                              ],
+                              "when": [],
+                              "event_type": "event"
+                            }
+                          }
+                        ],
+                        "WHEN"
+                      ],
+                      "WHEN", 0, "DUEL_OFFSET", "pos", "STORE", "$local.pos", 0, null, "LOOKUP", "$game.duelspace", "IS",
+                      ["$local.pos", 1, 0, "LOOKUP"],
+                      [0],
+                      "IF_ELSE", "index", "STORE",
+                      {
+                        "schedule": {
+                          "event": "before_skill_start",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": null,
+                          "require_source_alive": false,
+                          "require_target_alive": false,
+                          "then": [
+                            "$game.duelspace.current_duel_index", "$event.scheduled.capture.index", "EQ", "$game.active_duelspace",
+                            "$game.duelspace", "IS", "AND",
+                            ["$event.card", "blank_skill", true, "SET_SKILL_STATE"],
+                            "WHEN"
+                          ],
+                          "when": [
+                            {"left": "$event.source.player", "op": "eq", "right": "$event.scheduled.target.player"}
+                          ],
+                          "capture": {"index": "$local.index"}
+                        }
+                      },
+                      "$event.card", "hand", "MOVE_CARD"
+                    ]
+                  }
+                }
+              ],
+              "multiplier": 2,
+              "printed_effects": ["对目标当前技能施加折影；在下回合封印对方当前交锋（若未在常规交锋打出，则改为第一交锋）；回到手中。"]
+            }
+          ],
+          "range_level": 1,
+          "opponent_range_reduction": 3,
+          "pre_reveal_bind": "declared_card",
+          "preserve_pre_reveal_target": true
+        },
+        {
+          "id": "emyake_barrier",
+          "name": "虚空障壁",
+          "cost": 2,
+          "description": "",
+          "entries": [],
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "printed_text": "招架 1~12：获得1铭刻",
+              "entries": [
+                {
+                  "description": "招架 1~12：获得1铭刻",
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "铭刻", 1, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["获得1铭刻"]
+            },
+            {
+              "type": "block",
+              "level": 4,
+              "printed_text": "招架 1~12：获得1铭刻",
+              "entries": [
+                {
+                  "description": "招架 1~12：获得1铭刻",
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "铭刻", 1, "STATUS"]
+                  }
+                }
+              ],
+              "printed_effects": ["获得1铭刻"]
+            },
+            {
+              "type": "block",
+              "level": 4,
+              "printed_text": "招架 1~12：抽1卡",
+              "entries": [
+                {
+                  "description": "招架 1~12：抽1卡",
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$player", 1, "DRAW"]
+                  }
+                }
+              ],
+              "printed_effects": ["抽1卡"]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "printed_text": "斩击 1~6:0；施加2裂伤；回复1生命值；消耗1铭刻以使伤害+1",
+              "entries": [
+                {
+                  "description": "斩击 1~6:0；施加2裂伤；回复1生命值；消耗1铭刻以使伤害+1",
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die", "本次可消耗铭刻", 1, "SET_DIE_STATE", "$event.die", "本次选用铭刻", 0, "SET_DIE_STATE",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", 0, "GT", "$self", "铭刻", "STATUS_COUNT",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "GE", "AND",
+                      [
+                        "$self", "铭刻", "STATUS_COUNT", "$self.rule_state", "铭刻选择上限", -1, "LOOKUP", "LE",
+                        [
+                          {
+                            "literal": {
+                              "title": "斩击 1~6:0；施加2裂伤；回复1生命值；消耗1铭刻以使伤害+1",
+                              "optional": true,
+                              "options": [
+                                {
+                                  "id": "pay",
+                                  "label": "消耗铭刻",
+                                  "then": {
+                                    "op": "program",
+                                    "code": ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "CHOOSE_OPTION"
+                        ],
+                        ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"],
+                        "IF_ELSE"
+                      ],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  },
+                  "when": [
+                    {"left": "$event.result", "op": "eq", "right": true}
+                  ]
+                },
+                {
+                  "description": "斩击 1~6:0；施加2裂伤；回复1生命值；消耗1铭刻以使伤害+1",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die.use_state", "本次选用铭刻", 0, "LOOKUP", "n", "STORE", "$local.n", 0, "GT",
+                      [
+                        "$self", "铭刻", "$local.n",
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "result",
+                          "default": 0,
+                          "with": {"require_full": true}
+                        }
+                      ],
+                      [0],
+                      "IF_ELSE", "实付", "STORE", "$event.target", 0, "$local.实付", "ADD", "normal", "$event.die.type", "DAMAGE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "description": "斩击 1~6:0；施加2裂伤；回复1生命值；消耗1铭刻以使伤害+1",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 2, "STATUS", "$self", 1, "HEAL"]
+                  }
+                }
+              ],
+              "printed_effects": ["0；施加2裂伤；回复1生命值；消耗1铭刻以使伤害+1"]
+            }
+          ]
+        },
+        {
+          "id": "emyake_probe",
+          "name": "试探交锋",
+          "cost": 2,
+          "description": "",
+          "entries": [],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 4,
+              "printed_text": "闪避 1~12：获得2护盾；抽1卡",
+              "entries": [
+                {
+                  "description": "闪避 1~12：获得2护盾；抽1卡",
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "normal", 2, "SHIELD", "$player", 1, "DRAW"]
+                  }
+                }
+              ],
+              "printed_effects": ["获得2护盾；抽1卡"]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "printed_text": "斩击 1~6：骰子等级锁定；摧毁目标技能并在下回合施加1限制；【未拼点胜利】获得1护盾并激活剩余骰子",
+              "entries": [
+                {
+                  "description": "斩击 1~6：骰子等级锁定；摧毁目标技能并在下回合施加1限制；【未拼点胜利】获得1护盾并激活剩余骰子",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.opponent_card", "DESTROY",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": false,
+                          "then": ["$event.scheduled.target", "限制", "$event.scheduled.capture.amount", "STATUS"],
+                          "when": [],
+                          "capture": {"amount": 1}
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "description": "斩击 1~6：骰子等级锁定；摧毁目标技能并在下回合施加1限制；【未拼点胜利】获得1护盾并激活剩余骰子",
+                  "trigger": "on_clash_lose",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "normal", 1, "SHIELD", "$event.card", "激活剩余骰子", true, "SET_SKILL_STATE"]
+                  }
+                },
+                {
+                  "description": "斩击 1~6：骰子等级锁定；摧毁目标技能并在下回合施加1限制；【未拼点胜利】获得1护盾并激活剩余骰子",
+                  "trigger": "on_clash_draw",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "normal", 1, "SHIELD", "$event.card", "激活剩余骰子", true, "SET_SKILL_STATE"]
+                  }
+                },
+                {
+                  "description": "斩击 1~6：骰子等级锁定；摧毁目标技能并在下回合施加1限制；【未拼点胜利】获得1护盾并激活剩余骰子",
+                  "trigger": "after_dice_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "normal", 1, "SHIELD", "$event.card", "激活剩余骰子", true, "SET_SKILL_STATE"]
+                  },
+                  "when": [
+                    {"left": "$event.clash_result", "op": "eq", "right": null}
+                  ]
+                }
+              ],
+              "fixed_level": true,
+              "printed_effects": ["骰子等级锁定；摧毁目标技能并在下回合施加1限制；【未拼点胜利】获得1护盾并激活剩余骰子"]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "printed_text": "突刺 1~12+4:2穿甲；需激活",
+              "entries": ["2穿甲"],
+              "final_bonus": 4,
+              "requires_skill_state": "激活剩余骰子",
+              "printed_effects": ["2穿甲；需激活"]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12+2：施加3裂伤；需激活",
+              "entries": [
+                {
+                  "description": "斩击 1~12+2：施加3裂伤；需激活",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 3, "STATUS"]
+                  }
+                }
+              ],
+              "final_bonus": 2,
+              "requires_skill_state": "激活剩余骰子",
+              "printed_effects": ["施加3裂伤；需激活"]
+            }
+          ]
+        },
+        {
+          "id": "emyake_pierce",
+          "name": "片羽穿空",
+          "cost": 3,
+          "description": "本技能无法被摧毁词条摧毁",
+          "entries": [
+            {
+              "description": "本技能无法被摧毁词条摧毁",
+              "trigger": "BEFORE DESTROY",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "$owner", "IS",
+                  [
+                    {"op": "cancel"}
+                  ],
+                  "WHEN"
+                ]
+              },
+              "subject": "any",
+              "when": [
+                {"left": "$event.target.id", "op": "eq", "right": "emyake_pierce"},
+                {"left": "$event.target.character", "op": "eq", "right": "$self"}
+              ]
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12×2：无视3级远程；【拼点胜利】重复使用",
+              "entries": [
+                {
+                  "description": "斩击 1~12×2：无视3级远程；【拼点胜利】重复使用",
+                  "trigger": "on_clash_win",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.die", "REPEAT_DIE"]
+                  }
+                }
+              ],
+              "multiplier": 2,
+              "ignore_range": 3,
+              "printed_effects": ["无视3级远程；【拼点胜利】重复使用"]
+            },
+            {
+              "type": "pierce",
+              "level": 6,
+              "printed_text": "突刺 1~20:2超穿甲；消耗全部铭刻以使伤害增加（每消耗2铭刻伤害+1；每有一羽流·终，伤害+1（至多+3））；极限远程骰子，【命中时】摧毁目标技能",
+              "entries": [
+                {
+                  "description": "突刺 1~20:2超穿甲；消耗全部铭刻以使伤害增加（每消耗2铭刻伤害+1；每有一羽流·终，伤害+1（至多+3））；极限远程骰子，【命中时】摧毁目标技能",
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die", "本次可消耗铭刻", "$self", "铭刻", "STATUS_COUNT", "SET_DIE_STATE", "$event.die", "本次选用铭刻", 0,
+                      "SET_DIE_STATE", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", 0, "GT", "$self", "铭刻", "STATUS_COUNT",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "GE", "AND",
+                      [
+                        "$self", "铭刻", "STATUS_COUNT", "$self.rule_state", "铭刻选择上限", -1, "LOOKUP", "LE",
+                        [
+                          {
+                            "literal": {
+                              "title": "突刺 1~20:2超穿甲；消耗全部铭刻以使伤害增加（每消耗2铭刻伤害+1；每有一羽流·终，伤害+1（至多+3））；极限远程骰子，【命中时】摧毁目标技能",
+                              "optional": true,
+                              "options": [
+                                {
+                                  "id": "pay",
+                                  "label": "消耗铭刻",
+                                  "then": {
+                                    "op": "program",
+                                    "code": ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "CHOOSE_OPTION"
+                        ],
+                        ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"],
+                        "IF_ELSE"
+                      ],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  },
+                  "when": [
+                    {"left": "$event.result", "op": "eq", "right": true}
+                  ]
+                },
+                {
+                  "description": "突刺 1~20:2超穿甲；消耗全部铭刻以使伤害增加（每消耗2铭刻伤害+1；每有一羽流·终，伤害+1（至多+3））；极限远程骰子，【命中时】摧毁目标技能",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die.use_state", "本次选用铭刻", 0, "LOOKUP", "n", "STORE", "$local.n", 0, "GT",
+                      [
+                        "$self", "铭刻", "all",
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "result",
+                          "default": 0,
+                          "with": {"require_full": true}
+                        }
+                      ],
+                      [0],
+                      "IF_ELSE", "实付", "STORE", "$event.target", 2, "$local.实付", 2, "FLOOR_DIV", "$local.实付", 0, "GT",
+                      ["$self", "羽流·终", "STATUS_COUNT", 3, "MIN", "ADD"],
+                      "WHEN", "ADD", "concept", "$event.die.type", "DAMAGE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "description": "突刺 1~20:2超穿甲；消耗全部铭刻以使伤害增加（每消耗2铭刻伤害+1；每有一羽流·终，伤害+1（至多+3））；极限远程骰子，【命中时】摧毁目标技能",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.opponent_card", "DESTROY"]
+                  }
+                }
+              ],
+              "range_level": 3,
+              "printed_effects": ["2超穿甲；消耗全部铭刻以使伤害增加（每消耗2铭刻伤害+1；每有一羽流·终，伤害+1（至多+3））；极限远程骰子，【命中时】摧毁目标技能"]
+            }
+          ]
+        },
+        {
+          "id": "emyake_phantom",
+          "name": "流华幻影",
+          "cost": 3,
+          "description": "本技能无视3级远程\n本技能中的前两颗骰子命中时，最后一骰在命中时消耗1铭刻以使伤害+1、额外施加1裂伤\n【使用时】每持有4铭刻或1羽流·终，骰子等级提升1",
+          "entries": [
+            {
+              "description": "【使用时】每持有4铭刻或1羽流·终，骰子等级提升1",
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "$self", "铭刻", "STATUS_COUNT", 4, "FLOOR_DIV", "$self", "羽流·终", "STATUS_COUNT", "ADD",
+                  "SKILL_LEVEL_ADD"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12+3:1穿甲；施加2裂伤",
+              "entries": [
+                "1穿甲",
+                {
+                  "description": "斩击 1~12+3:1穿甲；施加2裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 2, "STATUS"]
+                  }
+                },
+                {
+                  "description": "本技能中的前两颗骰子命中时，最后一骰在命中时消耗1铭刻以使伤害+1、额外施加1裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card", "前骰命中", "$event.card.use_state", "前骰命中", 0, "LOOKUP", 1, "ADD", "SET_SKILL_STATE"]
+                  }
+                }
+              ],
+              "final_bonus": 3,
+              "printed_effects": ["1穿甲；施加2裂伤"]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12+3:1穿甲；施加2裂伤",
+              "entries": [
+                "1穿甲",
+                {
+                  "description": "斩击 1~12+3:1穿甲；施加2裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 2, "STATUS"]
+                  }
+                },
+                {
+                  "description": "本技能中的前两颗骰子命中时，最后一骰在命中时消耗1铭刻以使伤害+1、额外施加1裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card", "前骰命中", "$event.card.use_state", "前骰命中", 0, "LOOKUP", 1, "ADD", "SET_SKILL_STATE"]
+                  }
+                }
+              ],
+              "final_bonus": 3,
+              "printed_effects": ["1穿甲；施加2裂伤"]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12×2:1超穿甲；极限远程骰子；抽1卡；施加2裂伤",
+              "entries": [
+                {
+                  "description": "本技能中的前两颗骰子命中时，最后一骰在命中时消耗1铭刻以使伤害+1、额外施加1裂伤",
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die", "本次可消耗铭刻", "$self", "铭刻", "STATUS_COUNT", "$event.card.use_state", "前骰命中", 0, "LOOKUP", "MIN",
+                      "SET_DIE_STATE", "$event.die", "本次选用铭刻", 0, "SET_DIE_STATE", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP",
+                      0, "GT", "$self", "铭刻", "STATUS_COUNT", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "GE", "AND",
+                      [
+                        "$self", "铭刻", "STATUS_COUNT", "$self.rule_state", "铭刻选择上限", -1, "LOOKUP", "LE",
+                        [
+                          {
+                            "literal": [
+                              {"id": "pay", "label": "消耗铭刻", "amount": null},
+                              {"id": "one", "label": "消耗1铭刻", "amount": 1},
+                              {"id": "pay_2", "label": "消耗2铭刻", "amount": 2},
+                              {"id": "pay_3", "label": "消耗3铭刻", "amount": 3},
+                              {"id": "pay_4", "label": "消耗4铭刻", "amount": 4},
+                              {"id": "pay_5", "label": "消耗5铭刻", "amount": 5},
+                              {"id": "pay_6", "label": "消耗6铭刻", "amount": 6},
+                              {"id": "pay_7", "label": "消耗7铭刻", "amount": 7},
+                              {"id": "pay_8", "label": "消耗8铭刻", "amount": 8},
+                              {"id": "pay_9", "label": "消耗9铭刻", "amount": 9},
+                              {"id": "pay_10", "label": "消耗10铭刻", "amount": 10},
+                              {"id": "pay_11", "label": "消耗11铭刻", "amount": 11}
+                            ]
+                          },
+                          [
+                            "$event.item.amount", null, "IS",
+                            [true],
+                            ["$event.item.amount", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "LT"],
+                            "IF_ELSE"
+                          ],
+                          "FILTER",
+                          [
+                            "$event.item.id", "$event.item.label", "$event.item.amount", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP",
+                            "COALESCE",
+                            {
+                              "literal": ["选用铭刻"]
+                            },
+                            ["$event.bindings"],
+                            "WITH_BINDINGS",
+                            {
+                              "literal": {
+                                "op": "program",
+                                "code": ["$event.die", "本次选用铭刻", "$event.bindings.选用铭刻", "SET_DIE_STATE"]
+                              }
+                            },
+                            {
+                              "literal": ["id", "label", "bindings", "then"]
+                            },
+                            ["$event.bindings"],
+                            "WITH_BINDINGS"
+                          ],
+                          "MAP", "本技能中的前两颗骰子命中时，最后一骰在命中时消耗1铭刻以使伤害+1、额外施加1裂伤", true,
+                          {
+                            "literal": ["options", "title", "optional"]
+                          },
+                          ["$event.bindings", "CHOOSE_OPTION"],
+                          "WITH_BINDINGS"
+                        ],
+                        ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"],
+                        "IF_ELSE"
+                      ],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  },
+                  "when": [
+                    {"left": "$event.result", "op": "eq", "right": true}
+                  ]
+                },
+                {
+                  "description": "本技能中的前两颗骰子命中时，最后一骰在命中时消耗1铭刻以使伤害+1、额外施加1裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die.use_state", "本次选用铭刻", 0, "LOOKUP", "n", "STORE", "$local.n", 0, "GT",
+                      [
+                        "$self", "铭刻", "$local.n",
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "result",
+                          "default": 0,
+                          "with": {"require_full": false}
+                        }
+                      ],
+                      [0],
+                      "IF_ELSE", "实付", "STORE", "$event.target", 1, "$local.实付", "ADD", "concept", "$event.die.type", "DAMAGE",
+                      "$event.die", "末骰实付", "$local.实付", "SET_DIE_STATE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "description": "斩击 1~12×2:1超穿甲；极限远程骰子；抽1卡；施加2裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", 1, "DRAW", "$event.target", "裂伤", 2, "STATUS", "$event.die.use_state", "末骰实付", 0, "LOOKUP", 0,
+                      "GT",
+                      ["$event.target", "裂伤", "$event.die.use_state", "末骰实付", 0, "LOOKUP", "STATUS"],
+                      "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "multiplier": 2,
+              "range_level": 3,
+              "printed_effects": ["1超穿甲；极限远程骰子；抽1卡；施加2裂伤"]
+            }
+          ],
+          "ignore_range": 3
+        },
+        {
+          "id": "emyake_riposte",
+          "name": "羽流剑反",
+          "cost": 3,
+          "description": "本技能拼点逆转（最高话语权）\n本技能可在任意时刻替换一张己方技能，此时拼点逆转失效且本技能骰子最终点数×4，使用时减少2铭刻",
+          "entries": [
+            {
+              "description": "本技能可在任意时刻替换一张己方技能，此时拼点逆转失效且本技能骰子最终点数×4，使用时减少2铭刻",
+              "trigger": "on_skill_replaced",
+              "operation": {
+                "op": "program",
+                "code": ["$event.card", "替换", "SET_SKILL_FORM"]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "printed_text": "斩击 1~6:2",
+              "entries": ["2物理"],
+              "clash_order": "lower",
+              "printed_effects": ["2"]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "printed_text": "斩击 1~8：施加4裂伤；下回合施加1束缚",
+              "entries": [
+                {
+                  "description": "斩击 1~8：施加4裂伤；下回合施加1束缚",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "裂伤", 4, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": false,
+                          "then": ["$event.scheduled.target", "束缚", "$event.scheduled.capture.amount", "STATUS"],
+                          "when": [],
+                          "capture": {"amount": 1}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "clash_order": "lower",
+              "printed_effects": ["施加4裂伤；下回合施加1束缚"]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "printed_text": "斩击 1~6：获得1铭刻；下回和施加1限制",
+              "entries": [
+                {
+                  "description": "斩击 1~6：获得1铭刻；下回和施加1限制",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "铭刻", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": false,
+                          "then": ["$event.scheduled.target", "限制", "$event.scheduled.capture.amount", "STATUS"],
+                          "when": [],
+                          "capture": {"amount": 1}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "clash_order": "lower",
+              "printed_effects": ["获得1铭刻；下回和施加1限制"]
+            }
+          ],
+          "anytime_replace": true,
+          "replace_targets": "ally",
+          "forms": {
+            "替换": {
+              "name": "羽流剑反",
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 2,
+                  "printed_text": "斩击 1~6:2",
+                  "entries": ["2物理"],
+                  "printed_effects": ["2"]
+                },
+                {
+                  "type": "slash",
+                  "level": 3,
+                  "printed_text": "斩击 1~8：施加4裂伤；下回合施加1束缚",
+                  "entries": [
+                    {
+                      "description": "斩击 1~8：施加4裂伤；下回合施加1束缚",
+                      "trigger": "on_dice_hit",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$event.target", "裂伤", 4, "STATUS",
+                          {
+                            "schedule": {
+                              "event": "on_turn_prepared",
+                              "source": "$self",
+                              "target": "$event.target",
+                              "after_turns": 1,
+                              "through_turns": 1,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": false,
+                              "then": ["$event.scheduled.target", "束缚", "$event.scheduled.capture.amount", "STATUS"],
+                              "when": [],
+                              "capture": {"amount": 1}
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["施加4裂伤；下回合施加1束缚"]
+                },
+                {
+                  "type": "slash",
+                  "level": 2,
+                  "printed_text": "斩击 1~6：获得1铭刻；下回和施加1限制",
+                  "entries": [
+                    {
+                      "description": "斩击 1~6：获得1铭刻；下回和施加1限制",
+                      "trigger": "on_dice_hit",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", "铭刻", 1, "STATUS",
+                          {
+                            "schedule": {
+                              "event": "on_turn_prepared",
+                              "source": "$self",
+                              "target": "$event.target",
+                              "after_turns": 1,
+                              "through_turns": 1,
+                              "uses": 1,
+                              "require_source_alive": false,
+                              "require_target_alive": false,
+                              "then": ["$event.scheduled.target", "限制", "$event.scheduled.capture.amount", "STATUS"],
+                              "when": [],
+                              "capture": {"amount": 1}
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "printed_effects": ["获得1铭刻；下回和施加1限制"]
+                }
+              ],
+              "entries": [
+                {
+                  "description": "本技能可在任意时刻替换一张己方技能，此时拼点逆转失效且本技能骰子最终点数×4，使用时减少2铭刻",
+                  "trigger": "on_skill_use",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self", "铭刻", -2, "STATUS"]
+                  }
+                },
+                {
+                  "description": "本技能可在任意时刻替换一张己方技能，此时拼点逆转失效且本技能骰子最终点数×4，使用时减少2铭刻",
+                  "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+                  "operation": {
+                    "op": "program",
+                    "code": [4, "MUL"]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "emyake_storm",
+          "name": "刻刃风暴",
+          "cost": 4,
+          "description": "【极限远程】\n本技能消耗3铭刻方可用",
+          "entries": [
+            {
+              "description": "本技能消耗3铭刻方可用",
+              "trigger": "before_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": {
+                      "title": "本技能消耗3铭刻方可用",
+                      "optional": true,
+                      "options": [
+                        {
+                          "id": "pay",
+                          "label": "消耗3铭刻",
+                          "then": {
+                            "op": "program",
+                            "code": ["$event.card", "同意支付", true, "SET_SKILL_STATE"]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              },
+              "when": [
+                {
+                  "left": {"field": "$self.statuses", "key": "铭刻", "default": 0},
+                  "op": "ge",
+                  "right": 3
+                },
+                {
+                  "left": {"field": "$self.statuses", "key": "铭刻", "default": 0},
+                  "op": "le",
+                  "right": {"field": "$self.rule_state", "key": "铭刻选择上限", "default": -1}
+                }
+              ]
+            },
+            {
+              "description": "本技能消耗3铭刻方可用",
+              "trigger": "BEFORE PAY_COST",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {"op": "cancel"}
+                ]
+              },
+              "when": [
+                {
+                  "left": {"field": "$self.statuses", "key": "铭刻", "default": 0},
+                  "op": "le",
+                  "right": {"field": "$self.rule_state", "key": "铭刻选择上限", "default": -1}
+                },
+                {
+                  "left": {"field": "$event.card.use_state", "key": "同意支付", "default": false},
+                  "op": "eq",
+                  "right": false
+                }
+              ]
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~20：群体2超穿甲；使目标弃1卡",
+              "entries": [
+                {
+                  "description": "斩击 1~20：群体2超穿甲；使目标弃1卡",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT",
+                      {"field": "characters"},
+                      ["$event.item.is_alive"],
+                      "FILTER", "$event.target", "FIRST_IN_ORDER",
+                      ["$event.target", 2, "concept", "$event.die.type", "DAMAGE"],
+                      "FOR_EACH_TARGET"
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount": 2, "grade": "concept", "aoe": true}
+                },
+                {
+                  "description": "斩击 1~20：群体2超穿甲；使目标弃1卡",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      1, "$self", "羽流·制衡", "STATUS_COUNT", 2, "FLOOR_DIV", "ADD",
+                      [true],
+                      [
+                        "$event.target.player.cardspace.hand.content",
+                        {
+                          "literal": {
+                            "chooser": "target",
+                            "optional": false,
+                            "then": {
+                              "op": "program",
+                              "code": ["$event.target.player", "$event.chosen_card", "DISCARD"]
+                            }
+                          }
+                        },
+                        "CHOOSE_CARD"
+                      ],
+                      "REPEAT_WHILE"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["群体2超穿甲；使目标弃1卡"]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~20：施加2裂伤拘束；目标方下回合费用-1",
+              "entries": [
+                {
+                  "description": "斩击 1~20：施加2裂伤拘束；目标方下回合费用-1",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "裂伤拘束", 2, "STATUS", "$event.target.player", -1, "$self", "羽流·制衡", "STATUS_COUNT", 2,
+                      "FLOOR_DIV", "SUB", "NEXT_TURN_COST"
+                    ]
+                  }
+                }
+              ],
+              "printed_effects": ["施加2裂伤拘束；目标方下回合费用-1"]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~20×2：群体施加4裂伤；群体在下回合施加1虚弱；下回合施加2限制",
+              "entries": [
+                {
+                  "description": "斩击 1~20×2：群体施加4裂伤；群体在下回合施加1虚弱；下回合施加2限制",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT",
+                      {"field": "characters"},
+                      ["$event.item.is_alive"],
+                      "FILTER", "$event.target", "FIRST_IN_ORDER",
+                      [
+                        "$event.target", "裂伤", 4, "STATUS",
+                        {
+                          "schedule": {
+                            "event": "on_turn_prepared",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 1,
+                            "through_turns": 1,
+                            "uses": 1,
+                            "require_source_alive": false,
+                            "require_target_alive": false,
+                            "then": ["$event.scheduled.target", "虚弱", "$event.scheduled.capture.amount", "STATUS"],
+                            "when": [],
+                            "capture": {"amount": 1}
+                          }
+                        }
+                      ],
+                      "FOR_EACH_TARGET",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": false,
+                          "then": ["$event.scheduled.target", "限制", "$event.scheduled.capture.amount", "STATUS"],
+                          "when": [],
+                          "capture": {"amount": 2}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "multiplier": 2,
+              "printed_effects": ["群体施加4裂伤；群体在下回合施加1虚弱；下回合施加2限制"]
+            }
+          ],
+          "range_level": 3,
+          "resource_cost": {"status": "铭刻", "amount": 3}
+        },
+        {
+          "id": "emyake_heart",
+          "name": "纯粹之心",
+          "cost": 4,
+          "description": "【使用时】本回合下一次受到单方面攻击时可使用一次无消耗的不计次的额外的-闪回识破-迎击",
+          "entries": [
+            {
+              "description": "【使用时】本回合下一次受到单方面攻击时可使用一次无消耗的不计次的额外的-闪回识破-迎击",
+              "trigger": "on_skill_use",
+              "operation": {
+                "op": "program",
+                "code": ["$self", "纯粹之心迎击", true, "SET_TURN_STATE"]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 2,
+              "printed_text": "突刺 1~6×8：极限远程骰子；使目标技能的所有骰子顺延一轮",
+              "entries": [
+                {
+                  "description": "突刺 1~6×8：极限远程骰子；使目标技能的所有骰子顺延一轮",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.opponent_card", "delay_rounds", "$event.opponent_card.use_state", "delay_rounds", 0, "LOOKUP", 1, "ADD",
+                      "SET_SKILL_STATE"
+                    ]
+                  }
+                }
+              ],
+              "multiplier": 8,
+              "range_level": 3,
+              "printed_effects": ["极限远程骰子；使目标技能的所有骰子顺延一轮"]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+              "entries": [
+                "2超穿甲",
+                {
+                  "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "suppress_dice_increases", true, "SET_TURN_STATE", "$event.target", "破甲", 1, "STATUS",
+                      "$event.target", "normal", 0, "$event.target", "normal", "SHIELD_COUNT", "SUB", "SHIELD", "$event.target",
+                      "reinforced", 0, "$event.target", "reinforced", "SHIELD_COUNT", "SUB", "SHIELD", "$event.target", "concept",
+                      0, "$event.target", "concept", "SHIELD_COUNT", "SUB", "SHIELD",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": false,
+                          "then": ["$event.scheduled.target", "限制", "$event.scheduled.capture.amount", "STATUS"],
+                          "when": [],
+                          "capture": {"amount": 1}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "roll_max": 100,
+              "ignore_range": 3,
+              "printed_effects": ["2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制"]
+            },
+            {
+              "type": "skip",
+              "printed_text": "SKIP",
+              "entries": [],
+              "printed_effects": []
+            }
+          ]
+        },
+        {
+          "id": "emyake_weave",
+          "name": "折影交织",
+          "cost": 5,
+          "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。\n本技能持续期间，裂伤上限维持在24。\n【使用后】若裂伤为24层，则触发裂伤爆发，并将伤害改为超穿甲伤害。",
+          "entries": [
+            {
+              "description": "本技能持续期间，裂伤上限维持在24。",
+              "trigger": "BEFORE RESOLVE_STATUS_AMOUNT",
+              "operation": {
+                "op": "program",
+                "code": ["$event.value_ref", 24, "$event.target", "裂伤", "STATUS_COUNT", "SUB", 0, "MAX", "VALUE_CEILING"]
+              },
+              "when": [
+                {"left": "$event.status", "op": "eq", "right": "裂伤"},
+                {"left": "$pending.amount", "op": "gt", "right": 0}
+              ],
+              "subject": "any",
+              "period": {"from": "on_skill_use", "until": "after_skill_use"}
+            },
+            {
+              "description": "【使用后】若裂伤为24层，则触发裂伤爆发，并将伤害改为超穿甲伤害。",
+              "trigger": "after_skill_use",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "裂伤",
+                  {
+                    "call": "ACTIVATE_STATUS",
+                    "with": {"burst_grade": "concept"}
+                  }
+                ]
+              },
+              "when": [
+                {
+                  "left": {"field": "$event.target.statuses", "key": "裂伤", "default": 0},
+                  "op": "eq",
+                  "right": 24
+                }
+              ]
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "printed_text": "斩击 1~8×2:2超穿甲；施加4裂伤",
+              "entries": [
+                "2超穿甲",
+                {
+                  "description": "斩击 1~8×2:2超穿甲；施加4裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 4, "STATUS"]
+                  }
+                }
+              ],
+              "multiplier": 2,
+              "printed_effects": ["2超穿甲；施加4裂伤"]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "printed_text": "斩击 1~12×2:2超穿甲；施加4裂伤",
+              "entries": [
+                "2超穿甲",
+                {
+                  "description": "斩击 1~12×2:2超穿甲；施加4裂伤",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 4, "STATUS"]
+                  }
+                }
+              ],
+              "multiplier": 2,
+              "printed_effects": ["2超穿甲；施加4裂伤"]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~20×2:1超穿甲；施加2裂伤；每有1层羽流·终，额外命中1次（至多2次）",
+              "entries": [
+                "1超穿甲",
+                {
+                  "description": "斩击 1~20×2:1超穿甲；施加2裂伤；每有1层羽流·终，额外命中1次（至多2次）",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target", "裂伤", 2, "STATUS"]
+                  }
+                },
+                {
+                  "description": "斩击 1~20×2:1超穿甲；施加2裂伤；每有1层羽流·终，额外命中1次（至多2次）",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "羽流·终", "STATUS_COUNT", 2, "MIN",
+                      [true],
+                      ["$event.die", "full", "羽流·终", "QUEUE_HIT"],
+                      "REPEAT_WHILE"
+                    ]
+                  },
+                  "when": [
+                    {"left": "$event.hit_origin", "op": "ne", "right": "羽流·终"}
+                  ]
+                }
+              ],
+              "multiplier": 2,
+              "printed_effects": ["1超穿甲；施加2裂伤；每有1层羽流·终，额外命中1次（至多2次）"]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "printed_text": "斩击 1~100:1超穿甲；施加6裂伤；每有1羽流·终，施加1裂伤拘束；消耗3铭刻以+2伤害",
+              "entries": [
+                {
+                  "description": "斩击 1~100:1超穿甲；施加6裂伤；每有1羽流·终，施加1裂伤拘束；消耗3铭刻以+2伤害",
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die", "本次可消耗铭刻", 3, "SET_DIE_STATE", "$event.die", "本次选用铭刻", 0, "SET_DIE_STATE",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", 0, "GT", "$self", "铭刻", "STATUS_COUNT",
+                      "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "GE", "AND",
+                      [
+                        "$self", "铭刻", "STATUS_COUNT", "$self.rule_state", "铭刻选择上限", -1, "LOOKUP", "LE",
+                        [
+                          {
+                            "literal": {
+                              "title": "斩击 1~100:1超穿甲；施加6裂伤；每有1羽流·终，施加1裂伤拘束；消耗3铭刻以+2伤害",
+                              "optional": true,
+                              "options": [
+                                {
+                                  "id": "pay",
+                                  "label": "消耗铭刻",
+                                  "then": {
+                                    "op": "program",
+                                    "code": ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"]
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "CHOOSE_OPTION"
+                        ],
+                        ["$event.die", "本次选用铭刻", "$event.die.use_state", "本次可消耗铭刻", 0, "LOOKUP", "SET_DIE_STATE"],
+                        "IF_ELSE"
+                      ],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  },
+                  "when": [
+                    {"left": "$event.result", "op": "eq", "right": true}
+                  ]
+                },
+                {
+                  "description": "斩击 1~100:1超穿甲；施加6裂伤；每有1羽流·终，施加1裂伤拘束；消耗3铭刻以+2伤害",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die.use_state", "本次选用铭刻", 0, "LOOKUP", "n", "STORE", "$local.n", 0, "GT",
+                      [
+                        "$self", "铭刻", "$local.n",
+                        {
+                          "call": "SPEND_STATUS",
+                          "result": "result",
+                          "default": 0,
+                          "with": {"require_full": true}
+                        }
+                      ],
+                      [0],
+                      "IF_ELSE", "实付", "STORE", "$event.target", 1, "$local.实付", 3, "EQ",
+                      [2],
+                      [0],
+                      "IF_ELSE", "ADD", "concept", "$event.die.type", "DAMAGE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "description": "斩击 1~100:1超穿甲；施加6裂伤；每有1羽流·终，施加1裂伤拘束；消耗3铭刻以+2伤害",
+                  "trigger": "on_dice_hit",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "裂伤", 6, "STATUS", "$self", "羽流·终", "STATUS_COUNT", 0, "GT",
+                      ["$event.target", "裂伤拘束", "$self", "羽流·终", "STATUS_COUNT", "STATUS"],
+                      "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "roll_max": 100,
+              "printed_effects": ["1超穿甲；施加6裂伤；每有1羽流·终，施加1裂伤拘束；消耗3铭刻以+2伤害"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

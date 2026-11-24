@@ -329,7 +329,8 @@ class Game:
                     character.on_turn_end()
         for player in ordered:
             for character in player.characters:
-                character.reset_shields()
+                if not character.data.get("retain_shields"):
+                    character.reset_shields()
                 character.expire_die_responses(self.turn_number)
                 character.used_duels = 0
                 character.turn_duel_bonus = 0

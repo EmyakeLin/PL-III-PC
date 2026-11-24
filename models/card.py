@@ -54,7 +54,7 @@ def validate_skill_traits(data):
         raise ValueError("形态快照的时点必须是 use")
     for key in ("range_level", "ignore_range"):
         validate_range_trait(data, key)
-    for key in ("pre_reveal", "interceptable", "anytime_replace", "before_duel_attack"):
+    for key in ("pre_reveal", "interceptable", "preserve_pre_reveal_target", "anytime_replace", "before_duel_attack"):
         if key in data and type(data[key]) is not bool:
             raise ValueError(f"{key} 必须是布尔值")
     if data.get("pre_reveal_bind", "slot") not in ("slot", "declared_card"):
@@ -65,8 +65,8 @@ def validate_skill_traits(data):
         raise ValueError("anytime_play 须为不重复的 attack、place 或 custom 方式列表")
     if "replace_targets" in data:
         targets = data["replace_targets"]
-        if (not data.get("anytime_replace") or not isinstance(targets, list) or not targets
-                or any(not isinstance(name, str) or not name for name in targets)):
+        if (not data.get("anytime_replace") or targets != "ally" and (
+                not isinstance(targets, list) or not targets or any(not isinstance(name, str) or not name for name in targets))):
             raise ValueError("replace_targets 须配合 anytime_replace 列出允许替换的友方技能 ID")
 
 
@@ -160,6 +160,7 @@ class Card:
         self.current_dice_index = 0
         self._dice_order = [(index, False) for index in range(len(self.dice))]
         self.instantiated_dice = None
+        self.positive_modifiers = {}
         self.final_bonus = 0
         self.level_bonus = 0
         self.use_state = {}
@@ -333,11 +334,13 @@ class Card:
 
     @property
     def effective_range(self):
+        if self.use_state.get("blank_skill"):
+            return 0
         return min(3, range_trait(self.data, "range_level", self) + self.use_state.get("range_bonus", 0))
 
     @property
     def effective_ignore_range(self):
-        return range_trait(self.data, "ignore_range", self)
+        return 0 if self.use_state.get("blank_skill") else range_trait(self.data, "ignore_range", self)
 
     def set_range_opponent(self, opponent, *, own_range=None, opposing_range=None, ignore_range=None):
         """Retain this pairing for excess dice, until the next skill joins."""
@@ -360,9 +363,13 @@ class Card:
                 ctx.dispatch_pipeline("on_skill_disabled", source=self.character, card=self,
                                       target=opponent.character, opponent_card=opponent, reason="range")
 
+    @property
+    def blanked(self):
+        return self.range_deficit >= 3 or bool(self.use_state.get("blank_skill"))
+
     def paired_ranges(self, opponent, own_range=None, opposing_range=None):
         def levels(card, opposing, supplied):
-            reduction = opposing.data.get("opponent_range_reduction", 0)
+            reduction = 0 if opposing.use_state.get("blank_skill") else opposing.data.get("opponent_range_reduction", 0)
             skill = max(0, card.effective_range - reduction)
             die = max(0, supplied - reduction) if supplied is not None else 0
             return skill, die if die > skill else 0
@@ -419,6 +426,7 @@ class Card:
         self.form_locked = False
         self.set_form(self._form if "form_when" in self.printed_data else None)
         self.refresh_status_form()
+        self.positive_modifiers.clear()
         self.final_bonus = self.level_bonus = 0
         self.range_opponent = None
         self.range_deficit = 0
@@ -440,11 +448,15 @@ class Card:
     def describe(self):
         from models.dice import describe_die
         actions = " → ".join(describe_die(die) for die in self.dice)
-        effects = "；".join(describe_entry(entry) for entry in self.entries
-                            if not (isinstance(entry, dict) and entry.get("hidden")))
         in_hand = self.player and self in self.player.cardspace.hand.content
         restriction = "当前无法使用" if in_hand and self.character.skill_restricted(self) else ""
-        return " · ".join(part for part in [str(self), restriction, describe_skill_traits(self.data), actions, effects] if part)
+        if "description" in self.data:
+            parts = [str(self), restriction, self.data["description"], actions]
+        else:
+            effects = "；".join(describe_entry(entry) for entry in self.entries
+                               if not (isinstance(entry, dict) and entry.get("hidden")))
+            parts = [str(self), restriction, describe_skill_traits(self.data), actions, effects]
+        return " · ".join(part for part in parts if part)
 
 
 def describe_entry(entry):

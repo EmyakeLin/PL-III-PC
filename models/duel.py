@@ -151,6 +151,7 @@ class ClashPair:
         self.dice_dict = dict(dice_dict)
         self.split = False
         self.skipped = False
+        self.drawn = False
         self.unopposed_results = {}
 
     def clash_roll(self):

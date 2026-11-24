@@ -327,13 +327,16 @@ class SpecialActions:
     def printed_replace(card, target):
         targets = card.data.get("replace_targets")
         if targets is not None:
-            return target.id in targets and card.player is target.player
+            return card.player is target.player and (targets == "ally" or target.id in targets)
         return card.data.get("anytime_replace", False) and card.character is target.character
 
     def may_replace(self, card, slot, target):
         if (not card.meets_use_requirements() or self.is_locked(target) or target.destroyed or not target.character.is_alive
                 or not self.game.pipeline.can_replace(slot, target)):
             return False
+        if isinstance(slot, PreRevealDuel) and slot.preserve_target:
+            if target is slot.pulled_card or target is slot.intercept_card and card.character is not slot.target_character:
+                return False
         return (self.printed_replace(card, target)
                 or card.character is target.character and card.character.ability_permission("replace") is not None
                 and self.game.pipeline.before_use(slot, target))

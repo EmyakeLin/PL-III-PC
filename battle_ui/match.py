@@ -348,6 +348,8 @@ class BattleMatch:
                               else {"kind": "duel", "number": i + 1} for actor, i in early.attack_targets(c)]
                                for c in attack_cards} if private_pre else {},
             "pending_responses": early.pending_for(player) if private_pre else [],
+            "intercepts_by_number": {n: [hand_key(c) for c in early.intercept_cards(player, n)]
+                                     for n in early.pending_for(player)} if private_pre else {},
             "can_end_attack": private_pre and early.can_attack(player),
             "eligible_sides": [p.side for p in seats] if self._special_open else frame["pre_reveal"]["eligible_sides"],
             "response_times": [dict(timing) for timing in self._response_times],

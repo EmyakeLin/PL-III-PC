@@ -113,7 +113,7 @@ class ArenaEngine(BattleMatch):
             if phase.can_attack(player):
                 choices.append({"kind": "end_attack", "label": "结束主动进攻"})
             for number in phase.pending_for(player):
-                for card in phase.intercept_cards(player):
+                for card in phase.intercept_cards(player, number):
                     choices.append({"kind": "intercept", "card_id": hand_key(card), "response_number": number,
                                     "label": f"用{hand_card_label(card)}迎击开牌前交锋 {number}"})
                 choices.append({"kind": "let_through", "response_number": number,

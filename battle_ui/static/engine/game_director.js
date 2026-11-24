@@ -402,7 +402,7 @@ export class GameDirector {
       },
       onInterceptDuel: (duelNumber) => {
         const cid = this.selectedHandCardId;
-        if (!cid) return;
+        if (!cid || !this._canInterceptNumber(cid, duelNumber)) return;
         this.selectedHandCardId = null;
         this.audio.cardPlace();
         this._sendAction('intercept', { card_id: cid, duel_number: duelNumber });
@@ -2281,6 +2281,7 @@ export class GameDirector {
       attackableDuels,
       canTapEmptySlot,
       canClickIntercept,
+      interceptableNumbers: new Set([...pendingResponses].filter(n => this._canInterceptNumber(this.selectedHandCardId, n))),
     });
     this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
 
@@ -3584,6 +3585,11 @@ export class GameDirector {
     }
   }
 
+  _canInterceptNumber(cardId, number) {
+    const allowed = this.state?.intercepts_by_number?.[number];
+    return allowed ? allowed.includes(cardId) : (this.state?.pending_responses || []).includes(number);
+  }
+
   _canAttackTarget(cardId, kind, target) {
     const map = this._isPreRevealStagingMode()
       ? this.state.pre_reveal_stage_targets
@@ -3737,7 +3743,7 @@ export class GameDirector {
       if (d.canIntercept) {
         const pending = new Set(this.state.pending_responses || []);
         for (const [num, r] of this.preRevealSlotRects.entries()) {
-          if (pending.has(num) && x >= r.x - 12 && x <= r.x + r.w + 12 && y >= r.y - 12 && y <= r.y + r.h + 12) {
+          if (pending.has(num) && this._canInterceptNumber(actKey, num) && x >= r.x - 12 && x <= r.x + r.w + 12 && y >= r.y - 12 && y <= r.y + r.h + 12) {
             this.audio.cardPlace();
             this._sendAction('intercept', { card_id: actKey, duel_number: num });
             return;
@@ -4270,7 +4276,7 @@ export class GameDirector {
       if (this.dragState.canIntercept) {
         const pending = new Set(this.state?.pending_responses || []);
         for (const [num, r] of this.preRevealSlotRects.entries()) {
-          if (pending.has(num) && this.dragState.x >= r.x - 12 && this.dragState.x <= r.x + r.w + 12 && this.dragState.y >= r.y - 12 && this.dragState.y <= r.y + r.h + 12) {
+          if (pending.has(num) && this._canInterceptNumber(this.dragState.actKey, num) && this.dragState.x >= r.x - 12 && this.dragState.x <= r.x + r.w + 12 && this.dragState.y >= r.y - 12 && this.dragState.y <= r.y + r.h + 12) {
             dragPayload.targetPreRevealNumber = num;
             break;
           }

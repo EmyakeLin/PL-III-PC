@@ -442,6 +442,7 @@ export class CombatTabletop {
     pendingResponses = null,
     attackableDuels = null,
     canClickIntercept = false,
+    interceptableNumbers = null,
     canTapEmptySlot = false,
   }) {
     this.duels = duels;
@@ -455,6 +456,7 @@ export class CombatTabletop {
     this.pendingResponses = pendingResponses instanceof Set ? pendingResponses : new Set(pendingResponses || []);
     this.attackableDuels = attackableDuels instanceof Set ? attackableDuels : new Set(attackableDuels || []);
     this.canClickIntercept = Boolean(canClickIntercept);
+    this.interceptableNumbers = interceptableNumbers || this.pendingResponses;
     this.canTapEmptySlot = Boolean(canTapEmptySlot);
 
     this.combatBlendSpring.setTarget(this.phaseState === 'combat' ? 1 : 0);
@@ -746,7 +748,7 @@ export class CombatTabletop {
       const isPreReveal = duel.kind === 'pre_reveal';
       const isAttackable = duel.kind === 'regular' && this.attackableDuels.has(duel.number);
       const isPendingPreReveal = isPreReveal && this.pendingResponses.has(duel.number);
-      const isInterceptable = isPendingPreReveal && this.canClickIntercept && Boolean(this.onInterceptDuel);
+      const isInterceptable = isPendingPreReveal && this.canClickIntercept && this.interceptableNumbers.has(duel.number) && Boolean(this.onInterceptDuel);
       const emblemG = new PIXI.Graphics();
       const er = (isAttackable || isInterceptable || isPendingPreReveal) ? 14 : 11;
       const emblemFill = (isAttackable || isInterceptable || isPendingPreReveal)

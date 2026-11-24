@@ -111,7 +111,8 @@ def _printed_die(spec):
         "resource_cost": dict(spec["resource_cost"]) if spec.get("resource_cost") else None,
         "multiplier": die.multiplier, "final_bonus": die.final_bonus, "formula": die.calc_formula,
         "damage_parts": damage_parts,
-        "entries": rule_entries,
+        "entries": (spec["printed_effects"] if "printed_effects" in spec else rule_entries),
+        **({"printed_text": spec["printed_text"]} if "printed_text" in spec else {}),
     }
 
 
@@ -134,7 +135,7 @@ def _printed_skill(data, *, include_forms=False):
         "range_traits": describe_range_traits(data),
         "starts_out_of_combat": bool(data.get("out_of_combat")),
         "dice": [_printed_die(spec) for spec in data.get("dice", ())],
-        "entries": [describe_entry(entry) for entry in data.get("entries", ())
+        "entries": data["description"].splitlines() if "description" in data else [describe_entry(entry) for entry in data.get("entries", ())
                     if not (isinstance(entry, dict) and entry.get("hidden"))],
     }
 

@@ -91,6 +91,7 @@ def handle_final_add(ctx):
     amount, component = ctx.pop(), ctx.pop()
     if _usable_component(component):
         if not getattr(component, "fixed_scores", False):
+            component.positive_modifiers["final_bonus"] = component.positive_modifiers.get("final_bonus", 0) + max(0, amount)
             component.final_bonus += amount
         return component.final_bonus
 
@@ -99,6 +100,7 @@ def handle_die_base_add(ctx):
     amount, die = ctx.pop(), ctx.pop()
     if _usable_component(die):
         if not die.fixed_scores:
+            die.positive_modifiers["base_value"] = die.positive_modifiers.get("base_value", 0) + max(0, amount)
             die.base_value += amount
         return die.base_value
 
@@ -106,6 +108,7 @@ def handle_die_base_add(ctx):
 def handle_skill_level_add(ctx):
     amount, card = ctx.pop(), ctx.pop()
     if _usable_component(card):
+        card.positive_modifiers["level_bonus"] = card.positive_modifiers.get("level_bonus", 0) + max(0, amount)
         card.level_bonus += amount
         die = ctx.active_dice.get(card.player.side) if card.player else None
         if die is not None and die.card is card:
@@ -159,6 +162,15 @@ def handle_skip_round(ctx):
     pair = ctx.game.pipeline.current_clash_pair
     if pair is not None and die in pair.dice_dict.values():
         pair.skipped = True
+        return True
+    return False
+
+
+def handle_draw_clash(ctx):
+    die = ctx.pop()
+    pair = ctx.game.pipeline.current_clash_pair
+    if pair and die in pair.dice_dict.values() and not die.destroyed:
+        pair.drawn = True
         return True
     return False
 
@@ -474,7 +486,7 @@ def handle_pay_cost(ctx):
         ctx.event["failure_reason"] = f"费用不足（需 {cost}，现有 {personal + max(0, player.available_cost)}）"
         return False
     extra = card.data.get("resource_cost")
-    if extra and card.range_deficit < 3 and not card.ignore_conditions:
+    if extra and not card.blanked and not card.ignore_conditions:
         ctx.stack.extend((character, extra["status"], extra["amount"]))
         spend = ctx.execute_op(OpCode.SPEND_STATUS, require_full=True, result_field=None)
         if not spend or spend["result"] is None or not spend.get("paid_in_full"):
@@ -592,7 +604,8 @@ def handle_roll_update(ctx):
     if ctx.current_op == OpCode.QUEUE_ROLL_UPDATE:
         ctx.roll_adjustments.setdefault(die, []).append((mode, amount))
     else:
-        die.value = amount if mode == "set" else die.value + amount
+        updated = amount if mode == "set" else die.value + amount
+        die.value = min(updated, die.value) if die.increases_suppressed else updated
 
 
 def handle_damage_modifier(ctx):
@@ -693,6 +706,10 @@ def handle_route_die_attack(ctx):
     target, die = ctx.pop(), ctx.pop()
     if not die.is_attack or not _usable_component(die):
         return False
+    duel = ctx.event.get("duel")
+    if getattr(duel, "preserve_target", False) and duel.attack_card is die.card:
+        if target is not duel.resolved_target:
+            return False
     die.attack_redirected = True
     die.attack_target = target
     return True
@@ -1033,12 +1050,25 @@ def handle_ability_effect(ctx):
     return total
 
 
+def handle_resolve_status_amount(ctx):
+    amount = ctx.pop()
+    ctx.pop()
+    ctx.pop()
+    return ctx.event["value_ref"].apply(amount)
+
+
 def handle_status(ctx):
     amount, name, target = ctx.pop(), ctx.pop(), ctx.pop()
     if target is None or not target.is_alive:
         ctx.current_op = None
         return
     proposed = ctx.event["amount"]
+    if amount > 0 and any(e.trigger is OpCode.RESOLVE_STATUS_AMOUNT for e in ctx.entries):
+        ctx.stack.extend((target, name, amount))
+        amount = ctx.execute_op(OpCode.RESOLVE_STATUS_AMOUNT)
+        if amount is None:
+            ctx.current_op = None
+            return
     ctx.event["amount"] = amount
     old = target.statuses.get(name, 0)
     total = target.apply_status_delta(name, amount, notify=False)
@@ -1271,7 +1301,7 @@ DISPATCH_TABLE = {
     OpCode.SET_SUSTAINED_STACKS: handle_set_sustained_stacks,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.INSERT_SKILL: handle_insert_skill,
     OpCode.QUEUE_HIT: handle_queue_hit, OpCode.SKIP_ROUND: handle_skip_round,
-    OpCode.QUEUE_TARGET_HIT: handle_queue_hit, OpCode.SET_UNOPPOSED_RESULT: handle_unopposed_result,
+    OpCode.QUEUE_TARGET_HIT: handle_queue_hit, OpCode.DRAW_CLASH: handle_draw_clash, OpCode.SET_UNOPPOSED_RESULT: handle_unopposed_result,
     OpCode.SCHEDULE_EFFECT: schedule_effect,
     OpCode.SET_SKILL_FORM: handle_set_skill_form, OpCode.SPLIT_CLASH: handle_split_clash,
     OpCode.TRANSFER_REMAINING_DICE: handle_transfer_remaining_dice,
@@ -1313,7 +1343,7 @@ DISPATCH_TABLE = {
     OpCode.BLANK_DIE: lambda ctx: ctx.pop().make_blank(), OpCode.SELECT_ENEMY_CHARACTER: handle_select_enemy_character,
     OpCode.REAL_DAMAGE: handle_real_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
     OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
-    OpCode.STATUS: handle_status, OpCode.STAGGER: handle_stagger,
+    OpCode.RESOLVE_STATUS_AMOUNT: handle_resolve_status_amount, OpCode.STATUS: handle_status, OpCode.STAGGER: handle_stagger,
     OpCode.SPEND_STATUS: handle_spend_status,
     OpCode.ABILITY_EFFECT: handle_ability_effect, OpCode.SPEND_ABILITY_EFFECT: handle_ability_effect,
     OpCode.DESTROY: handle_destroy, OpCode.DISCARD: handle_discard,
@@ -1354,7 +1384,7 @@ OPERANDS = {
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.INSERT_SKILL: ("use", "anchor"),
     OpCode.QUEUE_HIT: ("die", "mode", "origin"), OpCode.SKIP_ROUND: ("die",),
     OpCode.QUEUE_TARGET_HIT: ("die", "mode", "origin", "target"),
-    OpCode.SET_UNOPPOSED_RESULT: ("die", "result_value"),
+    OpCode.DRAW_CLASH: ("die",), OpCode.SET_UNOPPOSED_RESULT: ("die", "result_value"),
     OpCode.SCHEDULE_EFFECT: ("source", "target", "capture", "terms", "block"),
     OpCode.SET_SKILL_FORM: ("card", "form"), OpCode.SPLIT_CLASH: ("die",),
     OpCode.TRANSFER_REMAINING_DICE: ("target", "receiving_card"),
@@ -1397,7 +1427,8 @@ OPERANDS = {
     OpCode.SET_HP: ("target", "amount"), OpCode.END_DUEL: ("duel",),
     OpCode.RESTORE_STATUS_STACKS: ("target", "status", "amount"),
     OpCode.BLANK_DIE: ("die",), OpCode.SELECT_ENEMY_CHARACTER: ("player",),
-    OpCode.HEAL: ("target", "amount"), OpCode.STATUS: ("target", "status", "amount"),
+    OpCode.HEAL: ("target", "amount"), OpCode.RESOLVE_STATUS_AMOUNT: ("target", "status", "amount"),
+    OpCode.STATUS: ("target", "status", "amount"),
     OpCode.SPEND_STATUS: ("target", "status", "amount"),
     OpCode.ABILITY_EFFECT: ("target", "ability", "amount"),
     OpCode.SPEND_ABILITY_EFFECT: ("target", "ability", "amount"),

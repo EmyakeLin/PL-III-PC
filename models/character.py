@@ -196,8 +196,11 @@ class Character:
     def status_modifier(self, value):
         """Read continuous per-stack adjustments without triggering effects in a preview."""
         rules = self.status_rules
-        return sum(count * rules.get(name, {}).get("per_stack", {}).get(value, 0)
-                   for name, count in self.statuses.items())
+        contributions = (count * rules.get(name, {}).get("per_stack", {}).get(value, 0)
+                         for name, count in self.statuses.items())
+        if value == "final_score" and self.turn_state.get("suppress_dice_increases"):
+            return sum(min(0, n) for n in contributions)
+        return sum(contributions)
 
     def init_cards(self):
         self.skills = [Card(self.player, skill, self) for skill in self.skill_data]
@@ -266,7 +269,8 @@ class Character:
 
     def ability_permission(self, permission):
         return next((name for name in self.ability_effects
-                     if self.ability_rules[name].get("permission") == permission), None)
+                     if self.ability_rules[name].get("permission") == permission
+                     or permission in self.ability_rules[name].get("permissions", ())), None)
 
     def spend_ability_effect(self, name, amount=1):
         ctx = self._effect_context
