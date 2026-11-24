@@ -218,6 +218,28 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertEqual(rendered["badges"], expected)
         self.assertIn(rendered["burn"], state["catalog"]["statuses"]["烧伤"])
 
+    @unittest.skipUnless(shutil.which("node"), "Status hover rendering requires JavaScript")
+    def test_status_hover_in_new_lan_qing_challenge_shows_each_status_own_text(self):
+        from battle_mcp.challenges import CHALLENGES
+        from battle_mcp.room import Room
+
+        room = Room([["emyake_lin_yu"], ["lan_qing"]], challenge=CHALLENGES["lan_qing"], seed=41)
+        self.addCleanup(room.close)
+        room.ready(1, 0, "hover-test", human=True, canvas=True)
+        pack = json.loads((STATIC_DIR.parents[1] / "_packs/emyake_lin_yu.json").read_text(encoding="utf-8"))
+        printed = {name: rule["description"] for name, rule in pack["status_rules"].items()}
+        lin_yu, lan_qing = [player.characters[0] for player in room.engine.game.players]
+        for name in ("羽流·势", "羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终", "铭刻", "折影化铭刻"):
+            lin_yu.add_status(name, 1)
+        for name, stacks in (("裂伤", 8), ("裂伤拘束", 2), ("破甲", 1)):
+            lan_qing.add_status(name, stacks)
+        state = room.canvas_state(1)
+        fighters = [player["characters"][0] for player in state["frame"]["players"]]
+        run = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("status_hover.mjs"))],
+                             input=json.dumps(dict(catalog=state["catalog"], fighters=fighters, printed=printed)), encoding="utf-8",
+                             capture_output=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+
     @unittest.skipUnless(shutil.which("node"), "Status icon rendering requires JavaScript")
     def test_mounted_status_texture_follows_the_current_snapshot(self):
         match = BattleMatch(["liu_yin", "plan_b_heck"], seed=37)

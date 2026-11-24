@@ -236,7 +236,7 @@
     ],
     "破甲": [
       {
-        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
         "operation": {
           "op": "program",
@@ -250,7 +250,7 @@
         "subject": "target"
       },
       {
-        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE SHIELD",
         "operation": {
           "op": "program",
@@ -264,7 +264,7 @@
         "subject": "target"
       },
       {
-        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
         "operation": {
           "op": "program",
@@ -280,7 +280,7 @@
         "subject": "target"
       },
       {
-        "description": "斩击 1~100:2超穿甲；无视3级远程；使目标本回合内骰子数值与骰子等级增加效果无效且破甲（无视全部护甲且无法持有护盾）；下回合施加1限制",
+        "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
         "operation": {
           "op": "program",

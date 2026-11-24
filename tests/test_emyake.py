@@ -232,7 +232,7 @@ class EmyakeTests(unittest.TestCase):
     def test_status_catalog_shows_each_printed_rule_once(self):
         catalog = Displayer(self.game).catalog()["statuses"]
         for name in ("羽流·势", "羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终",
-                     "裂伤", "裂伤拘束", "折影化铭刻"):
+                     "裂伤", "裂伤拘束", "铭刻", "折影化铭刻", "折影", "破甲"):
             with self.subTest(name=name):
                 self.assertEqual(catalog[name], [self.spec["status_rules"][name]["description"]])
         self.assertTrue(any("回合结束" in line for line in catalog["涡流"]))
