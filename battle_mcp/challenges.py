@@ -92,5 +92,5 @@ def carrier_move(frame, moves):
 CHALLENGES = {
     "carrier": Challenge("结构化载体", "structured_carrier", carrier_move,
                          (PACKS / "challenges" / "structured_carrier.json",)),
-    "lan_qing": Challenge("幽兰残雪·澜清", "lan_qing", lan_qing_move),
+    "lan_qing": Challenge("幽蓝残雪·澜清", "lan_qing", lan_qing_move),
 }

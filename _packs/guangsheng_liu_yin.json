@@ -24,7 +24,7 @@
   ],
   "status_rules": {
     "领域洞悉": {"cap":30,"description":"最大30；每持有15层领域洞悉，骰子等级提升1（最多2）"},
-    "环境压制": {"cap":18,"description":"最大18；生命值不高于X时，受到的伤害-50%（强化护甲）"},
+    "环境压制": {"description":"无层数上限；生命值不高于X时，受到的伤害-50%（强化护甲）"},
     "环境同调": {"cap":3,"description":"最大3；每一层提升1费用上限；若层数为3，则额外提升1费用上限","sustain_from":2,"sustain":{"强壮":1,"迅捷":1}},
     "战甲": {"cap":1,"description":"若处于战甲状态，则获得领域洞悉的同时获得等量的能源"},
     "溯源标记": {
@@ -74,6 +74,17 @@
       }
     ]
   },
+  "variant_passives": {
+    "环境压制": {
+      "name": "环境压制",
+      "description": "自身环境压制每次减少的层数翻倍。",
+      "entries": [
+        {"trigger":"BEFORE STATUS","subject":"target",
+         "when":[{"left":"$event.status","op":"eq","right":"环境压制"},{"left":"$pending.amount","op":"lt","right":0}],
+         "operation":{"op":"program","code":[2,"MUL"]}}
+      ]
+    }
+  },
   "characters": [
     {
       "id": "liu_yin",
@@ -81,6 +92,51 @@
       "title": "执政",
       "rank": "EMPOWERED_BOSS",
       "max_hp": 18,
+      "variants": [
+        {
+          "id": "liu_yin_sp_quick", "name": "流阴（秒开）",
+          "variant_passives": ["环境压制", {
+            "name": "秒开", "description":"【战斗开始】获得15层领域洞悉。\n【回合开始】额外抽1张牌。",
+            "entries": [
+              {"trigger":"on_battle_start","operation":{"op":"program","code":["$self","领域洞悉",15,"STATUS"]}},
+              {"trigger":"on_turn_start","operation":"DRAW 1"}
+            ]
+          }]
+        },
+        {
+          "id": "liu_yin_sp_unknown", "name": "流阴（？？？）", "max_hp": 24,
+          "variant_passives": ["环境压制", {
+            "name": "？？？", "description":"【战斗开始】获得30层领域洞悉。\n【首回合开始】失去9层环境压制。\n【首回合结束】获得10层领域洞悉。\n【回合开始】额外抽1张牌。",
+            "entries": [
+              {"trigger":"on_battle_start","operation":{"op":"program","code":["$self","领域洞悉",30,"STATUS"]}},
+              {"trigger":"on_turn_start","when":[{"left":"$self.game.turn_number","op":"eq","right":1}],
+               "operation":{"op":"program","code":["$self","环境压制",-9,"STATUS"]}},
+              {"trigger":"on_turn_end","when":[{"left":"$self.game.turn_number","op":"eq","right":1}],
+               "operation":{"op":"program","code":["$self","领域洞悉",10,"STATUS"]}},
+              {"trigger":"on_turn_start","operation":"DRAW 1"}
+            ]
+          }]
+        },
+        {
+          "id": "liu_yin_sp_regent", "name": "流阴（真正的执政）", "base_max_duels": 5,
+          "variant_passives": ["环境压制", {
+            "name": "真正的执政", "description":"首次获得环境压制时，改为获得30层。费用上限+3，基础交锋数为5。\n【回合开始】额外抽2张牌。\n【领域覆写使用后】获得2层领域洞悉与2层强壮。",
+            "entries": [
+              {"trigger":"BEFORE STATUS","subject":"target",
+               "when":[{"left":"$event.status","op":"eq","right":"环境压制"},{"left":"$pending.amount","op":"gt","right":0},
+                       {"left":{"field":"$self.rule_state","key":"已获得环境压制","default":false},"op":"eq","right":false}],
+               "operation":{"op":"program","code":["POP",30]}},
+              {"trigger":"on_status_changed","when":[{"left":"$event.status","op":"eq","right":"环境压制"},{"left":"$event.actual_delta","op":"gt","right":0}],
+               "operation":{"op":"program","code":["$self","已获得环境压制",true,"SET_CHARACTER_STATE"]}},
+              {"trigger":"BEFORE RESET_COST","when":[{"left":"$event.refill","op":"eq","right":true}],
+               "operation":{"op":"program","code":["SWAP",3,"ADD","SWAP"]}},
+              {"trigger":"on_turn_start","operation":"DRAW 2"},
+              {"trigger":"after_skill_use","subject":"source","when":[{"left":"$event.card.id","op":"eq","right":"liu_overwrite"}],
+               "operation":{"op":"program","code":["$self","领域洞悉",2,"STATUS","$self","强壮",2,"STATUS"]}}
+            ]
+          }]
+        }
+      ],
       "passive_skills": [
         {
           "name": "行至阴处",

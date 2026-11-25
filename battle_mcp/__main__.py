@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--port", type=int, default=8766, help="房间端口，0 表示自动分配")
     parser.add_argument("--bot", action="store_true", help="开启本机单角色 1v1 人机对战")
     parser.add_argument("--challenge", nargs="?", const="carrier", choices=CHALLENGES,
-                        help="本机挑战：carrier 结构化载体（默认），lan_qing 幽兰残雪·澜清")
+                        help="本机挑战：carrier 结构化载体（默认），lan_qing 幽蓝残雪·澜清")
     parser.add_argument("--lan", action="store_true", help="在局域网网卡上创建玩家联机房间")
     parser.add_argument("--address", metavar="IP", help="在指定的本机 IPv4 网卡上创建联机房间")
     parser.add_argument("--public-url", metavar="HTTPS_URL", help="使用已有 HTTPS 反向代理的公开来源生成联机邀请")

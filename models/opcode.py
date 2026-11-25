@@ -31,6 +31,7 @@ class OpCode(Enum):
     
     # 状态与业务原子操作
     DAMAGE = auto()
+    RESOLVE_DAMAGE_BASE = auto()
     LIGHTCORE_DAMAGE = auto()
     CHANGE_LIGHTCORE_MAX = auto()
     INSTANT_DEATH = auto()

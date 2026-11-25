@@ -250,7 +250,7 @@ def play_seat(room, side):
 def main():
     from battle_mcp.__main__ import serve_local_game
 
-    parser = argparse.ArgumentParser(description="本机挑战幽兰残雪·澜清")
+    parser = argparse.ArgumentParser(description="本机挑战幽蓝残雪·澜清")
     parser.add_argument("--opponent", default="plan_b_annolin", help="真人席位的角色 ID，默认安诺琳")
     parser.add_argument("--seed", type=int, help="固定洗牌与掷骰种子")
     parser.add_argument("--port", type=int, default=0, help="房间端口，默认自动分配")

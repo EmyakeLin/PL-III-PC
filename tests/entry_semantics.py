@@ -9,6 +9,7 @@ MODULES = (
     "tests.test_waa_east_four",
     "tests.test_carrier_challenge.CarrierTests",
     "tests.test_lan_qing",
+    "tests.test_sp_characters",
     "tests.test_entry_authoring_contract",
     "tests.test_entry_execution_paths",
     "tests.test_die_response_semantics",

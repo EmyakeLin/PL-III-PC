@@ -79,11 +79,53 @@
     {
       "id": "lan_qing",
       "name": "澜清",
-      "title": "幽兰残雪",
+      "title": "幽蓝残雪",
       "rank": "EMPOWERED_BOSS",
       "max_hp": 18,
       "base_max_duels": 3,
       "min_max_duels": 2,
+      "snow_limits": {"normal":1},
+      "variants": [
+        {
+          "id":"lan_qing_sp_unmasked", "name":"澜清（不演了）", "sprite_svg":"lan_qing.svg",
+          "snow_limits":{"normal":2,"low_hp":6,"low":3},
+          "variant_passives":[{
+            "name":"幽蓝残雪",
+            "description":"即将拼负时摧毁对方骰子，仍视为自身拼负。每回合至多触发2次，自身生命值不高于6时改为至多3次。\n本回合首次触发后，自身后续骰子的基础值+2，持续至回合结束。"
+          }]
+        },
+        {
+          "id":"lan_qing_sp_unknown", "name":"澜清（？？？？）", "sprite_svg":"lan_qing.svg",
+          "max_hp":30, "base_max_duels":5, "snow_limits":{"normal":2,"low_hp":12,"low":3},
+          "fatal_stagger_grades":{"concept":"concept"},
+          "variant_passives":[
+            {
+              "name":"幽蓝残雪",
+              "description":"即将拼负时摧毁对方骰子，仍视为自身拼负。每回合至多触发2次，自身生命值不高于12时改为至多3次。\n本回合首次触发后，自身后续骰子的基础值+2，持续至回合结束。"
+            },
+            {
+              "name":"？？？？",
+              "description":"费用上限+3，基础交锋数为5。\n【回合开始】回复3生命，额外抽2张牌。\n自身触发失衡爆发且判定成功时，对该目标额外施加1层致命失衡。\n【命中时】自身骰子最终点数不低于12时，该骰每段直伤改为目标当前生命上限的（原伤害数值×10%），向上取整，造成超穿甲伤害。",
+              "entries":[
+                {"trigger":"BEFORE RESET_COST","when":[{"left":"$event.refill","op":"eq","right":true}],
+                 "operation":{"op":"program","code":["SWAP",3,"ADD","SWAP"]}},
+                {"trigger":"on_turn_start","operation":{"op":"program","code":["$self",3,"HEAL","DRAW 2"]}},
+                {"trigger":"AFTER STAGGER","subject":"source","when":[{"left":"$event.source","op":"eq","right":"$self"},{"left":"$event.result","op":"eq","right":true}],
+                 "operation":{"op":"program","code":["$event.target","致命失衡",1,"STATUS"]}},
+                {"trigger":"BEFORE RESOLVE_DAMAGE_BASE","subject":"source",
+                 "when":[{"left":"$event.damage_die","op":"eq","right":"$event.hit_die"},
+                         {"left":"$event.damage_die.final_score","op":"ge","right":12}],
+                 "operation":{"op":"program","code":["POP","POP","$event.target.max_hp","MUL",10,"CEIL_DIV","concept",true]}}
+              ]
+            },
+            {
+              "name":"力量把握",
+              "description":"自身造成的直伤在结算致命失衡前不足2点时不触发，不翻倍也不扣层。触发时该段转为穿甲，超穿甲段保留超穿甲。"
+            },
+            {"name":"经值事务所","description":"基础5交锋，始终至少2交锋。【回合开始】上一回合自身至少打出3张手牌时，回复1生命，本回合费用上限+1。"}
+          ]
+        }
+      ],
       "passive_skills": [
         {
           "name": "经值事务所",
@@ -102,18 +144,24 @@
           ]
         },
         {
-          "name": "幽兰残雪",
+          "name": "幽蓝残雪",
+          "description": "本回合首次即将拼负时摧毁对方骰子，仍视为自身拼负。此后本回合自身骰子的基础值+2。",
           "entries": [
             {
               "trigger": "before_clash_result",
-              "description": "本回合首次即将拼负时摧毁目标骰，视为自身拼负，此后本回合骰子基础值+2。",
-              "when": [{"left":"$event.prospective_result","op":"eq","right":"lose"}],
-              "turn_limit": {"key":"幽兰残雪","count":1},
+              "hidden": true,
+              "when": [
+                {"left":"$event.prospective_result","op":"eq","right":"lose"},
+                {"left":{"field":"$self.turn_state","key":"幽蓝残雪次数","default":0},"op":"lt","right":{
+                  "if":{"left":"$self.hp","op":"le","right":{"field":"$self.data.snow_limits","key":"low_hp","default":0}},
+                  "then":"$self.data.snow_limits.low","else":"$self.data.snow_limits.normal"
+                }}
+              ],
               "operation": {
                 "op": "program",
                 "code": [
-                  "$event.opponent_die", "DESTROY", "$event.die", "lose", "SET_UNOPPOSED_RESULT", "$self",
-                  "幽兰残雪·拼负回合", "$game.turn_number", "SET_CHARACTER_STATE"
+                  "$self","幽蓝残雪次数","$self.turn_state","幽蓝残雪次数",0,"LOOKUP",1,"ADD","SET_TURN_STATE",
+                  "$event.opponent_die", "DESTROY", "$event.die", "lose", "SET_UNOPPOSED_RESULT"
                 ]
               }
             },
@@ -124,7 +172,7 @@
                 "op": "program",
                 "code": [
                   "$event.die", "$self.rule_state", "永久基础值", 0, "LOOKUP",
-                  "$self.rule_state", "幽兰残雪·拼负回合", null, "LOOKUP", "$game.turn_number", "EQ",
+                  "$self.turn_state", "幽蓝残雪次数", 0, "LOOKUP", 0, "GT",
                   [2, "ADD"], "WHEN", "DIE_BASE_ADD"
                 ]
               }
@@ -174,7 +222,8 @@
               "operation": {
                 "op": "program",
                 "code": [
-                  "$event.incoming", 2, "LT", [{"op":"cancel"}], ["factor","STORE","POP","pierce","$local.factor"],
+                  "$event.incoming", 2, "LT", [{"op":"cancel"}],
+                  ["factor","STORE","$self.data.fatal_stagger_grades","SWAP","pierce","LOOKUP","$local.factor"],
                   "IF_ELSE"
                 ]
               }

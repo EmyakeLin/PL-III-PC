@@ -125,7 +125,7 @@ class LobbyTests(WireClient, unittest.TestCase):
         _, initial = read(table, key)
         _, carrier = read(boss, boss_key)
         _, original_lan = read(lan, lan_key)
-        self.assertEqual(original_lan["challenge"], "幽兰残雪·澜清")
+        self.assertEqual(original_lan["challenge"], "幽蓝残雪·澜清")
         args = {"revision": carrier["revision"], "action": "new", "roster": [["plan_b_annolin"], ["structured_carrier"]]}
         self.assertEqual(self.request(boss + "/api/action", args, **boss_key)[1]["match_number"], 2)
         self.assertEqual(read(table, key)[1], initial)

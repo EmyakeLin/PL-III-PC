@@ -980,6 +980,13 @@ def damage_adjustments(modifiers, grade, multiplier):
     return multiplier, fixed
 
 
+def handle_damage_base(ctx):
+    percentage, grade, amount = ctx.pop(), ctx.pop(), ctx.pop()
+    if grade not in GRADE_RANK or type(percentage) is not bool:
+        raise ValueError("伤害段须指定有效的穿甲等级与百分比伤害标记")
+    return amount, grade, percentage
+
+
 def handle_damage_status(ctx):
     factor, grade = ctx.pop(), ctx.pop()
     ctx.pop()
@@ -1493,7 +1500,8 @@ DISPATCH_TABLE = {
     OpCode.DIE_BASE_ADD: handle_die_base_add,
     OpCode.REPEAT_DIE: handle_repeat_die, OpCode.NEXT_TURN_DUELS: handle_next_turn_duels,
     OpCode.SET_SKILL_STATE: handle_set_component_state,
-    OpCode.DAMAGE: handle_damage, OpCode.LIGHTCORE_DAMAGE: handle_lightcore_damage,
+    OpCode.DAMAGE: handle_damage, OpCode.RESOLVE_DAMAGE_BASE: handle_damage_base,
+    OpCode.LIGHTCORE_DAMAGE: handle_lightcore_damage,
     OpCode.CHANGE_LIGHTCORE_MAX: handle_change_lightcore_max, OpCode.INSTANT_DEATH: handle_instant_death,
     OpCode.SET_HP: handle_set_hp, OpCode.END_DUEL: handle_end_duel,
     OpCode.RESTORE_STATUS_STACKS: handle_restore_status_stacks,
@@ -1588,6 +1596,7 @@ OPERANDS = {
     OpCode.SELECT_SKILL_TARGET: ("card",),
     OpCode.FOR_EACH_TARGET: ("targets", "block"),
     OpCode.DAMAGE: ("target", "amount", "penetration", "attack_type"),
+    OpCode.RESOLVE_DAMAGE_BASE: ("amount", "penetration", "percentage_damage"),
     OpCode.LIGHTCORE_DAMAGE: ("target", "amount"), OpCode.REAL_DAMAGE: ("target", "amount"),
     OpCode.CHANGE_LIGHTCORE_MAX: ("target", "amount"), OpCode.INSTANT_DEATH: ("target",),
     OpCode.SET_HP: ("target", "amount"), OpCode.END_DUEL: ("duel",),

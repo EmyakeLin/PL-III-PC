@@ -13,6 +13,7 @@ from pipeline.pipeline_errors import PipelineSystemError, StackUnderflowError
 
 
 _NON_MUTATING_OPCODES = frozenset({
+    OpCode.RESOLVE_DAMAGE_BASE,
     OpCode.ENTRY, OpCode.CHOOSE_CARD, OpCode.CHOOSE_OPTION, OpCode.CHOOSE_CHARACTER, OpCode.CHOOSE_SLOT,
     OpCode.OPPONENT, OpCode.BOARD_SLOTS, OpCode.ZONE_CARDS, OpCode.SLOT_CARDS, OpCode.REMAINING_CARDS,
     OpCode.REAR_SLOT_CARDS, OpCode.REAR_CAPACITY, OpCode.SLOT_AT_OFFSET, OpCode.SKILL_RESTRICTED,
@@ -360,6 +361,8 @@ class Context:
             fields.setdefault("keep_position", False)
             if type(fields["keep_position"]) is not bool:
                 raise ValueError("摧毁骰位的保留标记须为布尔值")
+        if opcode == OpCode.RESOLVE_HIT:
+            fields["hit_die"] = None
         if opcode == OpCode.DAMAGE:
             fields.setdefault("percentage_damage", False)
             # Nested status and character effects own their damage independently of
@@ -481,6 +484,17 @@ class Context:
                     fields.setdefault("source", self.event.get("source") or fields["target"])
                     fields["side"] = fields["source"].player.side
         with self.binding(**fields) as event, self._pending(opcode):
+            if opcode == OpCode.DAMAGE and not event["damage_precomputed"]:
+                # Establish the segment's base once, before armor, status multipliers
+                # and any other DAMAGE listener observe its amount and grade.
+                self.stack.extend((event["amount"], event["penetration"], event["percentage_damage"]))
+                base = self.execute_op(OpCode.RESOLVE_DAMAGE_BASE)
+                if base is None:
+                    del self.stack[mark:]
+                    return None
+                amount, grade, percentage = base
+                self.stack[mark + 1:mark + 3] = (amount, grade)
+                event.update(amount=amount, base_amount=amount, penetration=grade, percentage_damage=percentage)
             self.dispatch_opcode(opcode, "BEFORE")
             if self.current_op is None or (originating_entry is not None and originating_entry.cancelled):
                 del self.stack[mark:]
@@ -755,6 +769,7 @@ class Context:
 
     def dispatch_pipeline(self, node_id, *, valid=None, **fields):
         side, card, die = fields.get("side"), fields.get("card"), fields.get("die")
+        fields["hit_die"] = die if node_id in ("on_dice_hit", "after_dice_hit") else None
         lane = fields.get("lane", "front")
         cards_map = self.rear_active_cards if lane == "rear" else self.active_cards
         dice_map = self.rear_active_dice if lane == "rear" else self.active_dice
@@ -916,6 +931,7 @@ class Context:
         if (not (die.is_attack or self.event.get("simultaneous_solo") and die.is_passive)
                 or not target.is_alive or not source.is_alive or die.destroyed or card.destroyed):
             return False
+        self.event["hit_die"] = die
         mode = self.event.get("hit_mode")
         index = self.event.get("hit_index") or 1
         self.record("hit", source=source.combat_name, target=target.combat_name, card=card.name,

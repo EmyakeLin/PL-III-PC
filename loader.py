@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -107,6 +108,33 @@ def base_effects():
     return _shared_effects(PACKS).resolve_aliases()
 
 
+def _character_forms(pack):
+    """Expand SP printings before the ordinary roster validation and registration."""
+    for printed in pack.get("characters", ()):
+        base = dict(printed)
+        variants = base.pop("variants", ())
+        yield base
+        for variant in variants:
+            for action in variant.get("actions", ()):
+                _validate_action(action)
+            form = deepcopy(base)
+            form.update(variant)
+            inherited = form.get("passive_skills", ())
+            by_name = {s["name"]: s for s in inherited if isinstance(s, dict) and "name" in s}
+            passives = []
+            for spec in form.pop("variant_passives", ()):
+                if isinstance(spec, str):
+                    spec = pack["variant_passives"][spec]
+                # The variant's printed entries precede the inherited ones. A
+                # revised description can retain its namesake's original entries.
+                passives.append({**by_name.get(spec["name"], {}), **deepcopy(spec)})
+            revised = {spec["name"] for spec in passives}
+            form["passive_skills"] = passives + [
+                skill for skill in inherited if not isinstance(skill, dict) or skill.get("name") not in revised
+            ]
+            yield form
+
+
 def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
     from models.card import validate_skill_traits
     from models.conditions import validate_skill_gate
@@ -122,7 +150,7 @@ def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
     for path in [*sorted(directory.glob("*.json")), *extra_packs]:
         pack = _read_pack(path, definitions)
         try:
-            for original in pack.get("characters", ()):
+            for original in _character_forms(pack):
                 char = dict(original, faction=pack.get("faction", ""),
                             faction_passives=pack.get("faction_passives", []),
                             status_entries=definitions.status_entries, status_rules=definitions.status_rules,
