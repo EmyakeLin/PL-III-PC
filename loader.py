@@ -113,7 +113,7 @@ def _character_forms(pack):
     for printed in pack.get("characters", ()):
         base = dict(printed)
         variants = base.pop("variants", ())
-        yield base
+        yield base, None
         for variant in variants:
             for action in variant.get("actions", ()):
                 _validate_action(action)
@@ -132,7 +132,8 @@ def _character_forms(pack):
             form["passive_skills"] = passives + [
                 skill for skill in inherited if not isinstance(skill, dict) or skill.get("name") not in revised
             ]
-            yield form
+            # Inherited skills retain the parent printing's deck size, even across ranks.
+            yield form, base["rank"] if "skills" not in variant else None
 
 
 def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
@@ -150,7 +151,7 @@ def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
     for path in [*sorted(directory.glob("*.json")), *extra_packs]:
         pack = _read_pack(path, definitions)
         try:
-            for original in _character_forms(pack):
+            for original, inherited_deck_rank in _character_forms(pack):
                 char = dict(original, faction=pack.get("faction", ""),
                             faction_passives=pack.get("faction_passives", []),
                             status_entries=definitions.status_entries, status_rules=definitions.status_rules,
@@ -170,8 +171,9 @@ def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
                 if "min_max_duels" in char and (type(char["min_max_duels"]) is not int or char["min_max_duels"] < 0):
                     raise ValueError(f"{char['name']} 的交锋额度下限须为非负整数")
                 regular = [card for card in char["skills"] if not card.get("out_of_combat")]
-                if len(regular) != RANK_SKILL_COUNT[rank]:
-                    raise ValueError(f"{char['name']} 应有 {RANK_SKILL_COUNT[rank]} 张常规技能")
+                deck_rank = CharacterRank[inherited_deck_rank] if inherited_deck_rank else rank
+                if len(regular) != RANK_SKILL_COUNT[deck_rank]:
+                    raise ValueError(f"{char['name']} 应有 {RANK_SKILL_COUNT[deck_rank]} 张常规技能")
                 card_ids = set()
                 for card in char["skills"]:
                     validate_skill_traits(card)

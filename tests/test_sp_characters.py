@@ -117,7 +117,7 @@ class SPCharacterTests(unittest.TestCase):
         forms = (
             ("liu_yin_sp_quick", "liu_yin", 18, 4, 1, 0),
             ("liu_yin_sp_unknown", "liu_yin", 24, 4, 1, 0),
-            ("liu_yin_sp_regent", "liu_yin", 18, 5, 2, 3),
+            ("liu_yin_sp_regent", "liu_yin", 30, 5, 2, 3),
             ("lan_qing_sp_unmasked", "lan_qing", 18, 3, 0, 0),
             ("lan_qing_sp_unknown", "lan_qing", 30, 5, 2, 3),
         )
@@ -141,6 +141,14 @@ class SPCharacterTests(unittest.TestCase):
                     self.assertEqual(self.actor.hp, hp - 7 + (3 * turn if character == "lan_qing_sp_unknown" else 0))
                     self.game.finish_turn()
                     self.assertEqual(self.left.max_cost, 0)
+
+    def test_regent_rank_and_initial_integrity_with_inherited_deck(self):
+        self.deploy("liu_yin_sp_regent", "liu_yin")
+        self.assertEqual((self.actor.rank.name, self.actor.hp, self.actor.lightcore_hp), ("EXTREME", 30, 44))
+        self.assertEqual((self.enemy.rank.name, self.enemy.hp, self.enemy.lightcore_hp), ("EMPOWERED_BOSS", 18, 28))
+        self.assertEqual(self.actor.skill_data, self.enemy.skill_data)
+        self.assertEqual(sum(not c.out_of_combat for c in self.actor.skills), 11)
+        self.assertEqual([c.id for c in self.actor.skills if c.out_of_combat], ["liu_overwrite"])
 
     def test_snow_rechecks_life_and_applies_base_bonus_once(self):
         for character, threshold in (("lan_qing_sp_unmasked", 6), ("lan_qing_sp_unknown", 12)):

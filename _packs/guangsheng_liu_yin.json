@@ -118,7 +118,7 @@
           }]
         },
         {
-          "id": "liu_yin_sp_regent", "name": "流阴（真正的执政）", "base_max_duels": 5,
+          "id": "liu_yin_sp_regent", "name": "流阴（真正的执政）", "rank": "EXTREME", "max_hp": 30, "base_max_duels": 5,
           "variant_passives": ["环境压制", {
             "name": "真正的执政", "description":"首次获得环境压制时，改为获得30层。费用上限+3，基础交锋数为5。\n【回合开始】额外抽2张牌。\n【领域覆写使用后】获得2层领域洞悉与2层强壮。",
             "entries": [
