@@ -479,6 +479,12 @@ export function createPresentationFx(env) {
       showBanner(`${ev.target_name || ''} · 光点形态群崩塌`.replace(/^ · /, ''), LIGHTCORE_COLLAPSE_COLOR, 1.8);
     },
 
+    lightcore_healed(ev) {
+      const pos = actorPos(ev.target_id, ev.target_side);
+      three.triggerRipple(pos.x, pos.y, LIGHTCORE_COLOR);
+      spawnFloater(pos.x, pos.y - 40, `+${ev.amount} 光点`, LIGHTCORE_COLOR, 15, 'status');
+    },
+
     lightcore_restored(ev) {
       const pos = actorPos(ev.target_id, ev.target_side);
       three.triggerRipple(pos.x, pos.y, LIGHTCORE_COLOR);

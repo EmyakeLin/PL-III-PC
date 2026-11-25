@@ -101,6 +101,10 @@ class TableBridge:
                                      if field != "concept_shield"})
             else:
                 self._append("heal" if kind == "health_recovered" else "lose_hp", **health, amount=data["amount"])
+        elif kind == "lightcore_healed":
+            self._append(kind, target_side=data["side"], target_id=data["character_id"],
+                         target_name=data["character_name"], amount=data["amount"],
+                         lightcore_after=data["hp"], max_lightcore=data["maximum"])
         elif kind == "lightcore_damage":
             self._append(
                 "lightcore_damage",

@@ -23,6 +23,7 @@ const IMPACT_CONSEQUENCE_KINDS = new Set([
   'damage',
   'lose_hp',
   'lightcore_damage',
+  'lightcore_healed',
   'lightcore_collapse',
   'lightcore_restored',
   'breath_crit',
@@ -290,7 +291,7 @@ export class TimelineSequencer {
             const ck = characterKeyFn(ev.target_id, ev.target_side);
             const prev = prevChars.get(ck);
             if (prev) this.deferredHpOverrides.set(ck, prev.hp);
-          } else if (ev.kind === 'lightcore_damage' || ev.kind === 'lightcore_collapse' || ev.kind === 'lightcore_restored') {
+          } else if (ev.kind === 'lightcore_damage' || ev.kind === 'lightcore_healed' || ev.kind === 'lightcore_collapse' || ev.kind === 'lightcore_restored') {
             const ck = characterKeyFn(ev.target_id, ev.target_side);
             const prev = prevChars.get(ck);
             if (prev) {

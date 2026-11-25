@@ -145,6 +145,14 @@ class Dice:
             self.blanked_by_range = blank_at is not None and self.range_deficit >= blank_at
 
     @property
+    def is_printed_on_card(self):
+        return self.card is not None and any(self.data is face for face in self.card.data.get("dice", ()))
+
+    @property
+    def printed_label(self):
+        return f"{self.card.name} · {describe_die(self.data)}"
+
+    @property
     def is_passive(self):
         return self.type in ("block", "evade")
 

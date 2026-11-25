@@ -97,7 +97,11 @@ class Player:
         alive_count = sum(c.is_alive for c in self.characters)
         if alive_count == 0:
             return
-        keep = self.game.gamerule.DRAW_COUNT + int(self.game.turn_count == 0)
+        ctx = self.game.context
+        ctx.stack.extend((self, self.game.gamerule.DRAW_COUNT + int(self.game.turn_count == 0)))
+        keep = ctx.execute_op(OpCode.RESOLVE_TURN_DRAW_COUNT) or 0
+        if keep == 0:
+            return
         if alive_count == 1:
             with self.game.context.binding(turn_draw=True):
                 self.draw_card(keep)

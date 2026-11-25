@@ -13,11 +13,11 @@ from pipeline.pipeline_errors import PipelineSystemError, StackUnderflowError
 
 
 _NON_MUTATING_OPCODES = frozenset({
-    OpCode.RESOLVE_DAMAGE_BASE,
+    OpCode.RESOLVE_DAMAGE_BASE, OpCode.RESOLVE_TURN_DRAW_COUNT,
     OpCode.ENTRY, OpCode.CHOOSE_CARD, OpCode.CHOOSE_OPTION, OpCode.CHOOSE_CHARACTER, OpCode.CHOOSE_SLOT,
     OpCode.OPPONENT, OpCode.BOARD_SLOTS, OpCode.ZONE_CARDS, OpCode.SLOT_CARDS, OpCode.REMAINING_CARDS,
     OpCode.REAR_SLOT_CARDS, OpCode.REAR_CAPACITY, OpCode.SLOT_AT_OFFSET, OpCode.SKILL_RESTRICTED,
-    OpCode.CAN_JOIN_DUEL, OpCode.NEXT_PLANNED_DIE, OpCode.DIE_VALUE, OpCode.SIZE, OpCode.ALL_IN,
+    OpCode.CAN_JOIN_DUEL, OpCode.NEXT_PLANNED_DIE, OpCode.NEXT_DIE_ON_CARD, OpCode.DIE_VALUE, OpCode.SIZE, OpCode.ALL_IN,
     OpCode.FILTER, OpCode.MAP, OpCode.FLATTEN, OpCode.FIRST, OpCode.LOOKUP, OpCode.EACH,
     OpCode.FIRST_IN_ORDER, OpCode.COALESCE, OpCode.WITH_BINDINGS, OpCode.SKILL_USE_COUNT,
     OpCode.CLASH_COUNT, OpCode.DUEL_OFFSET, OpCode.ROUND_TRIGGER_COUNT, OpCode.WINDOW_OPEN,
@@ -640,7 +640,7 @@ class Context:
             if entry.trigger == OpCode.TURN_COST_ADD:
                 return event["pool"] is character or event["pool"] is getattr(character, "player", None)
             if (entry.trigger_type == TriggerType.OPCODE
-                    and entry.trigger in (OpCode.DRAW, OpCode.DISCARD, OpCode.RESET_COST, OpCode.NEXT_TURN_COST)
+                    and entry.trigger in (OpCode.RESOLVE_TURN_DRAW_COUNT, OpCode.DRAW, OpCode.DISCARD, OpCode.RESET_COST, OpCode.NEXT_TURN_COST)
                     and event.get("player") is not None):
                 return getattr(character, "player", None) is event["player"]
             if entry.trigger_type == TriggerType.OPCODE and entry.trigger in (

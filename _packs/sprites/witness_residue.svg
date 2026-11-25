@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
+  <defs>
+    <linearGradient id="wr_void" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#463364"/><stop offset=".5" stop-color="#261f43"/><stop offset="1" stop-color="#164a50"/>
+    </linearGradient>
+    <linearGradient id="wr_prism" x1="0" y1="1" x2="1" y2="0">
+      <stop stop-color="#539b98"/><stop offset=".54" stop-color="#b8ffdf"/><stop offset="1" stop-color="#fff2bf"/>
+    </linearGradient>
+  </defs>
+  <g id="bone_back_hair" data-pivot="78,76" fill="none" stroke-linecap="round">
+    <path d="M28 91C10 56 72 23 115 35M123 40Q141 50 130 66" stroke="#9e7a91" stroke-width="2"/>
+    <path d="M135 62C142 86 91 122 37 118L29 114" stroke="#deb98b" stroke-width="2.5"/>
+    <path d="M32 97L27 107M118 32L125 35" stroke="#9ffff0" stroke-width="3"/>
+    <circle cx="124" cy="76" r="3" fill="#c8ffe8"/>
+  </g>
+  <g id="bone_cape_back" data-pivot="76,87" fill="url(#wr_void)" stroke="#918aa9" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M70 65L42 57 49 77 29 93 57 85 35 108 64 98 78 75Z"/>
+    <path d="M93 67L121 54 113 70 142 61 123 86 105 87 118 75 92 90Z"/>
+  </g>
+  <g id="bone_torso" data-pivot="80,136" stroke-linejoin="round">
+    <path d="M69 51L91 57 81 69 102 65 99 80 86 89 96 100 80 123 62 136 67 114 54 115 68 91 59 83 79 70 65 72Z"
+          fill="url(#wr_void)" stroke="#c5b5c8" stroke-width="1.8"/>
+    <path d="M67 85L90 72 79 87 83 92 62 108 74 92Z" fill="url(#wr_prism)"/>
+    <path d="M87 103L80 118 90 112 80 136 98 111 95 101Z" fill="#74b4ad"/>
+    <path d="M63 98L49 106 47 111 57 106M94 90L108 85 104 91" fill="none" stroke="#dfb381" stroke-width="2"/>
+  </g>
+  <g id="bone_head" data-pivot="80,68">
+    <path d="M54 59L70 41 91 38 104 45 85 52 72 64Z" fill="url(#wr_void)" stroke="#d0bfc9" stroke-width="1.6"/>
+    <path d="M66 55L80 45 94 43 82 52Z" fill="url(#wr_prism)"/>
+    <path d="M97 38L111 32 103 40Z" fill="#dfb381"/>
+  </g>
+  <g id="bone_weapon" data-pivot="98,90" fill="url(#wr_prism)">
+    <path d="M96 94L109 77 115 76 106 90Z"/><path d="M117 72L132 49 129 61Z"/>
+    <path d="M46 83L36 86 42 78Z" fill="#b4a3cf"/>
+  </g>
+</svg>

@@ -95,7 +95,7 @@
           }]
         },
         {
-          "id":"lan_qing_sp_unknown", "name":"澜清（？？？？）", "sprite_svg":"lan_qing.svg",
+          "id":"lan_qing_sp_unknown", "name":"澜清（？？？？）", "rank":"EXTREME", "sprite_svg":"lan_qing.svg",
           "max_hp":30, "base_max_duels":5, "snow_limits":{"normal":2,"low_hp":12,"low":3},
           "fatal_stagger_grades":{"concept":"concept"},
           "variant_passives":[

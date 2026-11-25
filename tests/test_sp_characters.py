@@ -150,6 +150,13 @@ class SPCharacterTests(unittest.TestCase):
         self.assertEqual(sum(not c.out_of_combat for c in self.actor.skills), 11)
         self.assertEqual([c.id for c in self.actor.skills if c.out_of_combat], ["liu_overwrite"])
 
+    def test_extreme_lan_qing_preserves_the_original_regular_cards(self):
+        self.deploy("lan_qing_sp_unknown", "lan_qing")
+        self.assertEqual((self.actor.rank.name, self.actor.hp, self.actor.lightcore_hp, self.actor.max_duels),
+                         ("EXTREME", 30, 44, 5))
+        self.assertEqual(self.actor.skill_data, self.enemy.skill_data)
+        self.assertEqual(sum(not c.out_of_combat for c in self.actor.skills), 11)
+
     def test_snow_rechecks_life_and_applies_base_bonus_once(self):
         for character, threshold in (("lan_qing_sp_unmasked", 6), ("lan_qing_sp_unknown", 12)):
             with self.subTest(character=character):

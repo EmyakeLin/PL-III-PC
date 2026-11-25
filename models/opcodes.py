@@ -144,6 +144,17 @@ def handle_grant_die_response(ctx):
     return True
 
 
+def handle_prepend_printed_die(ctx):
+    count, printing, card = ctx.pop(), ctx.pop(), ctx.pop()
+    if card is not None and _usable_component(card):
+        card.prepend_printed_die(printing, count)
+
+
+def handle_next_die_on_card(ctx):
+    card = ctx.pop()
+    ctx.push(next(card.planned_dice(ctx.game, after_current=True), None) if card else None)
+
+
 def handle_queue_hit(ctx):
     targeted = ctx.current_op == OpCode.QUEUE_TARGET_HIT
     target = ctx.pop() if targeted else None
@@ -469,6 +480,12 @@ def handle_turn_cost_add(ctx):
     if getattr(pool, "is_alive", True):
         pool.turn_cost_adjustment += max(-pool.available_cost, amount)
         return pool.available_cost
+
+
+def handle_turn_draw_count(ctx):
+    count = ctx.pop()
+    ctx.pop()  # drawing player
+    return max(0, count)
 
 
 def handle_draw(ctx):
@@ -1065,6 +1082,17 @@ def handle_heal(ctx):
     return actual
 
 
+def handle_heal_lightcore(ctx):
+    amount, target = ctx.pop(), ctx.pop()
+    if target is None or not target.is_alive:
+        return 0
+    recovered = min(max(0, amount), target.max_lightcore_hp - target.lightcore_hp)
+    if recovered:
+        target.lightcore_hp += recovered
+        target.record("lightcore_healed", amount=recovered, hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
+    return recovered
+
+
 def handle_lightcore_damage(ctx):
     amount, target = max(0, int(ctx.pop())), ctx.pop()
     if target == "target":
@@ -1456,6 +1484,8 @@ DISPATCH_TABLE = {
     OpCode.ROUND_TRIGGER_COUNT: handle_round_trigger_count,
     OpCode.RECORD_ROUND_TRIGGER: handle_record_round_trigger,
     OpCode.CAPTURE_SKILL_DIE: handle_capture_skill_die, OpCode.GRANT_DIE_RESPONSE: handle_grant_die_response,
+    OpCode.PREPEND_PRINTED_DIE: handle_prepend_printed_die, OpCode.NEXT_DIE_ON_CARD: handle_next_die_on_card,
+    OpCode.HEAL_LIGHTCORE: handle_heal_lightcore,
     OpCode.ACTIVATE_STATUS: handle_activate_status, OpCode.SET_DIE_STATE: handle_set_component_state,
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.SET_TURN_STATE: handle_set_character_state,
@@ -1487,6 +1517,7 @@ DISPATCH_TABLE = {
     OpCode.CLAMP: handle_clamp, OpCode.DUP: lambda ctx: ctx.dup(),
     OpCode.POP: lambda ctx: ctx.pop(), OpCode.SWAP: lambda ctx: ctx.swap(),
     OpCode.EVAL: lambda ctx: ctx.eval_block(ctx.pop()),
+    OpCode.RESOLVE_TURN_DRAW_COUNT: handle_turn_draw_count,
     OpCode.DRAW: handle_draw, OpCode.PLACE: handle_place, OpCode.ROLL: handle_roll,
     OpCode.REPLACE_SKILL: handle_replace_skill,
     OpCode.MOVE_CARD: handle_move_card, OpCode.ROUTE_DIE_ATTACK: handle_route_die_attack,
@@ -1547,6 +1578,8 @@ OPERANDS = {
     OpCode.ROUND_TRIGGER_COUNT: ("character", "key"),
     OpCode.RECORD_ROUND_TRIGGER: ("character", "key"),
     OpCode.CAPTURE_SKILL_DIE: ("card", "position"),
+    OpCode.PREPEND_PRINTED_DIE: ("card", "printing", "count"), OpCode.NEXT_DIE_ON_CARD: ("holder",),
+    OpCode.HEAL_LIGHTCORE: ("target", "amount"),
     OpCode.GRANT_DIE_RESPONSE: ("target", "template", "count", "trigger", "through_turn", "spend_on", "spend_amount"),
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
@@ -1581,6 +1614,7 @@ OPERANDS = {
     OpCode.IF_ELSE: ("condition", "then_block", "else_block"),
     OpCode.CLAMP: ("value", "low", "high"), OpCode.DUP: ("value",), OpCode.POP: ("value",),
     OpCode.SWAP: ("a", "b"), OpCode.EVAL: ("block",),
+    OpCode.RESOLVE_TURN_DRAW_COUNT: ("player", "amount"),
     OpCode.DRAW: ("player", "amount"), OpCode.DISCARD: ("player", "discarded_card"),
     OpCode.RESET_COST: ("player", "common", "personal"), OpCode.PAY_COST: ("card", "amount"),
     OpCode.NEXT_TURN_COST: ("player", "amount"),

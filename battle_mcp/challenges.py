@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from bots.lan_qing import choose_move as lan_qing_move
+from bots.witness_residue import choose_move as witness_move
 from loader import PACKS, load_characters_from_packs
 from .bot import choose_draw_bottom
 
@@ -93,4 +94,5 @@ CHALLENGES = {
     "carrier": Challenge("结构化载体", "structured_carrier", carrier_move,
                          (PACKS / "challenges" / "structured_carrier.json",)),
     "lan_qing": Challenge("幽蓝残雪·澜清", "lan_qing", lan_qing_move),
+    "witness_residue": Challenge("“目击残差”", "witness_residue", witness_move),
 }
