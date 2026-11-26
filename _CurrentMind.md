@@ -1,5 +1,21 @@
 # 当前设计与工作记录
 
+## 回合内即时行动、联机零泄密时序、3D 骰子状态机与命中演出重构（2026-11-27）
+
+- **已确认语义与联机公平准则**：
+  - **回合内即时切入与换卡**：开牌后及交锋任意结算节拍（含敌方已打出前两骰、轮空空白轮或拼点轮间），手牌扇区对固定视角席位全程常驻，无需切入二级模式即可直接拖入桌面或点击印章执行 `special_place` / `special_place_rear` / `special_replace` / `special_attack` / `special_custom` 及全量角色主动能力（含 `own_hand` 与 `board` 选目标能力）；中途置入或换入的新卡在下一骰轮直接以自身第 1 骰接敌方下一颗未用骰（如敌方第 3 骰）。
+  - **真人联机零读秒泄密**：联机房间公共节拍推进时长（`2.6s` / `2.4s` / `2.0s` / `1.75s`）仅由公开场面决定，严禁因单侧私有手牌或鼠标悬停冻结共享时钟；桌面席位在非暂停节拍私密接收 `inline_special_options` 零暂停直出，同窗口内节拍修订号微进仍允许合法提交。
+  - **动画期/跨轮预宣言（`/api/prepare`）与思考时间银行**：3D 骰子翻滚期或前序轮次拖放/点击切入与换卡时，联机模式自动挂载按 `(turn, duel_kind, duel_number, round_id, timing="after_dice_use")` 绑定的私密 `prepare` 声明（本地模式进入落骰即刻队列），桌面渲染仅本人可见的半透明预约残影并支持一键撤回；联机手动暂停接入每回合每席 `20s` 思考时间银行（支持暂停中连续多步操作保持暂停，耗尽自动恢复）。
+- **执行路径**：
+  - **命中因果序与本地桥接**（[table_bridge.py](battle_ui/table_bridge.py)、[match.py](battle_ui/match.py)、[session.py](battle_ui/session.py)）：新增 `TableBridge.mark()` 与保序重排 `emit_at(after_seq, ...)`，在 `before_dice_hit` 记录锚点并将 `combat_strike` 插回 `logic_dice_hit` 伤害/引燃之前、保持在 `cost_pay` / `on_skill_use` 被动之后；单方面技能 `logic_skill_use` 基于纯公开盘面停拍；`BattleSession` 传入 `viewer_side` 并开放免 `open_special` 的内联 `use_special` / `trigger_table_action` 与冗余微时点折叠。
+  - **联机房间与声明协议**（[declarations.py](battle_mcp/declarations.py)、[engine.py](battle_mcp/engine.py)、[room.py](battle_mcp/room.py)、[transport.js](battle_ui/static/engine/transport.js)）：补齐 `place_rear` / `special_place_rear` 及 `round_id`、`enemy_die_number` 声明匹配条件；`Room` 暴露 `beat_duration_ms`、`beat_remaining_ms`、`pause_bank_ms`、`pause_remaining_ms` 与席位私有 `declarations`；`roomTableState` 区分强制响应（`decline` / `special_choose_*`）与常驻内联选项，避免劫持 `combat` 模式。
+  - **3D 骰子回合状态机与受击同步**（[three_world.js](battle_ui/static/engine/three_world.js)、[physics.js](battle_ui/static/engine/physics.js)、[fx_director.js](battle_ui/static/engine/fx_director.js)、[presentation_fx.js](battle_ui/static/engine/presentation_fx.js)、[timeline_sequencer.js](battle_ui/static/engine/timeline_sequencer.js)）：引入 `roundKey` 与 `throwing -> holding -> clashing -> settled -> retiring` 状态机，新轮次 `0.16s` 快速退场旧骰消除空等，慢节拍下 `holding` 保活至对撞并修复 `attachClashBody` 地板下陷与拉回瞬移；`launchDie` 严格遵守 `revealDelay` 并展现 `掷X→Y` 跳变；`FxDirector` 拆分 `t = 0` 攻击前冲与 `t = impactMs` 受击后仰/震屏/血条光核扣减，补齐 `烧伤`/`爆燃`/`裂血` 伤害归因与飘字防重叠级联。
+  - **战桌直拖切入、印章标注与残影交互**（[field_action_workspace.js](battle_ui/static/engine/field_action_workspace.js)、[combat_tabletop.js](battle_ui/static/engine/combat_tabletop.js)、[combat_choreography.js](battle_ui/static/engine/combat_choreography.js)、[game_director.js](battle_ui/static/engine/game_director.js)）：修复 5 段式 `kind:number:side:lane:position` 场上牌键，暴露 `boardCardRects` 支持手牌直拖替换任意友方前后置牌，渲染切入虚线槽（提示「首骰接敌第 N 骰」）、预约残影与顶栏节拍/思考进度条，并为行动印章补齐常驻中文牌匾。
+- **验证结果**：
+  - 新增后端与联机集成专测 [test_inturn_and_choreography.py](tests/test_inturn_and_choreography.py)（5 项，覆盖因果事件序、人机常驻手牌切入接第 3 骰、联机零暂停同窗直出、联机 `prepare` 跨轮零泄密预约及 `20s` 思考时间银行连招保持与超时恢复）。
+  - 新增前端确定性专测 [test_sequencer_and_choreography.mjs](tests/frontend/test_sequencer_and_choreography.mjs)（5 项，覆盖 `normalizeBeatEvents` 前置事件保序、状态机快速退场与换卡退骰、`impactMs` 风压受击分离、`roomTableState` 内联投影与中文标注印章）。
+  - `python -m unittest tests.entry_semantics tests.test_displayer tests.test_inturn_and_choreography tests.test_room_pacing_and_dice_presentation tests.test_mode_lobby tests.test_cang_feng tests.test_lan_qing tests.test_liu_yin tests.test_heris tests.test_carrier_challenge` **454/454 通过**；前端专测套件 **21/21 通过**。
+
 ## 主动能力弹窗可取消与未提交不扣次数修复（2026-11-24）
 
 - **已确认语义**：
