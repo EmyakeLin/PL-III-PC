@@ -1,6 +1,7 @@
-"""One private invitation per seat, shared by the browser and Streamable HTTP MCP."""
+"""One private invitation per seat, shared by WebSocket, browser HTTP, and Streamable HTTP MCP."""
 
 import json
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +13,8 @@ from .decision_view import decision_view
 from .declarations import EVENTS, KINDS
 from .hosting import HostedRoom, Lobby, RequestError, mode_catalog
 from .network import allowed_origins, http_origin, https_origin, ipv4_address
+from .room import RoomConflict
+from .ws import WebSocketClosed, WebSocketConnection, is_websocket_upgrade
 
 
 VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
@@ -48,7 +51,8 @@ DECLARATION = {"type": "object", "oneOf": [
         "event": enum(*EVENTS),
         "match": object_schema({"kind": enum(*sorted(KINDS)), "card_id": TEXT, "target_card_id": TEXT, "ability_id": TEXT,
                                 "duel_number": NUMBER, "response_number": NUMBER, "character_id": TEXT}),
-        "when": object_schema({"duel_kind": TEXT, "duel_number": NUMBER, "die_number": NUMBER,
+        "when": object_schema({"duel_kind": TEXT, "duel_number": NUMBER, "round_id": NUMBER, "die_number": NUMBER,
+                               "enemy_die_number": NUMBER,
                                "own_card_id": TEXT, "score": enum("lt", "eq", "gt"), "timing": TEXT,
                                "pending_number": NUMBER, "after_ms": NUMBER, "turn": NUMBER,
                                "action_kind": enum(*sorted(KINDS)), "actor_side": {"type": "integer", "enum": [1, 2]}}),
@@ -80,9 +84,11 @@ SELECT_CHARACTER = object_schema({"character_id": TEXT, "target_side": NUMBER,
                                   "revision": REVISION, "request_id": REQUEST_ID},
                                  ("character_id", "revision", "request_id"))
 CANVAS_READY = object_schema({"character_id": TEXT,
+                              "team": {"type": "array", "items": TEXT},
                               "roster": {"type": "array", "minItems": 2, "maxItems": 2},
                               "revision": REVISION, "request_id": REQUEST_ID}, ("revision", "request_id"))
-CANVAS_REMATCH = object_schema({key: CANVAS_READY["properties"][key] for key in ("roster", "revision", "request_id")},
+CANVAS_REMATCH = object_schema({"roster": {"type": "array", "minItems": 2, "maxItems": 2},
+                                "revision": REVISION, "request_id": REQUEST_ID},
                                ("revision", "request_id"))
 CANVAS_STATE = object_schema({"after": TEXT})
 CANVAS_DRAW = object_schema({"card_ids": {"type": "array", "items": TEXT},
@@ -108,8 +114,67 @@ def check_arguments(schema, arguments):
             raise RequestError(400, "declaration 必须是对象。", -32602)
 
 
+def _dispatch_ws_command(room, side, hotseat, msg):
+    """Execute one Canvas WebSocket command dict on `room`."""
+    cmd = msg.get("cmd")
+    req_id = str(msg.get("request_id") or "")
+    rev = msg.get("revision")
+    if cmd == "ready":
+        return room.ready(
+            side, rev, req_id, human=True, canvas=True, hotseat=hotseat,
+            character_id=msg.get("character_id"),
+            team=msg.get("team"),
+            roster=msg.get("roster"),
+        )
+    if cmd == "unready":
+        return room.unready(side, rev, req_id, hotseat=hotseat)
+    if cmd == "update_rules":
+        return room.update_rules(side, msg.get("ruleset"), rev, req_id, hotseat=hotseat)
+    if cmd == "pass_first_pick":
+        return room.pass_first_pick(side, rev, req_id, hotseat=hotseat)
+    if cmd == "update_team":
+        return room.update_team(side, msg.get("team"), rev, req_id, target_side=msg.get("target_side"), hotseat=hotseat)
+    if cmd == "randomize_bot_team":
+        return room.randomize_bot_team(side, rev, req_id, preset_id=msg.get("preset_id"))
+    if cmd == "rematch":
+        return room.rematch(side, rev, req_id, roster=msg.get("roster"), hotseat=hotseat)
+    if cmd == "reopen_lobby":
+        return room.reopen_lobby(side, rev, req_id, hotseat=hotseat)
+    if cmd == "concede":
+        return room.concede(side, rev, req_id, hotseat=hotseat)
+    if cmd == "claim_disconnect_win":
+        return room.claim_disconnect_win(side, rev, req_id)
+    if cmd == "next":
+        return room.next_beat(side, rev, req_id, hotseat=hotseat)
+    if cmd == "pause":
+        return room.pause(side, rev, req_id, hotseat=hotseat)
+    if cmd == "resume":
+        return room.resume(side, rev, req_id, hotseat=hotseat)
+    if cmd == "draw_bottom":
+        return room.draw_bottom(side, msg.get("card_ids"), rev, req_id, hotseat=hotseat)
+    if cmd == "set_default_target":
+        return room.set_default_target(side, msg.get("character_id"), rev, req_id, hotseat=hotseat)
+    if cmd == "prepare":
+        eff = room._hotseat_side if hotseat else side
+        return room.prepare(eff, msg.get("declaration"), rev, req_id)
+    if cmd == "act":
+        return room.act(side, msg.get("option_id"), rev, req_id, hotseat=hotseat)
+    if cmd == "hotseat_ready":
+        return room.hotseat_ready(msg.get("side"), rev, req_id)
+    if cmd == "switch_side":
+        return room.switch_hotseat_side(side, rev, req_id)
+    if cmd in ("claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal", "commit_pre_reveal_plan"):
+        return room.pre_reveal_stage(
+            side, cmd, rev, req_id,
+            card_id=msg.get("card_id"), target=msg.get("target"), hotseat=hotseat,
+        )
+    raise ValueError(f"未知的房间操作：{cmd}。")
+
+
 class ArenaServer(ThreadingHTTPServer):
     """One listener can serve a lobby and any number of independently addressed rooms."""
+
+    daemon_threads = True
 
     def __init__(self, room=None, port=8766, *, address="127.0.0.1", public_url=None, seed=None):
         address = ipv4_address(address)
@@ -159,16 +224,14 @@ def rpc_error(request_id, code, message):
 
 
 def text_result(value, *, failed=False):
-    # Only one representation of the payload goes into the agent's context.
     data = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     return {"content": [{"type": "text", "text": data}], "isError": failed}
 
 
 class ArenaHandler(BaseHTTPRequestHandler):
-    server_version = "BattleRoom/1.0"
+    server_version = "BattleRoom/2.0"
 
     def log_request(self, code="-", size="-"):
-        # The CLI prints invitations once. Discard HTTP access logs (including raw URLs).
         pass
 
     def _send(self, status, value=None, content_type="application/json"):
@@ -224,8 +287,6 @@ class ArenaHandler(BaseHTTPRequestHandler):
             raise RequestError(400, "无效的 JSON。", -32700) from None
 
     def _drain_rejected_body(self):
-        # Closing with unread request bytes can reset the response on Windows.
-        # The rejection has already been sent. Only discard a small, declared body.
         self.close_connection = True
         try:
             remaining = self._content_length()
@@ -250,10 +311,133 @@ class ArenaHandler(BaseHTTPRequestHandler):
         room_id, _, route = path.removeprefix("/rooms/").partition("/")
         return self.server.lobby.get(room_id), "/" + route
 
+    def _serve_websocket(self, hosted):
+        room = hosted.room
+        if not hasattr(room, "ws_position"):
+            raise RequestError(400, "该房间不支持 WebSocket。")
+        # Optional header/query auth, OR first-frame `{"type": "auth", "token": ...}` so tokens stay out of URLs!
+        auth_header = self.headers.get("Authorization")
+        query = parse_qs(urlsplit(self.path).query)
+        q_token = query.get("token", [None])[0]
+        side, hotseat = (None, False)
+        authenticated_initial = False
+        if auth_header:
+            side, hotseat = hosted.auth_context(auth_header)
+            authenticated_initial = True
+        elif q_token is not None:
+            side, hotseat = hosted.resolve_token(q_token)
+            authenticated_initial = True
+
+        ws = WebSocketConnection.accept(self)
+        if ws is None:
+            return self._send(400, {"error": "无效的 WebSocket 握手请求。"})
+
+        if not authenticated_initial:
+            try:
+                first_msg = ws.recv_json(max_bytes=4096)
+            except (WebSocketClosed, ValueError):
+                ws.close(1008)
+                return
+            if not isinstance(first_msg, dict) or first_msg.get("type") != "auth":
+                ws.send_json({"type": "error", "status": 403, "error": "首帧须发送身份认证消息。"})
+                ws.close(1008)
+                return
+            try:
+                side, hotseat = hosted.resolve_token(first_msg.get("token"))
+            except RequestError as exc:
+                ws.send_json({"type": "error", "status": exc.status, "error": str(exc)})
+                ws.close(1008)
+                return
+
+        if hasattr(room, "on_ws_connect"):
+            room.on_ws_connect(side, hotseat=hotseat)
+
+        # Send static assets once + initial state snapshot immediately
+        ws.send_json({
+            "type": "welcome",
+            "side": side,
+            "hotseat": hotseat,
+            "assets": room.canvas_assets(),
+            "state": room.canvas_state(side, hotseat=hotseat),
+        })
+
+        def push_worker():
+            last_pos = None
+            with room.cv:
+                last_pos = room.ws_position(side, hotseat=hotseat)
+            while not ws.closed and not getattr(room, "_closed", False):
+                with room.cv:
+                    changed = room.cv.wait_for(
+                        lambda: ws.closed or room._closed or room.ws_position(side, hotseat=hotseat) != last_pos,
+                        timeout=15.0,
+                    )
+                    if ws.closed or room._closed:
+                        break
+                    if not changed:
+                        snap = None
+                    else:
+                        last_pos = room.ws_position(side, hotseat=hotseat)
+                        snap = room._canvas_snapshot_locked(side, hotseat=hotseat)
+                if snap is not None:
+                    if not ws.send_json({"type": "state", "state": snap}):
+                        break
+                else:
+                    if not ws.send_ping():
+                        break
+
+        pusher = threading.Thread(target=push_worker, daemon=True)
+        pusher.start()
+        try:
+            while not ws.closed:
+                msg = ws.recv_json()
+                if msg is None:
+                    break
+                if not isinstance(msg, dict):
+                    continue
+                mtype = msg.get("type")
+                if mtype == "ping":
+                    ws.send_json({"type": "pong", "ts": msg.get("ts")})
+                    continue
+                if mtype == "battle_record":
+                    try:
+                        rec = room.battle_record()
+                        ws.send_json({"type": "battle_record", "req_id": msg.get("req_id"), "data": rec})
+                    except Exception as exc:
+                        ws.send_json({"type": "error", "req_id": msg.get("req_id"), "error": str(exc)})
+                    continue
+                if mtype == "cmd":
+                    req_id = msg.get("request_id")
+                    if side is None and not hotseat:
+                        ws.send_json({"type": "error", "request_id": req_id, "status": 403, "error": "观战席不能执行对战操作。"})
+                        continue
+                    try:
+                        _dispatch_ws_command(room, side, hotseat, msg)
+                        ws.send_json({"type": "ack", "request_id": req_id})
+                    except RoomConflict as exc:
+                        ws.send_json({"type": "conflict", "request_id": req_id, "status": 409, "error": str(exc)})
+                    except (PermissionError, RequestError) as exc:
+                        ws.send_json({"type": "error", "request_id": req_id, "status": 403, "error": str(exc)})
+                    except ValueError as exc:
+                        ws.send_json({"type": "error", "request_id": req_id, "status": 400, "error": str(exc)})
+        except (WebSocketClosed, ValueError, OSError):
+            pass
+        finally:
+            ws.close()
+            if hasattr(room, "on_ws_disconnect"):
+                room.on_ws_disconnect(side, hotseat=hotseat)
+            with room.cv:
+                room.cv.notify_all()
+
     def do_GET(self):
         try:
             self._check_origin()
             path = urlsplit(self.path).path
+            if is_websocket_upgrade(self.headers):
+                hosted, sub = self._route(path)
+                if hosted is None or sub != "/ws":
+                    raise RequestError(404, "WebSocket 路径不存在。")
+                return self._serve_websocket(hosted)
+
             lobby = self.server.lobby
             if lobby is not None:
                 if path == "/api/modes":
@@ -270,21 +454,18 @@ class ArenaHandler(BaseHTTPRequestHandler):
                     filename, mime = asset
                     return self._send(200, filename.read_bytes(), mime)
             hosted, path = self._route(path)
-            if hosted is not None and hosted.local_table and path in ("/api/state", "/api/battle_record"):
-                if hosted.side_for(self.headers.get("Authorization")) is None:
-                    raise RequestError(403, "请使用本桌私人邀请。")
-                return self._send(200, hosted.room.state() if path == "/api/state" else hosted.room.battle_record())
-            if path == "/mcp" and hosted is not None and not hosted.local_table:
-                # This server uses JSON results and does not offer an SSE stream.
+            if hosted is not None and path == "/api/battle_record":
+                return self._send(200, hosted.room.battle_record())
+            if path == "/mcp" and hosted is not None:
                 self._send(405)
             elif hosted is not None and hosted is self.server.default_room and path in ASSETS:
                 filename, mime = ASSETS[path]
                 self._send(200, (STATIC_DIR / filename).read_bytes(), mime)
             else:
-                table = "/table" if hosted and hosted.local_table else "/canvas"
                 asset = None
-                if hosted and path.startswith(table + "/"):
-                    asset = resolve_static(path.removeprefix(table))
+                if hosted and (path.startswith("/canvas/") or path.startswith("/table/")):
+                    prefix = "/canvas" if path.startswith("/canvas/") else "/table"
+                    asset = resolve_static(path.removeprefix(prefix))
                 elif path.startswith(("/sprites/", "/fx_scripts/", "/status_icons/")):
                     asset = resolve_static(path)
                 if asset is None:
@@ -294,6 +475,8 @@ class ArenaHandler(BaseHTTPRequestHandler):
                     self._send(200, filename.read_bytes(), mime)
         except RequestError as exc:
             self._send(exc.status, {"error": str(exc)})
+        except ValueError as exc:
+            self._send(400, {"error": str(exc)})
 
     def do_DELETE(self):
         try:
@@ -316,7 +499,6 @@ class ArenaHandler(BaseHTTPRequestHandler):
         if not isinstance(method, str):
             raise RequestError(400, "JSON-RPC method 无效。")
         if "id" not in message:
-            # Notifications cannot perform player actions.
             return self._send(202)
         if type(request_id) not in (str, int):
             raise RequestError(400, "JSON-RPC id 无效。")
@@ -328,7 +510,7 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 return self._send(200, rpc_error(request_id, -32602, "协议版本无效。"))
             version = params["protocolVersion"]
             result = {"protocolVersion": version if version in VERSIONS else VERSIONS[0],
-                      "capabilities": {"tools": {}}, "serverInfo": {"name": "pl-iii-arena", "version": "1.0"},
+                      "capabilities": {"tools": {}}, "serverInfo": {"name": "pl-iii-arena", "version": "2.0"},
                       "instructions": STUDY_RULES + "再 observe 查看本席局面，按需 prepare 后 ready。"
                                       "用 act 提交本席选项，用 wait 等待下一处决策。"}
         elif method == "ping":
@@ -356,69 +538,70 @@ class ArenaHandler(BaseHTTPRequestHandler):
         try:
             self._check_origin()
             authorization = self.headers.get("Authorization")
-            if self.server.lobby is not None and path == "/api/rooms":
-                return self._send(201, self.server.lobby.create(self._json_body()))
+            if self.server.lobby is not None:
+                if path == "/api/rooms":
+                    return self._send(201, self.server.lobby.create(self._json_body()))
+                if path == "/api/rooms/join":
+                    return self._send(200, self.server.lobby.join(self._json_body()))
             hosted, path = self._route(path)
             if hosted is None:
                 raise RequestError(404, "请从大厅选择房间。")
             room = hosted.room
-            if hosted.local_table:
-                if path != "/api/action":
-                    raise RequestError(404, "本机战桌操作不存在。")
-                if hosted.side_for(authorization) is None:
-                    raise RequestError(403, "请使用本桌私人邀请。")
-                status, frame = room.command(self._json_body(limit=None if room.open_rosters and self.server.local_only else 8192))
-                return self._send(status, frame)
             if path.startswith("/api/desk/"):
                 seats = hosted.authorized_seats(authorization, desk=True)
                 if not seats:
                     raise RequestError(403, "请使用私人席位或双席搬运台邀请。")
                 value = hosted.desk_command(path.removeprefix("/api/desk/"), seats, self._json_body())
                 return self._send(200, value)
-            side = hosted.side_for(authorization)
+            side, hotseat = hosted.auth_context(authorization)
             if path == "/api/canvas/assets":
                 check_arguments(NO_ARGUMENTS, self._json_body())
                 return self._send(200, room.canvas_assets())
             if path == "/api/canvas/state":
                 args = self._json_body()
                 check_arguments(CANVAS_STATE, args)
-                return self._send(200, room.canvas_state(side, **args))
-            if path in ("/api/canvas/ready", "/api/canvas/rematch", "/api/canvas/draw_bottom", "/api/canvas/target", "/api/canvas/next"):
-                if side is None:
+                return self._send(200, room.canvas_state(side, hotseat=hotseat, **args))
+            if path == "/api/canvas/cmd":
+                if side is None and not hotseat:
                     raise RequestError(403, "请使用自己的席位邀请。")
-                # A local human-vs-bot roster or draw selection can grow with the lineup.
-                limit = None if self.server.local_only and room.bot_side is not None else 65536
+                msg = self._json_body(limit=131072)
+                _dispatch_ws_command(room, side, hotseat, msg)
+                return self._send(200, room.canvas_state(side, hotseat=hotseat))
+            if path in ("/api/canvas/ready", "/api/canvas/rematch", "/api/canvas/draw_bottom", "/api/canvas/target", "/api/canvas/next"):
+                if side is None and not hotseat:
+                    raise RequestError(403, "请使用自己的席位邀请。")
+                limit = None if self.server.local_only and (room.bot_side is not None or hotseat) else 65536
                 args = self._json_body(limit=limit)
                 if path == "/api/canvas/next":
                     check_arguments(BY_NAME["ready"]["inputSchema"], args)
-                    return self._send(200, room.next_beat(side, **args))
+                    return self._send(200, room.next_beat(side, hotseat=hotseat, **args))
                 if path == "/api/canvas/draw_bottom":
                     check_arguments(CANVAS_DRAW, args)
-                    return self._send(200, room.draw_bottom(side, **args))
+                    return self._send(200, room.draw_bottom(side, hotseat=hotseat, **args))
                 if path == "/api/canvas/target":
                     check_arguments(object_schema({"character_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
                                                   ("character_id", "revision", "request_id")), args)
-                    return self._send(200, room.set_default_target(side, **args))
+                    return self._send(200, room.set_default_target(side, hotseat=hotseat, **args))
                 if path == "/api/canvas/rematch":
                     check_arguments(CANVAS_REMATCH, args)
-                    return self._send(200, room.rematch(side, **args))
+                    return self._send(200, room.rematch(side, hotseat=hotseat, **args))
                 check_arguments(CANVAS_READY, args)
-                return self._send(200, room.ready(side, **args, human=True, canvas=True))
+                return self._send(200, room.ready(side, **args, human=True, canvas=True, hotseat=hotseat))
             if path == "/api/follow":
                 args = self._json_body()
                 check_arguments(BY_NAME["wait"]["inputSchema"], args)
                 return self._send(200, room.wait(side, **args, visible_updates=True))
             if path in ("/api/player_ready", "/api/pause", "/api/resume"):
-                if side is None:
+                if side is None and not hotseat:
                     raise RequestError(403, "请使用自己的席位邀请。")
                 args = self._json_body()
                 check_arguments(BY_NAME["ready"]["inputSchema"], args)
                 if path == "/api/player_ready":
-                    view = room.ready(side, **args, human=True)
+                    view = room.ready(side, **args, human=True, hotseat=hotseat)
                 elif path == "/api/pause":
-                    view = room.pause(side, **args)
+                    view = room.pause(side, **args, hotseat=hotseat)
                 else:
-                    view = room.resume(side, **args)
+                    view = room.resume(side, **args, hotseat=hotseat)
                 return self._send(200, view)
             if path == "/api/select_character":
                 if side is None:
@@ -443,7 +626,6 @@ class ArenaHandler(BaseHTTPRequestHandler):
         except PermissionError as exc:
             self._send(403, {"error": str(exc)})
         except ValueError as exc:
-            from .room import RoomConflict
             self._send(409 if isinstance(exc, RoomConflict) else 400, {"error": str(exc)})
         except (BrokenPipeError, ConnectionResetError):
             pass

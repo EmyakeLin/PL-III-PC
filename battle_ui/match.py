@@ -19,13 +19,14 @@ from player.player import Player
 from .fx_compiler import discover_character_fx, discover_fx_scripts
 from .table_bridge import TableBridge
 from .status_icons import discover_status_visuals
+from battle_mcp.ruleset import RANK_POWER, validate_match_teams
 
 
 class StaleActionError(ValueError):
     """The client submitted an action for an earlier position."""
 
 
-def _normalize_roster(roster, pool, *, open_rosters=False):
+def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None):
     if roster is None:
         roster = ("plan_b_annolin", "plan_b_heck")
     if not isinstance(roster, (tuple, list)) or len(roster) != 2:
@@ -36,6 +37,8 @@ def _normalize_roster(roster, pool, *, open_rosters=False):
         teams = (list(roster[0]), list(roster[1]))
     else:
         raise ValueError("请为双方选择有效的出战角色。")
+    if ruleset is not None:
+        return tuple(validate_match_teams(teams, pool, ruleset))
     seen = set()
     for team in teams:
         if not team or (not open_rosters and len(team) > 3):
@@ -137,6 +140,7 @@ def _roster_preview(spec, color=None, sprite_url=None):
         "name": spec["name"],
         "title": spec.get("title"),
         "rank": spec["rank"],
+        "power": RANK_POWER.get(spec["rank"], 1),
         "max_hp": spec["max_hp"],
         "base_duels": Character.base_duels(spec),
         "mirror_allowed": bool(spec.get("mirror_allowed")),
@@ -159,10 +163,11 @@ def roster_art(pool):
 class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
-    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False, extra_packs=(),
-                 full_history=False, viewer_side=None):
-        pool = {spec["id"]: spec for spec in load_characters_from_packs(extra_packs=extra_packs)}
-        teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
+    def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False,
+                 extra_packs=(), full_history=False, viewer_side=None, ruleset=None):
+        pool = {c["id"]: c for c in load_characters_from_packs(extra_packs=extra_packs)}
+        self.ruleset = dict(ruleset) if ruleset is not None else None
+        teams = _normalize_roster(roster, pool, open_rosters=open_rosters, ruleset=self.ruleset)
         self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
         self._character_card_backs = {
             cid: spec["card_back"]
@@ -175,6 +180,7 @@ class BattleMatch:
         self.choices = [
             {
                 **{key: spec.get(key) for key in ("id", "name", "title", "rank", "max_hp", "faction", "mirror_allowed")},
+                "power": RANK_POWER.get(spec["rank"], 1),
                 "max_lightcore_hp": Character.initial_lightcore_max(spec["max_hp"]),
                 "color": self._character_colors.get(spec["id"]),
                 "sprite_url": self._character_sprites.get(spec["id"]),
@@ -183,10 +189,26 @@ class BattleMatch:
         ]
         players = [Player(1, "玩家一"), Player(2, "玩家二")]
         self.game = Game(players, rng=random.Random(seed))
+        if self.ruleset:
+            gr = self.game.gamerule
+            gr.DRAW_COUNT = int(self.ruleset.get("draw_count", gr.DRAW_COUNT))
+            gr.MAX_BASIC_COST = int(self.ruleset.get("max_basic_cost", gr.MAX_BASIC_COST))
+            gr.CHAR_INDEPENDENT_COST = int(self.ruleset.get("char_independent_cost", gr.CHAR_INDEPENDENT_COST))
+            gr.PLACE_CAPACITY = int(self.ruleset.get("place_capacity", gr.PLACE_CAPACITY))
+            if self.ruleset.get("max_chars") is not None:
+                gr.MAX_CHAR_COUNT = int(self.ruleset["max_chars"])
+        hp_pct = int(self.ruleset.get("hp_scale_pct", 100)) if self.ruleset else 100
+
+        def _spec_for_deploy(spec):
+            if hp_pct == 100:
+                return spec
+            scaled_hp = max(1, int(round(spec["max_hp"] * hp_pct / 100.0)))
+            return {**spec, "max_hp": scaled_hp}
+
         self.presentation = TableBridge(self.game.context)
-        self.game.deploy_rosters([[pool[key] for key in team] for team in teams])
-        if open_rosters:
-            counts = Counter(key for team in teams for key in team)
+        self.game.deploy_rosters([[_spec_for_deploy(pool[key]) for key in team] for team in teams])
+        counts = Counter(key for team in teams for key in team)
+        if open_rosters or any(cnt > 1 for cnt in counts.values()):
             for team, player in zip(teams, players):
                 teammates = Counter(team)
                 for position, (key, character) in enumerate(zip(team, player.characters), 1):
@@ -428,6 +450,13 @@ class BattleMatch:
             duel_number=None, option=None, character_id=None):
         if type(revision) is not int or revision != self.revision:
             raise StaleActionError("对局已经推进，请查看当前局面。")
+        if action == "concede":
+            loser_side = side if side in (1, 2) else self.viewer_side
+            if loser_side not in (1, 2):
+                raise ValueError("请指定认输的席位。")
+            self.forfeit(loser_side)
+            self.revision += 1
+            return self.snapshot()
         if action == "set_default_target":
             owner = self._choose_seat(side, self.game.players)
             enemy = next(p for p in self.game.players if p is not owner)
@@ -1292,6 +1321,16 @@ class BattleMatch:
             prefix = {"pre_reveal": "开牌前交锋", "regular": "常规交锋", "instant": "即时交锋"}[combat["kind"]]
             self._history.append(f"{prefix} {combat['duel_number']}　" + "，".join(actions) + "。")
         return pause
+
+    def forfeit(self, loser_side, *, reason="宣布认输"):
+        if self.game.is_over:
+            raise ValueError("本局已经结束。")
+        loser = self._choose_seat(loser_side, self.game.players)
+        winner = next(p for p in self.game.players if p is not loser)
+        self.game.is_over = True
+        self.game.winner = winner
+        self._history.append(f"{loser.name}{reason}。")
+        self._finish()
 
     def _finish(self):
         self._special_open = False

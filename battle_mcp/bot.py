@@ -139,7 +139,16 @@ def choose_move(frame, moves):
         personal[actor] = max(0, personal[actor] - cost)
     if frame["mode"] == "placement":
         slots = {c["id"]: c["duels"]["max"] - c["duels"]["used"] for c in player["characters"]}
-        return _placement(moves, hand, shared, personal, slots) or next(move for move in moves if move["kind"] == "end")
+        picked = _placement(moves, hand, shared, personal, slots)
+        if picked is not None:
+            return picked
+        rear_moves = [
+            m for m in moves
+            if m["kind"] == "place_rear" and affordable(m) and not hand[m["card_id"]].get("pre_reveal")
+        ]
+        if rear_moves:
+            return max(rear_moves, key=lambda m: card_value(hand[m["card_id"]]))
+        return next(move for move in moves if move["kind"] == "end")
 
     response = _response(moves, hand, affordable, "intercept", "let_through")
     if response is not None:
@@ -154,3 +163,115 @@ def choose_move(frame, moves):
         return card_value(hand[move["card_id"]]), "character_id" in move, -hp, -lightcore
 
     return max(attacks, key=attack_value, default=end)
+
+
+@avoid_restricted_plays
+def choose_inturn_move(frame, moves):
+    """Evaluate fair, fog-of-war mid-turn special moves (`place`, `replace`, `ability`) for AI Bot."""
+    if not moves or frame.get("is_over"):
+        return None
+    side = frame.get("viewer_side")
+    if side not in (1, 2):
+        return None
+    player = next((p for p in frame["players"] if p["side"] == side), None)
+    if not player or not isinstance(player.get("hand"), list):
+        return None
+
+    hand = {card.get("action_key") or card["id"]: card for card in player["hand"]}
+    shared = max(0, player["cost"]["available"])
+    personal = {c["id"]: max(0, c["cost"]["available"]) for c in player["characters"]}
+
+    # Reserve cost for already-revealed unused cards sitting in upcoming regular duels
+    combat = frame.get("combat")
+    active_duel_num = combat["duel_number"] if combat and combat.get("kind") == "regular" else 0
+    reserved_by_actor = Counter()
+    for d in frame.get("duels") or []:
+        if d["number"] <= active_duel_num:
+            continue
+        se = next((s for s in d["sides"] if s["side"] == side), None)
+        for card in (se or {}).get("cards") or []:
+            if not card.get("used") and not card.get("destroyed") and not card.get("skipped") and card.get("state") != "negated":
+                cid = card.get("character_id")
+                if cid:
+                    reserved_by_actor[cid] += max(0, int(card.get("cost") or 0))
+
+    free_shared = shared
+    free_personal = dict(personal)
+    for actor, rcost in reserved_by_actor.items():
+        used_p = min(free_personal.get(actor, 0), rcost)
+        free_personal[actor] = free_personal.get(actor, 0) - used_p
+        free_shared = max(0, free_shared - (rcost - used_p))
+
+    def can_afford_surplus(card):
+        cost = max(0, int(card.get("cost") or 0))
+        return cost <= free_shared + free_personal.get(card.get("character_id"), 0)
+
+    # 1. Untargeted character active abilities at safe combat/before_duel windows
+    timing = frame.get("timing") or ""
+    if timing in ("交锋开始前", "骰子使用后") or frame.get("mode") == "reveal":
+        self_abilities = [
+            m for m in moves
+            if m["kind"] == "special_ability"
+            and not m.get("target_card_id")
+            and not m.get("effect_target")
+        ]
+        if self_abilities:
+            return self_abilities[0]
+
+    if not combat or combat.get("kind") != "regular":
+        return None
+
+    opp_side = 3 - side
+    my_cs = next((s for s in combat.get("sides", ()) if s["side"] == side), None)
+    opp_cs = next((s for s in combat.get("sides", ()) if s["side"] == opp_side), None)
+    duel_entry = next((d for d in (frame.get("duels") or ()) if d["number"] == combat["duel_number"]), None)
+    my_duel_cards = []
+    opp_duel_cards = []
+    if duel_entry:
+        ms = next((s for s in duel_entry["sides"] if s["side"] == side), None)
+        os_ = next((s for s in duel_entry["sides"] if s["side"] == opp_side), None)
+        my_duel_cards = [c for c in (ms or {}).get("cards", ()) if not c.get("used") and not c.get("destroyed") and not c.get("skipped")]
+        opp_duel_cards = [c for c in (os_ or {}).get("cards", ()) if not c.get("used") and not c.get("destroyed") and not c.get("skipped")]
+
+    # 2. Mid-duel Cut-In Placement: Opponent still has an active card/dice in this duel, while our slot is empty!
+    if not my_duel_cards and opp_duel_cards:
+        place_moves = [
+            m for m in moves
+            if m["kind"] == "special_place"
+            and m.get("card_id") in hand
+            and can_afford_surplus(hand[m["card_id"]])
+        ]
+        if place_moves:
+            # Verify first empty regular duel is indeed the active duel
+            first_empty = next(
+                (d["number"] for d in (frame.get("duels") or ())
+                 if not next((s for s in d["sides"] if s["side"] == side), {}).get("cards")
+                 and not next((s for s in d["sides"] if s["side"] == side), {}).get("resolved_cards")),
+                None,
+            )
+            if first_empty == combat["duel_number"]:
+                return max(place_moves, key=lambda m: card_value(hand[m["card_id"]]))
+
+    # 3. Tactical Mid-Duel Card Replacement (`scores_ready` losing badly to offensive die, or `after_dice_use` against remaining enemy dice)
+    if timing == "拼点点数已确定，尚未判胜负" and my_cs and opp_cs:
+        my_die = my_cs.get("die")
+        opp_die = opp_cs.get("die")
+        if (my_die and opp_die and opp_die.get("type") in ("slash", "pierce", "blunt")
+                and my_die.get("clash_score") is not None and opp_die.get("clash_score") is not None
+                and opp_die["clash_score"] - my_die["clash_score"] >= 3):
+            rep_moves = [
+                m for m in moves
+                if m["kind"] == "special_replace"
+                and m.get("card_id") in hand
+                and can_afford_surplus(hand[m["card_id"]])
+                and (m.get("effect_target") or {}).get("kind") == "regular"
+                and (m.get("effect_target") or {}).get("number") == combat["duel_number"]
+            ]
+            if rep_moves:
+                cur_card = my_duel_cards[0] if my_duel_cards else None
+                cur_val = card_value(cur_card) if cur_card and "dice" in cur_card else 0
+                best_rep = max(rep_moves, key=lambda m: card_value(hand[m["card_id"]]))
+                if card_value(hand[best_rep["card_id"]]) > cur_val + 2:
+                    return best_rep
+
+    return None
