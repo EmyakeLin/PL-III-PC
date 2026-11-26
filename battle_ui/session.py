@@ -27,8 +27,10 @@ class BattleSession:
     def _new_match(self, roster, *, initial_handoff):
         if self.challenge:
             roster = self.challenge.validate_roster(roster)
+        human_side = (3 - self.ai_side) if self.ai_side in (1, 2) else None
         match = BattleMatch(roster, seed=self.seed, initial_handoff=initial_handoff, open_rosters=self.open_rosters,
-                            extra_packs=self.challenge.packs if self.challenge else (), full_history=True)
+                            extra_packs=self.challenge.packs if self.challenge else (), full_history=True,
+                            viewer_side=human_side)
         if self.challenge:
             match.game.players[self.ai_side - 1].target_priority = (("hp", 1), ("lightcore_hp", 1))
         return match
