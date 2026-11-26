@@ -276,13 +276,17 @@ class Card:
             if key != self._form:
                 self.set_form(key)
 
-    def prepend_printed_die(self, printing, count):
+    def prepend_printed_die(self, printing, count, *, extra_entries=()):
         """Place fresh copies before the cursor, leaving original positions and materialized uses intact."""
         if printing is None or count <= 0 or self.destroyed:
             return
         index = self.current_dice_index
         face_index = self._dice_order[index][0] if index < len(self._dice_order) else len(self.dice)
-        self.dice = [*self.dice[:face_index], *(dict(printing) for _ in range(count)), *self.dice[face_index:]]
+        copies = [dict(printing) for _ in range(count)]
+        if extra_entries:
+            for face in copies:
+                face["entries"] = [*face.get("entries", ()), *extra_entries]
+        self.dice = [*self.dice[:face_index], *copies, *self.dice[face_index:]]
         self._dice_order = [(i + count if i >= face_index else i, repeated) for i, repeated in self._dice_order]
         self._dice_order[index:index] = [(face_index + i, False) for i in range(count)]
         if self.instantiated_dice is not None:

@@ -4,6 +4,9 @@
 
 | 作用域 | 名称 | 含义 |
 |---|---|---|
+| 战场角色 HUD | `storedDice`, `name`, `stored`, `i`, `storedLineH`, `hudCoreH`, `lineY` | 按角色公开投影列出留存骰。每行对应被动名、其骰面记录及行序号。行高为紧凑布局 14 px、常规 17 px；行在状态图标下，角色点击区域包含所有留存行。 |
+| 战场角色 HUD | `when`, `source`, `face`, `text`, `detail` | 显示来源回合、原技能名与常规宽度下的骰型。尚未留存时显示空位；文字绘入角色的 Pixi HUD。 |
+| 角色详情与被动总览 | `passiveContents(character, passive)`, `stored` | 按被动名称读取该角色的公开留存。短标签显示来源回合，正文首行显示完整原印骰面，随后列出被动原文。 |
 | ui_primitives 全局 | OUT | 源文件所在输出目录 |
 | ui_primitives 全局 | C | 背景 bg、纸面 paper、卡面 white、文字 ink、辅助 muted、边界 line、己方 green、浅绿 pale、敌方 red、浅红 rose、辅助 blue/gold 的颜色映射 |
 | ui_primitives 全局 | parts | 顺序积累 SVG 片段的列表 |

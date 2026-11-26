@@ -15,6 +15,8 @@ def actor_view(actor):
             data[key] = values
     if actor.get("passive_values"):
         data["passive_values"] = actor["passive_values"]
+    if actor.get("stored_dice"):
+        data["stored_dice"] = actor["stored_dice"]
     if actor.get("reserved_dice"):
         data["reserved_dice"] = actor["reserved_dice"]
     if actor["bleed_burst"]:

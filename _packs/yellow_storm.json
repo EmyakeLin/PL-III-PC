@@ -42,12 +42,15 @@
         "description": "崩析达到8层时立即爆发。"
       },
       {
-        "trigger": "BEFORE RESOLVE_DAMAGE",
+        "trigger": "BEFORE DAMAGE",
         "subject": "source",
         "when": [{"left": "$event.damage_part", "op": "eq", "right": true}],
         "operation": {
           "op": "program",
-          "code": ["$event.damage_die.is_attack", ["$self", "崩析", "STATUS_COUNT", 3, "FLOOR_DIV", "SUB"], "WHEN"]
+          "code": ["$event.damage_die.is_attack", [
+            "$event.target", "$event.modifiers", "damage_add", 0, "$self", "崩析", "STATUS_COUNT", 3,
+            "FLOOR_DIV", "SUB", "concept", "ADD_DAMAGE_MODIFIER"
+          ], "WHEN"]
         },
         "description": "每3层崩析使自身进攻骰的直伤部分减1。"
       },

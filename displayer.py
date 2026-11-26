@@ -172,6 +172,7 @@ def _printed_skill(data, *, include_forms=False):
         "pre_reveal_target": data.get("pre_reveal_target"),
         "pre_reveal_bind": data.get("pre_reveal_bind", "slot"),
         "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
+        **({"unfold": dict(data["unfold"])} if data.get("unfold") else {}),
         "requires_status": dict(data.get("requires_status", {})),
         "forms": [
             {**_printed_skill({**_strip_forms(data), **form}), "form_key": key, "form_label": _form_label(data, key)}
@@ -717,6 +718,16 @@ class Displayer:
             if isinstance(spec, dict) and "display_value" in spec
             and (value := read_value(compile_value(spec["display_value"]), c, {})) is not None
         }
+        stored_dice = {}
+        for passive in c.passive_skill_data:
+            if not isinstance(passive, dict) or "display_die" not in passive:
+                continue
+            fields = passive["display_die"]
+            face = c.rule_state.get(fields["printing"])
+            stored_dice[passive["name"]] = {
+                "die": _printed_die(face) if face else None,
+                "label": c.rule_state.get(fields["label"]), "turn": c.rule_state.get(fields["turn"]),
+            }
         return {
             "id": c.id, "printed_id": c.data["id"], "name": c.name, "title": c.data.get("title"), "faction": c.faction,
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
@@ -725,6 +736,7 @@ class Displayer:
             "statuses": {k: n for k, n in c.statuses.items() if k not in c.team_statuses},
             "status_details": self._status_details(c),
             "passive_values": passive_values,
+            **({"stored_dice": stored_dice} if stored_dice else {}),
             "bleed_burst": c.canonical_status_name("bleed") in c.active_statuses,
             "ability_effects": dict(c.ability_effects),
             "reserved_dice": [{"skill": reserve.template.card.name, "position": reserve.template.position,

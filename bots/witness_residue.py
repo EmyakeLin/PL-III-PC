@@ -12,7 +12,6 @@ VALUE = {
     "sprout": (2, 2), "sever": (5, 4), "lean": (6, 4), "parallel": (4, 2),
     "core": (6, 6), "span": (4, 4), "whole": (4, 3),
 }
-UNFOLD = {"return": (2, 1), "parallel": (3, 1), "whole": (4, 2)}
 DEFENSE = {"gather", "sprout", "latent", "shed"}
 PRINTED_NAMES = {
     "纳流": "intake", "收束": "gather", "蜕形": "shed", "潜相": "latent",
@@ -26,42 +25,57 @@ def _skill(card):
     return (card.get("id") or "").removeprefix("residue_")
 
 
-def _board_cards(frame, side):
-    for slot in frame["duels"]:
+def _board_cards(slots, side):
+    for slot in slots:
         lane = next(s for s in slot["sides"] if s["side"] == side)
-        yield from (c for c in lane["cards"] if not any(c.get(k) for k in ("used", "destroyed", "skipped")))
+        opposed = bool(next(s for s in slot["sides"] if s["side"] != side)["cards"])
+        for card in lane["cards"]:
+            if not any(card.get(k) for k in ("used", "destroyed", "skipped")):
+                yield card, opposed
 
 
-def _score(cards, energy, imprint, missing, enemies):
-    value = 0
-    for index, card in enumerate(cards):
-        key = _skill(card)
-        base = VALUE.get(key, (1, 1))[0]
-        if key == "intake":
-            energy += 3
-            base += 2 if energy <= 9 else 0
-        elif key == "restore" and missing >= 3 and energy >= 3:
-            energy -= 3
-            base += min(5, missing)
-            missing = max(0, missing - 5)
-        elif key == "gather":
-            base += min(4, missing)
-        elif key == "lean" and energy >= 4:
-            energy -= 4
-            base += 4
-        elif key == "span":
-            base += 2 * (enemies - 1)
-        elif key in UNFOLD and imprint:
-            price, copies = UNFOLD[key]
-            if energy >= price:
-                energy -= price
-                base += copies * VALUE.get(imprint, (0, 1))[1]
-                if key == "parallel" and imprint in DEFENSE:
-                    base += 3
-        value += base / (1 + 0.04 * index)
-        if key != "latent" or not imprint:
-            imprint = key
-    return value
+def _sequence(cards, energy, imprint, defensive, missing, enemies, opposed, *, at_prompt=False):
+    """Compare spending now with keeping that energy for a later card."""
+    if not cards:
+        return 0, False
+    card, *later = cards
+    key = _skill(card)
+    clash = opposed[0] if opposed else True
+    base = VALUE.get(key, (1, 1))[0]
+    price, gain = 0, 0
+    if unfold := card.get("unfold"):
+        if imprint:
+            price = unfold["cost"]
+            face = VALUE.get(imprint, (0, 1))[1]
+            gain = unfold["copies"] * (face + (2 if defensive else 7))
+            if defensive and not clash:
+                gain = 3 if key == "parallel" else 0
+    if key == "intake" and not at_prompt:
+        energy += 3
+    elif key == "lean":
+        price, gain = 4, 5
+    elif key == "span":
+        base += 2 * (enemies - 1)
+        price, gain = 3, 3 if clash else 0
+    elif key == "restore" and missing >= 3:
+        price, gain = 3, min(5, missing)
+    elif key == "gather":
+        base += min(4, missing)
+    # Unopposed passive dice never roll. A slash followed by an unused block
+    # leaves the slash, while a passive-only card preserves the previous die.
+    if key != "latent" or not imprint:
+        if clash or key not in {"gather", "shed", "latent"}:
+            imprint, defensive = key, key in DEFENSE and clash
+
+    def future(balance, lost):
+        return 0.96 * _sequence(later, balance, imprint, defensive, lost, enemies, opposed[1:])[0]
+
+    skip = future(energy, missing)
+    if price and gain and energy >= price:
+        pay = gain + future(energy - price, max(0, missing - 5) if key == "restore" else missing)
+        if pay > skip:
+            return base + pay, True
+    return base + skip, False
 
 
 @avoid_restricted_plays
@@ -73,30 +87,48 @@ def choose_move(frame, moves):
     missing = actor["max_hp"] - actor["hp"]
     heal_safe = actor["hp"] < actor["max_lightcore_hp"]
     hand = {c.get("action_key", c["id"]): c for c in own["hand"]}
-    # The public label includes the original skill followed by its die face.
-    imprint = PRINTED_NAMES.get(str(actor.get("passive_values", {}).get("余形", "")).split(" · ", 1)[0])
+    stored = actor.get("stored_dice", {}).get("余形", {})
+    imprint = PRINTED_NAMES.get((stored.get("label") or "").split(" · ", 1)[0])
+    defensive = (stored.get("die") or {}).get("type") in {"block", "evade"}
+    energy = actor["statuses"].get("能源", 0)
+    enemies = sum(c["alive"] for c in enemy["characters"])
+    slots_opposed = [bool(next(s for s in slot["sides"] if s["side"] != side)["cards"]) for slot in frame["duels"]]
     placements = {m["card_id"]: m for m in moves if m["kind"] == "place"}
     if placements:
-        placed = list(_board_cards(frame, side))
+        placed = [card for card, _ in _board_cards(frame["duels"], side)]
         budget = own["cost"]["available"] + actor["cost"]["available"] - sum(c["cost"] for c in placed)
         slots = actor["duels"]["max"] - actor["duels"]["used"]
-        energy = actor["statuses"].get("能源", 0)
-        enemies = sum(c["alive"] for c in enemy["characters"])
         best, value = None, float("-inf")
         for count in range(1, min(slots, len(placements)) + 1):
             for order in permutations(placements, count):
                 extra = [hand[key] for key in order]
                 if sum(c["cost"] for c in extra) > budget:
                     continue
-                candidate = _score(placed + extra, energy, imprint, missing if heal_safe else 0, enemies)
+                opposed = slots_opposed if enemy.get("placement_ended") else []
+                candidate, _ = _sequence(placed + extra, energy, imprint, defensive,
+                                         missing if heal_safe else 0, enemies, opposed)
                 if candidate > value:
                     best, value = placements[order[0]], candidate
         return best or next(m for m in moves if m["kind"] == "end")
     choices = [m for m in moves if m["kind"] == "special_choose_option"]
     if choices:
         selected = choices[0]
-        if selected.get("option_id") == "restore" and (not heal_safe or missing < 3):
-            return next((m for m in moves if m["kind"] == "special_decline_option"), selected)
+        decline = next((m for m in moves if m["kind"] == "special_decline_option"), selected)
+        option = selected.get("option_id")
+        if option == "restore" and (not heal_safe or missing < 3):
+            return decline
+        combat = frame.get("combat") or {}
+        if combat.get("kind") == "regular" and option in {"unfold", "lean", "span", "restore"}:
+            index = combat["duel_number"] - 1
+            slots = frame["duels"][index:]
+            remaining = list(_board_cards(slots, side))
+            active = next(s["card_id"] for s in combat["sides"] if s["side"] == side)
+            if remaining and remaining[0][0]["id"] == active:
+                cards, opposed = zip(*remaining)
+                _, spend = _sequence(cards, energy, imprint, defensive, missing if heal_safe else 0,
+                                     enemies, opposed, at_prompt=True)
+                if not spend:
+                    return decline
         return selected
     attacks = [m for m in moves if m["kind"] == "attack"]
     if attacks:

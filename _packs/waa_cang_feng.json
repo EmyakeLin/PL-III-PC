@@ -2948,7 +2948,7 @@
               }
             },
             {
-              "trigger": "BEFORE RESOLVE_DAMAGE",
+              "trigger": "BEFORE DAMAGE",
               "subject": "source",
               "hidden": true,
               "when": [
@@ -2960,7 +2960,8 @@
                 "op": "program",
                 "code": [
                   "$event.damage_die.card", "$owner", "IS",
-                  ["$owner.use_state", "deadwire_bonus", 0, "LOOKUP", "ADD"], "WHEN"
+                  ["$event.target", "$event.modifiers", "damage_add", "$owner.use_state", "deadwire_bonus", 0,
+                   "LOOKUP", "normal", "ADD_DAMAGE_MODIFIER"], "WHEN"
                 ]
               }
             }

@@ -69,7 +69,7 @@
         "trigger": "BEFORE DAMAGE",
         "description": "生命不高于环境压制层数时，受到的普通和穿甲伤害减半。",
         "when": [{"left":"$self.hp","op":"le","right":{"field":"$self.statuses","key":"环境压制","default":0}}],
-        "operation": {"op":"program","code":["$self","$event.modifiers","damage_multiply",0.5,"pierce","ADD_DAMAGE_MODIFIER"]},
+        "operation": {"op":"program","code":["$self","$event.incoming_modifiers","damage_multiply",0.5,"pierce","ADD_DAMAGE_MODIFIER"]},
         "subject": "target"
       }
     ]
@@ -1424,19 +1424,19 @@
       "passive_skills": [
         {
           "name": "一体两伤",
-          "description": "每造成一段直伤，对仍存活的该目标追加伤害量×2的光点伤害。每实际回复1生命，回复1光点生命。",
+          "description": "每结算一段直伤，按来源侧原始伤害量×2对仍存活的该目标追加光点伤害。计入自身增减伤，在目标侧倍率、护甲和护盾之前取值。每实际回复1生命，回复1光点生命。",
           "entries": [
             {
               "trigger": "AFTER DAMAGE",
-              "description": "按入盾前直伤量的两倍追加一段光点伤害。",
+              "description": "按目标侧结算前的原始伤害量追加两倍光点伤害。",
               "subject": "source",
               "when": [
-                {"left":"$event.damage_amount","op":"gt","right":0},
+                {"left":"$event.outgoing_amount","op":"gt","right":0},
                 {"left":"$event.target.is_alive","op":"eq","right":true}
               ],
               "operation": {
                 "op": "program",
-                "code": ["$event.target","$event.damage_amount",2,"MUL","LIGHTCORE_DAMAGE"]
+                "code": ["$event.target","$event.outgoing_amount",2,"MUL","LIGHTCORE_DAMAGE"]
               }
             },
             {
@@ -1523,9 +1523,42 @@
         },
         {
           "name": "余形",
-          "description": "技能使用完毕，将最后实际掷过的印刷骰公开留作余形，跨回合保留。展用时支付能源，将原印骰面和词条复制到本技能第一骰之前。",
+          "description": "技能使用完毕，将最后实际掷过的印刷骰公开留作余形，跨回合保留。展用时按技能标明的能源与次数，将余形插在第一骰之前。展用骰最终点数+8，每档供能加成再+6。展用攻骰命中额外造成2物理，每档供能加成再+3物理。",
           "display_value": {"field":"$self.rule_state","key":"余形说明","default":null},
+          "display_die": {"printing":"余形","label":"余形说明","turn":"余形回合"},
           "entries": [
+            {
+              "trigger": "on_skill_use",
+              "subject": "source",
+              "description": "持有余形且能源足够时，可按本牌的费用和次数展用。",
+              "when": [
+                {"left":"$event.card.data.unfold.cost","op":"ne","right":null},
+                {"left":"$self.rule_state.余形","op":"ne","right":null},
+                {"left":{"field":"$self.statuses","key":"能源","default":0},"op":"ge","right":"$event.card.data.unfold.cost"}
+              ],
+              "operation": {"op":"program","code":[
+                {"literal":{
+                  "optional":true, "title":{"field":"$event.card.data.unfold","key":"label"},
+                  "description":{"field":"$self.rule_state","key":"余形说明"},
+                  "options":[{"id":"unfold","label":"展用余形","then":{"op":"program","code":[
+                    "$self","能源","$event.card.data.unfold.cost",
+                    {"call":"SPEND_STATUS","with":{"require_full":true},"result":"paid_in_full","default":false},
+                    [
+                      "$event.card","$self.rule_state.余形","$event.card.data.unfold.copies",
+                      {"call":"PREPEND_PRINTED_DIE","with":{"extra_entries":[
+                        {"trigger":"BEFORE RESOLVE_FINAL_SCORE","description":"展用骰最终点数+8，每档供能加成再+6。",
+                         "operation":{"op":"program","code":["$event.die","$owner","IS",["$self.rule_state","供能加成",0,"LOOKUP",6,"MUL",8,"ADD","ADD"],"WHEN"]}},
+                        {"trigger":"AFTER RESOLVE_HIT","description":"展用攻骰命中额外造成2物理，每档供能加成再+3。",
+                         "damage_part":{"amount":"2＋3×供能加成","grade":"normal"},
+                         "when":[{"left":"$event.result","op":"eq","right":true},{"left":"$event.die.is_attack","op":"eq","right":true}],
+                         "operation":{"op":"program","damage_part":true,"code":["$event.die","$owner","IS",["$event.target","$self.rule_state","供能加成",0,"LOOKUP",3,"MUL",2,"ADD","normal","$owner.type","DAMAGE"],"WHEN"]}}
+                      ]}},
+                      "$event.card","防御展开",{"literal":["block","guard","evade"]},"$self.rule_state.余形.type","CONTAINS","SET_SKILL_STATE"
+                    ],"WHEN"
+                  ]}}]
+                }},"CHOOSE_OPTION"
+              ]}
+            },
             {
               "trigger": "on_variable_value_set",
               "description": "登记该技能实际掷过的最后一颗印刷骰。",
@@ -1551,7 +1584,8 @@
                 "op": "program",
                 "code": [
                   "$self", "余形", "$event.card.use_state.末骰", "SET_CHARACTER_STATE", "$self",
-                  "余形说明", "$event.card.use_state.末骰说明", "SET_CHARACTER_STATE"
+                  "余形说明", "$event.card.use_state.末骰说明", "SET_CHARACTER_STATE",
+                  "$self", "余形回合", "$game.turn_number", "SET_CHARACTER_STATE"
                 ]
               }
             },
@@ -1564,7 +1598,8 @@
                 "op": "program",
                 "code": [
                   "$event.card", "入场余形", "$self.rule_state.余形", "SET_SKILL_STATE",
-                  "$event.card", "入场余形说明", "$self.rule_state.余形说明", "SET_SKILL_STATE"
+                  "$event.card", "入场余形说明", "$self.rule_state.余形说明", "SET_SKILL_STATE",
+                  "$event.card", "入场余形回合", "$self.rule_state.余形回合", "SET_SKILL_STATE"
                 ]
               }
             },
@@ -1587,11 +1622,13 @@
                   "余形说明",
                   "$event.card.use_state.末骰说明",
                   "SET_CHARACTER_STATE",
+                  "$self", "余形回合", "$game.turn_number", "SET_CHARACTER_STATE",
                   "$event.card.use_state.入场余形",
                   [
                     {
                       "literal": {
                         "title": "潜相 · 保留原余形？",
+                        "description":{"field":"$event.card.use_state","key":"入场余形说明"},
                         "optional": true,
                         "options": [
                           {
@@ -1602,7 +1639,8 @@
                               "code": [
                                 "$self", "余形", "$event.card.use_state.入场余形",
                                 "SET_CHARACTER_STATE", "$self", "余形说明",
-                                "$event.card.use_state.入场余形说明", "SET_CHARACTER_STATE"
+                                "$event.card.use_state.入场余形说明", "SET_CHARACTER_STATE",
+                                "$self", "余形回合", "$event.card.use_state.入场余形回合", "SET_CHARACTER_STATE"
                               ]
                             }
                           }
@@ -1623,6 +1661,8 @@
           "id": "residue_intake",
           "name": "纳流",
           "cost": 1,
+          "unfold": {"cost":1,"copies":1,"label":"纳流 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。\n使用时获得3能源。",
           "entries": [
             {
               "trigger": "on_skill_use",
@@ -1636,6 +1676,8 @@
           "id": "residue_gather",
           "name": "收束",
           "cost": 1,
+          "unfold": {"cost":1,"copies":2,"label":"收束 · 可消耗1能源，先展用余形2次。"},
+          "description": "可消耗1能源，先展用余形2次。\n使用时回复2生命。",
           "entries": [
             {
               "trigger": "on_skill_use",
@@ -1661,6 +1703,8 @@
           "id": "residue_shed",
           "name": "蜕形",
           "cost": 1,
+          "unfold": {"cost":1,"copies":1,"label":"蜕形 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。\n使用后抽1张，获得1次置卡机会。",
           "entries": [
             {
               "trigger": "after_skill_use",
@@ -1674,64 +1718,25 @@
           "id": "residue_latent",
           "name": "潜相",
           "cost": 1,
+          "unfold": {"cost":1,"copies":2,"label":"潜相 · 可消耗1能源，先展用余形2次。"},
+          "description": "可消耗1能源，先展用余形2次。\n使用后可保留打出此牌之前的余形。",
           "keep_previous_printing": true,
-          "description": "使用后可保留打出此牌之前的余形。",
           "dice": [{"type":"evade","level":4,"entries":[]}]
         },
         {
           "id": "residue_return",
           "name": "折返",
           "cost": 2,
-          "entries": [
-            {
-              "trigger": "on_skill_use",
-              "description": "可消耗2能源，先展用余形一次。",
-              "when": [
-                {"left":{"field":"$self.statuses","key":"能源","default":0},"op":"ge","right":2},
-                {"left":"$self.rule_state.余形","op":"ne","right":null}
-              ],
-              "operation": {
-                "op": "program",
-                "code": [
-                  {
-                    "literal": {
-                      "title": "可消耗2能源，先展用余形一次。",
-                      "optional": true,
-                      "options": [
-                        {
-                          "id": "unfold",
-                          "label": "可消耗2能源，先展用余形一次。",
-                          "then": {
-                            "op": "program",
-                            "code": [
-                              "$self",
-                              "能源",
-                              2,
-                              {
-                                "call": "SPEND_STATUS",
-                                "with": {"require_full":true},
-                                "result": "paid_in_full",
-                                "default": false
-                              },
-                              ["$event.card","$self.rule_state.余形",1,"PREPEND_PRINTED_DIE"],
-                              "WHEN"
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  },
-                  "CHOOSE_OPTION"
-                ]
-              }
-            }
-          ],
+          "unfold": {"cost":2,"copies":3,"label":"折返 · 可消耗2能源，先展用余形3次。"},
+          "description": "可消耗2能源，先展用余形3次。",
           "dice": [{"type":"pierce","level":4,"entries":["2物理"]}]
         },
         {
           "id": "residue_cross",
           "name": "透界",
           "cost": 2,
+          "unfold": {"cost":1,"copies":2,"label":"透界 · 可消耗1能源，先展用余形2次。"},
+          "description": "可消耗1能源，先展用余形2次。",
           "range_level": 1,
           "dice": [
             {
@@ -1803,6 +1808,8 @@
           "id": "residue_probe",
           "name": "探隙",
           "cost": 2,
+          "unfold": {"cost":1,"copies":2,"label":"探隙 · 可消耗1能源，先展用余形2次。"},
+          "description": "可消耗1能源，先展用余形2次。",
           "dice": [
             {"type":"blunt","level":3,"entries":["1物理"]},
             {
@@ -1851,6 +1858,8 @@
           "id": "residue_sever",
           "name": "断节",
           "cost": 2,
+          "unfold": {"cost":1,"copies":2,"label":"断节 · 可消耗1能源，先展用余形2次。"},
+          "description": "可消耗1能源，先展用余形2次。",
           "dice": [
             {"type":"blunt","level":4,"entries":["2物理"]},
             {
@@ -1940,60 +1949,9 @@
           "id": "residue_parallel",
           "name": "并行",
           "cost": 3,
+          "unfold": {"cost":3,"copies":3,"label":"并行 · 可消耗3能源，先展用余形3次。"},
+          "description": "可消耗3能源，先展用余形3次。\n展用防御骰后，两颗印刷斩击最终点数各+4。",
           "entries": [
-            {
-              "trigger": "on_skill_use",
-              "description": "可消耗3能源，先展用余形一次。",
-              "when": [
-                {"left":{"field":"$self.statuses","key":"能源","default":0},"op":"ge","right":3},
-                {"left":"$self.rule_state.余形","op":"ne","right":null}
-              ],
-              "operation": {
-                "op": "program",
-                "code": [
-                  {
-                    "literal": {
-                      "title": "可消耗3能源，先展用余形一次。",
-                      "optional": true,
-                      "options": [
-                        {
-                          "id": "unfold",
-                          "label": "可消耗3能源，先展用余形一次。",
-                          "then": {
-                            "op": "program",
-                            "code": [
-                              "$self",
-                              "能源",
-                              3,
-                              {
-                                "call": "SPEND_STATUS",
-                                "with": {"require_full":true},
-                                "result": "paid_in_full",
-                                "default": false
-                              },
-                              [
-                                "$event.card",
-                                "$self.rule_state.余形",
-                                1,
-                                "PREPEND_PRINTED_DIE",
-                                "$self.rule_state.余形.type",
-                                {"literal":["block","guard","evade"]},
-                                "SWAP",
-                                "CONTAINS",
-                                ["$event.card","防御展开",true,"SET_SKILL_STATE"],
-                                "WHEN"
-                              ],
-                              "WHEN"
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  },
-                  "CHOOSE_OPTION"
-                ]
-              }
-            },
             {
               "trigger": "before_dice_use",
               "description": "展用防御骰后，两颗印刷斩击最终点数各+4。",
@@ -2010,6 +1968,8 @@
           "id": "residue_core",
           "name": "贯核",
           "cost": 3,
+          "unfold": {"cost":1,"copies":1,"label":"贯核 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。",
           "range_level": 2,
           "dice": [
             {
@@ -2116,50 +2076,8 @@
           "id": "residue_whole",
           "name": "全形",
           "cost": 3,
-          "entries": [
-            {
-              "trigger": "on_skill_use",
-              "description": "可消耗4能源，先展用余形两次。",
-              "when": [
-                {"left":{"field":"$self.statuses","key":"能源","default":0},"op":"ge","right":4},
-                {"left":"$self.rule_state.余形","op":"ne","right":null}
-              ],
-              "operation": {
-                "op": "program",
-                "code": [
-                  {
-                    "literal": {
-                      "title": "可消耗4能源，先展用余形两次。",
-                      "optional": true,
-                      "options": [
-                        {
-                          "id": "unfold",
-                          "label": "可消耗4能源，先展用余形两次。",
-                          "then": {
-                            "op": "program",
-                            "code": [
-                              "$self",
-                              "能源",
-                              4,
-                              {
-                                "call": "SPEND_STATUS",
-                                "with": {"require_full":true},
-                                "result": "paid_in_full",
-                                "default": false
-                              },
-                              ["$event.card","$self.rule_state.余形",2,"PREPEND_PRINTED_DIE"],
-                              "WHEN"
-                            ]
-                          }
-                        }
-                      ]
-                    }
-                  },
-                  "CHOOSE_OPTION"
-                ]
-              }
-            }
-          ],
+          "unfold": {"cost":4,"copies":4,"label":"全形 · 可消耗4能源，先展用余形4次。"},
+          "description": "可消耗4能源，先展用余形4次。",
           "dice": [{"type":"block","level":5,"entries":[]},{"type":"slash","level":5,"entries":["3物理"]}]
         }
       ]

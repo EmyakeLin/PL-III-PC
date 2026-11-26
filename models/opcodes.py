@@ -148,7 +148,7 @@ def handle_grant_die_response(ctx):
 def handle_prepend_printed_die(ctx):
     count, printing, card = ctx.pop(), ctx.pop(), ctx.pop()
     if card is not None and _usable_component(card):
-        card.prepend_printed_die(printing, count)
+        card.prepend_printed_die(printing, count, extra_entries=ctx.event["extra_entries"])
 
 
 def handle_next_die_on_card(ctx):
@@ -1028,7 +1028,13 @@ def handle_damage(ctx):
     source = ctx.event.get("source")
     ctx.event["base_amount"] = amount
     precomputed = ctx.event["damage_precomputed"]
-    modifiers = () if precomputed else ctx.event["modifiers"]
+    source_modifiers = () if precomputed else ctx.event["modifiers"]
+    outgoing = (item for item in source_modifiers if item[0] != "armor")
+    mult, add = damage_adjustments(outgoing, grade, 1)
+    if not precomputed:
+        mult = adjusted_value(ctx, "damage_multiplier", mult)
+    ctx.event["outgoing_amount"] = max(0, int(amount * mult + add))
+    modifiers = () if precomputed else [*source_modifiers, *ctx.event["incoming_modifiers"]]
     status_factor = 1
     suppressed = []
     for name in tuple(target.statuses):
@@ -1070,7 +1076,8 @@ def handle_damage(ctx):
     if damage_die is not None:
         damage_die.did_deal_damage = True
     ctx.record("direct_damage", source=ctx.event.get("damage_cause") or getattr(source, "combat_name", None),
-               target=target.combat_name, amount=damage, grade=grade, lost=hp_lost, hp=target.hp,
+               target=target.combat_name, amount=damage, outgoing_amount=ctx.event["outgoing_amount"],
+               grade=grade, lost=hp_lost, hp=target.hp,
                maximum=target.max_hp, alive=target.is_alive)
     if ctx.event.get("damage_part") and target.is_alive:
         target.after_damage_part()

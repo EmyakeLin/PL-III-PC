@@ -1653,7 +1653,10 @@ export class GameDirector {
     const lcChannelH = compactHud ? 9 : 11;
     // FIXED plinth & Row 3 geometry so revealing the Lightcore bar on first lightcore damage causes ZERO layout jump!
     const hudBoxH = compactHud ? 32 : 38;
-    const hudCoreH = hasRow3 ? ((compactHud ? 50 : 65) + lcChannelH) : (hudBoxH + lcChannelH + 2);
+    const storedDice = Object.entries(ch.stored_dice || {});
+    const storedLineH = compactHud ? 14 : 17;
+    const hudCoreH = (hasRow3 ? ((compactHud ? 50 : 65) + lcChannelH) : (hudBoxH + lcChannelH + 2))
+      + storedDice.length * storedLineH;
     const localActorY = scrollable ? slot.rawY : slot.y;
     const screenActorY = scrollable ? (slot.rawY - scrollY) : slot.y;
     const localUnitTop = Math.round(localActorY - actorR * 0.92);
@@ -1944,6 +1947,19 @@ export class GameDirector {
     // Row 3: Floating Active Shields (ONLY if > 0) + Limbus Status Icons at a FIXED offset (ZERO vertical jump!)
     const row3Y = hudBoxH + lcChannelH + 2;
     const iconH = compactHud ? 17 : 21;
+    for (const [i, [name, stored]] of storedDice.entries()) {
+      const when = stored.turn === this.state.frame.turn ? '本回合'
+        : stored.turn === this.state.frame.turn - 1 ? '上回合' : `第${stored.turn}回合`;
+      const source = stored.label?.split(' · ')[0];
+      const face = stored.die && !compactHud ? (DIE_STYLE[stored.die.type]?.label || '') : '';
+      const text = stored.die ? `${when}${name} · ${source} ${face}`.trimEnd() : `${name} · 待留存`;
+      const detail = new PIXI.Text({ text, style: {
+        fontFamily: FONT_UI, fontSize: compactHud ? 9 : 11, fontWeight: '700', fill: INK.primary,
+      } });
+      const lineY = row3Y + iconH + 2 + i * storedLineH;
+      detail.position.set(0, lineY);
+      hud.addChild(detail);
+    }
     let sx = 0;
     const shields = ch.shields || {};
     const shG = new PIXI.Graphics();

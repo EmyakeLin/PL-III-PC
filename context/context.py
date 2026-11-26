@@ -363,6 +363,8 @@ class Context:
                 raise ValueError("摧毁骰位的保留标记须为布尔值")
         if opcode == OpCode.RESOLVE_HIT:
             fields["hit_die"] = None
+        if opcode == OpCode.PREPEND_PRINTED_DIE:
+            fields.setdefault("extra_entries", ())
         if opcode == OpCode.DAMAGE:
             fields.setdefault("percentage_damage", False)
             # Nested status and character effects own their damage independently of
@@ -461,12 +463,13 @@ class Context:
             if fields["target"] == "target":
                 fields["target"] = self.event.get("target")
             # A follow-up segment owns its measurements even inside another channel's listener.
-            fields.update(result=None, hp_lost=None, damage_amount=None, damage_dealt=False, damage_received=False,
+            fields.update(result=None, hp_lost=None, outgoing_amount=None, damage_amount=None, damage_dealt=False, damage_received=False,
                           lightcore_lost=None, lightcore_collapsed=False)
             fields.setdefault("base_amount", fields["amount"])
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
+                fields["incoming_modifiers"] = []
             elif opcode in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE):
                 fields["damage_amount"] = fields["amount"]
                 if opcode == OpCode.FINALIZE_DAMAGE:

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 
 from entry.entry import Entry, TriggerType, character_of
 from entry.effects import run_effect
-from entry.predicates import compile_when
+from entry.predicates import compile_value, compile_when, read_value
 from entry.play_conditions import record_card_play
 from models.card import Card, CardState
 from models.character import Character
@@ -214,8 +214,8 @@ class SpecialActions:
             player=chooser.player,
             options=tuple(options),
             optional=bool(spec.get("optional")),
-            title=spec.get("title"),
-            description=spec.get("description"),
+            title=read_value(compile_value(spec.get("title")), actor, event),
+            description=read_value(compile_value(spec.get("description")), actor, event),
             invocation=invocation,
             event=event,
             specification=spec,

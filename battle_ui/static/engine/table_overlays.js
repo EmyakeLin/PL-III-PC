@@ -34,6 +34,17 @@ import {
 } from './card_print.js';
 import { createCharacterActor, actorPalette } from './stage_actors.js';
 
+function passiveContents(character, passive) {
+  const stored = character.stored_dice?.[passive.name];
+  if (!stored) {
+    return { tagLabel: String(character.passive_values?.[passive.name] ?? ''), entries: passive.display_lines };
+  }
+  return {
+    tagLabel: stored.turn == null ? '待留存' : `第 ${stored.turn} 回合留存`,
+    entries: [stored.label || '当前没有留存骰。', ...(passive.display_lines || [])],
+  };
+}
+
 // ── SHARED ILLUMINATED FOLIO & HERALDIC PRESSWORK HELPERS ──
 
 function drawCornerDiamonds(g, x, y, w, h, inset, r, color, alpha = 0.72) {
@@ -658,8 +669,7 @@ export function buildHeroSidePanel({
       const plate = buildUnifiedEntryPlate({
         variant: 'passive',
         title: p.name || '角色被动',
-        tagLabel: String(character.passive_values?.[p.name] ?? ''),
-        entries: p.display_lines,
+        ...passiveContents(character, p),
         width: innerW,
         accentColor: INK.gold,
         fontSize: 12.4,
@@ -905,8 +915,7 @@ export function buildPassiveDrawer({
           const plate = buildUnifiedEntryPlate({
             variant: 'passive',
             title: p.name || '角色被动',
-            tagLabel: String(ch.passive_values?.[p.name] ?? ''),
-            entries: p.display_lines,
+            ...passiveContents(ch, p),
             width: innerColW - 6,
             accentColor: INK.gold,
             fontSize: 12.2,
