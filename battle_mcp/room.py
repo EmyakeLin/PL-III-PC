@@ -87,7 +87,10 @@ class Room:
         self._receipts = {s: {} for s in SEATS}
         self._match_number = 1
         self._history_start = self._revision.copy()
-        self._beat_timer = self._timer = self._continuation = None
+        self.pause_bank_limit = 20.0
+        self._beat_timer = self._timer = self._continuation = self._pause_timer = None
+        self._beat_started_at = None
+        self._beat_duration_s = 0.0
         self._closed = False
         self._reset_match_decisions()
 
@@ -106,14 +109,18 @@ class Room:
 
     def _cancel_match_timers(self):
         self._cancel_beat()
-        for timer in (self._timer, self._continuation):
+        for timer in (self._timer, self._continuation, self._pause_timer):
             if timer is not None:
                 timer.cancel()
-        self._timer = self._continuation = None
+        self._timer = self._continuation = self._pause_timer = None
 
     def _reset_match_decisions(self):
         self._cancel_match_timers()
         self.paused_by = None
+        self._pause_started_at = None
+        self._pause_turn = 0
+        self._pause_bank = {s: self.pause_bank_limit for s in SEATS}
+        self._revision_windows = {s: {} for s in SEATS}
         self._next_votes.clear()
         self._plans = {s: {} for s in SEATS}
         self._serial = {s: 0 for s in SEATS}
@@ -131,12 +138,49 @@ class Room:
             self._cancel_match_timers()
             self.cv.notify_all()
 
+    def _record_revision_window(self, side):
+        if side not in SEATS:
+            return
+        win_map = self._revision_windows[side]
+        win_map[self._revision[side]] = self._window()
+        if len(win_map) > 24:
+            for stale_rev in sorted(win_map)[:-24]:
+                win_map.pop(stale_rev, None)
+
+    def _sync_turn_bank(self):
+        turn = self.engine.game.turn_number
+        if turn != self._pause_turn:
+            self._pause_turn = turn
+            self._pause_bank = {s: self.pause_bank_limit for s in SEATS}
+
+    def _remaining_pause_s(self, side):
+        self._sync_turn_bank()
+        if side not in SEATS:
+            return 0.0
+        bank = self._pause_bank.get(side, self.pause_bank_limit)
+        if self.paused_by == side and self._pause_started_at is not None and not self._client_paced:
+            bank = max(0.0, bank - (time.monotonic() - self._pause_started_at))
+        return bank
+
+    def _clear_pause(self, *, deduct=True):
+        if self._pause_timer is not None:
+            self._pause_timer.cancel()
+            self._pause_timer = None
+        if self.paused_by is not None:
+            side = self.paused_by
+            if deduct and self._pause_started_at is not None and not self._client_paced:
+                elapsed = max(0.0, time.monotonic() - self._pause_started_at)
+                self._pause_bank[side] = max(0.0, self._pause_bank.get(side, self.pause_bank_limit) - elapsed)
+            self.paused_by = None
+            self._pause_started_at = None
+
     def _note(self, kind, text, *, audiences=(None, 1, 2), wake=()):
         for side in audiences:
             journal = self._journal[side]
             cursor = len(journal) + 1
             journal.append(dict(id=cursor, kind=kind, text=text))
             self._revision[side] += 1
+            self._record_revision_window(side)
             if side in wake or side is None:
                 self._wake[side] = cursor
         self.cv.notify_all()
@@ -152,11 +196,13 @@ class Room:
         if self.paused_by is not None and self.paused_by != side:
             return []
         required = side in self.engine.required_sides()
+        live_canvas = side in self.canvas_seats and self.engine._mode() != "draw_select"
         available = []
         for move in self.engine.options(side):
             key = move_id(side, move)
             offered = required and (side in self.human_seats or move["kind"] in plans.ORDINARY)
-            if self.paused_by == side or offered or key in self._grants[side]:
+            inline_special = live_canvas and move["kind"].startswith("special_")
+            if self.paused_by == side or offered or inline_special or key in self._grants[side]:
                 available.append(dict(move, id=key))
         if side in self._asked:
             available.append(dict(kind="decline", id="decline", label="让过本次预留时机"))
@@ -166,6 +212,7 @@ class Room:
         with self.cv:
             if side is not None:
                 self._seat(side)
+                self._record_revision_window(side)
             log = self._journal[side]
             if cursor is None:
                 cursor = max(0, len(log) - 12)
@@ -203,12 +250,26 @@ class Room:
                     return {"timeout": True}
             if self._closed:
                 raise ValueError("对战房间已关闭。")
+            if side is not None:
+                self._record_revision_window(side)
+            self._sync_turn_bank()
             frame = self.engine.state(side)
             options = self._options(side)
             journal = self._journal[side]
             history_start = max(self._history_start[side], len(journal) - 100)
             player = next((p for p in self.engine.game.players if p.side == side), None)
             target = player.default_target_character if player else None
+            beat_duration_ms = 0
+            beat_remaining_ms = 0
+            if self._beat_timer is not None and self._beat_started_at is not None:
+                elapsed = max(0.0, time.monotonic() - self._beat_started_at)
+                beat_duration_ms = int(round(self._beat_duration_s * 1000))
+                beat_remaining_ms = max(0, int(round((self._beat_duration_s - elapsed) * 1000)))
+            pause_bank_ms = int(round(self._remaining_pause_s(side) * 1000)) if side in SEATS else 0
+            pause_remaining_ms = (
+                int(round(self._remaining_pause_s(self.paused_by) * 1000))
+                if self.paused_by in SEATS and not self._client_paced else None
+            )
             return {
                 "position": position(), "revision": self._revision[side],
                 "engine_revision": self.engine.revision, "side": side,
@@ -218,6 +279,11 @@ class Room:
                 "can_advance": self._can_advance_beat(side),
                 "next_voted": side in self._next_votes,
                 "has_special_actions": self._has_human_special_options(side),
+                "beat_duration_ms": beat_duration_ms,
+                "beat_remaining_ms": beat_remaining_ms,
+                "pause_bank_ms": pause_bank_ms,
+                "pause_remaining_ms": pause_remaining_ms,
+                "declarations": [dict(p, id=key) for key, p in self._plans.get(side, {}).items()] if side in SEATS else [],
                 "frame": frame, "options": options, "started": len(self.seated) == 2,
                 "ready": side in self.seated, "bot_side": self.bot_side,
                 "challenge": self.challenge.name if self.challenge else None,
@@ -255,12 +321,20 @@ class Room:
                 if due is None or due[0] > time.monotonic():
                     break
                 self._on_timer()
-            # Pause and default-target updates apply cleanly even if a beat just ticked.
-            # Moves and resume still require the exact position the seat observed.
+            # Pause, prepare, and default-target updates apply cleanly even if a beat just ticked.
+            # Inline special moves from a Canvas seat also commit cleanly while the exact combat/phase window holds.
             current = self._revision[side]
-            if (type(revision) is not int or not 0 <= revision <= current
-                    or (operation not in ("pause", "set_default_target") and revision != current)):
+            if type(revision) is not int or not 0 <= revision <= current:
                 raise RoomConflict("局面已更新，请重新观察后行动。")
+            if revision != current and operation not in ("pause", "set_default_target", "prepare"):
+                same_window_special = (
+                    operation == "act"
+                    and side in self.canvas_seats
+                    and self._revision_windows[side].get(revision) == self._window()
+                    and any(m["id"] == argument and m["kind"].startswith("special_") for m in self._options(side))
+                )
+                if not same_window_special:
+                    raise RoomConflict("局面已更新，请重新观察后行动。")
             if self._closed or (self.engine.game_over and not allow_finished):
                 raise ValueError("本局已经结束。")
             cursor = len(self._journal[side])
@@ -338,6 +412,11 @@ class Room:
         if mode == "timing":
             if event["kind"] == "scores_ready" or event.get("timing") == "技能使用前，可换卡":
                 return any(self._has_human_special_options(s) for s in self.human_seats)
+            if event.get("timing") == "交锋开始前":
+                return any(
+                    ch.is_alive and any(spec.get("window") == "before_duel" for spec in ch.action_specs())
+                    for p in self.engine.game.players for ch in p.characters
+                )
             return False
         return False
 
@@ -345,13 +424,15 @@ class Room:
         mode = self.engine._mode()
         ev_kind = self.engine.event["kind"]
         if ev_kind in ("roll", "scores_ready"):
-            return 2.2
+            return 2.6
         if mode == "combat":
             last_fx = self.engine.presentation.events[-1]["kind"] if self.engine.presentation.events else None
             if last_fx in ("dice_roll", "dice_clash"):
+                return 2.4
+            if last_fx == "combat_strike":
                 return 2.0
-            return 1.35
-        return 0.95
+            return 1.75
+        return 1.25
 
     def _can_advance_beat(self, side):
         return (side in self.human_seats and len(self.seated) == 2 and not self.engine.game_over
@@ -406,18 +487,45 @@ class Room:
         return self._command(side, revision, request_id, "next_beat", None, commit)
 
     def _can_pause(self, side):
+        self._sync_turn_bank()
+        has_bank = self._client_paced or self._remaining_pause_s(side) > 0.05
         return (side in self.human_seats and len(self.seated) == 2 and not self.engine.game_over
+                and has_bank
                 and self.paused_by is None and not self._continuation
                 and self.engine._mode() != "draw_select"
                 and self.engine.game.special.decision_owner is None
                 and self.engine.game.special.pending_attack is None)
 
+    def _on_pause_timeout(self, match_number, side):
+        with self.cv:
+            if match_number != self._match_number or self._closed or self.engine.game_over:
+                return
+            if self.paused_by != side:
+                return
+            self._pause_timer = None
+            self._pause_bank[side] = 0.0
+            self.paused_by = None
+            self._pause_started_at = None
+            self._note("pause_expired", f"席位 {side} 本回合思考时间已用尽，自动继续对局。", wake=SEATS)
+            self._drive(process=False)
+
     def pause(self, side, revision, request_id):
         def commit():
             if not self._can_pause(side):
+                if not self._client_paced and self._remaining_pause_s(side) <= 0.05:
+                    raise ValueError("本回合思考时间已用尽。")
                 raise ValueError("当前已有席位在决策，或尚未进入对局。")
             self._cancel_beat()
             self.paused_by = side
+            self._pause_started_at = time.monotonic()
+            if self._pause_timer is not None:
+                self._pause_timer.cancel()
+                self._pause_timer = None
+            if not self._client_paced:
+                remaining = max(0.05, self._remaining_pause_s(side))
+                self._pause_timer = threading.Timer(remaining, self._on_pause_timeout, args=(self._match_number, side))
+                self._pause_timer.daemon = True
+                self._pause_timer.start()
             self._schedule()
             self._note("pause", f"席位 {side} 暂停对局。", wake=SEATS)
         return self._command(side, revision, request_id, "pause", None, commit)
@@ -426,7 +534,7 @@ class Room:
         def commit():
             if self.paused_by != side:
                 raise ValueError("请由发起暂停的席位继续。")
-            self.paused_by = None
+            self._clear_pause(deduct=True)
             self._note("resume", f"席位 {side} 继续对局。", wake=SEATS)
             self._drive(process=False)
         return self._command(side, revision, request_id, "resume", None, commit)
@@ -465,10 +573,16 @@ class Room:
                 self._note("decline", "已让过本次预留时机。", audiences=(side,))
                 self._drive(process=False)
             else:
+                was_paused_by_me = (self.paused_by == side)
                 self.engine.apply(side, {k: v for k, v in choice.items() if k != "id"})
-                if self.paused_by == side:
-                    self.paused_by = None
                 self._release(side)
+                if was_paused_by_me:
+                    required = self.engine.required_sides()
+                    still_has_special = bool(self.engine._special_options(side))
+                    if (self.engine.game_over
+                            or (required and required != [side])
+                            or not still_has_special):
+                        self._clear_pause(deduct=True)
                 self._drive()
         return self._command(side, revision, request_id, "act", option_id, commit)
 
@@ -526,6 +640,7 @@ class Room:
             elif scope == bound[key]:
                 ended |= bool(when.get("own_card_id") and actor.get("card_id") not in (None, when["own_card_id"]))
                 ended |= bool(when.get("die_number") and (actor.get("die_number") or 0) > when["die_number"])
+                ended |= bool(when.get("round_id") and (combat.get("round_id") or 0) > when["round_id"])
                 ended |= "after_duel_end" in event.get("nodes", ())
             elif kind == scope[1] and scope[2] is not None:
                 ended |= scope[2] > number
@@ -533,7 +648,7 @@ class Room:
             number = when.get("pending_number")
             if number and (turn, number) in self._since:
                 bound[key] = (turn, "pending", number)
-            elif (combat and (when.get("own_card_id") or when.get("duel_number"))
+            elif (combat and (when.get("own_card_id") or when.get("duel_number") or when.get("round_id"))
                   and when.get("own_card_id", actor.get("card_id")) == actor.get("card_id")
                   and when.get("duel_number", scope[2]) == scope[2]
                   and when.get("duel_kind", scope[1]) == scope[1] and scope[2] is not None):
@@ -686,9 +801,13 @@ class Room:
                         self._note("decision", "请选择当前行动。", audiences=(side,), wake=(side,))
                     break
                 if self.human_seats and self._should_stop_human_beat():
+                    self._sync_turn_bank()
                     self._next_votes.clear()
                     if not self._client_paced:
-                        self._beat_timer = threading.Timer(self._beat_delay(), self._advance_beat)
+                        delay = self._beat_delay()
+                        self._beat_started_at = time.monotonic()
+                        self._beat_duration_s = delay
+                        self._beat_timer = threading.Timer(delay, self._advance_beat)
                         self._beat_timer.daemon = True
                         self._beat_timer.start()
                     break
@@ -699,6 +818,8 @@ class Room:
         if self._beat_timer:
             self._beat_timer.cancel()
             self._beat_timer = None
+        self._beat_started_at = None
+        self._beat_duration_s = 0.0
 
     def _step_beat(self):
         self._cancel_beat()

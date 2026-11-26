@@ -97,6 +97,15 @@ class ArenaEngine(BattleMatch):
         if mode == "placement" and player is self.game.placing:
             choices.extend({"kind": "place", "card_id": hand_key(c), "label": f"扣置{hand_card_label(c)}"}
                            for c in self._legal_cards())
+            for card, duel_indices in self.game.legal_rear_placements().items():
+                key, name = hand_key(card), hand_card_label(card)
+                for idx in duel_indices:
+                    choices.append({
+                        "kind": "place_rear",
+                        "card_id": key,
+                        "duel_number": idx + 1,
+                        "label": f"将{name}扣置到常规交锋 {idx + 1} 后置",
+                    })
             if self.game.placed_this_window:
                 choices.append({"kind": "pass", "label": "交出本次置卡权"})
             choices.append({"kind": "end", "label": "结束本回合常规置卡"})
@@ -232,6 +241,9 @@ class ArenaEngine(BattleMatch):
         elif kind in ("end", "pass", "place"):
             self._place_action(kind, legal.get("card_id"))
             public_text = f"{player.name}{'扣置常规技能' if kind == 'place' else legal['label']}。"
+        elif kind == "place_rear":
+            self._place_action("place_rear", legal.get("card_id"), duel_number=legal.get("duel_number"))
+            public_text = f"{player.name}在常规交锋 {legal['duel_number']} 扣置后置技能。"
         else:
             self._pre_seat = player
             target = None

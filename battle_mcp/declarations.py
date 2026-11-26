@@ -2,15 +2,18 @@
 
 EVENTS = ("decision", "placement", "pre_reveal", "roll", "scores_ready", "timing", "action",
           "combat", "reveal", "turn_end", "timer")
-ORDINARY = {"place", "pass", "end", "attack", "intercept", "let_through", "end_attack",
+ORDINARY = {"place", "place_rear", "pass", "end", "attack", "intercept", "let_through", "end_attack",
             "special_intercept", "special_pass_intercept", "special_choose_card", "special_decline_card",
             "special_choose_slot", "special_choose_option", "special_decline_option",
             "special_choose_character", "special_decline_character"}
-KINDS = ORDINARY | {"special_place", "special_replace", "special_attack", "special_custom", "special_ability"}
+KINDS = ORDINARY | {
+    "special_place", "special_place_rear", "special_replace",
+    "special_attack", "special_custom", "special_ability",
+}
 MOVE_KEYS = {"kind", "card_id", "character_id", "duel_number", "response_number", "target_card_id", "ability_id", "option_id"}
-CONDITIONS = {"turn", "duel_kind", "duel_number", "die_number", "own_card_id", "score",
+CONDITIONS = {"turn", "duel_kind", "duel_number", "round_id", "die_number", "enemy_die_number", "own_card_id", "score",
               "timing", "actor_side", "action_kind", "pending_number", "after_ms"}
-NUMBERS = {"turn", "duel_number", "die_number", "actor_side", "pending_number", "after_ms",
+NUMBERS = {"turn", "duel_number", "round_id", "die_number", "enemy_die_number", "actor_side", "pending_number", "after_ms",
            "response_number"}
 
 
@@ -69,8 +72,10 @@ def matches(plan, event, frame, side, required):
     combat = frame.get("combat") or {}
     sides = {s["side"]: s for s in combat.get("sides", [])}
     own = sides.get(side, {})
+    opp = sides.get(3 - side, {})
     facts = {"turn": frame["turn"], "duel_kind": combat.get("kind"),
-             "duel_number": combat.get("duel_number"), "die_number": own.get("die_number"),
+             "duel_number": combat.get("duel_number"), "round_id": combat.get("round_id"),
+             "die_number": own.get("die_number"), "enemy_die_number": opp.get("die_number"),
              "own_card_id": own.get("card_id"), "action_kind": event.get("action_kind"),
              "actor_side": event.get("actor_side")}
     if "score" in when:
