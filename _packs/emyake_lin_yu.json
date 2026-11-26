@@ -9,7 +9,27 @@
     },
     "羽流·终": {"description": "羽流剑术状态；\n每回合开始时，使X层铭刻折影化（至多持有8层折影化铭刻）；"},
     "铭刻": {"description": "铭刻X：用于特定效果。折影化时，会变为折影化铭刻。"},
-    "折影化铭刻": {"description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。", "cap": 8},
+    "折影化铭刻": {
+      "description": "每层折影化铭刻提供1点额度，取得时立即计入可用铭刻。\n回合开始时补足本回合额度。\n消耗铭刻时，先扣剩余折影额度，再扣普通铭刻。\n回合结束时，清空剩余额度，保留折影化铭刻层数。",
+      "display_fields": [
+        {"label":"本回合剩余额度","value":{"field":"$self.turn_state","key":"折影额度","default":0}},
+        {"label":"普通铭刻","value":{"op":"sub","left":{"field":"$self.statuses","key":"铭刻","default":0},"right":{"field":"$self.turn_state","key":"折影额度","default":0}}},
+        {"label":"可用铭刻（含额度）","value":{"field":"$self.statuses","key":"铭刻","default":0}}
+      ],
+      "global_entries": [{
+        "trigger":"on_status_changed",
+        "when":[{"left":"$event.status","op":"eq","right":"折影化铭刻"},{"left":"$event.actual_delta","op":"lt","right":0}],
+        "operation":{"op":"program","code":[
+          "$event.target", "本回合已发折影", "$event.target.turn_state", "本回合已发折影", 0, "LOOKUP", "$event.current_stacks", "MIN", "SET_TURN_STATE",
+          "$event.target.turn_state", "折影额度", 0, "LOOKUP", "$event.current_stacks", "SUB", 0, "MAX", "收回", "STORE",
+          "$local.收回", 0, "GT", [
+            "$event.target", "铭刻", 0, "$local.收回", "SUB", "STATUS",
+            "$event.target", "折影额度", "$event.current_stacks", "SET_TURN_STATE"
+          ], "WHEN"
+        ]}
+      }],
+      "cap": 8
+    },
     "裂伤": {
       "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/4（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
       "cap": 25,
@@ -307,10 +327,7 @@
             "STATUS_COUNT", "$self.turn_state", "折影额度", 0, "LOOKUP", "SUB", 0, "MAX", "MIN", "转化", "STORE", "$local.转化",
             0, "GT",
             [
-              "$self", "折影化铭刻", "$local.转化",
-              {"call": "STATUS", "result": "actual_delta", "default": 0},
-              "新增", "STORE", "$self", "本回合新折影", "$local.新增", "SET_TURN_STATE", "$self", "折影额度", "$self.turn_state",
-              "折影额度", 0, "LOOKUP", "$local.新增", "ADD", "SET_TURN_STATE"
+              "$self", "折影化铭刻", "$local.转化", {"call":"STATUS","with":{"converts_marks":true}}
             ],
             "WHEN"
           ]
@@ -319,14 +336,35 @@
     ],
     "折影化铭刻": [
       {
-        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
+        "description": "每层折影化铭刻提供1点额度，取得时立即计入可用铭刻。",
+        "trigger": "on_status_changed",
+        "subject": "target",
+        "when": [
+          {"left":"$event.status","op":"eq","right":"折影化铭刻"},
+          {"left":"$event.actual_delta","op":"gt","right":0}
+        ],
+        "operation": {"op":"program","code":[
+          "$game.turn_number", 0, "COALESCE", 0, "GT", [
+            "$self", "本回合已发折影", "$self.turn_state", "本回合已发折影", 0, "LOOKUP", "$event.actual_delta", "ADD", "SET_TURN_STATE",
+            "$event.converts_marks", [
+              "$event.actual_delta"
+            ], [
+              "$self", "铭刻", "$event.actual_delta", {"call":"STATUS","result":"actual_delta","default":0}
+            ], "IF_ELSE", "新增额度", "STORE",
+            "$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$local.新增额度", "ADD", "SET_TURN_STATE"
+          ], "WHEN"
+        ]}
+      },
+      {
+        "description": "回合开始时补足本回合额度。",
         "trigger": "on_turn_start",
         "operation": {
           "op": "program",
           "code": [
-            "$self", "折影化铭刻", "STATUS_COUNT", "$self.turn_state", "本回合新折影", 0, "LOOKUP", "SUB", 0, "MAX", "旧折影",
+            "$self", "折影化铭刻", "STATUS_COUNT", "$self.turn_state", "本回合已发折影", 0, "LOOKUP", "SUB", 0, "MAX", "旧折影",
             "STORE", "$local.旧折影", 0, "GT",
             [
+              "$self", "本回合已发折影", "$self", "折影化铭刻", "STATUS_COUNT", "SET_TURN_STATE",
               "$self", "铭刻", "$local.旧折影",
               {"call": "STATUS", "result": "actual_delta", "default": 0},
               "补充", "STORE", "$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$local.补充", "ADD",
@@ -337,27 +375,14 @@
         }
       },
       {
-        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
-        "trigger": "AFTER SPEND_STATUS",
+        "description": "消耗铭刻时，先扣剩余折影额度，再扣普通铭刻。",
+        "trigger": "on_status_changed",
         "operation": {
           "op": "program",
           "code": [
-            "$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$event.result", "SUB", 0, "MAX",
+            "$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$event.actual_delta", "ADD", 0, "MAX",
             "SET_TURN_STATE"
           ]
-        },
-        "when": [
-          {"left": "$event.status", "op": "eq", "right": "铭刻"},
-          {"left": "$event.result", "op": "gt", "right": 0}
-        ],
-        "subject": "target"
-      },
-      {
-        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
-        "trigger": "AFTER STATUS",
-        "operation": {
-          "op": "program",
-          "code": ["$self", "折影额度", "$self.turn_state", "折影额度", 0, "LOOKUP", "$event.current_stacks", "MIN", "SET_TURN_STATE"]
         },
         "when": [
           {"left": "$event.status", "op": "eq", "right": "铭刻"},
@@ -366,7 +391,7 @@
         "subject": "target"
       },
       {
-        "description": "折影化铭刻X：优先作为铭刻消耗；提供X个可供消耗的铭刻，在回合结束时清空这些额度。",
+        "description": "回合结束时，清空剩余额度，保留折影化铭刻层数。",
         "trigger": "on_character_turn_end",
         "operation": {
           "op": "program",

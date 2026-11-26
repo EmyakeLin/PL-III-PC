@@ -122,6 +122,67 @@ class EmyakeTests(unittest.TestCase):
         self.assertEqual(self.actor.statuses['折影化铭刻'],8)
         self.assertEqual(self.actor.turn_state['折影额度'],8)
 
+    def test_folded_credit_offers_flashback_and_is_spent_before_ordinary_marks(self):
+        for choice, uses, total, credit in (("counter", 1, 0, 0), (None, 0, 4, 3)):
+            with self.subTest(choice=choice):
+                self.setUp()
+                self.status(self.actor, "铭刻", 1)
+                self.actor.add_status("折影化铭刻", 3)
+                self.assertEqual(Displayer._status_details(self.actor)["折影化铭刻"],
+                                 ["本回合剩余额度：3", "普通铭刻：1", "可用铭刻（含额度）：4"])
+                offers = []
+                def decide(prompt):
+                    offers.append(prompt.title)
+                    return choice
+                self.game.place_in_duel(2, self.opposition([0]), 0)
+                self.start_duel(decide)
+                self.assertEqual(sum("单方面攻击" in title for title in offers), 1)
+                self.assertEqual(self.actor.turn_state.get("闪回识破次数", 0), uses)
+                self.assertEqual(self.actor.statuses.get("铭刻", 0), total)
+                self.assertEqual(self.actor.turn_state["折影额度"], credit)
+                self.assertEqual(self.actor.statuses["折影化铭刻"], 3)
+                if not uses:
+                    self.ctx.eval_block([self.actor, "铭刻", 2, OpCode.SPEND_STATUS])
+                    self.assertEqual((self.actor.statuses["铭刻"], self.actor.turn_state["折影额度"]), (2, 1))
+                    self.game.finish_turn()
+                    self.assertEqual(self.actor.statuses["铭刻"], 1)
+
+    def test_folded_marks_refresh_once_and_only_grant_accepted_stacks(self):
+        self.status(self.actor, "铭刻", 1)
+        self.actor.add_status("折影化铭刻", 7)
+        self.actor.add_status("折影化铭刻", 5)
+        self.assertEqual((self.actor.statuses["铭刻"], self.actor.turn_state["折影额度"]), (9, 8))
+        self.ctx.eval_block([self.actor, "铭刻", 5, OpCode.SPEND_STATUS])
+        self.actor.add_status("折影化铭刻", -2)
+        self.assertEqual((self.actor.statuses["铭刻"], self.actor.turn_state["折影额度"]), (4, 3))
+        self.actor.add_status("铭刻", -1)
+        self.assertEqual((self.actor.statuses["铭刻"], self.actor.turn_state["折影额度"]), (3, 2))
+        self.game.finish_turn()
+        self.game.start_turn()
+        self.ctx.dispatch_pipeline("on_turn_start")
+        self.assertEqual((self.actor.statuses["铭刻"], self.actor.turn_state["折影额度"]), (8, 6))
+        self.actor.add_status("折影化铭刻", -6)
+        self.assertEqual((self.actor.statuses["铭刻"], self.actor.turn_state["折影额度"]), (2, 0))
+
+    def test_flashback_uses_remaining_credit_for_threshold_and_turn_limit(self):
+        for normal, folded, spent, used, prompts, count in (
+                (1, 3, 1, 0, 0, 0), (1, 3, 0, 2, 0, 2), (9, 3, 0, 1, 1, 2), (10, 3, 0, 1, 0, 2)):
+            with self.subTest(normal=normal, spent=spent, used=used):
+                self.setUp()
+                self.status(self.actor, "铭刻", normal)
+                self.actor.add_status("折影化铭刻", folded)
+                if spent:
+                    self.ctx.eval_block([self.actor, "铭刻", spent, OpCode.SPEND_STATUS])
+                self.actor.turn_state["闪回识破次数"] = used
+                offered = []
+                def accept(prompt):
+                    offered.append(prompt.title)
+                    return "counter"
+                self.game.place_in_duel(2, self.opposition([0]), 0)
+                self.start_duel(accept)
+                self.assertEqual(sum("单方面攻击" in title for title in offered), prompts)
+                self.assertEqual(self.actor.turn_state["闪回识破次数"], count)
+
     def test_storage_rounding_damage_credit_and_restraint(self):
         self.status(self.actor,'羽流·延攻',2)
         self.status(self.enemy,'裂伤',8)
