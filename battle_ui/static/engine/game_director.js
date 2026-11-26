@@ -190,6 +190,8 @@ export class GameDirector {
       clearDice: () => this.three.clearDice(),
       hasActiveDice: () => this.three.hasActiveDice(),
       waitUntilDiceCleared: (cb) => this.three.waitUntilDiceCleared(cb),
+      retireStaleDice: (roundKey) => this.three.retireDiceExceptRound(roundKey),
+      retireSideDice: (side, lane) => this.three.retireDiceForSide(side, lane),
       clearClashGroups: () => this.physics.clearClashGroups(),
       playSpeedRoll: (ev, opts) => this.fxRenderer.playSpeedRoll(ev, opts),
       playDiceRoll: (ev, opts) => this.fxRenderer.playDiceRoll(ev, opts),
@@ -1072,8 +1074,18 @@ export class GameDirector {
     const resolvedKind = kind || (fontSize >= 18 ? 'heavy' : fontSize <= 13.5 ? 'status' : 'clash');
     const banner = buildHitstopBanner({ text, accentColor: color, kind: resolvedKind, x, y });
     const halfW = (banner._boxWidth || 120) / 2 + 12;
-    banner.x = Math.max(halfW, Math.min(this.w - halfW, x));
-    banner.y = Math.max(54, y);
+    const clampedX = Math.max(halfW, Math.min(this.w - halfW, x));
+    let stackedY = Math.max(54, y);
+    // Cascade simultaneous / rapid multi-part floaters on the same target cleanly upward (ZERO overlapping text blobs!)
+    for (let k = 0; k < 6; k++) {
+      const collision = this.floaters.some(
+        (f) => f.age < 0.85 && Math.abs(f.obj.x - clampedX) < 92 && Math.abs(f.obj.y - stackedY) < 25
+      );
+      if (!collision || stackedY <= 58) break;
+      stackedY = Math.max(50, stackedY - 29);
+    }
+    banner.x = clampedX;
+    banner.y = stackedY;
     banner.applyHitstopProgress(0);
     this.fxTextLayer.addChild(banner);
     const life = resolvedKind === 'heavy' ? 1.65 : resolvedKind === 'passive' ? 1.55 : resolvedKind === 'status' ? 1.25 : 1.45;

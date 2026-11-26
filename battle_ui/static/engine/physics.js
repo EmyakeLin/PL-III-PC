@@ -156,22 +156,25 @@ export class TabletopPhysics {
   /**
    * Create colliding Matter.js bodies directly bound to clashing 3D dice (supports 1v1, 1v2, 2v1, 2v2).
    */
-  createClashDicePair({ cx, cy, radius = 26, leftCount = 1, rightCount = 1, outcome = 'draw', winnerColor = 0xe89b32, lungeDelay = 0.34, alreadyRolled = false, onImpact = null }) {
+  createClashDicePair({ cx, cy, radius = 26, leftCount = 1, rightCount = 1, leftPositions = null, rightPositions = null, outcome = 'draw', winnerColor = 0xe89b32, lungeDelay = 0.28, alreadyRolled = false, onImpact = null }) {
     const { Bodies, Composite } = this.Matter;
     this.clearClashGroups();
 
-    const spawnDx = alreadyRolled ? 78 : 210;
+    const spawnDx = alreadyRolled ? 86 : 210;
     const spawnDy = alreadyRolled ? 0 : 32;
-    const makeSideBodies = (count, isLeft) => {
+    const makeSideBodies = (count, isLeft, customPositions) => {
       const n = Math.max(1, count);
       const bodies = [];
       for (let i = 0; i < n; i++) {
         const offsetY = n === 1 ? 0 : (i === 0 ? -36 : 36);
         const r = n > 1 ? Math.max(24, radius - 5) : radius;
         const winSide = isLeft ? 'left_win' : 'right_win';
+        const custom = Array.isArray(customPositions) ? customPositions[i] : null;
+        const startX = custom && Number.isFinite(custom.x) ? custom.x : (cx + (isLeft ? -spawnDx : spawnDx));
+        const startY = custom && Number.isFinite(custom.y) ? custom.y : (cy + offsetY + (n === 1 ? (isLeft ? spawnDy : -spawnDy) : 0));
         const body = Bodies.circle(
-          cx + (isLeft ? -spawnDx : spawnDx),
-          cy + offsetY + (n === 1 ? (isLeft ? spawnDy : -spawnDy) : 0),
+          startX,
+          startY,
           r,
           {
             frictionAir: 0.055,
@@ -181,14 +184,15 @@ export class TabletopPhysics {
           }
         );
         body._offsetY = offsetY;
+        body._baseX = startX;
         body._clashSide = isLeft ? 'left' : 'right';
         bodies.push(body);
       }
       return bodies;
     };
 
-    const leftBodies = makeSideBodies(leftCount, true);
-    const rightBodies = makeSideBodies(rightCount, false);
+    const leftBodies = makeSideBodies(leftCount, true, leftPositions);
+    const rightBodies = makeSideBodies(rightCount, false, rightPositions);
     const allBodies = [...leftBodies, ...rightBodies];
 
     const group = {
@@ -313,10 +317,9 @@ export class TabletopPhysics {
         const delay = g.lungeDelay ?? 0.34;
         if (!g.lunged) {
           if (g.age < delay) {
-            const lx = g.cx - (g.alreadyRolled ? 175 : 138);
-            const rx = g.cx + (g.alreadyRolled ? 175 : 138);
-            const aGain = g.alreadyRolled ? 0.00055 : 0.00028;
+            const aGain = g.alreadyRolled ? 0.00042 : 0.00028;
             for (const lb of g.leftBodies) {
+              const lx = g.alreadyRolled ? Math.min(g.cx - 110, (lb._baseX ?? (g.cx - 86)) - 42) : (g.cx - 138);
               const ty = g.cy + (lb._offsetY || 0);
               Body.applyForce(lb, lb.position, {
                 x: (lx - lb.position.x) * aGain * lb.mass,
@@ -324,6 +327,7 @@ export class TabletopPhysics {
               });
             }
             for (const rb of g.rightBodies) {
+              const rx = g.alreadyRolled ? Math.max(g.cx + 110, (rb._baseX ?? (g.cx + 86)) + 42) : (g.cx + 138);
               const ty = g.cy + (rb._offsetY || 0);
               Body.applyForce(rb, rb.position, {
                 x: (rx - rb.position.x) * aGain * rb.mass,

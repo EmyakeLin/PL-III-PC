@@ -913,9 +913,11 @@ export class ThreeWorld {
   launchDie({
     side = null,
     lane = 'front',
+    roundKey = null,
     sides = 6,
     dieType = 'speed',
     rolledValue = 1,
+    rawRolledValue = null,
     subLabel = '',
     startX,
     startY,
@@ -1036,13 +1038,21 @@ export class ThreeWorld {
     // Calibrated to exact airborne + bounce + rolling-friction stopping integral (~0.48 * v0 = dx)
     const initVx = alreadyRolled ? 0 : (dx * 2.05);
     const initVy = alreadyRolled ? 0 : (dy * 1.95);
-    const effectiveRevealDelay = alreadyRolled ? 0 : 0.54;
+    const effectiveRevealDelay = alreadyRolled
+      ? 0
+      : (typeof revealDelay === 'number' && Number.isFinite(revealDelay) && revealDelay > 0 ? revealDelay : 0.42);
 
     const initWp = this.screenToWorld(startX, startY, initZ);
     group.position.copy(initWp);
     shadow.position.set(initWp.x + 4, initWp.y - 6, 1);
 
     const badgeTex = makeDieReadoutTexture(rolledValue, subLabel || `1~${sides}`, pal.hex);
+    const hasScoreStep = !alreadyRolled
+      && rawRolledValue != null
+      && String(rawRolledValue) !== String(rolledValue);
+    const rawBadgeTex = hasScoreStep
+      ? makeDieReadoutTexture(rawRolledValue, `掷 ${rawRolledValue}`, pal.hex)
+      : null;
     const badgeMat = new THREE.SpriteMaterial({
       map: badgeTex,
       transparent: true,
@@ -1050,16 +1060,18 @@ export class ThreeWorld {
       depthTest: false,
     });
     const badge = new THREE.Sprite(badgeMat);
-    badge.scale.set(radius * 2.45, radius * 2.45, 1);
+    const baseBadgeScale = radius * 2.45;
+    badge.scale.set(baseBadgeScale, baseBadgeScale, 1);
     badge.position.set(initWp.x, initWp.y, initZ + radius + 14);
     this.scene.add(badge);
 
     // Pre-bake rolling-number texture cache (1..min(sides, 12)) for smooth number rolling before lock
     const rollTextures = [];
     const maxFace = Math.min(12, Math.max(2, Number(sides) || 6));
-    if (!alreadyRolled && typeof rolledValue === 'number') {
+    const numericSeed = typeof rawRolledValue === 'number' ? rawRolledValue : rolledValue;
+    if (!alreadyRolled && typeof numericSeed === 'number') {
       for (let f = 1; f <= maxFace; f++) {
-        rollTextures.push(makeDieReadoutTexture(f, subLabel || `1~${sides}`, pal.hex));
+        rollTextures.push(makeDieReadoutTexture(f, `1~${sides}`, pal.hex));
       }
     }
 
@@ -1067,11 +1079,17 @@ export class ThreeWorld {
     this.activeDice.push({
       side,
       lane,
+      roundKey,
+      state: alreadyRolled ? (physicsBody ? 'clashing' : 'holding') : 'throwing',
+      holdElapsed: 0,
+      scoreStepAge: hasScoreStep ? 0 : -1,
+      baseBadgeScale,
       rolledValue,
+      rawRolledValue,
       sides,
       dieType,
       group, mesh, shadow, badge,
-      geo, mat, outlineMat, edgeGeo, edgeMat, shadowGeo, shadowMat, badgeTex, badgeMat,
+      geo, mat, outlineMat, edgeGeo, edgeMat, shadowGeo, shadowMat, badgeTex, rawBadgeTex, badgeMat,
       sharedGeo, extraMats,
       rollTextures,
       rollPhase: Math.random() * maxFace,
@@ -1100,12 +1118,14 @@ export class ThreeWorld {
 
   /**
    * Seamlessly bind the MOST RECENT live 3D die for `side` directly to a Matter.js clash body
-   * at its exact live (lastX, lastY) — never hijacks or hard-deletes earlier fading dice.
+   * at its exact live (lastX, lastY) — never hijacks retiring dice and preserves exact `restZ`!
    */
-  attachClashBody(side, { lane = 'front', physicsBody, rolledValue, subLabel = '', dieType = 'speed', lifetime = 1.75, onReveal = null }) {
+  attachClashBody(side, { lane = 'front', roundKey = null, physicsBody, rolledValue, subLabel = '', dieType = 'speed', lifetime = 1.55, onReveal = null }) {
     let existing = null;
     for (let i = this.activeDice.length - 1; i >= 0; i--) {
       const cand = this.activeDice[i];
+      if (cand.state === 'retiring') continue;
+      if (roundKey && cand.roundKey && cand.roundKey !== roundKey) continue;
       if (cand.side === side && (cand.lane || 'front') === lane && !cand.physicsBody) {
         existing = cand;
         break;
@@ -1121,6 +1141,10 @@ export class ThreeWorld {
       }
     }
     existing.physicsBody = physicsBody;
+    existing.state = 'clashing';
+    existing.willClash = false;
+    existing.holdElapsed = 0;
+    existing.scoreStepAge = -1;
     existing.age = 0;
     existing.lifetime = lifetime;
     existing.alreadyRolled = true;
@@ -1128,11 +1152,12 @@ export class ThreeWorld {
     existing.revealed = true;
     existing.revealDelay = 0;
     existing.onReveal = null;
-    existing.z = existing.inradius;
+    existing.z = existing.restZ;
     existing.vz = 0;
     existing.mat.transparent = false;
     existing.mat.opacity = 1;
     existing.badgeMat.opacity = 1;
+    existing.badge.scale.set(existing.baseBadgeScale, existing.baseBadgeScale, 1);
     if (String(rolledValue) !== String(existing.rolledValue)) {
       const pal = DIE_PALETTES[dieType] || DIE_PALETTES.speed;
       const newTex = makeDieReadoutTexture(rolledValue, subLabel || `1~${existing.sides}`, pal.hex);
@@ -1181,7 +1206,7 @@ export class ThreeWorld {
   /**
    * 3D Tapered Sweeping Razor Slash Crescent with gilded edge glint & cross-cut flash!
    */
-  spawnSlashArc({ fromX, fromY, toX, toY, colorHex = 0xcf4330 }) {
+  spawnSlashArc({ fromX, fromY, toX, toY, colorHex = 0xcf4330, deferImpact = false }) {
     const target = this.screenToWorld(toX, toY, 54);
     const origin = this.screenToWorld(fromX, fromY, 54);
     const dir = Math.atan2(target.y - origin.y, target.x - origin.x);
@@ -1245,8 +1270,10 @@ export class ThreeWorld {
     group.add(arcPivot, flashMesh);
     this.scene.add(group);
 
-    this.emitShockwave(toX, toY, colorHex, 0.58);
-    this.spawnImpactBurst(toX, toY, colorHex, 26, true);
+    if (!deferImpact) {
+      this.emitShockwave(toX, toY, colorHex, 0.58);
+      this.spawnImpactBurst(toX, toY, colorHex, 26, true);
+    }
 
     this.vfxEffects.push({
       kind: 'slash',
@@ -1921,16 +1948,68 @@ export class ThreeWorld {
   }
 
   hasActiveDice() {
-    return this.activeDice.length > 0;
+    return this.activeDice.some((d) => d.state !== 'retiring');
   }
 
-  hasActiveDieForSide(side, lane = null) {
-    return this.activeDice.some((d) => d.side === side && (!lane || (d.lane || 'front') === lane));
+  hasActiveDieForSide(side, lane = null, roundKey = null) {
+    return this.activeDice.some((d) =>
+      d.state !== 'retiring'
+      && d.side === side
+      && (!lane || (d.lane || 'front') === lane)
+      && (!roundKey || !d.roundKey || d.roundKey === roundKey)
+    );
+  }
+
+  getDieScreenPos(side, lane = 'front', roundKey = null) {
+    for (let i = this.activeDice.length - 1; i >= 0; i--) {
+      const d = this.activeDice[i];
+      if (d.state === 'retiring') continue;
+      if (roundKey && d.roundKey && d.roundKey !== roundKey) continue;
+      if (d.side === side && (d.lane || 'front') === lane) {
+        return { x: d.lastX, y: d.lastY };
+      }
+    }
+    return null;
+  }
+
+  _startRetireDie(d, fadeSec = 0.16) {
+    if (!d || d.state === 'retiring') return;
+    d.state = 'retiring';
+    d.willClash = false;
+    d.physicsBody = null;
+    d.vx = 0;
+    d.vy = 0;
+    d.vz = 52;
+    d.age = Math.max(0, d.lifetime - fadeSec);
+  }
+
+  retireDiceExceptRound(roundKey) {
+    let retired = false;
+    for (const d of this.activeDice) {
+      if (d.state === 'retiring') continue;
+      if (!roundKey || d.roundKey !== roundKey) {
+        this._startRetireDie(d, 0.16);
+        retired = true;
+      }
+    }
+    if (retired) this._flushDiceClearedWaiters();
+  }
+
+  retireDiceForSide(side, lane = null) {
+    let retired = false;
+    for (const d of this.activeDice) {
+      if (d.state === 'retiring') continue;
+      if (d.side === side && (!lane || (d.lane || 'front') === lane)) {
+        this._startRetireDie(d, 0.18);
+        retired = true;
+      }
+    }
+    if (retired) this._flushDiceClearedWaiters();
   }
 
   waitUntilDiceCleared(cb) {
     if (typeof cb !== 'function') return;
-    if (this.activeDice.length === 0) {
+    if (!this.hasActiveDice()) {
       cb();
       return;
     }
@@ -1938,7 +2017,7 @@ export class ThreeWorld {
   }
 
   _flushDiceClearedWaiters() {
-    if (this.activeDice.length > 0 || !this._diceClearedWaiters.length) return;
+    if (this.hasActiveDice() || !this._diceClearedWaiters.length) return;
     const list = this._diceClearedWaiters.splice(0);
     for (const fn of list) fn();
   }
@@ -1985,6 +2064,7 @@ export class ThreeWorld {
     if (d.rollTextures) {
       for (const tex of d.rollTextures) tex?.dispose?.();
     }
+    d.rawBadgeTex?.dispose?.();
     d.badgeTex.dispose();
     d.badgeMat.dispose();
   }
@@ -2153,8 +2233,14 @@ export class ThreeWorld {
       if (!d.revealed && (d.age >= d.revealDelay || stoppedNaturally)) {
         d.revealed = true;
         d.locked = true;
-        if (d.badgeMat.map !== d.badgeTex) {
-          d.badgeMat.map = d.badgeTex;
+        if (d.willClash && !d.physicsBody && d.state !== 'retiring') {
+          d.state = 'holding';
+        } else if (d.state === 'throwing') {
+          d.state = 'settled';
+        }
+        const initialRevealTex = d.rawBadgeTex || d.badgeTex;
+        if (d.badgeMat.map !== initialRevealTex) {
+          d.badgeMat.map = initialRevealTex;
           d.badgeMat.needsUpdate = true;
         }
         if (d.onReveal) {
@@ -2163,7 +2249,34 @@ export class ThreeWorld {
           cb();
         }
       }
-      const fadeOut = d.age > d.lifetime - 0.32 ? Math.max(0, (d.lifetime - d.age) / 0.32) : 1;
+      if (d.revealed && d.scoreStepAge >= 0) {
+        d.scoreStepAge += dtSec;
+        if (d.scoreStepAge >= 0.14) {
+          d.scoreStepAge = -1;
+          if (d.badgeMat.map !== d.badgeTex) {
+            d.badgeMat.map = d.badgeTex;
+            d.badgeMat.needsUpdate = true;
+          }
+          d.badge.scale.set(d.baseBadgeScale * 1.18, d.baseBadgeScale * 1.18, 1);
+        }
+      } else if (d.badge.scale.x > d.baseBadgeScale + 0.2) {
+        const nextScale = d.baseBadgeScale + (d.badge.scale.x - d.baseBadgeScale) * Math.pow(0.015, dtSec);
+        d.badge.scale.set(nextScale, nextScale, 1);
+      }
+
+      // Paired dice waiting for Beat 2 clash collision stay crisp in `holding` state instead of
+      // prematurely fading out at 2.2s in online PvP or thoughtful beats!
+      if (d.state === 'holding' && !d.physicsBody) {
+        d.holdElapsed += dtSec;
+        if (d.holdElapsed < 14.0) {
+          d.age = Math.min(d.age, Math.max(0.45, d.lifetime - 0.55));
+        } else {
+          d.state = 'retiring';
+        }
+      }
+
+      const fadeWindow = d.state === 'retiring' ? 0.18 : 0.32;
+      const fadeOut = d.age > d.lifetime - fadeWindow ? Math.max(0, (d.lifetime - d.age) / fadeWindow) : 1;
       const badgeAlpha = (d.revealed || d.alreadyRolled)
         ? 1
         : (d.rollTextures && d.rollTextures.length ? Math.min(0.88, d.age / 0.10) : 0);
@@ -2193,7 +2306,7 @@ export class ThreeWorld {
         this.activeDice.splice(i, 1);
       }
     }
-    if (this.activeDice.length === 0 && this._diceClearedWaiters.length) {
+    if (!this.hasActiveDice() && this._diceClearedWaiters.length) {
       this._flushDiceClearedWaiters();
     }
 

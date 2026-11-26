@@ -97,6 +97,19 @@ export function createPresentationFx(env) {
     }
   }
 
+  function _roundKeyOf(ev) {
+    const turn = ev.turn ?? getState()?.frame?.turn ?? 0;
+    return `${turn}:${ev.duel_kind || ''}:${ev.duel_number || 0}:${ev.round_id || 0}`;
+  }
+
+  function _dieSubLabel(sd, sides, laneTag) {
+    const shown = sd.clash_score ?? sd.final_score ?? sd.rolled_value;
+    if (sd.rolled_value != null && shown != null && shown !== sd.rolled_value) {
+      return `${laneTag}掷${sd.rolled_value}→${shown}`;
+    }
+    return `${laneTag}1~${sides}`;
+  }
+
   function playDiceRoll(ev, { onNumbersRevealed = null } = {}) {
     audio.diceRoll();
     const { arenaX, arenaW, arenaTop } = getLayout();
@@ -108,6 +121,7 @@ export function createPresentationFx(env) {
       onNumbersRevealed?.();
       return;
     }
+    const roundKey = _roundKeyOf(ev);
     let remaining = sidesList.length;
     const onOne = () => {
       remaining -= 1;
@@ -132,16 +146,19 @@ export function createPresentationFx(env) {
       three.launchDie({
         side: sd.side,
         lane: sd.lane || 'front',
+        roundKey,
         sides,
         dieType: sd.type || 'blank',
         rolledValue: displayVal,
-        subLabel: `${laneTag}1~${sides}`,
+        rawRolledValue: sd.rolled_value ?? null,
+        subLabel: _dieSubLabel(sd, sides, laneTag),
         startX: cx + (isP1 ? -240 : 240),
         startY: cy + 28 + offY,
         targetX: isPaired ? cx + (isP1 ? -86 : 86) : cx + (isP1 ? 30 : -30),
         targetY: cy + offY,
         radius: multiSide ? 24 : 28,
-        lifetime: isPaired ? 2.2 : 1.35,
+        lifetime: isPaired ? 2.2 : 1.15,
+        revealDelay: 0.34,
         willClash: isPaired,
         onReveal: onOne,
       });
@@ -185,14 +202,21 @@ export function createPresentationFx(env) {
     const p1List = (ev.sides || []).filter((s) => s.side === 1 && !s.skipped);
     const p2List = (ev.sides || []).filter((s) => s.side === 2 && !s.skipped);
 
+    const roundKey = _roundKeyOf(ev);
     const alreadyRolled = !needsNumberReveal;
-    const revealDelay = needsNumberReveal ? 0.26 : 0;
+    const revealDelay = needsNumberReveal ? 0.28 : 0;
     if (p1List.length > 0 && p2List.length > 0) {
       const p1Wins = p1List.some((d) => d.result === 'win');
       const p2Wins = p2List.some((d) => d.result === 'win');
       const outcome = p1Wins && !p2Wins ? 'left_win' : p2Wins && !p1Wins ? 'right_win' : 'draw';
       const winDie = [...p1List, ...p2List].find((d) => d.result === 'win') || null;
       const winColor = winDie ? (DIE_STYLE[winDie.type]?.color || INK.gold) : INK.gold;
+      const leftPositions = alreadyRolled
+        ? p1List.map((sd) => three.getDieScreenPos?.(1, sd.lane || 'front', roundKey))
+        : null;
+      const rightPositions = alreadyRolled
+        ? p2List.map((sd) => three.getDieScreenPos?.(2, sd.lane || 'front', roundKey))
+        : null;
       // Collision radius = 34 matches outer 1.13x ink silhouette + polyhedron corners -> ZERO clipping (0穿模)!
       const group = physics.createClashDicePair({
         cx,
@@ -200,9 +224,11 @@ export function createPresentationFx(env) {
         radius: 34,
         leftCount: p1List.length,
         rightCount: p2List.length,
+        leftPositions,
+        rightPositions,
         outcome,
         winnerColor: winColor,
-        lungeDelay: needsNumberReveal ? 0.34 : 0.22,
+        lungeDelay: needsNumberReveal ? 0.30 : 0.16,
         alreadyRolled,
         onImpact: () => {
           playClashOutcomeStances(ev);
@@ -224,14 +250,16 @@ export function createPresentationFx(env) {
         const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
         const displayVal = sd.clash_score ?? sd.rolled_value ?? '—';
         const lane = sd.lane || 'front';
-        const subLabel = `${lane === 'rear' ? '后置 ' : ''}1~${sides}`;
+        const laneTag = lane === 'rear' ? '后置 ' : '';
+        const subLabel = _dieSubLabel(sd, sides, laneTag);
         if (alreadyRolled && three.attachClashBody?.(sd.side, {
           lane,
+          roundKey,
           physicsBody: body,
           rolledValue: displayVal,
           subLabel,
           dieType: sd.type || 'blank',
-          lifetime: 1.75,
+          lifetime: 1.35,
           onReveal: onOneNum,
         })) {
           continue;
@@ -240,9 +268,11 @@ export function createPresentationFx(env) {
         three.launchDie({
           side: sd.side,
           lane,
+          roundKey,
           sides,
           dieType: sd.type || 'blank',
           rolledValue: displayVal,
+          rawRolledValue: sd.rolled_value ?? null,
           subLabel,
           startX: body.position.x,
           startY: body.position.y,
@@ -250,7 +280,7 @@ export function createPresentationFx(env) {
           targetY: cy + (body._offsetY || 0),
           physicsBody: body,
           radius: multiSide ? 24 : 28,
-          lifetime: 1.75,
+          lifetime: 1.45,
           revealDelay,
           alreadyRolled,
           onReveal: onOneNum,
@@ -278,25 +308,28 @@ export function createPresentationFx(env) {
     for (const sd of sidesList) {
       const lane = sd.lane || 'front';
       // Never spawn a duplicate die on top of an already-rolled live die for this side & lane!
-      if (alreadyRolled && three.hasActiveDieForSide?.(sd.side, lane)) {
+      if (alreadyRolled && three.hasActiveDieForSide?.(sd.side, lane, roundKey)) {
         onOne();
         continue;
       }
       const isP1 = sd.side === 1;
       const sides = sd.roll_max || LEVEL_MAX[sd.level || sd.printed_level] || 6;
+      const laneTag = lane === 'rear' ? '后置 ' : '';
       three.launchDie({
         side: sd.side,
         lane,
+        roundKey,
         sides,
         dieType: sd.type || 'blank',
         rolledValue: sd.skipped ? '跳过' : (sd.clash_score ?? sd.rolled_value ?? '—'),
-        subLabel: sd.skipped ? '跳过' : `${lane === 'rear' ? '后置 ' : ''}1~${sides}`,
+        rawRolledValue: sd.skipped ? null : (sd.rolled_value ?? null),
+        subLabel: sd.skipped ? '跳过' : _dieSubLabel(sd, sides, laneTag),
         startX: cx + (isP1 ? -240 : 240),
         startY: cy + 32,
         targetX: cx + (isP1 ? -86 : 86),
         targetY: cy,
         radius: 27,
-        lifetime: 1.45,
+        lifetime: 1.15,
         revealDelay: sd.skipped ? 0.14 : revealDelay,
         onReveal: onOne,
       });
@@ -377,8 +410,16 @@ export function createPresentationFx(env) {
           defaultColor: resolveCharColor(ev.attacker_id, ev.attacker_side),
         });
         if (ran) {
-          getMotion(ev.attacker_id, ev.attacker_side).lunge = 1.0;
-          return;
+          getMotion(ev.attacker_id, ev.attacker_side).lunge = Math.max(getMotion(ev.attacker_id, ev.attacker_side).lunge, 1.0);
+          const impactMs = ran.impactMs ?? 90;
+          if (ev.target_id && !customRecipe.motion?.recoil) {
+            fxDirector.deferFx(() => {
+              const dm = getMotion(ev.target_id, ev.target_side);
+              dm.recoil = Math.max(dm.recoil, 0.78);
+              dm.hitFlash = Math.max(dm.hitFlash, 0.82);
+            }, impactMs);
+          }
+          return { impactMs, durationMs: ran.durationMs ?? (impactMs + 140) };
         }
       }
 
@@ -390,22 +431,37 @@ export function createPresentationFx(env) {
       });
       const to = actorPos(ev.target_id, ev.target_side);
 
+      // Windup frame (t = 0): ONLY attacker lunges and launches blade/lance!
       getMotion(ev.attacker_id, ev.attacker_side).lunge = 1.0;
-      getMotion(ev.target_id, ev.target_side).recoil = 0.85;
-      getMotion(ev.target_id, ev.target_side).hitFlash = 0.9;
 
+      const impactMs = ev.die_type === 'pierce' ? 140 : ev.die_type === 'slash' ? 85 : 65;
       if (ev.die_type === 'slash') {
-        audio.clashImpact(true);
-        three.spawnSlashArc({ fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, colorHex: ds.color });
+        audio.clashImpact(false);
+        three.spawnSlashArc({ fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, colorHex: ds.color, deferImpact: true });
       } else if (ev.die_type === 'pierce') {
         audio.clashImpact(false);
         three.spawnPierceLance({ fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, colorHex: ds.color });
       } else {
-        audio.clashImpact(true);
         three.spawnBluntImpact({ toX: to.x, toY: to.y, colorHex: ds.color });
-        three.emitShockwave(to.x, to.y, ds.color);
-        triggerShake(8, 0.24);
       }
+
+      // Contact frame (t = impactMs): defender recoil + hitFlash + impact burst fire right as strike lands!
+      fxDirector.deferFx(() => {
+        if (ev.target_id) {
+          const dm = getMotion(ev.target_id, ev.target_side);
+          dm.recoil = Math.max(dm.recoil, 0.85);
+          dm.hitFlash = Math.max(dm.hitFlash, 0.9);
+        }
+        if (ev.die_type === 'blunt') {
+          audio.clashImpact(true);
+          three.emitShockwave(to.x, to.y, ds.color);
+          triggerShake(7.5, 0.22);
+        } else {
+          three.spawnImpactBurst(to.x, to.y, ds.color, 14, false);
+        }
+      }, impactMs);
+
+      return { impactMs, durationMs: impactMs + 140 };
     },
 
     damage(ev) {
@@ -415,6 +471,10 @@ export function createPresentationFx(env) {
       const absorbedTotal = (ev.absorbed?.normal || 0) + (ev.absorbed?.reinforced || 0) + (ev.absorbed?.concept || 0);
       const erodedNormal = ev.eroded?.normal || 0;
       const erodedReinf = ev.eroded?.reinforced || 0;
+      const causeTag = ev.cause && !['attack', 'none'].includes(ev.cause) ? `${ev.cause} ` : '';
+      const causeColor = ev.cause === '烧伤' ? 0xd95724
+        : ev.cause === '爆燃' ? 0xc93832
+          : ev.cause === '裂血' ? 0xc43240 : 0xcf4330;
 
       if (absorbedTotal > 0) {
         audio.shieldBlock();
@@ -423,7 +483,7 @@ export function createPresentationFx(env) {
         three.spawnShieldDomePulse({ x: tx, y: ty, radius: 52, colorHex: col });
         physics.spawnShieldShards(tx, ty - 8, col, Math.min(10, 4 + absorbedTotal * 2), false);
         three.spawnImpactBurst(tx, ty - 8, col, 16, false);
-        spawnFloater(tx, ty - 42, `护盾抵扣 -${absorbedTotal}`, col, 14.5, 'shield');
+        spawnFloater(tx, ty - 42, `${causeTag}护盾抵扣 -${absorbedTotal}`, col, 14.5, 'shield');
       }
 
       if (erodedNormal > 0 || erodedReinf > 0) {
@@ -440,17 +500,18 @@ export function createPresentationFx(env) {
       }
 
       if (ev.hp_lost > 0) {
-        const isHeavy = ev.hp_lost >= 3 || (ev.multiplier && ev.multiplier > 1);
+        const isHeavy = ev.hp_lost >= 3 || (ev.multiplier && ev.multiplier > 1) || ev.cause === '爆燃';
         audio.hitDamage(isHeavy);
         getMotion(ev.target_id, ev.target_side).recoil = 1.0;
         getMotion(ev.target_id, ev.target_side).hitFlash = 1.0;
         triggerShake(Math.min(11, 5 + ev.hp_lost * 2), 0.28);
-        three.spawnImpactBurst(tx, ty, 0xcf4330, 24, isHeavy);
-        if (isHeavy) three.emitShockwave(tx, ty, 0xcf4330);
+        three.spawnImpactBurst(tx, ty, causeColor, 20, isHeavy);
+        if (isHeavy) three.emitShockwave(tx, ty, causeColor);
         const multTag = ev.multiplier > 1 ? ` ×${ev.multiplier}` : '';
-        spawnFloater(tx, ty - 18, `-${ev.hp_lost} ${GRADE_LABEL[ev.grade] || ''}${multTag}`.trim(), 0xcf4330, 21, isHeavy ? 'heavy' : 'clash');
+        const gradeStr = causeTag && ev.grade === 'normal' ? '' : (GRADE_LABEL[ev.grade] || '');
+        spawnFloater(tx, ty - 18, `${causeTag}-${ev.hp_lost} ${gradeStr}${multTag}`.trim(), causeColor, 21, isHeavy ? 'heavy' : 'clash');
       } else if (absorbedTotal === 0) {
-        spawnFloater(tx, ty - 14, '0', INK.muted, 13, 'status');
+        spawnFloater(tx, ty - 14, `${causeTag}0`, INK.muted, 13, 'status');
       }
     },
 
@@ -686,11 +747,21 @@ export function createPresentationFx(env) {
     card_replace(ev) {
       audio.cardFlip();
       const { arenaX, arenaW, arenaTop, arenaH, handY } = getLayout();
+      const rect = env.getCombatCardRect?.(ev.side);
+      const bx = rect?.cx ?? (arenaX + arenaW * (ev.side === 2 ? 0.65 : 0.35));
+      const by = rect?.cy ?? (arenaTop + arenaH * 0.45);
+      const accentHex = SIDE_THEME[ev.side]?.accentHex || '#1a8775';
       three.spawnCardFlipArc({
-        fromX: arenaX + arenaW * 0.5, fromY: arenaTop + arenaH * 0.45,
+        fromX: bx, fromY: by,
         toX: arenaX + arenaW * 0.5, toY: handY,
-        title: '', accentHex: SIDE_THEME[ev.side]?.accentHex || '#1a8775',
-        flipFromBack: false, duration: 0.44, peakZ: 120,
+        title: '', accentHex,
+        flipFromBack: false, duration: 0.38, peakZ: 105,
+      });
+      three.spawnCardFlipArc({
+        fromX: arenaX + arenaW * 0.5, fromY: handY,
+        toX: bx, toY: by,
+        title: '', accentHex,
+        flipFromBack: true, duration: 0.40, peakZ: 118,
       });
     },
 
@@ -732,9 +803,9 @@ export function createPresentationFx(env) {
   HANDLERS.lightcore_max_changed = HANDLERS.lightcore_restored;
 
   function playFx(ev, opts = {}) {
-    if (!ev || !getState()) return;
+    if (!ev || !getState()) return null;
     const handler = HANDLERS[ev.kind];
-    if (handler) handler(ev, opts);
+    return handler ? handler(ev, opts) : null;
   }
 
   return {
