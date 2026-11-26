@@ -190,6 +190,8 @@ export class GameDirector {
       clearDice: () => this.three.clearDice(),
       hasActiveDice: () => this.three.hasActiveDice(),
       waitUntilDiceCleared: (cb) => this.three.waitUntilDiceCleared(cb),
+      retireStaleDice: (roundKey) => this.three.retireDiceExceptRound(roundKey),
+      retireSideDice: (side, lane) => this.three.retireDiceForSide(side, lane),
       clearClashGroups: () => this.physics.clearClashGroups(),
       playSpeedRoll: (ev, opts) => this.fxRenderer.playSpeedRoll(ev, opts),
       playDiceRoll: (ev, opts) => this.fxRenderer.playDiceRoll(ev, opts),
@@ -424,8 +426,14 @@ export class GameDirector {
           this._placeCard(this.selectedHandCardId);
         }
       },
+      onCutInSlotTap: (duelNumber) => {
+        this._handleCutInSlotTap(duelNumber);
+      },
+      onCancelQueuedGhost: (ghost) => {
+        this._cancelQueuedGhost(ghost);
+      },
       onRearSlotTap: (duelNumber) => {
-        if (this.selectedHandCardId && this._isFieldActionMode()) {
+        if (this.selectedHandCardId && (this._isFieldActionMode() || this._hasInlineFieldOptions())) {
           const { analysis } = this._getFieldActionContext();
           const entries = analysis.byCardId.get(this.selectedHandCardId) || [];
           const match = entries.find((e) => e.kind === 'place_rear' && e.opt.duel_number === duelNumber);
@@ -567,10 +575,12 @@ export class GameDirector {
       if ((this.activeHeroPanel || this.passiveDrawer) && !this.dragState) {
         this._closeStageSheets();
       }
-      if (this.selectedHandCardId && !this.dragState) {
+      if ((this.selectedHandCardId || this.activeFieldAbilityKey) && !this.dragState) {
         this.selectedHandCardId = null;
+        this.activeFieldAbilityKey = null;
         this._clearCardIntent();
         this._rebuildDynamicBoard();
+        this._rebuildOverlay();
       }
     });
 
@@ -708,8 +718,20 @@ export class GameDirector {
     );
   }
 
+  _getLiveSpecialOptions() {
+    if (!this.state) return [];
+    if (this.state.special_options?.length) return this.state.special_options;
+    return this.state.inline_special_options || [];
+  }
+
+  _hasInlineFieldOptions() {
+    if (!this.state || this.state.effect_choice) return false;
+    if (['handoff', 'special_handoff', 'draw_select', 'finished', 'lobby'].includes(this.state.mode)) return false;
+    return this._getLiveSpecialOptions().length > 0;
+  }
+
   _getFieldActionContext() {
-    const analysis = analyzeFieldActions(this.state?.special_options || []);
+    const analysis = analyzeFieldActions(this._getLiveSpecialOptions());
     const highlights = resolveFieldHighlights(analysis, {
       selectedCardId: this.selectedHandCardId,
       activeAbilityKey: this.activeFieldAbilityKey,
@@ -717,20 +739,194 @@ export class GameDirector {
     return { analysis, highlights };
   }
 
+  _registerSpecialCardLaunch(cardId) {
+    if (!cardId || !this.tabletop) return;
+    const viewerSide = this.state?.frame?.viewer_side ?? this.state?.active_side;
+    const view = this.handCardViews.get(`hand_${viewerSide}_${cardId}`);
+    if (view?.bodyEntry?.body) {
+      const b = view.bodyEntry.body;
+      this.tabletop.registerPlacementLaunch(cardId, {
+        fromX: b.position.x,
+        fromY: b.position.y,
+        vx: (b.velocity?.x || 0) * 55,
+        vy: Math.min(-260, (b.velocity?.y || 0) * 55 - 180),
+        rot0: b.angle || 0,
+        scale0: view.bodyEntry.scale || 0.85,
+        color: this._resolveCharColor(view.card?.character_id, viewerSide),
+      });
+    }
+  }
+
+  _findFirstEmptyRegularDuel(side) {
+    if (!side || !this.state?.frame) return 1;
+    const duels = this.state.frame.duels || [];
+    for (const d of duels) {
+      const se = (d.sides || []).find((s) => s.side === side);
+      const all = [...(se?.cards || []), ...(se?.resolved_cards || [])].filter(Boolean);
+      if (!all.length) return d.number;
+    }
+    return duels.length + 1;
+  }
+
+  _resolveHandCardName(cardId) {
+    const viewerSide = this.state?.frame?.viewer_side ?? this.state?.active_side;
+    const player = (this.state?.frame?.players || []).find((p) => p.side === viewerSide);
+    const found = (player?.hand || []).find((c) => (c.action_key || c.id) === cardId || c.id === cardId);
+    return found?.name || cardId || '手牌';
+  }
+
   _pickFieldOption(optionIdx) {
-    if (optionIdx == null || optionIdx < 0) return;
+    const options = this._getLiveSpecialOptions();
+    if (optionIdx == null || optionIdx < 0 || optionIdx >= options.length) return;
+    const opt = options[optionIdx];
+    const frame = this.state?.frame;
+    const viewerSide = frame?.viewer_side ?? this.state?.active_side ?? 1;
+
     this.specialMenuOpen = false;
     this.activeFieldAbilityKey = null;
     this.selectedHandCardId = null;
+
+    // Animation-time / Mid-roll Pre-Queue: NEVER silently drop a player's mid-turn action while 3D dice are airborne!
+    if (this.sequencer.isRollAnimating) {
+      const combat = frame?.combat;
+      if (
+        this.transport.isRoom
+        && !this.state?.client_paced
+        && combat?.kind === 'regular'
+        && (opt.kind === 'place' || opt.kind === 'replace')
+        && opt.card_id
+      ) {
+        const match = opt.kind === 'place'
+          ? { kind: 'special_place', card_id: opt.card_id }
+          : { kind: 'special_replace', card_id: opt.card_id };
+        const declaration = {
+          event: 'timing',
+          mode: 'execute',
+          when: {
+            turn: frame.turn,
+            duel_kind: combat.kind,
+            duel_number: combat.duel_number,
+            round_id: combat.round_id,
+            timing: 'after_dice_use',
+          },
+          match,
+        };
+        this.audio.cardSlide();
+        this.showToast(`已预约「${this._resolveHandCardName(opt.card_id)}」· 本轮骰后自动切入`, 0x1a825e, 1.9);
+        this._sendAction('prepare', { declaration });
+        return;
+      }
+      const targetDuelNum = opt.kind === 'replace'
+        ? (opt.effect_target?.number ?? combat?.duel_number ?? 1)
+        : (opt.duel_number ?? this._findFirstEmptyRegularDuel(viewerSide));
+      this.localQueuedAction = {
+        id: 'local_q',
+        source: 'local',
+        optSignature: {
+          kind: opt.kind,
+          card_id: opt.card_id || null,
+          duel_number: opt.duel_number ?? null,
+          character_id: opt.character_id || null,
+          ability_id: opt.ability_id || null,
+          target_card_id: opt.target_card_id || null,
+          effect_target: opt.effect_target || null,
+          response_number: opt.response_number ?? null,
+        },
+        duelNumber: targetDuelNum,
+        side: viewerSide,
+        lane: opt.effect_target?.lane || (opt.kind === 'place_rear' ? 'rear' : 'front'),
+        cardName: opt.card_id ? this._resolveHandCardName(opt.card_id) : (opt.label || '行动'),
+        modeLabel: '落骰后即刻执行',
+      };
+      this.audio.cardSlide();
+      this.showToast(`已预约「${this.localQueuedAction.cardName}」· 落骰后即刻执行`, 0x1a825e, 1.8);
+      this._rebuildDynamicBoard();
+      this._rebuildOverlay();
+      return;
+    }
+
+    if (opt.card_id && ['place', 'place_rear', 'replace', 'intercept'].includes(opt.kind)) {
+      this._registerSpecialCardLaunch(opt.card_id);
+    }
     this.audio.cardPlace();
     this._sendAction('use_special', { option: optionIdx });
   }
 
+  _handleCutInSlotTap(duelNumber) {
+    if (!this._isFieldActionMode() && !this._hasInlineFieldOptions()) return;
+    const { analysis } = this._getFieldActionContext();
+    if (this.selectedHandCardId && analysis.byCardId.has(this.selectedHandCardId)) {
+      const entries = analysis.byCardId.get(this.selectedHandCardId) || [];
+      const pl = entries.find((e) => e.kind === 'place' && (e.opt.duel_number == null || e.opt.duel_number === duelNumber))
+        || entries.find((e) => e.kind === 'place');
+      if (pl) {
+        this._pickFieldOption(pl.idx);
+        return;
+      }
+    }
+    // If only a single hand card has `place`, give a helpful prompt if none selected yet
+    const placeCards = [...analysis.byCardId.entries()].filter(([, list]) => list.some((e) => e.kind === 'place'));
+    if (placeCards.length === 1) {
+      const [cid] = placeCards[0];
+      this.selectedHandCardId = cid;
+      this._rebuildDynamicBoard();
+      this._rebuildOverlay();
+      this._syncSelectedCardIntent();
+    } else if (placeCards.length > 1) {
+      this.showToast('请直接将手牌拖入此槽位，或先点击要切入的手牌。', 0x1a825e, 1.8);
+    }
+  }
+
+  _cancelQueuedGhost(ghost) {
+    if (!ghost) return;
+    this.audio.cardSlide();
+    if (ghost.source === 'local') {
+      this.localQueuedAction = null;
+      this.showToast('已撤回预约行动。', INK.gold, 1.5);
+      this._rebuildDynamicBoard();
+      return;
+    }
+    if (ghost.id && this.transport.isRoom) {
+      this.showToast('已撤回预约行动。', INK.gold, 1.5);
+      this._sendAction('prepare', { declaration: { cancel: ghost.id } });
+    }
+  }
+
+  _flushLocalQueuedAction() {
+    const q = this.localQueuedAction;
+    if (!q || this.sequencer.isRollAnimating || this.transport.busy) return;
+    this.localQueuedAction = null;
+    const s = q.optSignature;
+    const options = this._getLiveSpecialOptions();
+    const matchIdx = options.findIndex((o) => {
+      if (o.kind !== s.kind) return false;
+      if (s.card_id && o.card_id !== s.card_id) return false;
+      if (s.duel_number != null && o.duel_number !== s.duel_number) return false;
+      if (s.character_id && o.character_id !== s.character_id) return false;
+      if (s.ability_id && o.ability_id !== s.ability_id) return false;
+      if (s.target_card_id && o.target_card_id !== s.target_card_id) return false;
+      if (s.effect_target && o.effect_target) {
+        const a = s.effect_target;
+        const b = o.effect_target;
+        if (a.kind !== b.kind || a.number !== b.number || a.side !== b.side
+            || (a.lane || 'front') !== (b.lane || 'front') || a.position !== b.position) {
+          return false;
+        }
+      }
+      return true;
+    });
+    if (matchIdx >= 0) {
+      this._pickFieldOption(matchIdx);
+    } else {
+      this._rebuildDynamicBoard();
+    }
+  }
+
   _onFieldActionBoardCardClick(info) {
-    if (!info || !this._isFieldActionMode()) return;
+    if (!info || (!this._isFieldActionMode() && !this._hasInlineFieldOptions())) return;
     const { highlights } = this._getFieldActionContext();
     const t = info.target;
-    const key = t ? `${t.kind}:${t.number}:${t.side}:${t.position}` : null;
+    const key = t ? `${t.kind}:${t.number}:${t.side}:${t.lane || 'front'}:${t.position}` : null;
     if (key && highlights.boardCardTargets.has(key)) {
       this._pickFieldOption(highlights.boardCardTargets.get(key));
     }
@@ -740,12 +936,11 @@ export class GameDirector {
     const frame = this.state?.frame;
     if (!frame) return true;
     const mode = this.state.mode;
-    const allowHand = this._isFieldActionMode()
-      || (!frame.combat && ['placement', 'pre_attack', 'intercept'].includes(mode));
-    if (!allowHand) {
+    if (this.state.effect_choice || ['handoff', 'special_handoff', 'draw_select', 'finished', 'lobby'].includes(mode)) {
       return false;
     }
-    const viewerSide = frame.viewer_side ?? this.state.active_side;
+    const viewerSide = frame.viewer_side
+      ?? ((this._isFieldActionMode() || ['placement', 'pre_attack', 'intercept'].includes(mode)) ? this.state.active_side : null);
     const player = viewerSide ? (frame.players || []).find((p) => p.side === viewerSide) : null;
     return Boolean(player && Array.isArray(player.hand) && player.hand.length > 0);
   }
@@ -868,6 +1063,10 @@ export class GameDirector {
   }
 
   _nextAutoDelay(mode, hadFx = true, lastBeatKind = null) {
+    const singlePlayer = !this.transport.isRoom || Boolean(this.state?.client_paced);
+    if (singlePlayer && (mode === 'combat' || mode === 'timing') && lastBeatKind !== 'dice_roll' && this._hasInlineFieldOptions()) {
+      return 0.92;
+    }
     if (mode === 'timing') return hadFx ? 0.24 : 0.05;
     if (mode === 'combat') {
       // Keep Roll -> Clash -> Strike tightly chained with zero dead-air drag!
@@ -922,6 +1121,7 @@ export class GameDirector {
     const nextRosterSig = (nextState.frame?.players || [])
       .map((p) => (p.characters || []).map((c) => c.id).join(',')).join('|');
     if (isInitial || matchChanged || prevTurn !== nextTurn || prevRosterSig !== nextRosterSig) {
+      this.localQueuedAction = null;
       this.tabletop?.resetMatch(nextState.frame?.combat ? 1 : 0);
     }
     if (isInitial || matchChanged || prevRosterSig !== nextRosterSig) {
@@ -1072,8 +1272,18 @@ export class GameDirector {
     const resolvedKind = kind || (fontSize >= 18 ? 'heavy' : fontSize <= 13.5 ? 'status' : 'clash');
     const banner = buildHitstopBanner({ text, accentColor: color, kind: resolvedKind, x, y });
     const halfW = (banner._boxWidth || 120) / 2 + 12;
-    banner.x = Math.max(halfW, Math.min(this.w - halfW, x));
-    banner.y = Math.max(54, y);
+    const clampedX = Math.max(halfW, Math.min(this.w - halfW, x));
+    let stackedY = Math.max(54, y);
+    // Cascade simultaneous / rapid multi-part floaters on the same target cleanly upward (ZERO overlapping text blobs!)
+    for (let k = 0; k < 6; k++) {
+      const collision = this.floaters.some(
+        (f) => f.age < 0.85 && Math.abs(f.obj.x - clampedX) < 92 && Math.abs(f.obj.y - stackedY) < 25
+      );
+      if (!collision || stackedY <= 58) break;
+      stackedY = Math.max(50, stackedY - 29);
+    }
+    banner.x = clampedX;
+    banner.y = stackedY;
     banner.applyHitstopProgress(0);
     this.fxTextLayer.addChild(banner);
     const life = resolvedKind === 'heavy' ? 1.65 : resolvedKind === 'passive' ? 1.55 : resolvedKind === 'status' ? 1.25 : 1.45;
@@ -1133,8 +1343,12 @@ export class GameDirector {
       : (PHASE_NAMES[frame?.phase] || frame?.phase || '');
     if (room?.mode === 'lobby') phaseLabel = room.ready ? '等待另一席准备' : room.bot_side ? '离线人机对战' : '对局准备';
     if (room?.mode === 'lobby' && room.challenge) phaseLabel = `挑战 · ${room.challenge}`;
-    if (room?.paused_by) phaseLabel = room.paused_by === room.side ? '对局已暂停' : '等待对方继续';
-    else if (room?.mode === 'waiting') phaseLabel = room.bot_side ? '电脑正在行动' : '等待当前席位行动';
+    if (room?.paused_by) {
+      const remSec = room.pause_remaining_ms != null ? ` · 思考 ${Math.ceil(room.pause_remaining_ms / 1000)}s` : '';
+      phaseLabel = room.paused_by === room.side ? `对局已暂停${remSec}` : `对方暂停${remSec}`;
+    } else if (room?.mode === 'waiting') {
+      phaseLabel = room.bot_side ? '电脑正在行动' : '等待当前席位行动';
+    }
     this.topBar.sync({
       turn: frame?.turn || 0,
       phaseLabel,
@@ -1144,6 +1358,9 @@ export class GameDirector {
       rosterEnabled: !room || Boolean(room.side && ((!room.started && !room.ready) || room.can_restart || room.can_rematch)),
       muted: this.audio.muted,
       passivesOpen: Boolean(this.passiveDrawer),
+      beatDurationMs: room?.beat_duration_ms || 0,
+      beatRemainingMs: room?.beat_remaining_ms || 0,
+      pauseRemainingMs: room?.pause_remaining_ms ?? null,
     });
     this._syncClashMedallionCenters();
   }
@@ -2125,13 +2342,7 @@ export class GameDirector {
     const frame = this.state.frame;
     if (frame.combat) {
       this._rebuildCombatShowdownStage();
-      if (this._isFieldActionMode()) {
-        this._rebuildHandFan();
-      } else {
-        this.physics.pruneHandCards(new Set());
-        clearContainer(this.handLayer);
-        this.handCardViews.clear();
-      }
+      this._rebuildHandFan();
       this._rebuildActionControls();
       return;
     }
@@ -2181,9 +2392,16 @@ export class GameDirector {
       return;
     }
 
-    // Direct spatial tabletop target highlight during Live Field Action Mode ("场内行动")!
-    if (!this._isFieldActionMode()) return;
-    const { highlights } = this._getFieldActionContext();
+    // Direct spatial tabletop target highlight during Field Action OR Inline Selection/Drag/Ability Arming!
+    const canHighlightSpatial = this._isFieldActionMode()
+      || (this._hasInlineFieldOptions() && Boolean(this.selectedHandCardId || this.activeFieldAbilityKey || this.dragState));
+    if (!canHighlightSpatial) return;
+    const activeCardForHighlight = this.selectedHandCardId || this.dragState?.actKey || null;
+    const analysis = analyzeFieldActions(this._getLiveSpecialOptions());
+    const highlights = resolveFieldHighlights(analysis, {
+      selectedCardId: activeCardForHighlight,
+      activeAbilityKey: this.activeFieldAbilityKey,
+    });
     let optionIdx = null;
     let accent = INK.gold;
     if (position != null) {
@@ -2222,6 +2440,74 @@ export class GameDirector {
       this._pickFieldOption(optionIdx);
     });
     parent.addChild(mark);
+  }
+
+  _computeTabletopInTurnMeta(regDuels = [], combat = null) {
+    const cutInRegularDuels = new Map();
+    const queuedGhosts = [];
+    const frame = this.state?.frame;
+    const viewerSide = frame?.viewer_side ?? this.state?.active_side ?? null;
+    if (!viewerSide) return { cutInRegularDuels, queuedGhosts };
+
+    // 1. Private Pre-Queued Ghosts (from Room `/api/prepare` declarations OR Local mid-roll queue)
+    for (const decl of this.state?.declarations || []) {
+      const mKind = decl?.match?.kind || '';
+      if (mKind !== 'special_place' && mKind !== 'special_replace') continue;
+      const cardId = decl.match?.card_id || '';
+      const duelNum = decl.when?.duel_number ?? this._findFirstEmptyRegularDuel(viewerSide);
+      const roundTag = decl.when?.round_id != null ? `第 ${decl.when.round_id} 轮骰后生效` : '时机到达自动生效';
+      queuedGhosts.push({
+        id: decl.id,
+        source: 'room',
+        duelNumber: duelNum,
+        side: viewerSide,
+        lane: 'front',
+        cardName: this._resolveHandCardName(cardId),
+        modeLabel: roundTag,
+      });
+    }
+    if (this.localQueuedAction && this.localQueuedAction.side === viewerSide) {
+      queuedGhosts.push(this.localQueuedAction);
+    }
+
+    // 2. Cut-In Regular Duel Slot Callouts (when player has legal anytime `place` options)
+    if (this.state?.mode !== 'placement' && (this._isFieldActionMode() || this._hasInlineFieldOptions())) {
+      const { analysis } = this._getFieldActionContext();
+      const candId = this.dragState?.actKey || this.selectedHandCardId || null;
+      const hasAnyPlace = candId
+        ? (analysis.byCardId.get(candId) || []).some((e) => e.kind === 'place')
+        : [...analysis.byCardId.values()].some((list) => list.some((e) => e.kind === 'place'));
+      if (hasAnyPlace) {
+        const firstEmptyNum = this._findFirstEmptyRegularDuel(viewerSide);
+        const targetDuel = regDuels.find((d) => d.number === firstEmptyNum);
+        if (targetDuel) {
+          const oppSide = 3 - viewerSide;
+          const oppDuelSide = (targetDuel.sides || []).find((s) => s.side === oppSide);
+          const oppCards = [...(oppDuelSide?.cards || []), ...(oppDuelSide?.resolved_cards || [])].filter(Boolean);
+          let subLabel = '拖入或点击切入此交锋';
+          if (combat?.kind === 'regular' && combat?.duel_number === firstEmptyNum) {
+            const oppCombat = (combat.sides || []).find((s) => s.side === oppSide);
+            const oppActiveCard = oppCards.find((c) => !c.used && !c.dissolved && !c.skipped) || oppCards[oppCards.length - 1];
+            const totalDice = oppActiveCard?.dice?.length || 0;
+            const curDie = oppCombat?.die_number || oppCombat?.die?.position || 0;
+            const nextDie = this.state?.special_timing === '骰子使用后' || this.sequencer.isRollAnimating
+              ? curDie + 1
+              : Math.max(1, curDie);
+            if (totalDice > 0 && nextDie <= totalDice) {
+              subLabel = `首骰接敌第 ${nextDie} 骰`;
+            } else {
+              subLabel = '即时置入单方面进攻';
+            }
+          }
+          cutInRegularDuels.set(firstEmptyNum, {
+            label: '⊕ 即时置入',
+            subLabel,
+            armed: Boolean(candId),
+          });
+        }
+      }
+    }
+    return { cutInRegularDuels, queuedGhosts };
   }
 
   /**
@@ -2330,12 +2616,13 @@ export class GameDirector {
         ? (this.state.rear_targets?.[rearCandidateId] || [])
         : [],
     );
-    if (rearCandidateId && this._isFieldActionMode()) {
+    if (rearCandidateId && (this._isFieldActionMode() || this._hasInlineFieldOptions())) {
       const { analysis } = this._getFieldActionContext();
       for (const e of analysis.byCardId.get(rearCandidateId) || []) {
         if (e.kind === 'place_rear' && e.opt.duel_number != null) rearSlotTargets.add(e.opt.duel_number);
       }
     }
+    const { cutInRegularDuels, queuedGhosts } = this._computeTabletopInTurnMeta(regDuels, null);
     const canClickIntercept = Boolean(
       this.selectedHandCardId
       && (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
@@ -2357,6 +2644,8 @@ export class GameDirector {
       pendingResponses,
       attackableDuels,
       rearSlotTargets,
+      cutInRegularDuels,
+      queuedGhosts,
       canTapEmptySlot,
       canClickIntercept,
       interceptableNumbers: new Set([...pendingResponses].filter(n => this._canInterceptNumber(this.selectedHandCardId, n))),
@@ -2427,7 +2716,7 @@ export class GameDirector {
     }
 
     const fieldRearSlots = new Set();
-    if (this._isFieldActionMode()) {
+    if (this._isFieldActionMode() || this._hasInlineFieldOptions()) {
       const rearCand = this.dragState?.actKey || this.selectedHandCardId;
       if (rearCand) {
         const { analysis } = this._getFieldActionContext();
@@ -2436,6 +2725,7 @@ export class GameDirector {
         }
       }
     }
+    const { cutInRegularDuels, queuedGhosts } = this._computeTabletopInTurnMeta(frame?.duels || [], combat);
 
     this.tabletop.setLayout({ arenaX, arenaW, stageTop, stageH });
     this.tabletop.setState({
@@ -2450,6 +2740,8 @@ export class GameDirector {
       viewerSide: frame.viewer_side ?? null,
       cardsRevealed: Boolean(frame.cards_revealed),
       rearSlotTargets: fieldRearSlots,
+      cutInRegularDuels,
+      queuedGhosts,
     });
     this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
 
@@ -2758,16 +3050,6 @@ export class GameDirector {
     return out;
   }
 
-  _findFirstEmptyRegularDuel(side) {
-    if (!side || !this.state?.frame) return 1;
-    const duels = this.state.frame.duels || [];
-    for (const d of duels) {
-      const s = (d.sides || []).find((x) => x.side === side);
-      if (!s || !s.cards.length) return d.number;
-    }
-    return duels.length + 1;
-  }
-
   /**
    * Diegetic Fanned Hand Arc (《杀戮尖塔》/《废墟图书馆》/《炉石》物理扇形手牌):
    *  - ZERO opaque full-width bottom dock bar & ZERO horizontal web divider!
@@ -2841,13 +3123,14 @@ export class GameDirector {
     }
 
     const fieldMode = this._isFieldActionMode();
+    const inlineField = !fieldMode && this._hasInlineFieldOptions();
     const stagingPre = this._isPreRevealStagingMode();
     let legalSet;
     let attackSet;
     let interceptSet;
-    if (fieldMode) {
+    if (fieldMode || (inlineField && this.activeFieldAbilityKey)) {
       const { analysis, highlights } = this._getFieldActionContext();
-      legalSet = highlights.handCardKeys;
+      legalSet = new Set(highlights.handCardKeys);
       attackSet = new Set();
       interceptSet = new Set();
       for (const [cid, entries] of analysis.byCardId.entries()) {
@@ -2863,10 +3146,22 @@ export class GameDirector {
       legalSet = new Set(
         this.state.mode === 'placement'
           ? [...(this.state.legal_cards || []), ...(this.state.legal_rear_cards || [])]
-          : [...(this.state.legal_attack_cards || []), ...(this.state.legal_intercept_cards || [])]
+          : (this.state.mode === 'pre_attack' || this.state.mode === 'intercept')
+            ? [...(this.state.legal_attack_cards || []), ...(this.state.legal_intercept_cards || [])]
+            : []
       );
       attackSet = new Set(this.state.legal_attack_cards || []);
       interceptSet = new Set(this.state.legal_intercept_cards || []);
+      if (inlineField) {
+        const { analysis, highlights } = this._getFieldActionContext();
+        for (const cid of highlights.handCardKeys) legalSet.add(cid);
+        if (this.state.mode !== 'pre_attack' && this.state.mode !== 'intercept') {
+          for (const [cid, entries] of analysis.byCardId.entries()) {
+            if (entries.some((e) => e.kind === 'attack')) attackSet.add(cid);
+            if (entries.some((e) => e.kind === 'intercept')) interceptSet.add(cid);
+          }
+        }
+      }
     }
     const charNames = this._charNameMap();
     const multiChar = (player.characters || []).length > 1;
@@ -3180,96 +3475,156 @@ export class GameDirector {
 
     if (this.state.special_available && mode !== 'finished' && mode !== 'draw_select' && mode !== 'special' && mode !== 'special_handoff' && !this.specialMenuOpen) {
       const privateSide = this.state.frame.viewer_side;
-      const pauseLabel = (this.transport.isRoom && !this.state.client_paced)
-        || (this.autoPace && ['timing', 'combat', 'reveal'].includes(mode));
-      buttons.push({ label: pauseLabel ? '暂停并行动' : '场内行动', h: 34, accent: 0x177d6b, solid: true,
-        fn: () => {
-          if (this.transport.isRoom) {
-            this.specialMenuOpen = true;
-            if (this.state.client_paced) {
+      const isOnlineClock = Boolean(this.transport.isRoom && !this.state.client_paced);
+      const bankSec = isOnlineClock && this.state.pause_bank_ms != null
+        ? Math.max(0, Math.ceil(this.state.pause_bank_ms / 1000))
+        : null;
+      const canOpenPause = !isOnlineClock || this.state.is_paused_by_me || Boolean(this.state.can_pause);
+      if (canOpenPause) {
+        const pauseLabel = isOnlineClock || (this.autoPace && ['timing', 'combat', 'reveal'].includes(mode));
+        const btnText = isOnlineClock && !this.state.is_paused_by_me && bankSec != null
+          ? `暂停思考 (${bankSec}s)`
+          : (pauseLabel ? '暂停并行动' : '场内行动');
+        buttons.push({ label: btnText, h: 34, accent: 0x177d6b, solid: !this._hasInlineFieldOptions(),
+          fn: () => {
+            if (this.transport.isRoom) {
+              this.specialMenuOpen = true;
+              if (this.state.client_paced) {
+                this.autoPace = false;
+                this._syncTopBar();
+              }
+              if (this.state.is_paused_by_me) {
+                this._rebuildAll();
+                return;
+              }
+              this._sendAction('open_special');
+              return;
+            }
+            if (['timing', 'combat', 'reveal'].includes(mode)) {
               this.autoPace = false;
               this._syncTopBar();
+              if (this.transport.busy) {
+                this.pendingFieldAction = true;
+                return;
+              }
             }
-            if (this.state.is_paused_by_me) {
-              this._rebuildAll();
-              return;
-            }
-            this._sendAction('open_special');
-            return;
-          }
-          if (['timing', 'combat', 'reveal'].includes(mode)) {
-            this.autoPace = false;
-            this._syncTopBar();
-            if (this.transport.busy) {
-              this.pendingFieldAction = true;
-              return;
-            }
-          }
-          this._sendAction('open_special', privateSide ? { side: privateSide } : {});
-        } });
+            this._sendAction('open_special', privateSide ? { side: privateSide } : {});
+          } });
+      }
     }
 
-    if (!buttons.length) return;
-    const dockX = w - pad - rightDockW;
-    const gap = 8;
-    // Anchor cleanly above P2's bottom-right diegetic deck piles (ZERO overlap!)
-    const pileScale = h < 760 ? 0.84 : 0.94;
-    let cursorBottom = h - Math.round(92 * pileScale);
+    if (!buttons.length) {
+      // Still allow character-anchored stage abilities below even when the right dock has no buttons!
+    } else {
+      const dockX = w - pad - rightDockW;
+      const gap = 8;
+      // Anchor cleanly above P2's bottom-right diegetic deck piles (ZERO overlap!)
+      const pileScale = h < 760 ? 0.84 : 0.94;
+      let cursorBottom = h - Math.round(92 * pileScale);
 
-    for (const b of buttons) {
-      const by = cursorBottom - b.h;
-      const btn = makeSealButton(b.label, {
-        width: rightDockW,
-        height: b.h,
-        accent: b.accent,
-        solid: !!b.solid,
-        fontSize: b.h >= 40 ? 13 : 12.5,
-        radius: 8,
-        onClick: b.fn,
-      });
-      btn.position.set(dockX, by);
-      this.controlsLayer.addChild(btn);
-      cursorBottom = by - gap;
+      for (const b of buttons) {
+        const by = cursorBottom - b.h;
+        const btn = makeSealButton(b.label, {
+          width: rightDockW,
+          height: b.h,
+          accent: b.accent,
+          solid: !!b.solid,
+          fontSize: b.h >= 40 ? 13 : 12.5,
+          radius: 8,
+          onClick: b.fn,
+        });
+        btn.position.set(dockX, by);
+        this.controlsLayer.addChild(btn);
+        cursorBottom = by - gap;
+      }
     }
 
-    // Proactive character-anchored table actions (e.g. 澜清「深秋工作室」 — 1 click opens its PromptDecision!)
-    const tableActions = this.state?.table_actions || [];
-    if (tableActions.length && !this._isFieldActionMode() && !this.state?.effect_choice) {
+    // Proactive character-anchored stage abilities (ALL active abilities — both untargeted & hand/board-targeted!)
+    if (!this._isFieldActionMode() && !this.state?.effect_choice && !['handoff', 'special_handoff', 'draw_select', 'finished', 'lobby'].includes(mode)) {
       const { arenaX, arenaW } = this.layout;
-      const activeSide = this.state.active_side || 1;
-      const seen = new Set();
+      const ownerSide = this.state.frame?.viewer_side ?? this.state.active_side ?? 1;
       const perCharRank = new Map();
-      tableActions.forEach((opt, idx) => {
-        if (opt.effect_target || opt.target_card_id) return;
-        const cid = opt.character_id || '';
-        const key = `${cid}:${opt.ability_id || opt.label}`;
-        if (seen.has(key)) return;
-        seen.add(key);
+      const placeCharacterSigil = ({ cid, title, isArmed = false, onClick }) => {
         const rank = perCharRank.get(cid) || 0;
         perCharRank.set(cid, rank + 1);
-        const title = String(opt.label || '主动能力').split(' · ').slice(-1)[0];
-        const accent = this._resolveCharColor(cid, activeSide);
-        const rect = this.charRects.get(this._characterKey(cid, activeSide));
-        const sigilW = Math.max(108, Math.min(148, title.length * 12 + 32));
+        const accent = isArmed ? 0x7b42b8 : this._resolveCharColor(cid, ownerSide);
+        const rect = this.charRects.get(this._characterKey(cid, ownerSide));
+        const textStr = isArmed ? `✦ 选目标 · ${title}` : `✦ ${title}`;
+        const sigilW = Math.max(108, Math.min(168, textStr.length * 12 + 24));
         const anchorX = rect
-          ? (activeSide === 1 ? Math.min(arenaX - 6, rect.x + rect.w + 4) : Math.max(arenaX + arenaW - sigilW + 6, rect.x - sigilW - 4))
-          : (activeSide === 1 ? arenaX - sigilW - 8 : arenaX + arenaW + 8);
-        const anchorY = rect ? Math.max(58, Math.min(h - 180, rect.y + 8 + rank * 38)) : (120 + rank * 38);
-        const sigil = makeSealButton(`✦ ${title}`, {
+          ? (ownerSide === 1 ? Math.min(arenaX - 6, rect.x + rect.w + 4) : Math.max(arenaX + arenaW - sigilW + 6, rect.x - sigilW - 4))
+          : (ownerSide === 1 ? arenaX - sigilW - 8 : arenaX + arenaW + 8);
+        const anchorY = rect ? Math.max(58, Math.min(h - 180, rect.y + 8 + rank * 36)) : (120 + rank * 36);
+        const sigil = makeSealButton(textStr, {
           width: sigilW,
           height: 30,
           accent,
-          solid: false,
-          fontSize: 12,
+          solid: isArmed,
+          fontSize: 11.8,
           radius: 15,
-          onClick: () => {
-            this.audio.cardPlace();
-            this._sendAction('trigger_table_action', { option: idx });
-          },
+          onClick,
         });
         sigil.position.set(Math.max(12, Math.min(w - sigilW - 12, anchorX)), anchorY);
         this.controlsLayer.addChild(sigil);
-      });
+      };
+
+      if (this._hasInlineFieldOptions()) {
+        const { analysis } = this._getFieldActionContext();
+        const seen = new Set();
+        for (const ab of analysis.selfAbilities) {
+          const cid = ab.characterId || '';
+          const key = `${cid}:${ab.abilityId || ab.label}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const title = String(ab.label || '主动能力').split(' · ').slice(-1)[0];
+          placeCharacterSigil({
+            cid,
+            title,
+            isArmed: false,
+            onClick: () => this._pickFieldOption(ab.idx),
+          });
+        }
+        for (const ab of [...analysis.handAbilities.values(), ...analysis.boardAbilities.values()]) {
+          const cid = ab.characterId || '';
+          if (seen.has(ab.key)) continue;
+          seen.add(ab.key);
+          const title = String(ab.label || '主动能力').split(' · ').slice(-1)[0];
+          const isArmed = this.activeFieldAbilityKey === ab.key;
+          placeCharacterSigil({
+            cid,
+            title,
+            isArmed,
+            onClick: () => {
+              this.audio.cardSlide();
+              this.activeFieldAbilityKey = isArmed ? null : ab.key;
+              this.selectedHandCardId = null;
+              this._rebuildConfrontationWings();
+              this._rebuildDynamicBoard();
+              this._rebuildOverlay();
+            },
+          });
+        }
+      } else {
+        const tableActions = this.state?.table_actions || [];
+        const seen = new Set();
+        tableActions.forEach((opt, idx) => {
+          if (opt.effect_target || opt.target_card_id) return;
+          const cid = opt.character_id || '';
+          const key = `${cid}:${opt.ability_id || opt.label}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          const title = String(opt.label || '主动能力').split(' · ').slice(-1)[0];
+          placeCharacterSigil({
+            cid,
+            title,
+            isArmed: false,
+            onClick: () => {
+              this.audio.cardPlace();
+              this._sendAction('trigger_table_action', { option: idx });
+            },
+          });
+        });
+      }
     }
   }
 
@@ -3575,7 +3930,7 @@ export class GameDirector {
       });
       this._activeOverlayNode = { kind: 'draw_select', node: ov };
       this.overlayLayer.addChild(ov);
-    } else if (this._isFieldActionMode()) {
+    } else if (this._isFieldActionMode() || (this._hasInlineFieldOptions() && this.selectedHandCardId && !['placement', 'pre_attack', 'intercept'].includes(mode))) {
       const { analysis } = this._getFieldActionContext();
       const viewerSide = this.state.frame.viewer_side ?? this.state.active_side;
       let selectedCardAnchor = null;
@@ -3591,6 +3946,7 @@ export class GameDirector {
         selectedCardId: this.selectedHandCardId,
         selectedCardAnchor,
         activeAbilityKey: this.activeFieldAbilityKey,
+        includeAbilities: this._isFieldActionMode(),
         characterAnchor: (charId) => {
           const r = this.charRects.get(this._characterKey(charId, viewerSide));
           if (r) return { x: r.x + r.w / 2, y: r.y };
@@ -3984,16 +4340,62 @@ export class GameDirector {
     const y = e.global.y;
     const actKey = d.actKey || d.card.action_key || d.card.id;
 
-    if (this._isFieldActionMode()) {
+    const isOrdinaryPhase = ['placement', 'pre_attack', 'intercept'].includes(this.state.mode);
+    const hasFieldOpts = this._isFieldActionMode() || this._hasInlineFieldOptions();
+
+    // 0a. Armed hand-targeted character ability: 1-click on highlighted hand card fires immediately in ANY phase!
+    if (!d.moved && this.activeFieldAbilityKey && hasFieldOpts) {
+      const { analysis } = this._getFieldActionContext();
+      if (analysis.handAbilities.has(this.activeFieldAbilityKey)) {
+        const ab = analysis.handAbilities.get(this.activeFieldAbilityKey);
+        const match = ab.options.find((o) => o.targetCardId === actKey);
+        if (match) {
+          this._ignoreNextStageTapUntil = performance.now() + 90;
+          this._pickFieldOption(match.idx);
+          return;
+        }
+      }
+    }
+
+    // 0b. Direct Drag-to-Replace onto ANY valid ally board card (works seamlessly in BOTH inline & field mode!)
+    if (d.moved && hasFieldOpts && this.tabletop?.boardCardRects?.length) {
+      const { analysis } = this._getFieldActionContext();
+      const repEntries = (analysis.byCardId.get(actKey) || []).filter((e) => e.kind === 'replace' && e.opt.effect_target?.zone === 'board');
+      if (repEntries.length > 0) {
+        for (const br of this.tabletop.boardCardRects) {
+          if (x >= br.x - 8 && x <= br.x + br.w + 8 && y >= br.y - 8 && y <= br.y + br.h + 8) {
+            const match = repEntries.find((e) => {
+              const t = e.opt.effect_target;
+              return t.kind === br.kind && t.number === br.number && t.side === br.side
+                && (t.lane || 'front') === br.lane && t.position === br.position;
+            });
+            if (match) {
+              this._pickFieldOption(match.idx);
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    if (this._isFieldActionMode() || (!isOrdinaryPhase && hasFieldOpts)) {
       const { analysis } = this._getFieldActionContext();
       if (!d.moved) {
         this._ignoreNextStageTapUntil = performance.now() + 90;
-        // If an own_hand ability is armed, clicking a highlighted hand card executes it immediately!
-        if (this.activeFieldAbilityKey && analysis.handAbilities.has(this.activeFieldAbilityKey)) {
-          const ab = analysis.handAbilities.get(this.activeFieldAbilityKey);
-          const match = ab.options.find((o) => o.targetCardId === actKey);
-          if (match) {
-            this._pickFieldOption(match.idx);
+        // Double-tap a selected hand card in inline combat/reveal/timing to execute its primary single action!
+        if (!this._isFieldActionMode() && this.selectedHandCardId === actKey) {
+          const entries = analysis.byCardId.get(actKey) || [];
+          const rearEntries = entries.filter((e) => e.kind === 'place_rear');
+          const replaceEntries = entries.filter((e) => e.kind === 'replace');
+          const attackEntries = entries.filter((e) => e.kind === 'attack');
+          const singleDirect = entries.find((e) => e.kind === 'place')
+            || (rearEntries.length === 1 ? rearEntries[0] : null)
+            || (replaceEntries.length === 1 ? replaceEntries[0] : null)
+            || entries.find((e) => e.kind === 'custom')
+            || entries.find((e) => e.kind === 'intercept')
+            || (attackEntries.length === 1 ? attackEntries[0] : null);
+          if (singleDirect && entries.length === 1) {
+            this._pickFieldOption(singleDirect.idx);
             return;
           }
         }
@@ -4005,7 +4407,7 @@ export class GameDirector {
         this._syncSelectedCardIntent();
         return;
       }
-      // Drag-and-drop during Live Field Action Mode!
+      // Drag-and-drop during Live / Inline Field Action!
       const entries = analysis.byCardId.get(actKey) || [];
       // 1. Drop onto enemy fighter -> execute field attack
       for (const r of this.charRects.values()) {
@@ -4039,14 +4441,16 @@ export class GameDirector {
           }
         }
       }
-      // 3. Drop onto open battlefield -> execute single direct place / place_rear / custom / intercept
+      // 3. Drop onto open battlefield / cut-in slot -> execute single direct place / place_rear / custom / intercept / lone replace
       const { battleX, battleW, arenaTop, stageBottom } = this.layout;
       if (x >= battleX - 16 && x <= battleX + battleW + 16 && y >= arenaTop - 24 && y <= stageBottom + 16) {
         const rearEntries = entries.filter((entry) => entry.kind === 'place_rear');
+        const replaceEntries = entries.filter((entry) => entry.kind === 'replace');
         const direct = entries.find((entry) => entry.kind === 'place')
           || (rearEntries.length === 1 ? rearEntries[0] : null)
           || entries.find((entry) => entry.kind === 'custom')
-          || entries.find((entry) => entry.kind === 'intercept');
+          || entries.find((entry) => entry.kind === 'intercept')
+          || (replaceEntries.length === 1 ? replaceEntries[0] : null);
         if (direct) {
           this._pickFieldOption(direct.idx);
           return;
@@ -4386,6 +4790,15 @@ export class GameDirector {
         this._rebuildOverlay();
         return;
       }
+      if (this.selectedHandCardId || this.activeFieldAbilityKey) {
+        this.selectedHandCardId = null;
+        this.activeFieldAbilityKey = null;
+        this._clearCardIntent();
+        this._rebuildConfrontationWings();
+        this._rebuildDynamicBoard();
+        this._rebuildOverlay();
+        return;
+      }
       if (this.activeHeroPanel || this.passiveDrawer) {
         this._closeStageSheets();
       }
@@ -4502,11 +4915,15 @@ export class GameDirector {
       this.worldRoot.position.set(0, 0);
     }
 
-    // 1b. Tick Persistent Spring-Physical Cost HUDs, 2.5D Deck Piles & Living Tabletop at 60fps!
+    // 1b. Tick Persistent Spring-Physical Cost HUDs, 2.5D Deck Piles, Top Bar & Living Tabletop at 60fps!
+    this.topBar?.tick?.(dtSec);
     this.costHuds[1]?.tick(dtSec);
     this.costHuds[2]?.tick(dtSec);
     this.deckPiles[1]?.tick(dtSec);
     this.deckPiles[2]?.tick(dtSec);
+    if (this.localQueuedAction && !this.sequencer.isRollAnimating && !this.transport.busy) {
+      this._flushLocalQueuedAction();
+    }
     if (this.tabletop) {
       this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
       this.tabletop.tick(dtSec);
@@ -4628,6 +5045,29 @@ export class GameDirector {
         label = isNegative
           ? `耗 ${cardCost}${split} → 负费 ${afterVal}`
           : `耗 ${cardCost}${split} → 余 ${afterVal}`;
+      }
+      if (!['placement', 'pre_attack', 'intercept'].includes(this.state?.mode) && this._hasInlineFieldOptions()) {
+        const { analysis } = this._getFieldActionContext();
+        const entries = analysis.byCardId.get(ds.actKey) || [];
+        let hoverReplace = false;
+        for (const br of this.tabletop?.boardCardRects || []) {
+          if (br.side === ds.side && ds.x >= br.x - 8 && ds.x <= br.x + br.w + 8 && ds.y >= br.y - 8 && ds.y <= br.y + br.h + 8) {
+            if (entries.some((e) => e.kind === 'replace' && e.opt.effect_target?.number === br.number && (e.opt.effect_target?.lane || 'front') === br.lane)) {
+              hoverReplace = true;
+              break;
+            }
+          }
+        }
+        if (hoverReplace) {
+          const combat = this.state?.frame?.combat;
+          const myCombatSide = (combat?.sides || []).find((s) => s.side === ds.side);
+          const isBlank = Boolean(combat && !myCombatSide?.die);
+          label += this.sequencer.isRollAnimating
+            ? ' · 松手预约本轮后换卡'
+            : (isBlank ? ' · 空白轮换入' : ' · 换入接下一轮');
+        } else if (entries.some((e) => e.kind === 'place')) {
+          label += this.sequencer.isRollAnimating ? ' · 松手预约本轮后切入' : ' · 即时切入交锋';
+        }
       }
       const sig = `${label}|${isNegative}|${cardCost === 0}`;
       if (sig !== this._dragCostLastSig) {
@@ -4787,8 +5227,10 @@ export class GameDirector {
     }
     if (toastCleared) this._renderToast();
 
-    // 10. Completion-Gated Auto-Pace during resolution (NEVER cuts off dice roll, clash, or strike FX!)
-    if (this.autoPace && this.sequencer.isSettled && !this.sequencer.isRollAnimating && !this.transport.busy
+    // 10. Completion-Gated Auto-Pace during resolution (NEVER cuts off dice roll, clash, strike FX, or active single-player card drag!)
+    const holdLocalInteraction = (!this.transport.isRoom || this.state?.client_paced)
+      && Boolean(this.dragState || this.selectedHandCardId || this.activeFieldAbilityKey || this.localQueuedAction);
+    if (this.autoPace && !holdLocalInteraction && this.sequencer.isSettled && !this.sequencer.isRollAnimating && !this.transport.busy
       && !this.passiveDrawer && !this.rosterModal && !this.codexModal && !this.pileModal) {
       const m = this.state?.mode;
       const autoModes = this.state?.client_paced || this.transport.isRoom

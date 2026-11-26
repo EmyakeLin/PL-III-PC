@@ -162,6 +162,16 @@ const GLYPH_TIPS = {
   replace: '替换场上牌',
 };
 
+const GLYPH_SHORT = {
+  place: '置入',
+  place_rear: '后置',
+  custom: '打出',
+  ability: '能力',
+  intercept: '迎击',
+  attack: '进攻',
+  replace: '换卡',
+};
+
 /** Small hand-drawn glyphs for the round action seals. Drawn around (0,0) within radius r. */
 function drawActionGlyph(g, kind, r, color) {
   const s = r * 0.5;
@@ -226,10 +236,16 @@ function attachTip(node, text, tipLayer, { above = true } = {}) {
   node.on('destroyed', clear);
 }
 
-/** A round brass-rimmed seal with a glyph. */
-function makeSeal(kind, { radius = 17, accent, armed = false, onClick }) {
+/** A round brass-rimmed seal with a glyph and an always-visible concise text plaque. */
+function makeSeal(kind, { radius = 17, accent, armed = false, caption = null, onClick }) {
   const c = new PIXI.Container();
   const g = new PIXI.Graphics();
+  const labelStr = caption !== undefined && caption !== null ? String(caption) : (GLYPH_SHORT[kind] || '');
+  const tagBg = labelStr ? new PIXI.Graphics() : null;
+  const tagTxt = labelStr ? new PIXI.Text({
+    text: labelStr,
+    style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '900', fill: INK.primary },
+  }) : null;
   const draw = (hov) => {
     g.clear();
     g.circle(1, 3, radius).fill({ color: INK.shadow, alpha: 0.35 });
@@ -238,12 +254,25 @@ function makeSeal(kind, { radius = 17, accent, armed = false, onClick }) {
       .stroke({ width: 2, color: accent });
     g.circle(0, 0, radius - 3.5).stroke({ width: 0.9, color: hov || armed ? INK.paper : accent, alpha: 0.45 });
     drawActionGlyph(g, kind, radius, hov || armed ? INK.paper : accent);
+    if (tagBg && tagTxt) {
+      tagTxt.style.fill = hov || armed ? INK.paper : INK.primary;
+      const pw = Math.max(30, Math.ceil(tagTxt.width) + 10);
+      const ph = 15;
+      const py = radius + 6;
+      tagBg.clear();
+      tagBg.roundRect(-pw / 2, py - ph / 2, pw, ph, 5)
+        .fill({ color: hov || armed ? accent : INK.paper, alpha: 0.96 })
+        .stroke({ width: 1.1, color: accent, alpha: 0.9 });
+      tagTxt.anchor.set(0.5);
+      tagTxt.position.set(0, py + 0.5);
+    }
   };
   draw(false);
   c.addChild(g);
+  if (tagBg && tagTxt) c.addChild(tagBg, tagTxt);
   c.eventMode = 'static';
   c.cursor = 'pointer';
-  c.hitArea = new PIXI.Circle(0, 0, radius + 2);
+  c.hitArea = new PIXI.Circle(0, 0, radius + 6);
   c.on('pointerover', () => draw(true));
   c.on('pointerout', () => draw(false));
   c.on('pointertap', (e) => {
@@ -266,6 +295,7 @@ export function buildFieldActionLayer({
   selectedCardId = null,
   selectedCardAnchor = null, // { x, y } top-centre of the lifted card
   activeAbilityKey = null,
+  includeAbilities = true,
   characterAnchor,           // (characterId) => { x, y } top-centre above the actor, or null
   onPickOption,
   onArmAbility,
@@ -276,33 +306,42 @@ export function buildFieldActionLayer({
   root.addChild(sealLayer, tipLayer);
 
   // 1. Ability sigils above their owners
-  const byChar = new Map();
-  const pushAbility = (characterId, entry) => {
-    const k = characterId || '';
-    if (!byChar.has(k)) byChar.set(k, []);
-    byChar.get(k).push(entry);
-  };
-  for (const ab of analysis.selfAbilities) {
-    pushAbility(ab.characterId, { label: ab.label, armed: false, onClick: () => onPickOption(ab.idx) });
-  }
-  for (const ab of [...analysis.boardAbilities.values(), ...analysis.handAbilities.values()]) {
-    const armed = activeAbilityKey === ab.key;
-    pushAbility(ab.characterId, { label: ab.label, armed, onClick: () => onArmAbility(armed ? null : ab.key) });
-  }
-  let fallbackX = 0;
-  for (const [charId, list] of byChar) {
-    const anchor = characterAnchor?.(charId) || null;
-    const r = 15;
-    const gap = 8;
-    const total = list.length * r * 2 + (list.length - 1) * gap;
-    const baseX = anchor ? anchor.x - total / 2 + r : 80 + (fallbackX += total + 20);
-    const y = anchor ? anchor.y - r - 6 : 120;
-    list.forEach((entry, i) => {
-      const seal = makeSeal('ability', { radius: r, accent: ACTION_COLOR.ability, armed: entry.armed, onClick: entry.onClick });
-      seal.position.set(baseX + i * (r * 2 + gap), y);
-      attachTip(seal, entry.label, tipLayer);
-      sealLayer.addChild(seal);
-    });
+  if (includeAbilities) {
+    const byChar = new Map();
+    const pushAbility = (characterId, entry) => {
+      const k = characterId || '';
+      if (!byChar.has(k)) byChar.set(k, []);
+      byChar.get(k).push(entry);
+    };
+    for (const ab of analysis.selfAbilities) {
+      pushAbility(ab.characterId, { label: ab.label, armed: false, onClick: () => onPickOption(ab.idx) });
+    }
+    for (const ab of [...analysis.boardAbilities.values(), ...analysis.handAbilities.values()]) {
+      const armed = activeAbilityKey === ab.key;
+      pushAbility(ab.characterId, { label: ab.label, armed, onClick: () => onArmAbility(armed ? null : ab.key) });
+    }
+    let fallbackX = 0;
+    for (const [charId, list] of byChar) {
+      const anchor = characterAnchor?.(charId) || null;
+      const r = 15;
+      const gap = 16;
+      const total = list.length * r * 2 + (list.length - 1) * gap;
+      const baseX = anchor ? anchor.x - total / 2 + r : 80 + (fallbackX += total + 20);
+      const y = anchor ? anchor.y - r - 12 : 120;
+      list.forEach((entry, i) => {
+        const shortName = String(entry.label || '能力').split(' · ').slice(-1)[0].slice(0, 5);
+        const seal = makeSeal('ability', {
+          radius: r,
+          accent: ACTION_COLOR.ability,
+          armed: entry.armed,
+          caption: shortName,
+          onClick: entry.onClick,
+        });
+        seal.position.set(baseX + i * (r * 2 + gap), y);
+        attachTip(seal, entry.label, tipLayer);
+        sealLayer.addChild(seal);
+      });
+    }
   }
 
   // 2. Arc of seals above the selected card
@@ -312,32 +351,48 @@ export function buildFieldActionLayer({
     for (const entry of entries) {
       const o = entry.opt;
       if (entry.kind === 'place') {
-        seals.push({ kind: 'place', tip: `${GLYPH_TIPS.place}${o.duel_number != null ? ` ${o.duel_number}` : ''}`, idx: entry.idx });
+        seals.push({
+          kind: 'place',
+          caption: o.duel_number != null ? `置入${o.duel_number}` : GLYPH_SHORT.place,
+          tip: `${GLYPH_TIPS.place}${o.duel_number != null ? ` ${o.duel_number}` : ''}`,
+          idx: entry.idx,
+        });
       } else if (entry.kind === 'place_rear') {
-        seals.push({ kind: 'place_rear', tip: `${GLYPH_TIPS.place_rear}${o.duel_number != null ? ` ${o.duel_number}` : ''}`, idx: entry.idx });
+        seals.push({
+          kind: 'place_rear',
+          caption: o.duel_number != null ? `后置${o.duel_number}` : GLYPH_SHORT.place_rear,
+          tip: `${GLYPH_TIPS.place_rear}${o.duel_number != null ? ` ${o.duel_number}` : ''}`,
+          idx: entry.idx,
+        });
       } else if (entry.kind === 'custom') {
-        seals.push({ kind: 'custom', tip: o.label || GLYPH_TIPS.custom, idx: entry.idx });
+        seals.push({ kind: 'custom', caption: GLYPH_SHORT.custom, tip: o.label || GLYPH_TIPS.custom, idx: entry.idx });
       } else if (entry.kind === 'ability') {
-        seals.push({ kind: 'ability', tip: entry.abilityLabel || GLYPH_TIPS.ability, idx: entry.idx });
+        const shortAb = String(entry.abilityLabel || '').split(' · ').slice(-1)[0].slice(0, 4) || GLYPH_SHORT.ability;
+        seals.push({ kind: 'ability', caption: shortAb, tip: entry.abilityLabel || GLYPH_TIPS.ability, idx: entry.idx });
       } else if (entry.kind === 'intercept') {
-        seals.push({ kind: 'intercept', tip: o.label || GLYPH_TIPS.intercept, idx: entry.idx });
+        seals.push({ kind: 'intercept', caption: GLYPH_SHORT.intercept, tip: o.label || GLYPH_TIPS.intercept, idx: entry.idx });
       }
     }
     // A lone attack / replace target gets a seal too; several targets are picked on the battlefield itself.
     const attacks = entries.filter((e) => e.kind === 'attack');
-    if (attacks.length === 1) seals.push({ kind: 'attack', tip: attacks[0].opt.label || GLYPH_TIPS.attack, idx: attacks[0].idx });
+    if (attacks.length === 1) seals.push({ kind: 'attack', caption: GLYPH_SHORT.attack, tip: attacks[0].opt.label || GLYPH_TIPS.attack, idx: attacks[0].idx });
     const replaces = entries.filter((e) => e.kind === 'replace');
-    if (replaces.length === 1) seals.push({ kind: 'replace', tip: replaces[0].opt.label || GLYPH_TIPS.replace, idx: replaces[0].idx });
+    if (replaces.length === 1) seals.push({ kind: 'replace', caption: GLYPH_SHORT.replace, tip: replaces[0].opt.label || GLYPH_TIPS.replace, idx: replaces[0].idx });
 
     const r = 19;
     const n = seals.length;
-    const spreadAngle = Math.min(Math.PI * 0.75, 0.42 * Math.max(0, n - 1));
-    const arcR = 64 + Math.max(0, n - 3) * 10;
+    const spreadAngle = Math.min(Math.PI * 0.78, 0.50 * Math.max(0, n - 1));
+    const arcR = 72 + Math.max(0, n - 3) * 12;
     const cx = selectedCardAnchor.x;
-    const cy = selectedCardAnchor.y + arcR - 18;
+    const cy = selectedCardAnchor.y + arcR - 22;
     seals.forEach((s, i) => {
       const a = -Math.PI / 2 + (n > 1 ? -spreadAngle / 2 + (spreadAngle * i) / (n - 1) : 0);
-      const seal = makeSeal(s.kind, { radius: r, accent: ACTION_COLOR[s.kind] || INK.gold, onClick: () => onPickOption(s.idx) });
+      const seal = makeSeal(s.kind, {
+        radius: r,
+        accent: ACTION_COLOR[s.kind] || INK.gold,
+        caption: s.caption,
+        onClick: () => onPickOption(s.idx),
+      });
       seal.position.set(cx + Math.cos(a) * arcR, cy + Math.sin(a) * arcR);
       attachTip(seal, s.tip, tipLayer);
       sealLayer.addChild(seal);

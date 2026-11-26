@@ -63,8 +63,9 @@ export function normalizeBeatEvents(rawEvents) {
       })
     : events;
 
-  // 2. Ensure every combat_strike plays BEFORE the damage/lightcore/death consequences
-  //    from that same hit (kernel emits damage at logic_dice_hit before match.py emits combat_strike at after_dice_hit).
+  // 2. Ensure every combat_strike plays BEFORE the direct impact consequences
+  //    (damage/lightcore/death) of that same hit, WITHOUT ever pushing pre-hit events
+  //    (cost_pay, on_skill_use shield/status/passive, card_pull, cards_reveal) behind combat_strike!
   const out = [];
   let pendingConsequences = [];
   const flushConsequences = () => {
@@ -74,17 +75,14 @@ export function normalizeBeatEvents(rawEvents) {
     }
   };
   for (const ev of coalesced) {
-    if (ev.kind === 'dice_roll' || ev.kind === 'dice_clash' || ev.kind === 'speed_roll') {
-      flushConsequences();
-      out.push(ev);
-    } else if (ev.kind === 'combat_strike') {
+    if (ev.kind === 'combat_strike') {
       out.push(ev);
       flushConsequences();
     } else if (IMPACT_CONSEQUENCE_KINDS.has(ev.kind)) {
       pendingConsequences.push(ev);
     } else {
-      // Non-consequence event (e.g., passive/status) stays attached after strike if a strike follows in this batch.
-      pendingConsequences.push(ev);
+      flushConsequences();
+      out.push(ev);
     }
   }
   flushConsequences();
@@ -184,12 +182,56 @@ export class TimelineSequencer {
    */
   prepareBeat({ prevState, nextState, isInitial = false, matchChanged = false, characterKeyFn }) {
     if (matchChanged) this.resetMatch();
+
+    const prevTurn = prevState?.frame?.turn;
+    const nextTurn = nextState?.frame?.turn;
+    const prevCombat = prevState?.frame?.combat;
+    const nextCombat = nextState?.frame?.combat;
+    const isCombat = Boolean(nextCombat);
+    const combatRoundChanged = Boolean(
+      prevCombat && (!nextCombat
+        || prevCombat.kind !== nextCombat.kind
+        || prevCombat.duel_number !== nextCombat.duel_number
+        || prevCombat.round_id !== nextCombat.round_id)
+    );
+
+    // Detect mid-round card withdrawal / blank-round replacement so its 3D die retires immediately!
+    const withdrawnLanes = [];
+    if (!isInitial && !matchChanged && prevCombat && nextCombat && !combatRoundChanged) {
+      for (const sideNum of [1, 2]) {
+        const ps = (prevCombat.sides || []).find((s) => s.side === sideNum);
+        const ns = (nextCombat.sides || []).find((s) => s.side === sideNum);
+        const pFront = ps?.card_instance_id ?? ps?.card_id ?? null;
+        const nFront = ns?.card_instance_id ?? ns?.card_id ?? null;
+        if (pFront != null && pFront !== nFront) withdrawnLanes.push({ side: sideNum, lane: 'front' });
+        const pRear = ps?.rear?.card_instance_id ?? ps?.rear?.card_id ?? null;
+        const nRear = ns?.rear?.card_instance_id ?? ns?.rear?.card_id ?? null;
+        if (pRear != null && pRear !== nRear) withdrawnLanes.push({ side: sideNum, lane: 'rear' });
+      }
+    }
+
+    const events = nextState?.fx_events || [];
+    let rawFresh = [];
+    if (!isInitial) {
+      rawFresh = events.filter((e) => e.seq > this.lastFxSeq);
+      if (events.length) {
+        const tailSeq = events[events.length - 1].seq;
+        if (tailSeq > this.lastFxSeq) this.lastFxSeq = tailSeq;
+      }
+    }
+    const fresh = isInitial ? [] : normalizeBeatEvents(rawFresh);
+
+    // Same-round non-withdrawing refresh guard (e.g. pausing, queuing pre-declarations, or setting default target):
+    // preserve in-flight roll animations, timers, score concealment, and deferred HP overrides!
+    if (!isInitial && !matchChanged && prevTurn === nextTurn && !combatRoundChanged
+        && withdrawnLanes.length === 0 && fresh.length === 0 && !this.isSettled) {
+      return { gen: this.beatGen, keepRunning: true, isInitial: false, initialSpeed: null, initialPassives: [], fresh: [], nextTurn };
+    }
+
     this._clearTimers();
     this.beatGen += 1;
     const gen = this.beatGen;
 
-    const prevTurn = prevState?.frame?.turn;
-    const nextTurn = nextState?.frame?.turn;
     if (isInitial || matchChanged || prevTurn !== nextTurn) {
       this.revealedRollKeys.clear();
     }
@@ -200,9 +242,6 @@ export class TimelineSequencer {
     this.deferredHpOverrides.clear();
     this.deferredLightcoreOverrides.clear();
 
-    const events = nextState?.fx_events || [];
-    const isCombat = Boolean(nextState?.frame?.combat);
-    let fresh = [];
     let initialSpeed = null;
     let initialPassives = [];
 
@@ -234,27 +273,17 @@ export class TimelineSequencer {
         }
       }
     } else {
-      const rawFresh = events.filter((e) => e.seq > this.lastFxSeq);
-      if (events.length) {
-        const tailSeq = events[events.length - 1].seq;
-        if (tailSeq > this.lastFxSeq) this.lastFxSeq = tailSeq;
-      }
-      fresh = normalizeBeatEvents(rawFresh);
-
-      // Clear any leftover 3D dice / physics clash bodies from earlier beats when transitioning
-      // to a new combat beat, leaving combat, or rolling fresh dice.
-      const prevCombat = prevState?.frame?.combat;
-      const nextCombat = nextState?.frame?.combat;
-      const combatRoundChanged = Boolean(
-        prevCombat && (!nextCombat
-          || prevCombat.kind !== nextCombat.kind
-          || prevCombat.duel_number !== nextCombat.duel_number
-          || prevCombat.round_id !== nextCombat.round_id)
-      );
-      // Never forcibly delete live 3D dice before they finish fading out naturally!
-      // Only clear Matter.js clash physics groups when transitioning rounds.
-      if (combatRoundChanged || (!isCombat && prevState?.frame?.combat)) {
+      if (withdrawnLanes.length > 0) {
         this.hooks.clearClashGroups?.();
+        for (const w of withdrawnLanes) {
+          this.hooks.retireSideDice?.(w.side, w.lane);
+        }
+      } else if (combatRoundChanged || (!isCombat && prevCombat)) {
+        this.hooks.clearClashGroups?.();
+        const nextRoundKey = nextCombat
+          ? `${nextTurn || 0}:${nextCombat.kind || ''}:${nextCombat.duel_number || 0}:${nextCombat.round_id || 0}`
+          : null;
+        this.hooks.retireStaleDice?.(nextRoundKey);
       }
 
       if (fresh.some((e) => e.kind === 'speed_roll')) {
@@ -320,7 +349,7 @@ export class TimelineSequencer {
   }
 
   playBeat(plan) {
-    if (!plan || this.beatGen !== plan.gen) return;
+    if (!plan || plan.keepRunning || this.beatGen !== plan.gen) return;
     const { gen, isInitial, initialSpeed, initialPassives, fresh, nextTurn } = plan;
 
     if (isInitial) {
@@ -410,14 +439,15 @@ export class TimelineSequencer {
     //    Step B: Physical Matter.js collision -> stamp win/lose + trigger winner stance!
     //    Step C: Release deferred vitals & play post-clash consequences!
     if (ev.kind === 'dice_clash') {
+      const roundKey = `${ev.turn ?? nextTurn ?? 0}:${ev.duel_kind || ''}:${ev.duel_number || 0}:${ev.round_id || 0}`;
+      this.hooks.retireStaleDice?.(roundKey);
       const rollKeys = (ev.sides || [])
         .filter((sd) => !sd.skipped && sd.rolled_value != null)
         .map((sd) => combatRollKey(
           ev.turn ?? nextTurn, ev.duel_kind, ev.duel_number, ev.round_id, sd.side, sd.die_number ?? sd.position, sd.lane || 'front'
         ));
       const needsNumberReveal = rollKeys.some((k) => this.pendingCombatRollKeys.has(k));
-      // If launching a brand-new clash while earlier dice are still fading out, block queue until they clear!
-      if (needsNumberReveal && this.hooks.hasActiveDice?.()) {
+      if (needsNumberReveal && !this.hooks.retireStaleDice && this.hooks.hasActiveDice?.()) {
         this._setActiveRollKind('dice_clash');
         this.hooks.waitUntilDiceCleared?.(() => {
           if (this.beatGen === gen) this._runQueue(gen, queue, index, nextTurn);
@@ -442,7 +472,7 @@ export class TimelineSequencer {
         }
         this._setActiveRollKind(null);
         this.hooks.onCombatMedallionsChanged?.();
-        this._later(gen, 120, () => this._runQueue(gen, queue, index + 1, nextTurn));
+        this._later(gen, 90, () => this._runQueue(gen, queue, index + 1, nextTurn));
       };
 
       this.hooks.clearClashGroups?.();
@@ -455,11 +485,11 @@ export class TimelineSequencer {
     }
 
     // 3. Solo / early combat die roll:
-    //    Step A: Launch 3D die -> 0.26s reveal rolled value on medallion (blocks backend until done!)
-    //    Step B: Continue to remaining beat effects or settle cleanly!
+    //    Retires any earlier round's lingering dice in 0.16s (ZERO dead-air freeze!) and launches immediately!
     if (ev.kind === 'dice_roll') {
-      // Strictly block queue until any previous round's dice finish fading out naturally!
-      if (this.hooks.hasActiveDice?.()) {
+      const roundKey = `${ev.turn ?? nextTurn ?? 0}:${ev.duel_kind || ''}:${ev.duel_number || 0}:${ev.round_id || 0}`;
+      this.hooks.retireStaleDice?.(roundKey);
+      if (!this.hooks.retireStaleDice && this.hooks.hasActiveDice?.()) {
         this._setActiveRollKind('dice_roll');
         this.hooks.waitUntilDiceCleared?.(() => {
           if (this.beatGen === gen) this._runQueue(gen, queue, index, nextTurn);
@@ -488,11 +518,12 @@ export class TimelineSequencer {
       return;
     }
 
-    // 4. Attack strike: plays slash / pierce / blunt / custom strike FX FIRST,
-    //    then releases deferred HP & Lightcore bars right as impact lands!
+    // 4. Attack strike: plays windup trajectory at t = 0, then releases deferred HP/Lightcore bars
+    //    and triggers hit consequences at the exact contact arrival frame (`impactMs`)!
     if (ev.kind === 'combat_strike') {
-      this.hooks.playFx?.(ev, { silent: false });
-      this._later(gen, 130, () => {
+      const fxTiming = this.hooks.playFx?.(ev, { silent: false }) || {};
+      const impactMs = Math.max(40, Math.min(650, Number(fxTiming.impactMs) || 95));
+      this._later(gen, impactMs, () => {
         if (this.beatGen !== gen) return;
         if (this.deferredHpOverrides.size || this.deferredLightcoreOverrides.size) {
           this.deferredHpOverrides.clear();

@@ -33,6 +33,27 @@ class TableBridge:
         self.flush()
         self._append(kind, **payload)
 
+    def mark(self):
+        """Flush settled facts and return the current monotonic event sequence."""
+        self.flush()
+        return self._sequence
+
+    def emit_at(self, after_seq, kind, **payload):
+        """Insert a presentation event right after `after_seq`, preserving monotonic `seq`."""
+        self.flush()
+        if after_seq is None or after_seq >= self._sequence:
+            self._append(kind, **payload)
+            return
+        items = list(self._events)
+        insert_idx = next((i for i, ev in enumerate(items) if ev["seq"] > after_seq), len(items))
+        self._sequence += 1
+        inserted_seq = items[insert_idx]["seq"] if insert_idx < len(items) else self._sequence
+        items.insert(insert_idx, {"seq": inserted_seq, "kind": kind, "turn": self._turn, **payload})
+        for idx in range(insert_idx + 1, len(items)):
+            items[idx]["seq"] += 1
+        self._events.clear()
+        self._events.extend(items)
+
     def flush(self):
         while self._pending:
             self._project(*self._pending.popleft())

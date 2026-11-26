@@ -160,7 +160,7 @@ class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
     def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False, extra_packs=(),
-                 full_history=False):
+                 full_history=False, viewer_side=None):
         pool = {spec["id"]: spec for spec in load_characters_from_packs(extra_packs=extra_packs)}
         teams = _normalize_roster(roster, pool, open_rosters=open_rosters)
         self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
@@ -197,6 +197,7 @@ class BattleMatch:
                         for assets in (self._character_colors, self._character_sprites, self._character_fx):
                             if key in assets:
                                 assets[character.id] = assets[key]
+        self.viewer_side = viewer_side if viewer_side in (1, 2) else None
         self._views = {side: Displayer(self.game, viewer_side=side) for side in (None, 1, 2)}
         self._history = deque(maxlen=None if full_history else 100)
         self._require_handoff = initial_handoff
@@ -209,6 +210,7 @@ class BattleMatch:
         self._special_seat = None
         self._interrupt_returns = []
         self._emitted_dice_rolls = set()
+        self._hit_marks = {}
         self._temporary_clashes = {}
         self.game.pipeline.pause_on_clash_scores = True
         self._timing = ""
@@ -298,6 +300,7 @@ class BattleMatch:
         mode = self.mode
         seats = special_seats(self.game)
         special_options = []
+        inline_special_options = []
         if self._special_open:
             deciding = self._special_seat is not None
             mode = "special" if deciding else "special_handoff"
@@ -306,7 +309,12 @@ class BattleMatch:
             legal_cards, attacks, intercepts = [], [], []
             if deciding:
                 special_options = self._views[side].special_actions()
-        frame = self._views[side if deciding else None].snapshot()
+            view_side = side if deciding else None
+        else:
+            view_side = side if deciding else self.viewer_side
+            if self.mode != "draw_select" and view_side in (1, 2):
+                inline_special_options = self._views[view_side].special_actions()
+        frame = self._views[view_side].snapshot()
         for (kind, number, seat, card), settled in self._temporary_clashes.items():
             if not card.destroyed:
                 continue
@@ -362,12 +370,17 @@ class BattleMatch:
             },
         }
         table_actions = []
-        if deciding and player is not None and not self._special_open and self.mode in ("placement", "pre_attack", "intercept"):
-            table_actions = [seat_action_view(a, player) for a in self.game.special.ability_options(player)]
+        if not self._special_open and self.mode != "draw_select":
+            table_player = player if (deciding and player is not None and self.mode in ("placement", "pre_attack", "intercept")) else (
+                self._choose_seat(self.viewer_side, self.game.players) if self.viewer_side in (1, 2) else None
+            )
+            if table_player is not None:
+                table_actions = [seat_action_view(a, table_player) for a in self.game.special.ability_options(table_player)]
         return {
-            "mode": mode, "revision": self.revision, "active_side": side,
+            "mode": mode, "revision": self.revision, "active_side": side if side is not None else self.viewer_side,
             "special_available": bool(seats) and self.mode != "draw_select",
             "special_options": special_options,
+            "inline_special_options": inline_special_options,
             "table_actions": table_actions,
             "special_pending": self.game.special.pending_attack is not None or self.game.special.decision_owner is not None,
             "card_choice": (
@@ -428,14 +441,31 @@ class BattleMatch:
             self._special_action(action, side, option)
         elif action == "open_special" and special_seats(self.game) and self.mode != "draw_select":
             viewer = None
-            if side is not None:
+            target_side = side if side is not None else self.viewer_side
+            if target_side is not None:
                 private = self.game.placing if self.mode == "placement" else (
                     self._pre_seat if self.mode in ("pre_attack", "intercept") else None)
-                if private is None or private not in special_seats(self.game):
+                if private is not None:
+                    if private not in special_seats(self.game):
+                        raise ValueError("请先由行动方接手。")
+                    viewer = self._choose_seat(target_side, [private])
+                elif self.viewer_side is not None and target_side == self.viewer_side:
+                    viewer = self._choose_seat(target_side, special_seats(self.game))
+                else:
                     raise ValueError("请先由行动方接手。")
-                viewer = self._choose_seat(side, [private])
             self._special_open = True
             self._special_seat = viewer
+        elif action == "use_special" and special_seats(self.game) and self.mode != "draw_select":
+            actor_player = (
+                self.game.placing if self.mode == "placement" else
+                self._pre_seat if self.mode in ("pre_attack", "intercept") else
+                self._choose_seat(side if side is not None else self.viewer_side, special_seats(self.game))
+                if (side is not None or self.viewer_side is not None) else None
+            )
+            if actor_player is None:
+                raise ValueError("请先由行动方接手。")
+            self._special_seat = actor_player
+            self._special_action("use_special", actor_player.side, option)
         elif self.mode == "handoff" and action == "ready":
             if self._draw_seat is not None:
                 if side is not None:
@@ -457,8 +487,13 @@ class BattleMatch:
             self._place_action(action, card_id, duel_number=duel_number)
         elif self.mode == "placement" and action in ("claim_pre_reveal", "stage_pre_reveal", "unstage_pre_reveal"):
             self._pre_reveal_plan_action(action, self.game.placing, card_id, target)
-        elif self.mode in ("placement", "pre_attack", "intercept") and action == "trigger_table_action":
-            actor_player = self.game.placing if self.mode == "placement" else self._pre_seat
+        elif self.mode != "draw_select" and action == "trigger_table_action":
+            actor_player = (
+                self.game.placing if self.mode == "placement" else
+                self._pre_seat if self.mode in ("pre_attack", "intercept") else
+                self._choose_seat(side if side is not None else self.viewer_side, self.game.players)
+                if (side is not None or self.viewer_side is not None) else None
+            )
             self._trigger_table_action(actor_player, option)
         elif self.mode in ("pre_attack", "intercept"):
             if action == "switch_side":
@@ -478,7 +513,7 @@ class BattleMatch:
         owner = self.game.special.decision_owner
         if owner is not None and not self._special_open:
             self._special_open = True
-            self._special_seat = owner if action == "trigger_table_action" else None
+            self._special_seat = owner if (action in ("trigger_table_action", "use_special") or self.viewer_side == owner.side) else None
         self.revision += 1
         return self.snapshot()
 
@@ -958,8 +993,9 @@ class BattleMatch:
             if game.is_over:
                 break
             if game.special.decision_owner is not None:
+                owner = game.special.decision_owner
                 self._special_open = True
-                self._special_seat = None
+                self._special_seat = owner if self.viewer_side == owner.side else None
                 self._timing = (
                     "选择角色" if game.special.character_decision
                     else "选择技能" if game.special.card_decision
@@ -984,6 +1020,7 @@ class BattleMatch:
             self._timing = timing_label(node)
             if node == "before_turn_start":
                 self._temporary_clashes.clear()
+                self._hit_marks.clear()
             if node == "logic_draw_cards" and game.pending_draw:
                 self._draw_seat = game.pending_draw.player
                 self.mode = "handoff" if self._require_handoff else "draw_select"
@@ -1031,7 +1068,11 @@ class BattleMatch:
         self._finish()
 
     def _pause_at_timing(self):
-        return bool(special_seats(self.game))
+        if not special_seats(self.game):
+            return False
+        if self.viewer_side is not None:
+            return self._timing in ("拼点点数已确定，尚未判胜负", "技能使用前，可换卡", "交锋开始前")
+        return True
 
     def _roll_key(self, combat, side_num, die_number, lane="front"):
         return (self.game.turn_number, combat["kind"], combat["duel_number"], combat["round_id"], side_num, lane, die_number)
@@ -1093,6 +1134,13 @@ class BattleMatch:
         # Roll-first gate: pause strictly AFTER rolling and BEFORE clash resolution or hit damage!
         if "logic_dice_clash" in all_nodes or "before_dice_hit" in all_nodes:
             rolled = self._emit_unannounced_rolls(combat)
+            if "before_dice_hit" in all_nodes:
+                hit_mark = self.presentation.mark()
+                for fallback_node, player in zip(nodes, game.players):
+                    if lane_nodes.get((player.side, "front"), fallback_node) == "before_dice_hit":
+                        self._hit_marks[(player.side, "front")] = hit_mark
+                    if lane_nodes.get((player.side, "rear")) == "before_dice_hit":
+                        self._hit_marks[(player.side, "rear")] = hit_mark
             if rolled:
                 prefix = {"pre_reveal": "开牌前交锋", "regular": "常规交锋", "instant": "即时交锋"}[combat["kind"]]
                 roll_summary = " · ".join(
@@ -1106,7 +1154,11 @@ class BattleMatch:
                 return False
         actions = []
         scores = []
-        pause = "logic_skill_use" in all_nodes and bool(combat["suspended"])
+        unopposed_skill_entry = (
+            "logic_skill_use" in all_nodes
+            and sum(1 for s in combat["sides"] if s.get("card_id")) == 1
+        )
+        pause = "logic_skill_use" in all_nodes and (bool(combat["suspended"]) or unopposed_skill_entry)
         early = combat["kind"] == "pre_reveal"
         if early and "logic_duel_start" in all_nodes:
             slot = game.pre_reveal.space.space[combat["duel_number"] - 1]
@@ -1189,6 +1241,7 @@ class BattleMatch:
                     pause = True
                 elif node == "after_dice_hit" and die:
                     self._emit_unannounced_rolls(combat, sides_filter={player.side})
+                    mark_seq = self._hit_marks.pop((player.side, lane), None)
                     target = pipe.target or next((c for c in next(
                         p for p in game.players if p is not player).characters if c.is_alive), None)
                     attack = "单方面攻击" if die["result"] is None else "进攻"
@@ -1197,7 +1250,8 @@ class BattleMatch:
                             f"{character.combat_name}{lane_tag}{attack}，{target.combat_name}生命 {target.hp}/{target.max_hp}，"
                             f"完整度 {target.lightcore_hp}/{target.max_lightcore_hp}"
                         )
-                        self.presentation.emit(
+                        self.presentation.emit_at(
+                            mark_seq,
                             "combat_strike",
                             attacker_side=player.side,
                             lane=lane,

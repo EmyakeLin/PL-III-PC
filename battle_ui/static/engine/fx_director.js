@@ -143,7 +143,45 @@ export class FxDirector {
   }
 
   /**
-   * Execute a validated FX recipe (returns true if custom FX ran so caller can skip default fallback).
+   * Estimate exact first-contact `impactMs` and total `durationMs` from a declarative FX recipe
+   * so defender recoil, hitFlash, and HP/Lightcore bar drops align with projectile/blade arrival!
+   */
+  estimateRecipeTiming(recipe) {
+    if (!recipe || typeof recipe !== 'object') return { impactMs: 90, durationMs: 220 };
+    const atoms = Array.isArray(recipe.vfx) ? recipe.vfx : [];
+    let firstContact = Infinity;
+    let maxEnd = 180;
+    for (const atom of atoms) {
+      const delay = Math.max(0, Number(atom.delay_ms) || 0);
+      const count = Math.max(1, Math.min(6, atom.primitive === 'sparks' || atom.primitive === 'shards' ? 1 : (atom.count || 1)));
+      const stagger = Math.max(0, Number(atom.stagger_ms) || 90);
+      let contactOffset = 75;
+      let atomDur = Number(atom.duration_ms) || 320;
+      if (atom.primitive === 'pierce_lance') {
+        contactOffset = 135;
+        atomDur = 360;
+      } else if (atom.primitive === 'beam') {
+        const dur = Math.max(120, Math.min(1400, Number(atom.duration_ms) || 440));
+        contactOffset = Math.round(dur * 0.78);
+        atomDur = dur;
+      } else if (atom.primitive === 'slash_arc') {
+        contactOffset = 85;
+        atomDur = 400;
+      } else if (atom.primitive === 'ground_shockwave') {
+        contactOffset = 70;
+        atomDur = 380;
+      }
+      if (atom.to !== 'attacker.center' && atom.primitive !== 'shield_dome') {
+        firstContact = Math.min(firstContact, delay + contactOffset);
+      }
+      maxEnd = Math.max(maxEnd, delay + (count - 1) * stagger + atomDur);
+    }
+    const impactMs = Number.isFinite(firstContact) ? Math.max(35, Math.min(650, firstContact)) : 90;
+    return { impactMs, durationMs: Math.max(impactMs + 80, maxEnd) };
+  }
+
+  /**
+   * Execute a validated FX recipe (returns `{ ran: true, impactMs, durationMs }` if custom FX ran, else `false`).
    */
   playRecipe(recipe, ctx, { silent = false } = {}) {
     if (!recipe || typeof recipe !== 'object') return false;
@@ -156,8 +194,11 @@ export class FxDirector {
     );
     if (!hasCustom) return false;
 
-    // 1. Actor Motion
+    const timing = this.estimateRecipeTiming(recipe);
     const motion = recipe.motion || {};
+    const separateDefender = Boolean(ctx.defenderId && ctx.defenderId !== ctx.attackerId && timing.impactMs > 20);
+
+    // 1a. Attacker windup motions fire immediately at t = 0
     if (ctx.attackerId) {
       const am = this.getMotion(ctx.attackerId, ctx.attackerSide);
       if (motion.lunge) am.lunge = Math.max(am.lunge, motion.lunge);
@@ -165,10 +206,23 @@ export class FxDirector {
       if (motion.healGlow) am.healGlow = Math.max(am.healGlow, motion.healGlow);
       if (motion.passiveFlare) am.passiveFlare = Math.max(am.passiveFlare, motion.passiveFlare);
     }
-    if (ctx.defenderId) {
-      const dm = this.getMotion(ctx.defenderId, ctx.defenderSide);
-      if (motion.recoil) dm.recoil = Math.max(dm.recoil, motion.recoil);
-      if (motion.hitFlash) dm.hitFlash = Math.max(dm.hitFlash, motion.hitFlash);
+
+    // 1b. Defender impact recoil/hitFlash & camera shake fire on arrival (`impactMs`)!
+    const applyImpactFeedback = () => {
+      if (ctx.defenderId) {
+        const dm = this.getMotion(ctx.defenderId, ctx.defenderSide);
+        if (motion.recoil) dm.recoil = Math.max(dm.recoil, motion.recoil);
+        if (motion.hitFlash) dm.hitFlash = Math.max(dm.hitFlash, motion.hitFlash);
+      }
+      if (recipe.camera?.shake > 0) {
+        const durSec = Math.max(0.06, Math.min(0.7, (recipe.camera.duration_ms || 220) / 1000));
+        this.triggerShake?.(recipe.camera.shake, durSec);
+      }
+    };
+    if (separateDefender) {
+      this.deferFx(applyImpactFeedback, timing.impactMs);
+    } else {
+      applyImpactFeedback();
     }
 
     // 2. Audio (preset or procedural WebAudio synth)
@@ -177,25 +231,19 @@ export class FxDirector {
       this.audio?.playSynthRecipe(recipe.sfx, pan);
     }
 
-    // 3. Camera Shake
-    if (recipe.camera?.shake > 0) {
-      const durSec = Math.max(0.06, Math.min(0.7, (recipe.camera.duration_ms || 220) / 1000));
-      this.triggerShake?.(recipe.camera.shake, durSec);
-    }
-
-    // 4. Visual Atoms
+    // 3. Visual Atoms
     if (Array.isArray(recipe.vfx)) {
       for (const atom of recipe.vfx) {
         this._dispatchAtom(atom, ctx);
       }
     }
 
-    // 5. Optional Custom JS FX Script Plugin (`/fx_scripts/<name>.js`)
+    // 4. Optional Custom JS FX Script Plugin (`/fx_scripts/<name>.js`)
     if (recipe.script?.url) {
       this._invokeCustomScript(recipe.script, ctx);
     }
 
-    return true;
+    return { ran: true, ...timing };
   }
 
   _dispatchAtom(atom, ctx) {
