@@ -39,17 +39,36 @@ class TeamRestrictionTests(unittest.TestCase):
         actor.player.cardspace.hand.add_card(card)
         return card
 
-    def test_team_rank_strict_threshold_and_all_lowest_ties(self):
+    def test_team_rank_inclusive_threshold_and_all_lowest_ties(self):
         cards = [self.in_hand(actor, str(i), cost) for i, (actor, cost) in enumerate(
             [(self.a, 4), (self.b, 4), (self.b, 2), (self.a, 1), (self.b, 1)])]
-        for n, expected in [(0, []), (1, [0]), (2, [0, 1]), (3, [0, 1, 2]), (5, list(range(5))),
-                            (6, [0, 1, 2]), (100, [0, 1, 2])]:
+        for n, expected in [(0, []), (1, [0]), (2, [0, 1]), (3, [0, 1, 2]), (4, [0, 1, 2, 3]),
+                            (5, [0, 1, 2]), (6, [0, 1, 2]), (100, [0, 1, 2])]:
             with self.subTest(n=n):
                 self.b.add_status("限制", n - self.left.team_statuses.get("限制", 0))
                 for _ in range(2):
                     self.assertEqual([i for i, c in enumerate(cards) if c.character.skill_restricted(c)], expected)
                 self.assertEqual(self.a.statuses.get("限制", 0), n)
                 self.assertEqual(self.right.team_statuses, {})
+
+    def test_last_hand_card_at_one_layer_is_used_and_reduces_restriction(self):
+        self.game.start_turn()
+        only = self.in_hand(self.b, "独张", 1)
+        self.a.add_status("限制", 1)
+        self.assertFalse(self.b.skill_restricted(only))
+        self.assertTrue(self.game.place_in_duel(1, only, 0))
+        self.assertEqual(self.a.statuses["限制"], 1)
+        with self.ctx.collect_facts() as facts:
+            self.game.reveal_cards()
+            self.game.pipeline.start_duel_combat()
+            for _ in range(100):
+                if not self.game.pipeline.in_duel_phase:
+                    break
+                self.game.next_step()
+        self.assertEqual([(k, v.get("card", v.get("amount"))) for k, v in facts
+                          if k in ("skill_used", "skill_unpaid", "status_spent")],
+                         [("skill_used", only.name), ("status_spent", 1)])
+        self.assertNotIn("限制", self.left.team_statuses)
 
     def test_pool_is_declared_by_the_status(self):
         definitions = EffectDefinitions()

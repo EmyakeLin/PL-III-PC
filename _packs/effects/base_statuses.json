@@ -11,7 +11,7 @@
     "骰子等级降低": {},
     "限制": {
       "pool": "team",
-      "description": "全队共享X层，无法使用手牌中费用最高的X张，同费按手牌顺序。X严格超过全队手牌数时，可任选一张全队最低费技能。任一队员用完一张技能减少1层。回合末保留。整队空过时，下回合开始先施加预约的限制，再清空一次。",
+      "description": "全队共享X层，无法使用手牌中费用最高的X张，同费按手牌顺序。X不低于全队手牌数时，可任选一张全队最低费技能。任一队员用完一张技能减少1层。回合末保留。整队空过时，下回合开始先施加预约的限制，再清空一次。",
       "skill_use": [{
         "capture": {
           "position": {
@@ -28,7 +28,7 @@
         },
         "deny_when": [{"left": "$event.observed.position", "op": "le", "right": "$event.stacks"}],
         "except_when": [
-          {"left": "$event.stacks", "op": "gt", "right": "$event.observed.hand_size"},
+          {"left": "$event.stacks", "op": "ge", "right": "$event.observed.hand_size"},
           {"left": "$event.observed.cheaper", "op": "eq", "right": 0}
         ]
       }],

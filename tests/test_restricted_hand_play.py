@@ -27,7 +27,7 @@ class RestrictedHandPlayTests(unittest.TestCase):
                 offered = [m for m in moves if m["kind"] in ("place", "end")]
                 self.assertEqual(len(offered), len(hand) + 1)  # Humans may commit any of them.
                 prices = [c.cost for c in hand]
-                allowed = {hand_key(c) for c in hand if not stacks or stacks > len(hand) and c.cost == min(prices)}
+                allowed = {hand_key(c) for c in hand if not stacks or c.cost == min(prices)}
                 visible = frame["players"][1]["hand"]
                 self.assertEqual({c["action_key"] for c in visible if not c["use_restricted"]}, allowed)
                 self.assertIsNone(engine.state(1)["players"][1]["hand"])
@@ -71,7 +71,7 @@ class RestrictedHandPlayTests(unittest.TestCase):
         remaining = next(c for c in engine.state(2)["players"][1]["hand"] if c["id"] == first.id)
         self.assertEqual((remaining["action_key"], remaining["use_restricted"]), (first.id, True))
 
-    def test_local_ai_ends_placement_with_all_skills_restricted(self):
+    def test_local_ai_plays_lowest_cost_at_equal_restriction(self):
         session = BattleSession(seed=7, roster=("plan_b_annolin", "witness_residue"))
         match = session.match
         player = match.game.placing
@@ -80,5 +80,5 @@ class RestrictedHandPlayTests(unittest.TestCase):
         session.ai_side = player.side
         before = list(player.cardspace.hand.content)
         self.assertTrue(session._ai_step(match.snapshot()))
-        self.assertEqual(player.cardspace.hand.content, before)
-        self.assertIn(player, match.game.ended_player)
+        played, = set(before) - set(player.cardspace.hand.content)
+        self.assertEqual(played.cost, min(c.cost for c in before))
