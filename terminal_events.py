@@ -45,6 +45,8 @@ MESSAGES = {
     "direct_damage": "{source} 对 {target} 造成 {amount} 点伤害（{grade}，剩余生命 {hp}/{maximum}）。",
     "healed": "{target} 恢复 {amount} 点生命（{hp}/{maximum}）。",
     "lightcore_damage": "{source} 对 {target} 造成 {amount} 点光点伤害（完整度 {hp}/{maximum}）。",
+    "lightcore_overflow": "本骰的溢出伤害从 {target} 的新光点生命条扣除 {lost} 点（完整度 {hp}/{maximum}）。",
+    "lightcore_max_changed": "{character_name} 的光点生命上限变为 {maximum}（完整度 {hp}/{maximum}）。",
     "lightcore_healed": "{character_name} 回复 {amount} 点光点生命（完整度 {hp}/{maximum}）。",
     "lightcore_collapse": "{target} 的光点形态群崩塌。",
     "lightcore_restored": "{target} 的光点生命上限降至 {maximum}，完整度恢复为 {hp}/{maximum}。",

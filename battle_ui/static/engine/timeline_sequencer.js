@@ -19,13 +19,19 @@ export function combatRollKey(turn, kind, duelNumber, roundId, side, dieNumber, 
   return `${turn || 0}:${kind || ''}:${duelNumber || 0}:${roundId || 0}:${side || 0}:${lane || 'front'}:${dieNumber || 0}`;
 }
 
-const IMPACT_CONSEQUENCE_KINDS = new Set([
-  'damage',
-  'lose_hp',
+const LIGHTCORE_KINDS = new Set([
   'lightcore_damage',
   'lightcore_healed',
   'lightcore_collapse',
   'lightcore_restored',
+  'lightcore_overflow',
+  'lightcore_max_changed',
+]);
+
+const IMPACT_CONSEQUENCE_KINDS = new Set([
+  'damage',
+  'lose_hp',
+  ...LIGHTCORE_KINDS,
   'breath_crit',
   'stagger_check',
   'character_death',
@@ -291,7 +297,7 @@ export class TimelineSequencer {
             const ck = characterKeyFn(ev.target_id, ev.target_side);
             const prev = prevChars.get(ck);
             if (prev) this.deferredHpOverrides.set(ck, prev.hp);
-          } else if (ev.kind === 'lightcore_damage' || ev.kind === 'lightcore_healed' || ev.kind === 'lightcore_collapse' || ev.kind === 'lightcore_restored') {
+          } else if (LIGHTCORE_KINDS.has(ev.kind)) {
             const ck = characterKeyFn(ev.target_id, ev.target_side);
             const prev = prevChars.get(ck);
             if (prev) {

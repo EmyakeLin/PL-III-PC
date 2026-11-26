@@ -7,6 +7,7 @@ from hashlib import sha256
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from battle_ui.table_bridge import TableBridge
 from displayer import Displayer, _visible_card
 from game import Game
 from loader import load_characters_from_packs
@@ -79,8 +80,8 @@ class LiuYinTests(unittest.TestCase):
         self.actor.add_ability_effect("劣势次数", 1)
         self.assertEqual(self.actor.ability_effects, {"优势次数":2})
 
-    def deploy(self):
-        data = next(c for c in load_characters_from_packs() if c["id"] == "liu_yin")
+    def deploy(self, character_id="liu_yin"):
+        data = next(c for c in load_characters_from_packs() if c["id"] == character_id)
         self.liu = self.recruit(self.left, data)
         self.cards = {card.id: card for card in self.liu.skills}
         self.game.start_turn()
@@ -532,7 +533,7 @@ class LiuYinTests(unittest.TestCase):
         self.assertEqual([e["card"] for k,e in facts if k=="skill_used"].count("下一场"), 1)
         self.assertFalse(any(k == "skill_used" and e["card"] == "本场待用" for k,e in facts))
 
-    def test_finisher_fixed_range_collapse_and_three_lethal_attempts(self):
+    def test_finisher_uses_pre_collapse_hp_and_carries_only_the_excess(self):
         self.deploy()
         self.enemy.lightcore_hp = 1
         self.liu.add_status("能源", 5)
@@ -545,11 +546,108 @@ class LiuYinTests(unittest.TestCase):
         self.ctx.register_entries(self.enemy, [
             dict(trigger="BEFORE CHECK_DEATH", subject="target", operation=lambda ctx: (
                 attempts.append(ctx.event["lethal"]), ctx.cancel_op(0)))])
-        self.fight(card)
-        self.assertEqual(attempts, [True, True, True])
+        bridge = TableBridge(self.ctx)
+        facts = self.fight(card)
+        self.assertEqual(attempts, [])
         self.assertTrue(self.enemy.is_alive)
-        self.assertEqual((self.enemy.hp, self.enemy.lightcore_hp, self.enemy.max_lightcore_hp), (9,20,20))
+        self.assertEqual((self.enemy.hp, self.enemy.lightcore_hp, self.enemy.max_lightcore_hp), (9,17,20))
+        self.assertEqual([e["amount"] for k, e in facts if k == "lightcore_damage"], [4])
+        self.assertEqual([e["lost"] for k, e in facts if k == "lightcore_overflow"], [3])
+        self.assertEqual([(e["kind"], e.get("lightcore_after")) for e in bridge.events
+                          if e["kind"].startswith("lightcore_")],
+                         [("lightcore_damage", 0), ("lightcore_collapse", None), ("lightcore_restored", 24),
+                          ("lightcore_max_changed", 20), ("lightcore_overflow", 17)])
         self.assertNotIn("能源", self.liu.statuses)
+
+    def test_finisher_two_collapses_then_three_death_checks_even_after_full_revives(self):
+        for revives, survives in ((3, False), (4, True)):
+            with self.subTest(revives=revives):
+                self.setUp()
+                self.deploy()
+                target = self.enemy
+                target.lightcore_hp = 1
+                self.liu.add_status("能源", 22)  # 21 光点，刚好打空 1/28 和恢复后的 20/20。
+                target.add_status("复活次数", revives)
+                checks = []
+                self.ctx.register_entries(target, [
+                    dict(trigger="BEFORE CHECK_DEATH", subject="target",
+                         operation=lambda ctx: checks.append((ctx.event["lethal"], target.hp))),
+                    dict(trigger="BEFORE CHECK_DEATH", subject="target",
+                         when=[{"left":{"field":"$self.statuses","key":"复活次数","default":0},"op":"gt","right":0}],
+                         operation={"op":"program","code":[
+                             "$self", "复活次数", 1, "SPEND_STATUS", "$self", "$self.max_hp", "SET_HP", {"op":"cancel"}]}),
+                ])
+                facts = self.fight(self.cards["liu_annihilate"])
+                self.assertEqual(checks, [(False, 0), (True, 18), (True, 18), (True, 18)])
+                self.assertEqual((target.is_alive, target.hp), (survives, 18 if survives else 0))
+                self.assertEqual([e["amount"] for k, e in facts if k == "real_damage"], [9, 9])
+                self.assertEqual([e["amount"] for k, e in facts if k == "lightcore_damage"], [21])
+                self.assertEqual([e["amount"] for k, e in facts if k == "status_spent" and e["name"] == "复活次数"],
+                                 [1] * revives)
+                self.assertEqual(len([1 for k, e in facts if k == "hit"]), 1)
+
+    def test_finisher_threshold_uses_the_current_max_and_rounds_half_up(self):
+        for max_hp, hp, expected in ((17, 9, 3), (17, 9.5, 0), (17, 10, 0), (19, 10, 3)):
+            with self.subTest(max_hp=max_hp, hp=hp):
+                self.setUp()
+                self.deploy()
+                self.enemy.max_hp = max_hp
+                self.enemy.hp = hp
+                self.enemy.lightcore_hp = 1
+                self.liu.add_status("能源", 2)
+                attempts = []
+                def protect(ctx):
+                    if ctx.event["lethal"]:
+                        attempts.append(self.enemy.hp)
+                    self.enemy.hp = 17
+                    ctx.cancel_op(0)
+                self.ctx.register_entries(self.enemy, [dict(trigger="BEFORE CHECK_DEATH", subject="target", operation=protect)])
+                facts = self.fight(self.cards["liu_annihilate"])
+                self.assertEqual(len(attempts), expected)
+                self.assertFalse(any(k == "lightcore_overflow" for k, _ in facts))
+
+    def test_all_liu_forms_apply_lightcore_modifiers_and_pay_for_one_hit(self):
+        for character_id in ("liu_yin", "liu_yin_sp_quick", "liu_yin_sp_unknown", "liu_yin_sp_regent"):
+            with self.subTest(character_id=character_id):
+                self.setUp()
+                self.deploy(character_id)
+                self.liu.add_status("能源", 19)
+                self.enemy.lightcore_hp = 1
+                receipts = []
+                def observe(ctx):
+                    e = ctx.event
+                    receipts.append((e["damage_die"], e["amount"], e["result"], e["lightcore_lost"]))
+                self.ctx.register_entries(self.enemy, [
+                    dict(trigger="BEFORE LIGHTCORE_DAMAGE", operation={"op":"program","code":[2,"ADD"]}),
+                    dict(trigger="AFTER LIGHTCORE_DAMAGE", operation=observe),
+                ])
+                card = self.cards["liu_annihilate"]
+                die = card.get_current_die(self.game)
+                facts = self.fight(card)
+                self.assertEqual(receipts, [(die, 20, 20, 20)])
+                self.assertEqual(self.enemy.lightcore_hp, 1)
+                self.assertEqual([e["amount"] for k, e in facts if k == "status_spent" and e["name"] == "能源"], [19])
+
+    def test_passive_damage_during_the_finisher_does_not_inherit_its_die(self):
+        self.deploy()
+        self.enemy.lightcore_hp = 1
+        self.liu.add_status("能源", 5)
+        self.ctx.register_entries(self.liu, [dict(trigger="BEFORE LIGHTCORE_DAMAGE", subject="source",
+            operation={"op":"program","code":["$event.target", 40, "LIGHTCORE_DAMAGE"]})])
+        facts = self.fight(self.cards["liu_annihilate"])
+        self.assertEqual([e["amount"] for k, e in facts if k == "lightcore_damage"], [40, 4])
+        self.assertFalse(any(k in ("lightcore_overflow", "lightcore_max_changed") for k, _ in facts))
+        self.assertEqual((self.enemy.hp, self.enemy.lightcore_hp, self.enemy.max_lightcore_hp), (9, 20, 24))
+
+    def test_finisher_stops_when_there_is_no_next_lightcore_bar(self):
+        self.deploy()
+        self.enemy.lightcore_hp = 1
+        self.enemy.max_lightcore_hp = 8
+        self.liu.add_status("能源", 100)
+        facts = self.fight(self.cards["liu_annihilate"])
+        self.assertEqual((self.enemy.hp, self.enemy.max_lightcore_hp, self.enemy.lightcore_hp), (9, 0, 0))
+        self.assertEqual([e["amount"] for k, e in facts if k == "lightcore_damage"], [99])
+        self.assertFalse(any(k == "lightcore_overflow" for k, _ in facts))
 
     def test_prison_blanks_eight_in_first_actual_duel_only(self):
         self.deploy()

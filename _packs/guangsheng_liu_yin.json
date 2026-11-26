@@ -356,11 +356,10 @@
               "subject": "source"
             },
             {
-              "trigger": "AFTER LIGHTCORE_DAMAGE",
+              "trigger": "after_lightcore_collapse",
               "description": "三层同调时，自身造成崩塌即回复3生命。",
               "when": [
-                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3},
-                {"left":"$event.lightcore_collapsed","op":"eq","right":true}
+                {"left":{"field":"$self.statuses","key":"环境同调","default":0},"op":"ge","right":3}
               ],
               "operation": {"op":"program","code":["$self",3,"HEAL"]},
               "subject": "source",
@@ -1293,23 +1292,37 @@
                 {
                   "trigger": "AFTER RESOLVE_HIT",
                   "damage_part": {"amount": "(能源值-1)", "grade": "lightcore"},
-                  "description": "【命中时】若造成光点形态群崩塌，则额外使目标光点形态群完整度上限-4；若造成形态群崩塌时目标生命值不高于50%（向上取整），则追加3次即死伤害",
+                  "description": "【命中时】(能源值-1) 光点",
                   "when": [{"left":"$event.result","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
                     "damage_part": true,
                     "code": [
                       "$event.target", "$self", "能源", "STATUS_COUNT", 1, "SUB", 0, "MAX",
-                      {"call":"LIGHTCORE_DAMAGE","result":"lightcore_collapsed","default":false},
-                      [
-                        "$event.target", -4, "CHANGE_LIGHTCORE_MAX", "$event.target.hp",
-                        "$event.target.max_hp", 1, "ADD", 2, "FLOOR_DIV", "LE",
-                        [3,["$event.target.is_alive"],["$event.target","INSTANT_DEATH"],"REPEAT_WHILE"],
-                        "WHEN"
-                      ],
+                      "LIGHTCORE_DAMAGE"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "after_lightcore_collapse",
+                  "description": "本骰每次造成崩塌，额外使目标完整度上限降低4。若目标在该次崩塌前的生命不高于当时生命上限的50%（向上取整），崩塌结算后依次追加3次即死判定。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.damage_die", "$owner", "IS",
+                      ["$event.target", -4, "CHANGE_LIGHTCORE_MAX",
+                       "$event.hp_before_collapse", "$event.max_hp_before_collapse", 1, "ADD", 2, "FLOOR_DIV", "LE",
+                       [3, ["$event.target.is_alive"], ["$event.target", "INSTANT_DEATH"], "REPEAT_WHILE"], "WHEN"],
                       "WHEN"
                     ]
                   }
+                },
+                {
+                  "trigger": "after_lightcore_collapse",
+                  "description": "本骰造成崩塌后，将溢出的光点伤害继续扣在目标恢复后的光点生命值上。若再次崩塌，照此结算。",
+                  "operation": {"op":"program","code":[
+                    "$event.damage_die", "$owner", "IS", ["$event.carry", "$event.overflow", "VALUE_FLOOR"], "WHEN"
+                  ]}
                 },
                 {
                   "trigger": "on_dice_hit",
@@ -1727,10 +1740,9 @@
               "entries": [
                 "5光点伤害",
                 {
-                  "trigger": "AFTER LIGHTCORE_DAMAGE",
+                  "trigger": "after_lightcore_collapse",
                   "description": "本骰造成崩塌时获得3能源。",
                   "subject": "source",
-                  "when": [{"left":"$event.lightcore_collapsed","op":"eq","right":true}],
                   "operation": {
                     "op": "program",
                     "code": ["$event.damage_die","$owner","IS",["$self","能源",3,"STATUS"],"WHEN"]
@@ -2006,10 +2018,9 @@
               "entries": [
                 "7光点伤害",
                 {
-                  "trigger": "AFTER LIGHTCORE_DAMAGE",
+                  "trigger": "after_lightcore_collapse",
                   "description": "本骰造成崩塌时回复4生命。",
                   "subject": "source",
-                  "when": [{"left":"$event.lightcore_collapsed","op":"eq","right":true}],
                   "operation": {"op":"program","code":["$event.damage_die","$owner","IS",["$self",4,"HEAL"],"WHEN"]}
                 }
               ]

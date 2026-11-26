@@ -105,9 +105,9 @@ class TableBridge:
             self._append(kind, target_side=data["side"], target_id=data["character_id"],
                          target_name=data["character_name"], amount=data["amount"],
                          lightcore_after=data["hp"], max_lightcore=data["maximum"])
-        elif kind == "lightcore_damage":
+        elif kind in ("lightcore_damage", "lightcore_overflow"):
             self._append(
-                "lightcore_damage",
+                kind,
                 target_side=data.get("side"),
                 target_id=data.get("character_id"),
                 target_name=data.get("character_name") or data.get("target"),
@@ -123,9 +123,9 @@ class TableBridge:
                 target_id=data.get("character_id"),
                 target_name=data.get("character_name") or data.get("target"),
             )
-        elif kind == "lightcore_restored":
+        elif kind in ("lightcore_restored", "lightcore_max_changed"):
             self._append(
-                "lightcore_restored",
+                kind,
                 target_side=data.get("side"),
                 target_id=data.get("character_id"),
                 target_name=data.get("character_name") or data.get("target"),

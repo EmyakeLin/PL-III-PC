@@ -122,6 +122,10 @@ class Character:
     def hp(self, value):
         self._hp = max(Decimal(0), Decimal(str(value)))
 
+    @property
+    def exact_hp(self):
+        return self._hp
+
     def _deduct_hp(self, amount):
         lost = min(self._hp, Decimal(str(amount)))
         self._hp -= lost

@@ -467,6 +467,12 @@ export function createPresentationFx(env) {
       spawnFloater(pos.x, pos.y - 34, `-${shown} 光点`, LIGHTCORE_COLOR, 18.5, shown >= 4 ? 'heavy' : 'clash');
     },
 
+    lightcore_overflow(ev) {
+      const pos = actorPos(ev.target_id, ev.target_side);
+      flashLightcore?.(characterKey(ev.target_id, ev.target_side));
+      spawnFloater(pos.x, pos.y - 34, `余伤 −${ev.lost} 光点`, LIGHTCORE_COLOR, 16, 'clash');
+    },
+
     lightcore_collapse(ev) {
       const pos = actorPos(ev.target_id, ev.target_side);
       audio.clashImpact(true);
@@ -722,6 +728,8 @@ export function createPresentationFx(env) {
       }
     },
   };
+
+  HANDLERS.lightcore_max_changed = HANDLERS.lightcore_restored;
 
   function playFx(ev, opts = {}) {
     if (!ev || !getState()) return;

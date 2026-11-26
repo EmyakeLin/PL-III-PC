@@ -12,6 +12,7 @@ from models.character import SHIELD_FIELDS, _public_amount
 from models.die_response import DieResponse, SkillDieTemplate
 from models.duel import DuelSlot
 from models.opcode import OpCode
+from models.values import ValueBounds
 
 
 def handle_add(ctx):
@@ -942,8 +943,11 @@ def handle_instant_death(ctx):
 def handle_change_lightcore_max(ctx):
     delta, target = ctx.pop(), ctx.pop()
     if target is not None and target.is_alive:
+        previous = target.max_lightcore_hp
         target.max_lightcore_hp = max(0, target.max_lightcore_hp + delta)
         target.lightcore_hp = min(target.lightcore_hp, target.max_lightcore_hp)
+        if target.max_lightcore_hp != previous:
+            target.record("lightcore_max_changed", hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
         return target.max_lightcore_hp
 
 
@@ -1100,25 +1104,40 @@ def handle_lightcore_damage(ctx):
     if target is None or not target.is_alive:
         ctx.current_op = None
         return
-    lost = min(target.lightcore_hp, amount)
-    target.lightcore_hp -= lost
-    collapsed = lost > 0 and target.lightcore_hp == 0
-    ctx.event.update(amount=amount, lightcore_lost=lost, lightcore_collapsed=collapsed)
-    ctx.record("lightcore_damage", source=getattr(ctx.event.get("source"), "combat_name", None),
-               side=target.player.side, character_id=target.id, character_name=target.name,
-               target=target.combat_name, amount=amount, lost=lost,
-               hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
-    if collapsed:
-        # This whole segment has been consumed. A subsequent segment sees the new pool.
-        ctx.record("lightcore_collapse", side=target.player.side, character_id=target.id,
-                   character_name=target.name, target=target.combat_name)
+    source, die = ctx.event.get("source"), ctx.event.get("damage_die")
+    remaining = amount
+    fact = "lightcore_damage"
+    ctx.event.update(amount=amount, lightcore_lost=0, lightcore_collapsed=False)
+    while True:
+        lost = min(target.lightcore_hp, remaining)
+        target.lightcore_hp -= lost
+        ctx.event["lightcore_lost"] += lost
+        target.record(fact, source=getattr(source, "combat_name", None), target=target.combat_name,
+                      amount=remaining, lost=lost, hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
+        if not lost or target.lightcore_hp > 0:
+            break
+
+        ctx.event["lightcore_collapsed"] = True
+        hp_before, max_hp_before = target.exact_hp, target.max_hp
+        excess = remaining - lost
+        target.record("lightcore_collapse", target=target.combat_name)
         with ctx.binding(source=target, damage_cause="光点形态群崩塌"):
             ctx.eval_block([target, (target.original_max_hp + 1) // 2, OpCode.REAL_DAMAGE])
         target.max_lightcore_hp = max(0, target.max_lightcore_hp - 4)
         target.lightcore_hp = target.max_lightcore_hp
-        ctx.record("lightcore_restored", side=target.player.side, character_id=target.id,
-                   character_name=target.name, target=target.combat_name,
-                   hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
+        target.record("lightcore_restored", target=target.combat_name, hp=target.lightcore_hp,
+                      maximum=target.max_lightcore_hp)
+
+        # Only a collapse entry can carry part of this segment into the restored bar.
+        carry = ValueBounds()
+        carry.set_ceiling(excess)
+        ctx.dispatch_pipeline("after_lightcore_collapse", source=source, target=target, die=die,
+                              card=getattr(die, "card", None), hp_before_collapse=hp_before,
+                              max_hp_before_collapse=max_hp_before, overflow=excess, carry=carry)
+        remaining = int(carry.apply(0))
+        if remaining <= 0 or not target.is_alive or not target.lightcore_hp:
+            break
+        fact = "lightcore_overflow"
     return amount
 
 
