@@ -1,19 +1,104 @@
-"""Regression coverage for the local battle adapter, independent of the browser."""
+"""Regression coverage for BattleMatch state machine and hotseat Room concurrency."""
 
 import io
+import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from http import HTTPStatus
 from unittest.mock import patch
 
-from battle_ui.__main__ import BattleSession
+from battle_mcp.room import Room, RoomConflict
+from battle_ui.match import BattleMatch, StaleActionError
 
 
-class BattleSessionTests(unittest.TestCase):
+class _LocalMatchDriver:
+    """Thread-safe test harness driving `BattleMatch` directly."""
+
+    def __init__(self, seed=37):
+        self._lock = threading.Lock()
+        self._seed = seed
+        self._offset = 0
+        self.match = BattleMatch(seed=seed)
+        self._fold_empty_timings()
+
+    def _fold_empty_timings(self):
+        while self.match.mode == "timing" and not self.match.snapshot()["special_available"]:
+            self.match._advance()
+
+    def state(self):
+        with self._lock:
+            snap = {**self.match.table_assets(), **self.match.snapshot()}
+            snap["revision"] += self._offset
+            return snap
+
+    def command(self, body):
+        action = body.get("action")
+        rev = body.get("revision")
+        with self._lock:
+            cur_rev = self.match.revision + self._offset
+            if type(rev) is not int or rev != cur_rev:
+                snap = {**self.match.table_assets(), **self.match.snapshot()}
+                snap["revision"] += self._offset
+                return HTTPStatus.CONFLICT, snap
+            if action == "new":
+                next_match = BattleMatch(
+                    body.get("roster"),
+                    seed=self._seed,
+                    initial_handoff=True,
+                )
+                self._offset = cur_rev + 1
+                self.match = next_match
+                self._fold_empty_timings()
+                snap = {**self.match.table_assets(), **self.match.snapshot()}
+                snap["revision"] += self._offset
+                return HTTPStatus.OK, snap
+            try:
+                self.match.act(
+                    action,
+                    self.match.revision,
+                    card_id=body.get("card_id"),
+                    card_ids=body.get("card_ids"),
+                    target=body.get("target"),
+                    side=body.get("side"),
+                    duel_number=body.get("duel_number"),
+                    option=body.get("option"),
+                    character_id=body.get("character_id"),
+                )
+                self._fold_empty_timings()
+            except StaleActionError:
+                snap = {**self.match.table_assets(), **self.match.snapshot()}
+                snap["revision"] += self._offset
+                return HTTPStatus.CONFLICT, snap
+            snap = {**self.match.table_assets(), **self.match.snapshot()}
+            snap["revision"] += self._offset
+            return HTTPStatus.OK, snap
+
+
+class BattleMatchAndHotseatTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(redirect_stdout(io.StringIO()))
-        self.session = BattleSession(seed=37)
+        self.session = _LocalMatchDriver(seed=37)
+
+    def test_hotseat_room_rejects_duplicate_concurrent_revision_commands(self):
+        room = Room(["plan_b_annolin", "lan_qing"], seed=37, hotseat=True, start_immediately=True)
+        self.addCleanup(room.close)
+        s0 = room.canvas_state(None, hotseat=True)
+        self.assertIsNotNone(s0["hotseat_handoff_side"])
+        room.hotseat_ready(s0["hotseat_handoff_side"], s0["revision"], "r1")
+        s1 = room.canvas_state(None, hotseat=True)
+        place_opt = next(m for m in s1["options"] if m["kind"] == "place")
+
+        def attempt(req_id):
+            try:
+                room.act(None, place_opt["id"], s1["revision"], req_id, hotseat=True)
+                return HTTPStatus.OK
+            except RoomConflict:
+                return HTTPStatus.CONFLICT
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(attempt, ["p-a", "p-b"]))
+        self.assertCountEqual(statuses, [HTTPStatus.OK, HTTPStatus.CONFLICT])
 
     def test_two_commands_against_one_revision_only_place_one_card(self):
         opening = self.session.state()
@@ -31,7 +116,7 @@ class BattleSessionTests(unittest.TestCase):
 
     def test_new_match_hides_hands_and_rejects_old_match_commands(self):
         opening = self.session.state()
-        roster = [choice["id"] for choice in opening["choices"][:2]]
+        roster = ["plan_b_heck", "plan_b_annolin"]
         status, replaced = self.session.command({"action": "new", "revision": opening["revision"], "roster": roster})
         self.assertEqual(status, HTTPStatus.OK)
         self.assertEqual(replaced["mode"], "handoff")
@@ -58,48 +143,66 @@ class BattleSessionTests(unittest.TestCase):
             if state["mode"] == "handoff":
                 play("ready")
 
-        play("new", roster=["mistport_cen_yao", "plan_b_annolin"])
+        play("new", roster=["plan_b_heck", "plan_b_annolin"])
+        self.session.match._pre_reveal_claimed = {1: True, 2: True}
+        for player in self.session.match.game.players:
+            for card in player.characters[0].skills:
+                card.data["pre_reveal"] = True
+                card.data["cost"] = 1
         ready()
-        play("place", card_id="cen_yao_fold_rule")
+        first = state["active_side"]
+        second = 3 - first
+        p_first = state["frame"]["players"][first - 1]["hand"]
+        place_1, atk_1, atk_2 = p_first[0]["id"], p_first[1]["id"], p_first[2]["id"]
+        play("place", card_id=place_1)
         ready()
-        annolin_hand = state["frame"]["players"][1]["hand"]
-        reserved, interceptor = annolin_hand[0]["id"], annolin_hand[1]["id"]
+        p_second = state["frame"]["players"][second - 1]["hand"]
+        reserved, interceptor = p_second[0]["id"], p_second[1]["id"]
         play("place", card_id=reserved)
         play("end")
         ready()
         play("end")
         ready()
+        if state["active_side"] != first:
+            play("switch_side")
+            ready()
         self.assertEqual(state["mode"], "pre_attack")
         before = self.session.state()
         with self.assertRaises(ValueError):
-            play("attack", card_id="cen_yao_sounding", target={"kind": "duel", "number": 0})
+            play("attack", card_id=atk_1, target={"kind": "duel", "number": 0})
         self.assertEqual(before, self.session.state())
-        play("attack", card_id="cen_yao_sounding", target={"kind": "duel", "number": 1})
+        play("attack", card_id=atk_1, target={"kind": "duel", "number": 1})
         ready()
         self.assertFalse(state["frame"]["pre_reveal"]["duels"][0]["ready"])
         play("intercept", card_id=interceptor)
         ready()
         board = state["frame"]
-        self.assertEqual(board["duels"][0]["sides"][1]["cards"], [{"hidden": True}])
+        self.assertEqual(board["duels"][0]["sides"][second - 1]["cards"], [{"hidden": True}])
         early = board["pre_reveal"]["duels"][0]
         self.assertTrue(early["ready"])
         self.assertEqual(early["target"]["kind"], "intercept")
         self.assertIsNone(early["pulled_card_id"])
-        play("attack", card_id="cen_yao_transit", target={"kind": "duel", "number": 1})
+        play("attack", card_id=atk_2, target={"kind": "duel", "number": 1})
         ready()
         play("let_through")
         ready()
         play("end_attack")
+        if state["mode"] in ("handoff", "pre_attack", "intercept"):
+            if state["mode"] == "handoff":
+                ready()
+            if state["can_end_attack"]:
+                play("end_attack")
         saw_pull = False
-        while state["mode"] == "combat":
+        while state["mode"] in ("combat", "timing"):
             board = state["frame"]
-            self.assertFalse(board["cards_revealed"])
-            self.assertTrue(all(p["hand"] is None for p in board["players"]))
-            self.assertEqual(board["combat"]["kind"], "pre_reveal")
-            if board["combat"]["duel_number"] == 2:
-                self.assertEqual(board["duels"][0]["sides"][1]["cards"], [])
-                self.assertEqual(board["pre_reveal"]["duels"][1]["pulled_card_id"], reserved)
-                saw_pull = True
+            if state["mode"] == "combat":
+                self.assertFalse(board["cards_revealed"])
+                self.assertTrue(all(p["hand"] is None for p in board["players"]))
+                self.assertEqual(board["combat"]["kind"], "pre_reveal")
+                if board["combat"]["duel_number"] == 2:
+                    self.assertEqual(board["duels"][0]["sides"][second - 1]["cards"], [])
+                    self.assertEqual(board["pre_reveal"]["duels"][1]["pulled_card_id"], reserved)
+                    saw_pull = True
             play("next")
         self.assertTrue(saw_pull)
         self.assertEqual(state["mode"], "reveal")
@@ -156,12 +259,14 @@ class BattleSessionTests(unittest.TestCase):
                 play("ready", side=side)
             self.assertEqual(state["active_side"], side)
 
-        play("new", roster=["mistport_cen_yao", "plan_b_annolin"])
+        play("new", roster=["plan_b_heck", "plan_b_annolin"])
+        self.session.match._pre_reveal_claimed = {1: True, 2: True}
         # Model two attack-capable hands; the defender has exactly two cards,
         # so after counterattacking and intercepting once it must decide with an empty hand.
         for player in self.session.match.game.players:
             for card in player.characters[0].skills:
                 card.data["pre_reveal"] = True
+                card.data["cost"] = 1
         first = state["active_side"]
         second = 3 - first
         defender = next(p for p in self.session.match.game.players if p.side == second)

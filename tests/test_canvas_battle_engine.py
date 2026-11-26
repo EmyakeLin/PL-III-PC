@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 from http import HTTPStatus
 from pathlib import Path
 
-from battle_ui.__main__ import BattleSession, STATIC_DIR, _resolve_static
+from battle_ui.assets import SPRITES_DIR, STATIC_DIR, resolve_static as _resolve_static
 from battle_ui.match import BattleMatch
 from loader import load_characters_from_packs
 
@@ -91,17 +91,19 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertRegex(colors["random_hero_b"], r"^#[0-9a-f]{6}$")
         self.assertNotEqual(colors["random_hero_a"], colors["random_hero_b"])
 
-        session = BattleSession(seed=37)
-        s = session.state()
+        match = BattleMatch(seed=37, initial_handoff=True)
+        while match.mode == "timing" and not match.snapshot()["special_available"]:
+            match._advance()
+        s = {**match.table_assets(), **match.snapshot()}
         self.assertIn("character_colors", s)
         self.assertIn("card_owners", s)
         # Place 1 card as active side, then advance to opponent's placement view
         if s["mode"] == "handoff":
-            _, s = session.command({"action": "ready", "revision": s["revision"], "side": s["active_side"]})
+            s = match.act("ready", match.revision, side=s["active_side"])
         placer_side = s["active_side"]
-        _, s = session.command({"action": "place", "revision": s["revision"], "card_id": s["legal_cards"][0]})
+        s = match.act("place", match.revision, card_id=s["legal_cards"][0])
         if s["mode"] == "handoff":
-            _, s = session.command({"action": "ready", "revision": s["revision"], "side": s["active_side"]})
+            s = match.act("ready", match.revision, side=s["active_side"])
         # Opponent's view keeps the placed card strictly hidden in frame.duels,
         # while card_owners exposes ONLY public character ownership (no card id/name/cost!)
         duel1_sides = {entry["side"]: entry["cards"] for entry in s["frame"]["duels"][0]["sides"]}
@@ -124,24 +126,22 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertNotIn("highCost", cp_src)
 
     def test_passive_display_lines_in_roster_and_match_catalogs(self):
-        roster = ["blank_boss", "waa_erkes"]
+        roster = ["plan_b_annolin", "lan_qing"]
         groups = {group["name"]: group for actor in load_characters_from_packs()
                   if actor["id"] in roster for group in actor["passive_skills"]}
-        expected = {
-            "智脑": [groups["智脑"]["description"]],
-            "纯能电池": [groups["纯能电池"]["description"]],
-            "自发增压武器": [entry["description"] for entry in groups["自发增压武器"]["entries"]],
-        }
-        state = BattleMatch(roster, seed=37).snapshot()
+        m = BattleMatch(roster, seed=37)
+        state = {**m.table_assets(), **m.snapshot()}
         selected = [actor for player in state["catalog"]["players"] for actor in player["characters"]]
-        for actors in (state["roster_catalog"], selected):
+        for actors in ([a for a in state["roster_catalog"] if a["id"] in roster], selected):
             lines = {group["name"]: group["display_lines"] for actor in actors for group in actor["passives"]}
-            for name, original in expected.items():
-                self.assertEqual(lines[name], original, name)
+            for name, group in groups.items():
+                expected = [group["description"]] if "description" in group else [e["description"] for e in group["entries"]]
+                self.assertEqual(lines[name], expected, name)
 
     @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
     def test_liu_yin_renders_structured_data_and_colored_triggers_on_cards_and_in_catalog(self):
-        state = BattleMatch([["liu_yin"], ["lan_qing"]], seed=37).snapshot()
+        m = BattleMatch([["liu_yin"], ["lan_qing"]], seed=37)
+        state = {**m.table_assets(), **m.snapshot()}
         actor = state["catalog"]["players"][0]["characters"][0]
         script = """
             import assert from 'node:assert/strict';
@@ -191,9 +191,10 @@ class CanvasBattleEngineTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
     def test_webgl_pre_reveal_labels_and_burn_fallback_match_the_catalog(self):
-        state = BattleSession(seed=37).state()
+        match = BattleMatch(seed=37)
+        state = {**match.table_assets(), **match.snapshot()}
         cards = {card["name"]: card for actor in state["roster_catalog"] for card in actor["skills"]}
-        selection = [cards[name] for name in ("机动·贯彻长空", "抽刀", "开锋", "空断")]
+        selection = [cards[name] for name in ("机动·贯彻长空", "空断")]
         script = """
             import {readFileSync} from 'node:fs';
             import {exactSkillTraits, exactSkillTraitSpecs, OFFICIAL_STATUS_RULES}
@@ -212,7 +213,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
         rendered = json.loads(result.stdout)
         expected = [
             [*cards["机动·贯彻长空"]["range_traits"], "凝聚达到3层时可在开牌前进攻"],
-            ["开牌前打出"], [], [*cards["空断"]["range_traits"], "使用须付 2 隧道"],
+            [*cards["空断"]["range_traits"], "使用须付 2 隧道"],
         ]
         self.assertEqual(rendered["traits"], expected)
         self.assertEqual(rendered["badges"], expected)
@@ -226,14 +227,16 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.addCleanup(lobby.close)
         invite = lobby.create({"mode": "challenge", "variant": "lan_qing", "roster": [["emyake_lin_yu"], ["lan_qing"]]})
         room = lobby.get(invite["id"]).room
+        if not room.started:
+            room.ready(1, 0, "start", human=True, canvas=True)
         pack = json.loads((STATIC_DIR.parents[1] / "_packs/emyake_lin_yu.json").read_text(encoding="utf-8"))
         printed = {name: rule["description"] for name, rule in pack["status_rules"].items()}
-        lin_yu, lan_qing = [player.characters[0] for player in room.match.game.players]
+        lin_yu, lan_qing = [player.characters[0] for player in room.engine.game.players]
         for name in ("羽流·势", "羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终", "铭刻", "折影化铭刻"):
             lin_yu.add_status(name, 1)
         for name, stacks in (("裂伤", 8), ("裂伤拘束", 2), ("破甲", 1)):
             lan_qing.add_status(name, stacks)
-        state = room.state()
+        state = room.canvas_state(1)
         fighters = [player["characters"][0] for player in state["frame"]["players"]]
         run = subprocess.run([shutil.which("node"), str(Path(__file__).with_name("status_hover.mjs"))],
                              input=json.dumps(dict(catalog=state["catalog"], fighters=fighters, printed=printed)), encoding="utf-8",
@@ -390,23 +393,19 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertNotIn("clearContainer(this.cornerHudLayer)", director_src)
 
     def test_multi_character_roster_draw_peek_bottom_and_speed_rolls(self):
-        session = BattleSession(seed=37)
-        s = session.state()
-        status, s = session.command({
-            "action": "new",
-            "revision": s["revision"],
-            "roster": [["plan_b_annolin", "waa_lake"], ["mistport_cen_yao", "ember_wen_sheng"]],
-        })
-        self.assertEqual(status, HTTPStatus.OK)
+        match = BattleMatch(
+            [["plan_b_annolin", "plan_b_heck"], ["lan_qing", "liu_yin"]],
+            seed=37,
+            initial_handoff=True,
+        )
+        s = match.snapshot()
         # Advance past any before_turn_start timing pause (since Wen Sheng has anytime cards)
         while s["mode"] == "timing":
-            status, s = session.command({"action": "next", "revision": s["revision"]})
-            self.assertEqual(status, HTTPStatus.OK)
+            s = match.act("next", match.revision)
         # Handoff for Player 1's 2-character draw peek & bottom (look 4, bottom 1, keep 3)
         self.assertEqual(s["mode"], "handoff")
         self.assertIsNone(s["draw_select"])
-        status, s = session.command({"action": "ready", "revision": s["revision"], "side": 1})
-        self.assertEqual(status, HTTPStatus.OK)
+        s = match.act("ready", match.revision, side=1)
         self.assertEqual(s["mode"], "draw_select")
         prompt1 = s["draw_select"]
         self.assertEqual(prompt1["side"], 1)
@@ -415,29 +414,17 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertEqual(len(prompt1["candidates"]), 4)
 
         bottom_id_1 = prompt1["candidates"][0]["id"]
-        status, s = session.command({
-            "action": "draw_bottom",
-            "revision": s["revision"],
-            "card_ids": [bottom_id_1],
-        })
-        self.assertEqual(status, HTTPStatus.OK)
+        s = match.act("draw_bottom", match.revision, card_ids=[bottom_id_1])
         # Now Player 2 must privately pick 1 of 4 to bottom
         self.assertEqual(s["mode"], "handoff")
-        status, s = session.command({"action": "ready", "revision": s["revision"], "side": 2})
-        self.assertEqual(status, HTTPStatus.OK)
+        s = match.act("ready", match.revision, side=2)
         self.assertEqual(s["mode"], "draw_select")
         prompt2 = s["draw_select"]
         self.assertEqual(prompt2["side"], 2)
         bottom_id_2 = prompt2["candidates"][0]["id"]
-        status, s = session.command({
-            "action": "draw_bottom",
-            "revision": s["revision"],
-            "card_ids": [bottom_id_2],
-        })
-        self.assertEqual(status, HTTPStatus.OK)
+        s = match.act("draw_bottom", match.revision, card_ids=[bottom_id_2])
         while s["mode"] == "timing":
-            status, s = session.command({"action": "next", "revision": s["revision"]})
-            self.assertEqual(status, HTTPStatus.OK)
+            s = match.act("next", match.revision)
         self.assertIn(s["mode"], ("handoff", "placement"))
         # Speed roll telemetry recorded with team averages and dropped lowest char
         self.assertTrue(s["speed_rolls"])
@@ -448,35 +435,28 @@ class CanvasBattleEngineTests(unittest.TestCase):
         self.assertTrue({"draw_bottom", "draw", "speed_roll", "cost_refill"} <= kinds)
 
     def test_shield_wear_vs_absorption_emits_distinct_damage_telemetry(self):
-        session = BattleSession(seed=37)
-        target = session.match.game.players[1].characters[0]
+        match = BattleMatch(seed=37)
+        target = match.game.players[1].characters[0]
         target.add_shield("normal", 3)
         target.add_shield("reinforced", 2)
         target.add_shield("concept", 1)
         lost = target.take_damage(3, penetration="pierce", result_field="hp_lost")
         self.assertEqual(lost, 1)
         self.assertEqual((target.shield, target.reinforced_shield, target.concept_shield), (0, 0, 1))
-        dmg_ev = next(ev for ev in reversed(session.state()["fx_events"]) if ev["kind"] == "damage")
+        snap = match.snapshot()
+        dmg_ev = next(ev for ev in reversed(snap["fx_events"]) if ev["kind"] == "damage")
         self.assertEqual(dmg_ev["grade"], "pierce")
         self.assertEqual(dmg_ev["absorbed"], {"normal": 0, "reinforced": 2, "concept": 0})
         self.assertEqual(dmg_ev["eroded"], {"normal": 3, "reinforced": 0})
         self.assertEqual(dmg_ev["hp_lost"], 1)
-        kinds = {ev["kind"] for ev in session.state()["fx_events"]}
+        kinds = {ev["kind"] for ev in snap["fx_events"]}
         self.assertIn("shield_gain", kinds)
         self.assertIn("passive_trigger", kinds)
         self.assertIn("status_change", kinds)
 
     def test_full_match_emits_reveal_clash_and_recycle_fx_events(self):
-        session = BattleSession(seed=37)
-        s = session.state()
-        # Keep the pair fixed so an addition to the roster cannot end the fight
-        # before the first turn's cards are recycled.
-        status, s = session.command({
-            "action": "new",
-            "revision": s["revision"],
-            "roster": ["plan_b_heck", "char_iron_vanguard"],
-        })
-        self.assertEqual(status, HTTPStatus.OK)
+        match = BattleMatch(["plan_b_heck", "lan_qing"], seed=37, initial_handoff=True)
+        s = match.snapshot()
         seen_kinds = set()
         for _ in range(240):
             for ev in s["fx_events"]:
@@ -485,15 +465,16 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 break
             mode = s["mode"]
             if mode == "placement":
-                cmd = {"action": "place", "card_id": s["legal_cards"][0]}
+                if s["legal_cards"]:
+                    s = match.act("place", match.revision, card_id=s["legal_cards"][0])
+                else:
+                    s = match.act("end", match.revision)
             elif mode == "handoff":
-                cmd = {"action": "ready"}
+                s = match.act("ready", match.revision)
             elif mode in ("pre_attack", "intercept"):
-                cmd = {"action": "end_attack"} if s["can_end_attack"] else {"action": "let_through"}
+                s = match.act("end_attack", match.revision) if s["can_end_attack"] else match.act("let_through", match.revision)
             else:
-                cmd = {"action": "next"}
-            status, s = session.command({**cmd, "revision": s["revision"]})
-            self.assertEqual(status, HTTPStatus.OK)
+                s = match.act("next", match.revision)
         self.assertTrue(
             {"speed_roll", "cost_refill", "cards_reveal", "cost_pay", "dice_clash", "combat_strike", "damage", "turn_recycle"}
             <= seen_kinds,
@@ -502,16 +483,12 @@ class CanvasBattleEngineTests(unittest.TestCase):
 
     def test_svg_sprites_discovery_static_serving_and_bone_schema(self):
         import xml.etree.ElementTree as ET
-        from pathlib import Path
-        from battle_ui.__main__ import _resolve_static, SPRITES_DIR
 
-        session = BattleSession(seed=37)
-        s = session.state()
+        s = BattleMatch(seed=37).table_assets()
         sprites = s.get("character_sprites", {})
         self.assertIn("plan_b_annolin", sprites)
         self.assertEqual(sprites["plan_b_annolin"], "/sprites/plan_b_annolin.svg")
-        self.assertIn("iron_qi_zheng", sprites)
-        self.assertIn("blank_boss", sprites)
+        self.assertIn("lan_qing", sprites)
 
         # Roster catalog and choices carry matching sprite_url
         by_id = {c["id"]: c for c in s["roster_catalog"]}

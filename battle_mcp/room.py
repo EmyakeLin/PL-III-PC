@@ -637,7 +637,7 @@ class Room:
 
         return {
             "position": self.ws_position(side, hotseat=hotseat),
-            "revision": self._revision[rev_side],
+            "revision": (max(self._revision[1], self._revision[2]) + self._state_epoch) if hotseat else self._revision[rev_side],
             "engine_revision": self.engine.revision,
             "side": eff_side if not hotseat else (eff_side or self._hotseat_side),
             "seat_role": "hotseat" if hotseat else ("player" if side in SEATS else "spectator"),
@@ -755,13 +755,14 @@ class Room:
                 if due is None or due[0] > time.monotonic():
                     break
                 self._on_timer()
-            current = self._revision[rec_side]
+            current = (max(self._revision[1], self._revision[2]) + self._state_epoch) if hotseat else self._revision[rec_side]
             if revision is not None:
-                if type(revision) is not int or revision < 0 or (not hotseat and operation not in self._REVISION_TOLERANT_OPS and revision > current):
+                if type(revision) is not int or revision < 0 or (operation not in self._REVISION_TOLERANT_OPS and revision > current):
                     raise RoomConflict("局面已更新，请重新观察后行动。")
-                if revision != current and operation not in self._REVISION_TOLERANT_OPS and not hotseat:
+                if revision != current and operation not in self._REVISION_TOLERANT_OPS:
                     same_window_special = (
-                        operation == "act"
+                        not hotseat
+                        and operation == "act"
                         and side in self.canvas_seats
                         and self._revision_windows[side].get(revision) == self._window()
                         and any(m["id"] == argument and m["kind"].startswith("special_") for m in self._options(side))
@@ -938,9 +939,9 @@ class Room:
                 picks[side] = [character_id]
 
             if self.challenge:
-                picks[2] = list(self.challenge.opponents)
-                if any(c in self.challenge.opponents for c in picks[1]):
-                    raise ValueError("挑战对手固定，请从其余角色中选择自己的阵容。")
+                if roster is None:
+                    picks[2] = list(self.challenge.opponents)
+                self.challenge.validate_roster([picks[1], picks[2]])
 
             if hotseat or self.bot_side is not None:
                 if self.bot_side is not None and not picks.get(self.bot_side):
@@ -1169,6 +1170,9 @@ class Room:
             engine = self._build_engine(picks)
             self._reset_match_decisions()
             self.engine = engine
+            if hotseat:
+                self._hotseat_side = 1
+                self._hotseat_revealed = None if self.ruleset.get("hotseat_curtain", True) else 1
             self._sync_engine_auto_claim()
             self._lobby_picks = picks
             self._match_number += 1
