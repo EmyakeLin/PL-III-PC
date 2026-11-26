@@ -44,6 +44,17 @@ class ResidueTests(unittest.TestCase):
         self.assertEqual({c.cost for c in self.cards.values()}, {1, 2, 3})
         self.assertEqual(len(self.left.cardspace.hand.content), 4)
 
+    def test_unfold_counts_and_energy_match_the_card_text(self):
+        offers = {name: card.data["unfold"] for name, card in self.cards.items() if "unfold" in card.data}
+        self.assertEqual({name: (offer["cost"], offer["copies"]) for name, offer in offers.items()}, {
+            "纳流": (1, 1), "收束": (1, 1), "蜕形": (1, 1), "潜相": (1, 1), "透界": (1, 1),
+            "探隙": (1, 1), "断节": (1, 1), "贯核": (1, 1), "折返": (2, 2), "并行": (3, 3), "全形": (4, 3),
+        })
+        for name, offer in offers.items():
+            text = f"可消耗{offer['cost']}能源，先展用余形{offer['copies']}次。"
+            self.assertIn(text, self.cards[name].data["description"])
+            self.assertIn(text, offer["label"])
+
     def test_team_draw_keeps_four_and_preserves_bot_instances_and_choices(self):
         left, right = Player(1, "甲"), Player(2, "乙")
         game = Game([left, right], rng=random.Random(17))
@@ -166,15 +177,15 @@ class ResidueTests(unittest.TestCase):
                     self.game.special.apply(player, pick)
         self.fail("交锋未结束")
 
-    def test_paid_heavy_then_four_fresh_imprints_at_first_growth_threshold(self):
+    def test_paid_heavy_then_three_fresh_imprints_at_first_growth_threshold(self):
         self.actor.add_status("能源", 2)
         with self.ctx.collect_facts() as facts:
             choices = self.fight(["倾身", "全形"])
         self.assertEqual(choices, ["lean", "unfold"])
         self.assertEqual([v["amount"] for k,v in facts if k == "status_spent" and v["name"] == "能源"], [4, 4])
-        self.assertEqual([v["amount"] for k,v in facts if k == "direct_damage"], [2, 5, *([3, 5] * 4), 3])
-        copies = self.cards["全形"].instantiated_dice[:4]
-        self.assertEqual([d.final_score - d.value for d in copies], [14] * 4)
+        self.assertEqual([v["amount"] for k,v in facts if k == "direct_damage"], [2, 5, *([3, 5] * 3), 3])
+        copies = [die for die in self.cards["全形"].instantiated_dice if not die.is_printed_on_card]
+        self.assertEqual([d.final_score - d.value for d in copies], [14] * 3)
         self.assertEqual(self.actor.rule_state["余形"]["type"], "slash")
         self.assertIn("全形", self.actor.rule_state["余形说明"])
 
@@ -257,7 +268,7 @@ class ResidueTests(unittest.TestCase):
     def test_only_actually_rolled_faces_replace_the_public_imprint(self):
         # The last block has no opponent and never rolls. The first slash remains.
         self.fight(["横生", "折返"])
-        self.assertEqual([d["type"] for d in self.cards["折返"].dice], ["slash"] * 3 + ["pierce"])
+        self.assertEqual([d["type"] for d in self.cards["折返"].dice], ["slash"] * 2 + ["pierce"])
         self.assertEqual(self.actor.rule_state["余形"]["type"], "pierce")
         self.game.finish_turn()
         self.assertIn("折返", self.actor.rule_state["余形说明"])
@@ -282,10 +293,26 @@ class ResidueTests(unittest.TestCase):
         with self.ctx.collect_facts() as facts:
             self.fight(["收束"], inspect_choice=prompts.append)
         self.assertEqual([(p["source_name"], p["description"]) for p in prompts],
-                         [("收束 · 可消耗1能源，先展用余形2次。", original["label"])])
+                         [("收束 · 可消耗1能源，先展用余形1次。", original["label"])])
         self.assertEqual(stored(1), original)
-        self.assertEqual([v["amount"] for k,v in facts if k == "direct_damage"], [2, 2])
-        self.assertEqual([v["amount"] for k,v in facts if k == "lightcore_damage"], [7, 4, 7, 4])
+        self.assertEqual([v["amount"] for k,v in facts if k == "direct_damage"], [])
+        self.assertEqual([v["amount"] for k,v in facts if k == "lightcore_damage"], [7])
+
+    def test_one_energy_unfold_uses_printed_skill_cost_for_bonus_damage(self):
+        # Same prior expenditure and same borrowed 7-lightcore die. Both payments unlock tier one.
+        for name, expected_physical, expected_light in [
+            ("收束", [], [7]), ("透界", [5], [7, 10, 5]),
+        ]:
+            with self.subTest(skill=name):
+                self.deploy()
+                self.ctx.eval_block([self.actor, "能源", 5, OpCode.SPEND_STATUS])
+                with self.ctx.collect_facts() as facts:
+                    self.fight(["贯核", name])
+                self.assertEqual([v["amount"] for k,v in facts if k == "status_spent" and v["name"] == "能源"], [1])
+                self.assertEqual([v["amount"] for k,v in facts if k == "direct_damage"], expected_physical)
+                self.assertEqual([v["amount"] for k,v in facts if k == "lightcore_damage"], [7, *expected_light])
+                copy, = [die for die in self.cards[name].instantiated_dice if not die.is_printed_on_card]
+                self.assertEqual(copy.final_score - copy.value, 14)
 
     def test_unfold_reads_skill_parameters_and_caps_growth_on_copies_only(self):
         self.cards["探隙"].data = {**self.cards["探隙"].data, "unfold": {"cost": 5, "copies": 1, "label": "试验"}}

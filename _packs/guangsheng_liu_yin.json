@@ -1523,7 +1523,7 @@
         },
         {
           "name": "余形",
-          "description": "技能使用完毕，将最后实际掷过的印刷骰公开留作余形，跨回合保留。展用时按技能标明的能源与次数，将余形插在第一骰之前。展用骰最终点数+8，每档供能加成再+6。展用攻骰命中额外造成2物理，每档供能加成再+3物理。",
+          "description": "技能使用完毕，将最后实际掷过的印刷骰公开留作余形，跨回合保留。展用时按技能标明的能源与次数，将余形插在第一骰之前。展用骰最终点数+8，每档供能加成再+6。使用印刷费用不低于2的技能展用余形时，每枚展用攻骰命中额外造成2物理，每档供能加成再+3物理。",
           "display_value": {"field":"$self.rule_state","key":"余形说明","default":null},
           "display_die": {"printing":"余形","label":"余形说明","turn":"余形回合"},
           "entries": [
@@ -1548,9 +1548,8 @@
                       {"call":"PREPEND_PRINTED_DIE","with":{"extra_entries":[
                         {"trigger":"BEFORE RESOLVE_FINAL_SCORE","description":"展用骰最终点数+8，每档供能加成再+6。",
                          "operation":{"op":"program","code":["$event.die","$owner","IS",["$self.rule_state","供能加成",0,"LOOKUP",6,"MUL",8,"ADD","ADD"],"WHEN"]}},
-                        {"trigger":"AFTER RESOLVE_HIT","description":"展用攻骰命中额外造成2物理，每档供能加成再+3。",
-                         "damage_part":{"amount":"2＋3×供能加成","grade":"normal"},
-                         "when":[{"left":"$event.result","op":"eq","right":true},{"left":"$event.die.is_attack","op":"eq","right":true}],
+                        {"trigger":"AFTER RESOLVE_HIT","description":"展用此骰的技能印刷费用不低于2时，攻骰命中额外造成2物理，每档供能加成再+3。",
+                         "when":[{"left":"$event.result","op":"eq","right":true},{"left":"$event.die.is_attack","op":"eq","right":true},{"left":"$event.card.data.cost","op":"ge","right":2}],
                          "operation":{"op":"program","damage_part":true,"code":["$event.die","$owner","IS",["$event.target","$self.rule_state","供能加成",0,"LOOKUP",3,"MUL",2,"ADD","normal","$owner.type","DAMAGE"],"WHEN"]}}
                       ]}},
                       "$event.card","防御展开",{"literal":["block","guard","evade"]},"$self.rule_state.余形.type","CONTAINS","SET_SKILL_STATE"
@@ -1676,8 +1675,8 @@
           "id": "residue_gather",
           "name": "收束",
           "cost": 1,
-          "unfold": {"cost":1,"copies":2,"label":"收束 · 可消耗1能源，先展用余形2次。"},
-          "description": "可消耗1能源，先展用余形2次。\n使用时回复2生命。",
+          "unfold": {"cost":1,"copies":1,"label":"收束 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。\n使用时回复2生命。",
           "entries": [
             {
               "trigger": "on_skill_use",
@@ -1718,8 +1717,8 @@
           "id": "residue_latent",
           "name": "潜相",
           "cost": 1,
-          "unfold": {"cost":1,"copies":2,"label":"潜相 · 可消耗1能源，先展用余形2次。"},
-          "description": "可消耗1能源，先展用余形2次。\n使用后可保留打出此牌之前的余形。",
+          "unfold": {"cost":1,"copies":1,"label":"潜相 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。\n使用后可保留打出此牌之前的余形。",
           "keep_previous_printing": true,
           "dice": [{"type":"evade","level":4,"entries":[]}]
         },
@@ -1727,16 +1726,16 @@
           "id": "residue_return",
           "name": "折返",
           "cost": 2,
-          "unfold": {"cost":2,"copies":3,"label":"折返 · 可消耗2能源，先展用余形3次。"},
-          "description": "可消耗2能源，先展用余形3次。",
+          "unfold": {"cost":2,"copies":2,"label":"折返 · 可消耗2能源，先展用余形2次。"},
+          "description": "可消耗2能源，先展用余形2次。",
           "dice": [{"type":"pierce","level":4,"entries":["2物理"]}]
         },
         {
           "id": "residue_cross",
           "name": "透界",
           "cost": 2,
-          "unfold": {"cost":1,"copies":2,"label":"透界 · 可消耗1能源，先展用余形2次。"},
-          "description": "可消耗1能源，先展用余形2次。",
+          "unfold": {"cost":1,"copies":1,"label":"透界 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。",
           "range_level": 1,
           "dice": [
             {
@@ -1808,8 +1807,8 @@
           "id": "residue_probe",
           "name": "探隙",
           "cost": 2,
-          "unfold": {"cost":1,"copies":2,"label":"探隙 · 可消耗1能源，先展用余形2次。"},
-          "description": "可消耗1能源，先展用余形2次。",
+          "unfold": {"cost":1,"copies":1,"label":"探隙 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。",
           "dice": [
             {"type":"blunt","level":3,"entries":["1物理"]},
             {
@@ -1858,8 +1857,8 @@
           "id": "residue_sever",
           "name": "断节",
           "cost": 2,
-          "unfold": {"cost":1,"copies":2,"label":"断节 · 可消耗1能源，先展用余形2次。"},
-          "description": "可消耗1能源，先展用余形2次。",
+          "unfold": {"cost":1,"copies":1,"label":"断节 · 可消耗1能源，先展用余形1次。"},
+          "description": "可消耗1能源，先展用余形1次。",
           "dice": [
             {"type":"blunt","level":4,"entries":["2物理"]},
             {
@@ -2076,8 +2075,8 @@
           "id": "residue_whole",
           "name": "全形",
           "cost": 3,
-          "unfold": {"cost":4,"copies":4,"label":"全形 · 可消耗4能源，先展用余形4次。"},
-          "description": "可消耗4能源，先展用余形4次。",
+          "unfold": {"cost":4,"copies":3,"label":"全形 · 可消耗4能源，先展用余形3次。"},
+          "description": "可消耗4能源，先展用余形3次。",
           "dice": [{"type":"block","level":5,"entries":[]},{"type":"slash","level":5,"entries":["3物理"]}]
         }
       ]
