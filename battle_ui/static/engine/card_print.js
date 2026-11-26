@@ -56,6 +56,11 @@ import {
   dualFormBadgeLabel,
 } from './design_system.js';
 
+const HAND_USE_WARNING = {
+  text: '受限 · 当前无法使用',
+  style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: 0x96382b },
+};
+
 export {
   FONT_UI,
   FONT_NUM,
@@ -442,7 +447,8 @@ export function buildFullCard(card, {
 
   const root = new PIXI.Container();
   const sheet = new PIXI.Container();
-  const bodyTop = headerH + (tight ? 5 : 7);
+  const useWarning = card.use_restricted ? new PIXI.Text(HAND_USE_WARNING) : null;
+  const bodyTop = headerH + (useWarning?.height ?? 0) + (tight ? 5 : 7);
   const dice = card.dice || [];
 
   const layoutBody = (targetInnerW) => {
@@ -524,7 +530,7 @@ export function buildFullCard(card, {
     bg.roundRect(-2.5, -2.5, W + 5, H + 5, 10).stroke({ width: 2.0, color: pal.accent, alpha: 0.42 });
   }
   const borderCol = isBlanked ? INK.muted : legal ? pal.accent : pal.border;
-  const topBarCol = isBlanked ? INK.muted : pal.accent;
+  const topBarCol = useWarning ? HAND_USE_WARNING.style.fill : isBlanked ? INK.muted : pal.accent;
   bg.roundRect(0, 0, W, H, 8)
     .fill({ color: isBlanked ? 0xf3efe8 : INK.paper, alpha: 0.995 })
     .stroke({ width: selected ? 2.4 : 1.45, color: borderCol, alpha: selected ? 1 : legal ? 0.85 : 0.55 });
@@ -674,6 +680,10 @@ export function buildFullCard(card, {
     const wash = new PIXI.Graphics();
     wash.roundRect(0, 0, W, H, 8).fill({ color: 0xf5f1e7, alpha: 0.48 });
     sheet.addChild(wash);
+  }
+  if (useWarning) {
+    useWarning.position.set(padX, headerH);
+    sheet.addChild(useWarning);
   }
 
   if (centered) {

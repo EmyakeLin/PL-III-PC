@@ -1,6 +1,31 @@
 """Deterministic play from a seat's visible frame and legal options."""
 
 from collections import Counter, defaultdict
+from functools import wraps
+
+
+HAND_PLAYS = frozenset({
+    "place", "place_rear", "attack", "intercept", "special_place", "special_place_rear",
+    "special_replace", "special_attack", "special_intercept", "special_custom",
+})
+
+
+def avoid_restricted_plays(policy):
+    """Keep hand plays the seat can currently use. Other choices may target any offered card."""
+    @wraps(policy)
+    def decide(frame, moves):
+        if not moves:
+            return None
+        if not any(m["kind"] in HAND_PLAYS for m in moves):
+            return policy(frame, moves)
+        player = next(p for p in frame["players"] if p["side"] == frame["viewer_side"])
+        restricted = {card.get("action_key") or card["id"] for card in player["hand"]
+                      if card.get("use_restricted")}
+        if restricted:
+            moves = [m for m in moves if m["kind"] not in HAND_PLAYS or m["card_id"] not in restricted]
+        return policy(frame, moves) if moves else None
+
+    return decide
 
 
 def printed_card_value(cost, range_level, dice):
@@ -79,10 +104,9 @@ def _response(moves, hand, affordable, intercept, release):
     return max(legal, key=lambda move: card_value(hand[move["card_id"]]), default=first)
 
 
+@avoid_restricted_plays
 def choose_move(frame, moves):
     """Answer a required decision. The engine still checks and applies the move."""
-    if not moves:
-        return None
     if frame["mode"] == "skill_choice":
         cards = [move for move in moves if move["kind"] == "special_choose_card"]
         if not cards:

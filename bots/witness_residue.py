@@ -1,6 +1,8 @@
 """Light Creature Union challenge policy. Reads only the acting seat's public frame and hand."""
 from itertools import permutations
 
+from battle_mcp.bot import avoid_restricted_plays
+
 
 # Estimated combat value of the native dice and the printing left behind.
 # Keeping these separate lets a weak attack set up a valuable later unfold.
@@ -62,9 +64,8 @@ def _score(cards, energy, imprint, missing, enemies):
     return value
 
 
+@avoid_restricted_plays
 def choose_move(frame, moves):
-    if not moves:
-        return None
     side = frame["viewer_side"]
     own = next(p for p in frame["players"] if p["side"] == side)
     enemy = next(p for p in frame["players"] if p["side"] != side)

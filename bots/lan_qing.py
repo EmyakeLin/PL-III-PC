@@ -5,6 +5,7 @@ from functools import cache
 from itertools import permutations
 from uuid import uuid4
 
+from battle_mcp.bot import avoid_restricted_plays
 from loader import load_characters_from_packs
 
 
@@ -194,10 +195,9 @@ class _Turn:
         return best
 
 
+@avoid_restricted_plays
 def choose_move(frame, moves):
     """Return an offered move for a solo Lan Qing seat, or None when waiting."""
-    if not moves:
-        return None
     turn = _Turn(frame)
     if any(m["kind"] == "place" for m in moves):
         return turn.place(moves)

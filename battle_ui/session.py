@@ -70,8 +70,8 @@ class BattleSession:
                 shared = max(0, shared - (c_cost - personal))
         return shared, char_budget, char_statuses
 
-    def _is_card_affordable(self, card, shared, char_budget, char_statuses):
-        if not card:
+    def _can_play_card(self, card, shared, char_budget, char_statuses):
+        if not card or card.get("use_restricted"):
             return False
         cid = card.get("character_id")
         c_cost = max(0, int(card.get("cost") or 0))
@@ -131,7 +131,7 @@ class BattleSession:
 
             affordable = [
                 k for k in legal
-                if self._is_card_affordable(hand_by_key.get(k), shared, char_budget, char_statuses)
+                if self._can_play_card(hand_by_key.get(k), shared, char_budget, char_statuses)
             ]
             if affordable:
                 chosen = self._rng.choice(affordable)
@@ -139,7 +139,7 @@ class BattleSession:
                 return True
             rear_legal = [
                 k for k in (snap.get("legal_rear_cards") or [])
-                if self._is_card_affordable(hand_by_key.get(k), shared, char_budget, char_statuses)
+                if self._can_play_card(hand_by_key.get(k), shared, char_budget, char_statuses)
                 and (snap.get("rear_targets") or {}).get(k)
             ]
             if rear_legal:
@@ -151,7 +151,7 @@ class BattleSession:
             if not snap.get("pre_reveal_claimed"):
                 pre_elig = [
                     k for k in (snap.get("pre_reveal_eligible_cards") or [])
-                    if self._is_card_affordable(hand_by_key.get(k), shared, char_budget, char_statuses)
+                    if self._can_play_card(hand_by_key.get(k), shared, char_budget, char_statuses)
                 ]
                 if pre_elig and self._rng.random() < 0.45:
                     self.match.act("claim_pre_reveal", rev)
@@ -169,7 +169,7 @@ class BattleSession:
             shared, char_budget, char_statuses = self._remaining_budget(snap)
             affordable_atk = [
                 cid for cid in legal_atk
-                if self._is_card_affordable(hand_by_key.get(cid), shared, char_budget, char_statuses)
+                if self._can_play_card(hand_by_key.get(cid), shared, char_budget, char_statuses)
             ]
             if affordable_atk and self._rng.random() < 0.45:
                 for cid in affordable_atk:
@@ -189,7 +189,7 @@ class BattleSession:
             shared, char_budget, char_statuses = self._remaining_budget(snap)
             affordable_int = [
                 cid for cid in legal_int
-                if self._is_card_affordable(hand_by_key.get(cid), shared, char_budget, char_statuses)
+                if self._can_play_card(hand_by_key.get(cid), shared, char_budget, char_statuses)
             ]
             if pending:
                 duel_num = pending[0]

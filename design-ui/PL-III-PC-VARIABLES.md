@@ -207,3 +207,4 @@
 | 编队交互 | `onInspectChar`, `onToggleChar`, `onRemoveFromSide`, `lockedIds`, `title` | 点头像查看、按编入按钮修改当前队伍、点移出标记减少一名、固定对手的角色编号，以及当前玩法的名称。 |
 | 继续对局 | `rooms`, `id`, `play_url`, `label`, `matchup` | 当前标签页保存的私人邀请。用房间编号去重，玩法名和对阵双方帮助辨认同一玩法下的不同战桌。 |
 | 战桌 | `footerHeight`, `footer`, `roomName` | 大厅所开战桌底部留给导航的高度（38 屏幕像素）、导航容器和本局玩法名。其余高度供战场、物理和交互布局使用。 |
+| 私有手牌 | `use_restricted`, `HAND_USE_WARNING`, `useWarning`, `bodyTop` | 引擎逐张给出当前能否使用。受限牌在费用与牌名下方左对齐显示警示文字，警示字色也用于顶边。正文起点按警示文字的实际像素高度下移，仍按原规则查看和扣置。 |

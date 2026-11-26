@@ -7,7 +7,7 @@ from typing import Callable
 from bots.lan_qing import choose_move as lan_qing_move
 from bots.witness_residue import choose_move as witness_move
 from loader import PACKS, load_characters_from_packs
-from .bot import choose_draw_bottom
+from .bot import avoid_restricted_plays, choose_draw_bottom
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,7 @@ class Challenge:
         return move["kind"], args
 
 
+@avoid_restricted_plays
 def carrier_move(frame, moves):
     # Its card entries place the template and declare its attacks. Ordinary
     # prompts still have to yield initiative to the human seat.
