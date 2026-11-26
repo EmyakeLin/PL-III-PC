@@ -26,7 +26,7 @@ class StaleActionError(ValueError):
     """The client submitted an action for an earlier position."""
 
 
-def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None):
+def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None, fixed_opponent=False):
     if roster is None:
         roster = ("plan_b_annolin", "plan_b_heck")
     if not isinstance(roster, (tuple, list)) or len(roster) != 2:
@@ -38,7 +38,7 @@ def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None):
     else:
         raise ValueError("请为双方选择有效的出战角色。")
     if ruleset is not None:
-        return tuple(validate_match_teams(teams, pool, ruleset))
+        return tuple(validate_match_teams(teams, pool, ruleset, fixed_opponent=fixed_opponent))
     seen = set()
     for team in teams:
         if not team or (not open_rosters and len(team) > 3):
@@ -164,10 +164,11 @@ class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
     def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False,
-                 extra_packs=(), full_history=False, viewer_side=None, ruleset=None):
+                 extra_packs=(), full_history=False, viewer_side=None, ruleset=None, fixed_opponent=False):
         pool = {c["id"]: c for c in load_characters_from_packs(extra_packs=extra_packs)}
         self.ruleset = dict(ruleset) if ruleset is not None else None
-        teams = _normalize_roster(roster, pool, open_rosters=open_rosters, ruleset=self.ruleset)
+        teams = _normalize_roster(roster, pool, open_rosters=open_rosters, ruleset=self.ruleset,
+                                  fixed_opponent=fixed_opponent)
         self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
         self._character_card_backs = {
             cid: spec["card_back"]

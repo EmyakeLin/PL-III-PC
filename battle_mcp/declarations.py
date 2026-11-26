@@ -10,11 +10,11 @@ KINDS = ORDINARY | {
     "special_place", "special_place_rear", "special_replace",
     "special_attack", "special_custom", "special_ability",
 }
-MOVE_KEYS = {"kind", "card_id", "character_id", "duel_number", "response_number", "target_card_id", "ability_id", "option_id"}
+MOVE_KEYS = {"kind", "card_id", "character_id", "duel_number", "response_number", "target_card_id", "target_instance_id", "ability_id", "option_id"}
 CONDITIONS = {"turn", "duel_kind", "duel_number", "round_id", "die_number", "enemy_die_number", "own_card_id", "score",
               "timing", "actor_side", "action_kind", "pending_number", "after_ms"}
 NUMBERS = {"turn", "duel_number", "round_id", "die_number", "enemy_die_number", "actor_side", "pending_number", "after_ms",
-           "response_number"}
+           "response_number", "target_instance_id"}
 
 
 def _fields(data, allowed):
@@ -52,7 +52,10 @@ def validate(data):
 
 
 def select_moves(options, match):
-    return [move for move in options if all(move.get(k) == v for k, v in match.items())]
+    return [move for move in options if all(
+        (move.get("effect_target", {}).get("card", {}).get("instance_id") if k == "target_instance_id" else move.get(k)) == v
+        for k, v in match.items()
+    )]
 
 
 def pending(frame, number):

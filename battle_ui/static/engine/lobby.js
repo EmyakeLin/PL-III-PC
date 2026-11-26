@@ -305,8 +305,10 @@ function picker(w, h) {
       returnLabel: '返回玩法',
       isHost: true,
       ruleset: d.ruleset,
+      ruleBounds: lineup.rule_bounds,
       rulesOpen: Boolean(d.rulesOpen),
-      hotseatMode: Boolean(lineup.hotseat),
+      isHotseat: Boolean(lineup.hotseat),
+      isChallenge: fixed.length > 0,
       opponentPresets: presets,
       onToggleRules: redraw(() => { d.rulesOpen = !d.rulesOpen; }),
       onUpdateRules: redraw((patch) => {

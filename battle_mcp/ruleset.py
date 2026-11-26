@@ -64,6 +64,14 @@ def _bounded_int(val, label, minimum, maximum):
     return val
 
 
+ROOM_RULE_BOUNDS = {
+    "draw_count": (1, 12),
+    "max_basic_cost": (0, 30),
+    "char_independent_cost": (0, 10),
+    "place_capacity": (1, 12),
+}
+
+
 def normalize_ruleset(patch, *, base=None, online=False):
     current = dict(base) if base is not None else default_ruleset(online=online)
     if patch is None:
@@ -95,13 +103,13 @@ def normalize_ruleset(patch, *, base=None, online=False):
             raise ValueError("轮选先手席位须为 1 或 2。")
         out["draft_first_side"] = val
     if "draw_count" in patch:
-        out["draw_count"] = _bounded_int(patch["draw_count"], "每回合基础留牌数", 1, 12)
+        out["draw_count"] = _bounded_int(patch["draw_count"], "每回合基础留牌数", *ROOM_RULE_BOUNDS["draw_count"])
     if "max_basic_cost" in patch:
-        out["max_basic_cost"] = _bounded_int(patch["max_basic_cost"], "每回合基础通用费", 0, 30)
+        out["max_basic_cost"] = _bounded_int(patch["max_basic_cost"], "每回合基础通用费", *ROOM_RULE_BOUNDS["max_basic_cost"])
     if "char_independent_cost" in patch:
-        out["char_independent_cost"] = _bounded_int(patch["char_independent_cost"], "角色独立费", 0, 10)
+        out["char_independent_cost"] = _bounded_int(patch["char_independent_cost"], "角色独立费", *ROOM_RULE_BOUNDS["char_independent_cost"])
     if "place_capacity" in patch:
-        out["place_capacity"] = _bounded_int(patch["place_capacity"], "单窗口连扣上限", 1, 12)
+        out["place_capacity"] = _bounded_int(patch["place_capacity"], "单窗口连扣上限", *ROOM_RULE_BOUNDS["place_capacity"])
     if "hp_scale_pct" in patch:
         out["hp_scale_pct"] = _bounded_int(patch["hp_scale_pct"], "生命倍率(%)", 25, 500)
     if "pause_limit_s" in patch:
@@ -149,11 +157,12 @@ def validate_single_team(team, pool, ruleset, *, allow_empty=False):
     return items
 
 
-def validate_match_teams(teams, pool, ruleset):
+def validate_match_teams(teams, pool, ruleset, *, fixed_opponent=False):
     if not isinstance(teams, (list, tuple)) or len(teams) != 2:
         raise ValueError("双方都需要有效的出战阵容。")
     t1 = validate_single_team(teams[0], pool, ruleset, allow_empty=False)
-    t2 = validate_single_team(teams[1], pool, ruleset, allow_empty=False)
+    opponent_rules = {**ruleset, "power_cap": None, "max_chars": None} if fixed_opponent else ruleset
+    t2 = validate_single_team(teams[1], pool, opponent_rules, allow_empty=False)
     if ruleset.get("duplicate_policy") == "strict_unique":
         overlap = [cid for cid in t1 if cid in set(t2) and not pool[cid].get("mirror_allowed")]
         if overlap:

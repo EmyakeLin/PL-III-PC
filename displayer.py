@@ -630,10 +630,14 @@ class Displayer:
             "die_position": getattr(entry.owner, "position", None) if visible else None,
         }
 
-    def catalog(self) -> dict:
+    def catalog(self, rosters=None) -> dict:
         """Public printed rules for the selected roster, independent of card locations."""
-        actions = {action["id"]: action["name"] for p in self._game.players for c in p.characters
-                   for action in c.data.get("actions", ())}
+        if rosters is None:
+            rosters = {p.side: [dict(c.data, id=c.id, name=c.name, skills=c.skill_data,
+                                     passive_skills=c.passive_skill_data) for c in p.characters]
+                       for p in self._game.players}
+        actions = {action["id"]: action["name"] for team in rosters.values() for c in team
+                   for action in c.get("actions", ())}
         actions.update({action["id"]: action["name"] for rule in self._game.ability_rules.values()
                         if (action := rule.get("action"))})
         statuses = {name: [describe_entry(e) for e in entries]
@@ -645,14 +649,14 @@ class Displayer:
                 statuses[name] = [description, *extra]
         return {
             "players": [{
-                "side": p.side,
+                "side": side,
                 "characters": [{
-                    "id": c.id, "name": c.name,
-                    "passives": _passives(c.passive_skill_data),
-                    "faction_passives": _passives(c.data.get("faction_passives", ())),
-                    "skills": [_printed_skill(skill, include_forms=True) for skill in c.skill_data],
-                } for c in p.characters],
-            } for p in self._game.players],
+                    "id": c["id"], "name": c["name"],
+                    "passives": _passives(c.get("passive_skills", ())),
+                    "faction_passives": _passives(c.get("faction_passives", ())),
+                    "skills": [_printed_skill(skill, include_forms=True) for skill in c.get("skills", ())],
+                } for c in team],
+            } for side, team in rosters.items()],
             "statuses": statuses,
             "actions": actions,
             "ability_effects": {name: rule.get("description", "") for name, rule in self._game.ability_rules.items()},

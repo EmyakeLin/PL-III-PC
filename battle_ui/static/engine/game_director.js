@@ -808,12 +808,14 @@ export class GameDirector {
         this.transport.isRoom
         && !this.state?.client_paced
         && combat?.kind === 'regular'
-        && (opt.kind === 'place' || opt.kind === 'replace')
+        && (opt.kind === 'place' || (opt.kind === 'replace' && opt.target_card_id
+          && opt.effect_target?.card?.instance_id != null))
         && opt.card_id
       ) {
         const match = opt.kind === 'place'
           ? { kind: 'special_place', card_id: opt.card_id }
-          : { kind: 'special_replace', card_id: opt.card_id };
+          : { kind: 'special_replace', card_id: opt.card_id, target_card_id: opt.target_card_id,
+              target_instance_id: opt.effect_target?.card?.instance_id };
         const declaration = {
           event: 'timing',
           mode: 'execute',
@@ -827,8 +829,10 @@ export class GameDirector {
           match,
         };
         this.audio.cardSlide();
-        this.showToast(`已预约「${this._resolveHandCardName(opt.card_id)}」· 本轮骰后自动切入`, 0x1a825e, 1.9);
-        this._sendAction('prepare', { declaration });
+        const cardName = this._resolveHandCardName(opt.card_id);
+        this._sendAction('prepare', { declaration }).then((accepted) => {
+          if (accepted) this.showToast(`已预约「${cardName}」· 本轮骰后自动切入`, 0x1a825e, 1.9);
+        });
         return;
       }
       const targetDuelNum = opt.kind === 'replace'
@@ -923,6 +927,7 @@ export class GameDirector {
       if (s.effect_target && o.effect_target) {
         const a = s.effect_target;
         const b = o.effect_target;
+        if (a.card?.instance_id != null && a.card.instance_id !== b.card?.instance_id) return false;
         if (a.kind !== b.kind || a.number !== b.number || a.side !== b.side
             || (a.lane || 'front') !== (b.lane || 'front') || a.position !== b.position) {
           return false;
@@ -3727,6 +3732,7 @@ export class GameDirector {
       isHost,
       isReady: Boolean(this.state.ready),
       ruleset: rs,
+      ruleBounds: lob.rule_bounds,
       pickMeta,
       draftTurnSide: lob.draft_turn_side || null,
       canPassFirstPick: Boolean(isHost && rs.pick_mode === 'draft' && (meta1?.count || 0) === 0 && (meta2?.count || 0) === 0),
@@ -5249,10 +5255,13 @@ export class GameDirector {
           }
         }
       }
+      return true;
     } catch (err) {
       this.pendingFieldAction = false;
+      if (action === 'open_special') this.specialMenuOpen = false;
       this.audio.shieldErode();
       this.showToast(err.message || String(err), 0xcf4932, 2.4);
+      return false;
     }
   }
 

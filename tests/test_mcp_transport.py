@@ -19,7 +19,7 @@ class SeatEcho:
     def ready(self, side, revision, request_id):
         return {"side": side, "request_id": request_id}
 
-    def rules(self, topic=None):
+    def rules(self, topic=None, *, viewer_side=None):
         return {"topic": topic}
 
     def close(self):
@@ -80,7 +80,7 @@ class TransportTests(WireClient, unittest.TestCase):
         self.assertEqual(self.rpc("tools/list", **{"MCP-Protocol-Version": "invalid"})[0], 400)
         private_tools = self.rpc("tools/list", side=1)[1]["result"]["tools"]
         public_tools = self.rpc("tools/list")[1]["result"]["tools"]
-        self.assertEqual({t["name"] for t in private_tools}, {"observe", "ready", "prepare", "act", "wait", "rules"})
+        self.assertEqual({t["name"] for t in private_tools}, {"observe", "ready", "prepare", "act", "draw_bottom", "wait", "rules"})
         self.assertEqual({t["name"] for t in public_tools}, {"observe", "wait", "rules"})
         descriptions = {t["name"]: t["description"] for t in private_tools}
         for topic in ("briefing", "full", "catalog"):

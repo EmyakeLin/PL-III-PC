@@ -9,7 +9,7 @@ from loader import load_characters_from_packs
 from .challenges import CHALLENGES
 from .manual import ManualDesk
 from .room import Room
-from .ruleset import build_opponent_presets, default_ruleset, generate_room_code
+from .ruleset import ROOM_RULE_BOUNDS, build_opponent_presets, default_ruleset, generate_room_code
 
 
 def mode_definitions():
@@ -169,6 +169,7 @@ class Lobby:
             "fixed_opponents": list(challenge.opponents) if challenge else [],
             "opponent_presets": [] if (challenge or is_online) else build_opponent_presets(pool),
             "default_ruleset": default_ruleset(online=is_online),
+            "rule_bounds": dict(ROOM_RULE_BOUNDS),
             "hotseat": mode == "regular" and variant == "hotseat",
             "online": is_online,
         }

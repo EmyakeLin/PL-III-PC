@@ -50,7 +50,8 @@ DECLARATION = {"type": "object", "oneOf": [
         "mode": enum("reserve", "execute"),
         "event": enum(*EVENTS),
         "match": object_schema({"kind": enum(*sorted(KINDS)), "card_id": TEXT, "target_card_id": TEXT, "ability_id": TEXT,
-                                "duel_number": NUMBER, "response_number": NUMBER, "character_id": TEXT}),
+                                "duel_number": NUMBER, "response_number": NUMBER, "character_id": TEXT,
+                                "target_instance_id": NUMBER}),
         "when": object_schema({"duel_kind": TEXT, "duel_number": NUMBER, "round_id": NUMBER, "die_number": NUMBER,
                                "enemy_die_number": NUMBER,
                                "own_card_id": TEXT, "score": enum("lt", "eq", "gt"), "timing": TEXT,
@@ -61,6 +62,7 @@ DECLARATION = {"type": "object", "oneOf": [
     object_schema({"cancel": TEXT}, ("cancel",)),
 ]}
 
+DRAW_ARGUMENTS = {"card_ids": {"type": "array", "items": TEXT}, "revision": REVISION, "request_id": REQUEST_ID}
 TOOLS = [
     tool("observe", "查看本席位的当前局面、合法选择和 cursor 之后的可见事件。观战席只见公开信息。",
          {"cursor": CURSOR}),
@@ -77,6 +79,8 @@ TOOLS = [
     tool("act", "提交本席位 options 中的一项行动，包括词条要求的选牌或选交锋。",
          {"option_id": TEXT, "revision": REVISION, "request_id": REQUEST_ID},
          ("option_id", "revision", "request_id")),
+    tool("draw_bottom", "从本席 draw_select.candidates 选出 discard_count 张，按置底顺序提交 action_key。",
+         DRAW_ARGUMENTS, DRAW_ARGUMENTS),
 ]
 BY_NAME = {item["name"]: item for item in TOOLS}
 READ_ONLY = {"rules", "observe", "wait"}
@@ -91,9 +95,7 @@ CANVAS_REMATCH = object_schema({"roster": {"type": "array", "minItems": 2, "maxI
                                 "revision": REVISION, "request_id": REQUEST_ID},
                                ("revision", "request_id"))
 CANVAS_STATE = object_schema({"after": TEXT})
-CANVAS_DRAW = object_schema({"card_ids": {"type": "array", "items": TEXT},
-                             "revision": REVISION, "request_id": REQUEST_ID},
-                            ("card_ids", "revision", "request_id"))
+CANVAS_DRAW = object_schema(DRAW_ARGUMENTS, DRAW_ARGUMENTS)
 NO_ARGUMENTS = object_schema({})
 
 
@@ -141,7 +143,7 @@ def _dispatch_ws_command(room, side, hotseat, msg):
     if cmd == "reopen_lobby":
         return room.reopen_lobby(side, rev, req_id, hotseat=hotseat)
     if cmd == "concede":
-        return room.concede(side, rev, req_id, hotseat=hotseat)
+        return room.concede(side, rev, req_id, hotseat=hotseat, match_number=msg.get("match_number"))
     if cmd == "claim_disconnect_win":
         return room.claim_disconnect_win(side, rev, req_id)
     if cmd == "next":
@@ -215,7 +217,7 @@ def invoke(room, name, side, arguments):
         raise RequestError(403, "观众只能查看公开对局。")
     check_arguments(BY_NAME[name]["inputSchema"], arguments)
     if name == "rules":
-        return room.rules(**arguments)
+        return room.rules(viewer_side=side, **arguments)
     return getattr(room, name)(side, **arguments)
 
 
@@ -353,18 +355,17 @@ class ArenaHandler(BaseHTTPRequestHandler):
             room.on_ws_connect(side, hotseat=hotseat)
 
         # Send static assets once + initial state snapshot immediately
+        initial_state = room.canvas_state(side, hotseat=hotseat)
         ws.send_json({
             "type": "welcome",
             "side": side,
             "hotseat": hotseat,
             "assets": room.canvas_assets(),
-            "state": room.canvas_state(side, hotseat=hotseat),
+            "state": initial_state,
         })
 
         def push_worker():
-            last_pos = None
-            with room.cv:
-                last_pos = room.ws_position(side, hotseat=hotseat)
+            last_pos = initial_state["position"]
             while not ws.closed and not getattr(room, "_closed", False):
                 with room.cv:
                     changed = room.cv.wait_for(

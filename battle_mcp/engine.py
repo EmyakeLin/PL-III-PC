@@ -19,8 +19,10 @@ def hand_card_label(card):
 
 
 class ArenaEngine(BattleMatch):
-    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=(), ruleset=None):
-        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs, ruleset=ruleset)
+    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=(), ruleset=None,
+                 fixed_opponent=False):
+        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs,
+                         ruleset=ruleset, fixed_opponent=fixed_opponent)
         for player in self.game.players:
             if player.side == bot_side:
                 player.target_priority = (("hp", 1), ("lightcore_hp", 1))
@@ -96,8 +98,8 @@ class ArenaEngine(BattleMatch):
                 frame["draw_select"] = draw
         return frame
 
-    def catalog(self):
-        return self._views[None].catalog()
+    def catalog(self, rosters=None):
+        return self._views[None].catalog(rosters)
 
     def options(self, side):
         if side is None or self.game_over or self._mode() == "draw_select":

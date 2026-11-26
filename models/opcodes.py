@@ -1159,8 +1159,11 @@ def handle_real_damage(ctx):
     if not target.is_alive and ctx.game.is_over:
         ctx.close_combat_effects()
     ctx.event.update(amount=amount, hp_lost=lost)
-    ctx.record("real_damage", source=ctx.event.get("damage_cause") or getattr(ctx.event.get("source"), "combat_name", None),
-               target=target.combat_name, amount=amount, lost=lost, hp=target.hp, maximum=target.max_hp, alive=target.is_alive)
+    source = ctx.event.get("source")
+    ctx.record("real_damage", source=ctx.event.get("damage_cause") or getattr(source, "combat_name", None),
+               source_id=getattr(source, "id", None), source_side=getattr(getattr(source, "player", None), "side", None),
+               target=target.combat_name, target_id=target.id, target_side=target.player.side,
+               amount=amount, lost=lost, hp=target.hp, maximum=target.max_hp, alive=target.is_alive)
     return amount
 
 

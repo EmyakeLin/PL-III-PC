@@ -1748,6 +1748,13 @@ function buildRoomRulesFolio(x, y, w, h, roomLobby) {
   const host = new PIXI.Container();
   const rs = roomLobby?.ruleset || {};
   const canEdit = Boolean(roomLobby?.isHost && !roomLobby?.isReady && roomLobby?.onUpdateRules);
+  const adjust = (key, value) => {
+    const bounds = roomLobby.ruleBounds?.[key];
+    if (!bounds) return;
+    const [min, max] = bounds;
+    const next = Math.min(max, Math.max(min, value));
+    if (next !== rs[key]) roomLobby.onUpdateRules({ [key]: next });
+  };
 
   const bg = new PIXI.Graphics();
   drawFolioFrame(bg, x, y, w, h, {
@@ -2004,8 +2011,8 @@ function buildRoomRulesFolio(x, y, w, h, roomLobby) {
         label: v === 2 ? '2(标准)' : `${v}`, width: v === 2 ? 62 : 38, active: drawCnt === v,
         onClick: () => roomLobby.onUpdateRules({ draw_count: v }),
       })),
-      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ draw_count: Math.max(1, drawCnt - 1) }) },
-      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ draw_count: Math.min(10, drawCnt + 1) }) },
+      { label: '−', width: 32, active: false, onClick: () => adjust('draw_count', drawCnt - 1) },
+      { label: '+', width: 32, active: false, onClick: () => adjust('draw_count', drawCnt + 1) },
     ]
   );
 
@@ -2020,8 +2027,8 @@ function buildRoomRulesFolio(x, y, w, h, roomLobby) {
         label: v === 5 ? '5(标准)' : `${v}`, width: v === 5 ? 62 : 38, active: basicCost === v,
         onClick: () => roomLobby.onUpdateRules({ max_basic_cost: v }),
       })),
-      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ max_basic_cost: Math.max(0, basicCost - 1) }) },
-      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ max_basic_cost: Math.min(99, basicCost + 1) }) },
+      { label: '−', width: 32, active: false, onClick: () => adjust('max_basic_cost', basicCost - 1) },
+      { label: '+', width: 32, active: false, onClick: () => adjust('max_basic_cost', basicCost + 1) },
     ]
   );
 
@@ -2036,8 +2043,8 @@ function buildRoomRulesFolio(x, y, w, h, roomLobby) {
         label: v === 1 ? '1(标准)' : `${v}`, width: v === 1 ? 62 : 38, active: charCost === v,
         onClick: () => roomLobby.onUpdateRules({ char_independent_cost: v }),
       })),
-      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ char_independent_cost: Math.max(0, charCost - 1) }) },
-      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ char_independent_cost: Math.min(20, charCost + 1) }) },
+      { label: '−', width: 32, active: false, onClick: () => adjust('char_independent_cost', charCost - 1) },
+      { label: '+', width: 32, active: false, onClick: () => adjust('char_independent_cost', charCost + 1) },
     ]
   );
 
@@ -2052,8 +2059,8 @@ function buildRoomRulesFolio(x, y, w, h, roomLobby) {
         label: v === 2 ? '2(标准)' : `${v}`, width: v === 2 ? 62 : 38, active: placeCap === v,
         onClick: () => roomLobby.onUpdateRules({ place_capacity: v }),
       })),
-      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ place_capacity: Math.max(1, placeCap - 1) }) },
-      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ place_capacity: Math.min(20, placeCap + 1) }) },
+      { label: '−', width: 32, active: false, onClick: () => adjust('place_capacity', placeCap - 1) },
+      { label: '+', width: 32, active: false, onClick: () => adjust('place_capacity', placeCap + 1) },
     ]
   );
 
@@ -2206,8 +2213,11 @@ export function buildRosterOverlay(w, h, {
         ? (meta?.power || 0)
         : list.reduce((sum, cid) => sum + charPower(charById.get(cid)), 0);
       sidePowers[side] = sidePower;
-      const overPower = powerCap != null && sidePower > powerCap;
-      const overCount = effectiveMaxChars != null && Number.isFinite(effectiveMaxChars) && sideCount > effectiveMaxChars;
+      const fixedOpponent = side === 2 && roomLobby?.isChallenge;
+      const cappedPower = !fixedOpponent && powerCap != null;
+      const cappedCount = !fixedOpponent && Number.isFinite(effectiveMaxChars);
+      const overPower = cappedPower && sidePower > powerCap;
+      const overCount = cappedCount && sideCount > effectiveMaxChars;
       const wx = side === 1 ? pad : w - pad - wingW;
 
       const wing = new PIXI.Container();
@@ -2226,8 +2236,8 @@ export function buildRosterOverlay(w, h, {
       });
       wing.addChild(wg);
 
-      const capBadge = powerCap != null ? `/${powerCap}` : '';
-      const countBadge = effectiveMaxChars != null && Number.isFinite(effectiveMaxChars) ? `${sideCount}/${effectiveMaxChars}人` : `${sideCount}人`;
+      const capBadge = cappedPower ? `/${powerCap}` : '';
+      const countBadge = cappedCount ? `${sideCount}/${effectiveMaxChars}人` : `${sideCount}人`;
       const readyTag = meta?.ready ? ' · ✓已准备' : '';
       const headerStr = sideCount > 0 || powerCap != null
         ? `${sideName} · ${countBadge} · 战力 ${sidePower}${capBadge}${readyTag}`
