@@ -1,5 +1,22 @@
 # 当前设计与工作记录
 
+## 私人牌桌、房主全权房间规则与原生 WebSocket 实时架构重构（2026-11-27）
+
+- **已确认语义与私人牌桌规则体系**：
+  - **统一房间引擎与 6 位无歧义房间码**：移除本地专属 `BattleSession` 分裂栈，将 `online`（双人联机）、`solo`（单人演练）、`hotseat`（同屏双人）与 `challenge`（首领挑战）全部统一承载于实时 `Room` 引擎；大厅支持一键创建房间并生成 6 位去歧义大写房间码（`23456789ABCDEFGHJKLMNPQRSTUVWXYZ`），通过 `POST /api/rooms/join` 输入房间码加入时，第 1 位加入者自动获得 2 号对战席，第 2 位及以后加入者自动分配只读观战席。
+  - **房主全权房间规则设置（默认基线严格对齐《正式规则书》）**：
+    - **编队与选人规则**：支持总战力标度上限 `power_cap`（常人 `1`、精英 `2`、首领 `3`、强化首领 `4`、极端战力 `5`；默认 `None` 不设限，支持 `3/5/7/10` 及自定义整数）、每方人数上限 `max_chars`（默认不设限，最少 `1` 人）、同名角色规则 `duplicate_policy`（默认 `team_unique` 队内唯一可镜像，可选 `strict_unique` 全场唯一或 `free_duplicates` 允许同名堆叠，自动按 `@side.pos:id` 区分实例）、选人方式 `pick_mode`（联机默认 `blind` 双盲保密仅向对手展示人数与总战力，可选 `open` 公开选人或 `draft` `1-2-2-1...` 蛇形轮选并支持房主 `pass_first_pick` 让出先手及单方提前准备跳过）以及同屏防窥遮帘开关 `hotseat_curtain`。
+    - **对局 `GameRule` 与节奏覆盖**：支持房主按房间独立覆盖每回合留牌数 `draw_count`（默认 `2`，首回合自动 `+1`）、每回合通用费用补充 `max_basic_cost`（默认 `5`）、存活角色独立费用补充 `char_independent_cost`（默认 `1`）、单窗口常规连扣上限 `place_capacity`（默认 `2`）、开局最大生命与最大光核百分比倍率 `hp_scale_pct`（默认 `100%`，浅拷贝缩放不污染全局卡包）与思考暂停限时 `pause_limit_s`（好友房默认 `None` 不限时，可选 `20s / 60s / 120s`）。
+    - **好友局流程韧性与断线保护**：支持开战前随时 `unready` 取消准备调整阵容、局中房主或终局任意席位发起 `reopen_lobby` 全员不断线保留原房间码重返选人台、二次确认 `concede` 投子认输结算；联机 WebSocket 断线满 `60s` 自动挂起公共节拍时钟等待重连，满 `120s` 绝不强制判负销毁牌局，仅向在线方开放可选的 `claim_disconnect_win` 提前获胜结算按钮，重连后自动解冻续战。
+- **执行路径**：
+  - **规则校验、智能单人对手与统一对局内核**（[ruleset.py](battle_mcp/ruleset.py)、[match.py](battle_ui/match.py)、[engine.py](battle_mcp/engine.py)、[bot.py](battle_mcp/bot.py)）：新增 `RoomRuleset` 归一化与单队/双队战力及重名校验、蛇形轮选席位计算、卡包阵营/首领预设自动发现与等战力随机配队 `generate_matched_team`；`BattleMatch` 注入独立 `GameRule` 与生命光核缩放并实现 `forfeit` 终局裁定；`bot.py` 补齐 `place_rear` 置牌与基于本方可见局面的回合内 `choose_inturn_move`（`special_place` / `special_replace` / 无目标 `special_ability`）。
+  - **零第三方依赖 RFC 6455 WebSocket 与房间调度**（[ws.py](battle_mcp/ws.py)、[room.py](battle_mcp/room.py)、[hosting.py](battle_mcp/hosting.py)、[transport.py](battle_mcp/transport.py)、[__main__.py](battle_ui/__main__.py)）：纯标准库实现 WebSocket 握手、掩码/分片帧编解码、线程安全推送与心跳；连接首帧通过 `{"type": "auth", "token": ...}` 完成鉴权（URL 零明文凭据），服务端状态变更经 `Condition` 即时广播；删除旧 `battle_ui/session.py` 并将 `python -m battle_ui` 统一挂载至 `Room + ArenaServer`。
+  - **纯 WebGL 大厅、实时房间选人台、房间规则设置与牌桌菜单**（[transport.js](battle_ui/static/engine/transport.js)、[app.js](battle_ui/static/app.js)、[lobby.js](battle_ui/static/engine/lobby.js)、[table_overlays.js](battle_ui/static/engine/table_overlays.js)、[game_director.js](battle_ui/static/engine/game_director.js)、[combat_choreography.js](battle_ui/static/engine/combat_choreography.js)）：`RoomSeatTransport` 切换为原生 WebSocket 双工直连与断线指数退避重连；大厅补齐联机建房与 6 位房间码输入/粘贴入房页；选人台实时同步 `lobby_state`、战力标度徽章、双盲保密遮罩、单人等战力随机/预设切换与房主「房间规则设置」面板；顶栏「菜单」整合房间码复制、重返选人台、战报导出与二次确认投子认输。
+- **验证结果**：
+  - 新增后端与双工协议专测 [test_private_table_and_ws.py](tests/test_private_table_and_ws.py)（9 项，覆盖 6 位房间码双人及第 3 人自动观战、战力上限与重名策略、双盲脱敏与蛇形轮选先手让渡、自定义 `GameRule` 与 `150%` 生命光核倍率、投子认输与不断线重返选人台、`60s/120s` 断线挂起保护与提前结算、同屏遮帘开关、等战力 AI 回合内切入及真实 Socket WebSocket 并发握手推送），并将 [test_battle_session.py](tests/test_battle_session.py)、[test_canvas_battle_engine.py](tests/test_canvas_battle_engine.py)、[test_fx_dsl.py](tests/test_fx_dsl.py)、[test_mode_lobby.py](tests/test_mode_lobby.py) 全部迁移至统一后端。
+  - 扩充前端专测 [test_sequencer_and_choreography.mjs](tests/frontend/test_sequencer_and_choreography.mjs)（新增统一房间大厅/同屏遮帘/不限时暂停映射、双盲战力展示、「房间规则设置」与「牌桌菜单」渲染校验）。
+  - Python 回归套件 **360/360 通过**；前端专测套件 **23/23 通过**。
+
 ## 回合内即时行动、联机零泄密时序、3D 骰子状态机与命中演出重构（2026-11-27）
 
 - **已确认语义与联机公平准则**：

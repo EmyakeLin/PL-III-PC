@@ -1728,9 +1728,365 @@ export function buildEffectChoice(w, h, {
   return root;
 }
 
-// ── 6. INFINITE-SCALE 10v10+ SQUAD FORMATION STAGE (ROSTER OVERLAY) ──
+// ── 6. INFINITE-SCALE 10v10+ SQUAD FORMATION STAGE & HOST ROOM RULES (ROSTER OVERLAY) ──
 
-const ROSTER_PRESETS = [1, 3, 5, 10];
+const DEFAULT_RANK_POWER = {
+  NORMAL: 1,
+  ELITE: 2,
+  BOSS: 3,
+  EMPOWERED_BOSS: 4,
+  EXTREME: 5,
+};
+
+function charPower(ch) {
+  if (!ch) return 1;
+  if (typeof ch.power === 'number' && Number.isFinite(ch.power)) return ch.power;
+  return DEFAULT_RANK_POWER[ch.rank] || 1;
+}
+
+function buildRoomRulesFolio(x, y, w, h, roomLobby) {
+  const host = new PIXI.Container();
+  const rs = roomLobby?.ruleset || {};
+  const canEdit = Boolean(roomLobby?.isHost && !roomLobby?.isReady && roomLobby?.onUpdateRules);
+
+  const bg = new PIXI.Graphics();
+  drawFolioFrame(bg, x, y, w, h, {
+    accent: INK.gold,
+    bg: INK.paper,
+    radius: 13,
+    edgeDepth: 3.5,
+    shadowAlpha: 0.24,
+    topRibbonH: 48,
+    ribbonFill: INK.paperSoft,
+    cornerDiamonds: true,
+    diamondColor: INK.gold,
+  });
+  host.addChild(bg);
+
+  const title = new PIXI.Text({
+    text: '房间规则设置',
+    style: { fontFamily: FONT_UI, fontSize: 16.5, fontWeight: '900', fill: INK.strong },
+  });
+  title.position.set(x + 18, y + 8);
+  host.addChild(title);
+
+  const subText = canEdit
+    ? '房主可自由定制本房编队限制与对局数值，未改项严格遵循《正式规则书》标准'
+    : (roomLobby?.isHost ? '请先取消准备后再调整房间规则' : '当前展示本房生效规则（仅房主可修改）');
+  const sub = new PIXI.Text({
+    text: subText,
+    style: { fontFamily: FONT_UI, fontSize: 11.2, fontWeight: '700', fill: INK.secondary },
+  });
+  sub.position.set(x + 18, y + 29);
+  host.addChild(sub);
+
+  let hdrRightX = x + w - 16;
+  if (roomLobby?.onToggleRules) {
+    const backBtn = makeSealButton('返回选人', {
+      width: 96, height: 30, accent: 0x1a825e, solid: true, fontSize: 12, radius: 15,
+      onClick: roomLobby.onToggleRules,
+    });
+    hdrRightX -= 96;
+    backBtn.position.set(hdrRightX, y + 9);
+    host.addChild(backBtn);
+    hdrRightX -= 10;
+  }
+  if (canEdit) {
+    const resetBtn = makeSealButton('恢复标准规则', {
+      width: 112, height: 30, accent: INK.secondary, fontSize: 11.5, radius: 15,
+      onClick: () => roomLobby.onUpdateRules({
+        power_cap: null,
+        max_chars: null,
+        duplicate_policy: 'team_unique',
+        pick_mode: roomLobby.isOnline ? 'blind' : 'open',
+        draft_first_side: 1,
+        draw_count: 2,
+        max_basic_cost: 5,
+        char_independent_cost: 1,
+        place_capacity: 2,
+        hp_scale_pct: 100,
+        pause_limit_s: null,
+        hotseat_curtain: true,
+      }),
+    });
+    hdrRightX -= 112;
+    resetBtn.position.set(hdrRightX, y + 9);
+    host.addChild(resetBtn);
+  }
+
+  const colGap = 24;
+  const colW = Math.floor((w - 36 - colGap) / 2);
+  const leftX = x + 18;
+  const rightX = leftX + colW + colGap;
+  const contentTop = y + 60;
+
+  const dividerG = new PIXI.Graphics();
+  dividerG.moveTo(leftX + colW + colGap / 2, contentTop)
+    .lineTo(leftX + colW + colGap / 2, y + h - 16)
+    .stroke({ width: 1, color: INK.line, alpha: 0.85 });
+  host.addChild(dividerG);
+
+  const renderSectionHead = (sx, sy, label) => {
+    const t = new PIXI.Text({
+      text: label,
+      style: { fontFamily: FONT_UI, fontSize: 13.2, fontWeight: '900', fill: INK.goldDeep },
+    });
+    t.position.set(sx, sy);
+    host.addChild(t);
+    return sy + 24;
+  };
+
+  const renderRuleRow = (sx, sy, label, currentSummary, hint, buttons) => {
+    const rowBg = new PIXI.Graphics();
+    const rowH = hint ? 64 : 54;
+    rowBg.roundRect(sx, sy, colW, rowH, 8)
+      .fill({ color: INK.paperSoft, alpha: 0.72 })
+      .stroke({ width: 1, color: INK.line, alpha: 0.78 });
+    host.addChild(rowBg);
+
+    const lbl = new PIXI.Text({
+      text: label,
+      style: { fontFamily: FONT_UI, fontSize: 12.2, fontWeight: '900', fill: INK.strong },
+    });
+    lbl.position.set(sx + 10, sy + 6);
+    host.addChild(lbl);
+
+    if (currentSummary) {
+      const curTxt = new PIXI.Text({
+        text: currentSummary,
+        style: { fontFamily: FONT_UI, fontSize: 11.2, fontWeight: '800', fill: 0x1a825e },
+      });
+      curTxt.position.set(sx + colW - 10 - curTxt.width, sy + 7);
+      host.addChild(curTxt);
+    }
+
+    if (hint) {
+      const hTxt = new PIXI.Text({
+        text: hint,
+        style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '700', fill: INK.muted },
+      });
+      hTxt.position.set(sx + 10, sy + 22);
+      host.addChild(hTxt);
+    }
+
+    let bx = sx + 10;
+    const by = sy + (hint ? 36 : 26);
+    for (const b of buttons) {
+      const bw = b.width || Math.max(44, b.label.length * 11 + 16);
+      if (bx + bw > sx + colW - 6) break;
+      const pill = makeSealButton(b.label, {
+        width: bw,
+        height: 23,
+        accent: b.active ? 0x1a825e : (b.accent || INK.secondary),
+        solid: Boolean(b.active),
+        disabled: !canEdit && !b.active,
+        fontSize: 10.8,
+        radius: 6,
+        onClick: canEdit ? b.onClick : null,
+      });
+      pill.position.set(bx, by);
+      host.addChild(pill);
+      bx += bw + 6;
+    }
+    return sy + rowH + 7;
+  };
+
+  // Left Column: Lineup & Pick Rules
+  let ly = renderSectionHead(leftX, contentTop, '◆ 编队与选人规则');
+  const pCap = rs.power_cap ?? null;
+  ly = renderRuleRow(
+    leftX, ly,
+    '总战力标度上限',
+    pCap == null ? '当前：不限' : `当前：≤ ${pCap}`,
+    '常人 1 · 精英 2 · 首领 3 · 强化首领 4 · 极端战力 5',
+    [
+      { label: '不限', active: pCap == null, onClick: () => roomLobby.onUpdateRules({ power_cap: null }) },
+      ...[3, 5, 7, 10].map((v) => ({
+        label: `${v}`, width: 38, active: pCap === v,
+        onClick: () => roomLobby.onUpdateRules({ power_cap: v }),
+      })),
+      {
+        label: '−', width: 32, active: false,
+        onClick: () => roomLobby.onUpdateRules({ power_cap: Math.max(1, (pCap ?? 5) - 1) }),
+      },
+      {
+        label: '+', width: 32, active: false,
+        onClick: () => roomLobby.onUpdateRules({ power_cap: Math.min(500, (pCap ?? 5) + 1) }),
+      },
+    ]
+  );
+
+  const mChars = rs.max_chars ?? null;
+  ly = renderRuleRow(
+    leftX, ly,
+    '每方人数上限',
+    mChars == null ? '当前：不限' : `当前：≤ ${mChars} 人`,
+    null,
+    [
+      { label: '不限', active: mChars == null, onClick: () => roomLobby.onUpdateRules({ max_chars: null }) },
+      ...[1, 2, 3, 5].map((v) => ({
+        label: `${v}人`, width: 44, active: mChars === v,
+        onClick: () => roomLobby.onUpdateRules({ max_chars: v }),
+      })),
+      {
+        label: '−', width: 32, active: false,
+        onClick: () => roomLobby.onUpdateRules({ max_chars: Math.max(1, (mChars ?? 3) - 1) }),
+      },
+      {
+        label: '+', width: 32, active: false,
+        onClick: () => roomLobby.onUpdateRules({ max_chars: Math.min(50, (mChars ?? 3) + 1) }),
+      },
+    ]
+  );
+
+  const dup = rs.duplicate_policy || 'team_unique';
+  ly = renderRuleRow(
+    leftX, ly,
+    '同名角色限制',
+    dup === 'team_unique' ? '队内唯一' : dup === 'strict_unique' ? '全场唯一' : '不限同名',
+    null,
+    [
+      { label: '队内唯一(可镜像)', width: 112, active: dup === 'team_unique', onClick: () => roomLobby.onUpdateRules({ duplicate_policy: 'team_unique' }) },
+      { label: '全场唯一', width: 76, active: dup === 'strict_unique', onClick: () => roomLobby.onUpdateRules({ duplicate_policy: 'strict_unique' }) },
+      { label: '允许同名堆叠', width: 96, active: dup === 'free_duplicates', onClick: () => roomLobby.onUpdateRules({ duplicate_policy: 'free_duplicates' }) },
+    ]
+  );
+
+  const pMode = rs.pick_mode || 'open';
+  ly = renderRuleRow(
+    leftX, ly,
+    '选人方式',
+    pMode === 'blind' ? '双盲选人' : pMode === 'draft' ? '蛇形轮选' : '公开选人',
+    null,
+    [
+      { label: '双盲选人', width: 78, active: pMode === 'blind', onClick: () => roomLobby.onUpdateRules({ pick_mode: 'blind' }) },
+      { label: '公开选人', width: 78, active: pMode === 'open', onClick: () => roomLobby.onUpdateRules({ pick_mode: 'open' }) },
+      { label: '蛇形轮选(1-2-2-1)', width: 126, active: pMode === 'draft', onClick: () => roomLobby.onUpdateRules({ pick_mode: 'draft' }) },
+    ]
+  );
+
+  if (pMode === 'draft') {
+    const firstS = rs.draft_first_side || 1;
+    renderRuleRow(
+      leftX, ly,
+      '轮选先手席位',
+      `席位 ${firstS} 先选`,
+      null,
+      [
+        { label: '1号席先选', width: 88, active: firstS === 1, onClick: () => roomLobby.onUpdateRules({ draft_first_side: 1 }) },
+        { label: '2号席先选', width: 88, active: firstS === 2, onClick: () => roomLobby.onUpdateRules({ draft_first_side: 2 }) },
+      ]
+    );
+  } else if (roomLobby?.isHotseat) {
+    const curtain = rs.hotseat_curtain !== false;
+    renderRuleRow(
+      leftX, ly,
+      '同屏防窥遮帘',
+      curtain ? '切换席位时遮蔽手牌' : '全程公开手牌',
+      null,
+      [
+        { label: '开启防窥遮帘', width: 102, active: curtain, onClick: () => roomLobby.onUpdateRules({ hotseat_curtain: true }) },
+        { label: '关闭遮帘(明牌)', width: 108, active: !curtain, onClick: () => roomLobby.onUpdateRules({ hotseat_curtain: false }) },
+      ]
+    );
+  }
+
+  // Right Column: Match GameRule & Pacing
+  let ry = renderSectionHead(rightX, contentTop, '◆ 对局数值与节奏规则');
+  const drawCnt = rs.draw_count ?? 2;
+  ry = renderRuleRow(
+    rightX, ry,
+    '每回合留牌数（首回合自动 +1）',
+    `当前：${drawCnt} 张`,
+    null,
+    [
+      ...[1, 2, 3, 4].map((v) => ({
+        label: v === 2 ? '2(标准)' : `${v}`, width: v === 2 ? 62 : 38, active: drawCnt === v,
+        onClick: () => roomLobby.onUpdateRules({ draw_count: v }),
+      })),
+      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ draw_count: Math.max(1, drawCnt - 1) }) },
+      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ draw_count: Math.min(10, drawCnt + 1) }) },
+    ]
+  );
+
+  const basicCost = rs.max_basic_cost ?? 5;
+  ry = renderRuleRow(
+    rightX, ry,
+    '每回合通用费用补充',
+    `当前：${basicCost} 费`,
+    null,
+    [
+      ...[3, 5, 7, 10].map((v) => ({
+        label: v === 5 ? '5(标准)' : `${v}`, width: v === 5 ? 62 : 38, active: basicCost === v,
+        onClick: () => roomLobby.onUpdateRules({ max_basic_cost: v }),
+      })),
+      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ max_basic_cost: Math.max(0, basicCost - 1) }) },
+      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ max_basic_cost: Math.min(99, basicCost + 1) }) },
+    ]
+  );
+
+  const charCost = rs.char_independent_cost ?? 1;
+  ry = renderRuleRow(
+    rightX, ry,
+    '存活角色独立费用补充',
+    `当前：${charCost} 费/人`,
+    null,
+    [
+      ...[0, 1, 2, 3].map((v) => ({
+        label: v === 1 ? '1(标准)' : `${v}`, width: v === 1 ? 62 : 38, active: charCost === v,
+        onClick: () => roomLobby.onUpdateRules({ char_independent_cost: v }),
+      })),
+      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ char_independent_cost: Math.max(0, charCost - 1) }) },
+      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ char_independent_cost: Math.min(20, charCost + 1) }) },
+    ]
+  );
+
+  const placeCap = rs.place_capacity ?? 2;
+  ry = renderRuleRow(
+    rightX, ry,
+    '单窗口常规连扣上限',
+    `当前：${placeCap} 张`,
+    null,
+    [
+      ...[1, 2, 3, 5].map((v) => ({
+        label: v === 2 ? '2(标准)' : `${v}`, width: v === 2 ? 62 : 38, active: placeCap === v,
+        onClick: () => roomLobby.onUpdateRules({ place_capacity: v }),
+      })),
+      { label: '−', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ place_capacity: Math.max(1, placeCap - 1) }) },
+      { label: '+', width: 32, active: false, onClick: () => roomLobby.onUpdateRules({ place_capacity: Math.min(20, placeCap + 1) }) },
+    ]
+  );
+
+  const hpPct = rs.hp_scale_pct ?? 100;
+  ry = renderRuleRow(
+    rightX, ry,
+    '开局生命与光核倍率',
+    `当前：${hpPct}%`,
+    null,
+    [75, 100, 125, 150, 200, 300].map((v) => ({
+      label: v === 100 ? '100%' : `${v}%`,
+      width: 52,
+      active: hpPct === v,
+      onClick: () => roomLobby.onUpdateRules({ hp_scale_pct: v }),
+    }))
+  );
+
+  const pLim = rs.pause_limit_s ?? null;
+  renderRuleRow(
+    rightX, ry,
+    '思考暂停限时',
+    pLim == null ? '当前：不限时' : `当前：${pLim} 秒`,
+    null,
+    [
+      { label: '不限时', width: 64, active: pLim == null, onClick: () => roomLobby.onUpdateRules({ pause_limit_s: null }) },
+      { label: '20秒', width: 54, active: pLim === 20, onClick: () => roomLobby.onUpdateRules({ pause_limit_s: 20 }) },
+      { label: '60秒', width: 54, active: pLim === 60, onClick: () => roomLobby.onUpdateRules({ pause_limit_s: 60 }) },
+      { label: '120秒', width: 60, active: pLim === 120, onClick: () => roomLobby.onUpdateRules({ pause_limit_s: 120 }) },
+    ]
+  );
+
+  return host;
+}
 
 export function buildRosterOverlay(w, h, {
   catalog = [],
@@ -1781,22 +2137,25 @@ export function buildRosterOverlay(w, h, {
 
   const pad = 18;
   const charById = new Map(catalog.map((c) => [c.id, c]));
-  const openTeams = Boolean(roomLobby?.openTeams);
+  const rs = roomLobby?.ruleset || null;
+  const openTeams = Boolean(rs ? rs.duplicate_policy === 'free_duplicates' : roomLobby?.openTeams);
+  const powerCap = rs?.power_cap ?? null;
+  const effectiveMaxChars = rs ? rs.max_chars : maxPerSide;
   const teamCounts = [team1, team2].map(team => {
     const counts = new Map();
     for (const id of team) counts.set(id, (counts.get(id) || 0) + 1);
     return counts;
   });
 
-  const isUnlimited = maxPerSide === Infinity || maxPerSide === null || maxPerSide <= 0;
+  const isUnlimited = effectiveMaxChars === Infinity || effectiveMaxChars === null || effectiveMaxChars <= 0;
   let activeCap = isUnlimited
     ? Math.max(10, team1.length, team2.length)
-    : Math.max(1, maxPerSide, team1.length, team2.length);
+    : Math.max(1, effectiveMaxChars, team1.length, team2.length);
 
-  // ── 1. TOP CONFRONTATIONAL VS SQUAD FORMATION STAGE (Clean Organic Pedestals, ZERO Preset/Batch Clutter!) ──
+  // ── 1. TOP CONFRONTATIONAL VS SQUAD FORMATION STAGE ──
   const topY = 12;
-  const topH = 122;
-  const centerW = 196;
+  const topH = 126;
+  const centerW = 208;
   const wingW = Math.floor((w - pad * 2 - centerW - 22) / 2);
 
   const wingsHost = new PIXI.Container();
@@ -1824,6 +2183,8 @@ export function buildRosterOverlay(w, h, {
     }
   }
 
+  const sidePowers = { 1: 0, 2: 0 };
+
   const renderWingRacks = () => {
     const oldWings = wingsHost.removeChildren();
     for (const child of oldWings) child.destroy({ children: true });
@@ -1834,49 +2195,89 @@ export function buildRosterOverlay(w, h, {
       const isEditing = assignSide === side;
       const editable = !roomLobby || roomLobby.editableSides.includes(side);
       const sideName = roomLobby?.sideNames?.[side] || t.name;
-      const list = side === 1 ? team1 : team2;
+      const meta = roomLobby?.pickMeta?.[side] || roomLobby?.pickMeta?.[String(side)] || null;
+      const isMasked = Boolean(meta?.masked);
+      const list = isMasked ? [] : (side === 1 ? team1 : team2);
       const counts = teamCounts[side - 1];
       const displayed = openTeams && list.length > 5 ? Array.from(counts.keys()) : list;
       const grouped = displayed !== list;
+      const sideCount = isMasked ? (meta?.count || 0) : list.length;
+      const sidePower = isMasked
+        ? (meta?.power || 0)
+        : list.reduce((sum, cid) => sum + charPower(charById.get(cid)), 0);
+      sidePowers[side] = sidePower;
+      const overPower = powerCap != null && sidePower > powerCap;
+      const overCount = effectiveMaxChars != null && Number.isFinite(effectiveMaxChars) && sideCount > effectiveMaxChars;
       const wx = side === 1 ? pad : w - pad - wingW;
 
       const wing = new PIXI.Container();
       wing.position.set(wx, topY);
       const wg = new PIXI.Graphics();
       drawFolioFrame(wg, 0, 0, wingW, topH, {
-        accent: isEditing ? t.accent : INK.line,
-        bg: isEditing ? t.warmTint : INK.paper,
+        accent: (overPower || overCount) ? 0xcf4330 : (isEditing && editable ? t.accent : INK.line),
+        bg: isEditing && editable ? t.warmTint : INK.paper,
         radius: 12,
         edgeDepth: 3,
-        shadowAlpha: isEditing ? 0.28 : 0.14,
+        shadowAlpha: isEditing && editable ? 0.28 : 0.14,
         topRibbonH: 25,
-        ribbonFill: isEditing ? t.softBg : INK.paperSoft,
+        ribbonFill: isEditing && editable ? t.softBg : INK.paperSoft,
         cornerDiamonds: true,
-        diamondColor: isEditing ? t.accent : INK.muted,
+        diamondColor: isEditing && editable ? t.accent : INK.muted,
       });
       wing.addChild(wg);
 
+      const capBadge = powerCap != null ? `/${powerCap}` : '';
+      const countBadge = effectiveMaxChars != null && Number.isFinite(effectiveMaxChars) ? `${sideCount}/${effectiveMaxChars}人` : `${sideCount}人`;
+      const readyTag = meta?.ready ? ' · ✓已准备' : '';
+      const headerStr = sideCount > 0 || powerCap != null
+        ? `${sideName} · ${countBadge} · 战力 ${sidePower}${capBadge}${readyTag}`
+        : `${sideName}${readyTag}`;
       const wTitle = new PIXI.Text({
-        text: list.length ? `${sideName} · ${list.length}人` : sideName,
-        style: { fontFamily: FONT_UI, fontSize: 12.2, fontWeight: '900', fill: t.accent },
+        text: headerStr,
+        style: { fontFamily: FONT_UI, fontSize: 11.8, fontWeight: '900', fill: (overPower || overCount) ? 0xcf4330 : t.accent },
       });
       wTitle.position.set(side === 1 ? 14 : wingW - 14 - wTitle.width, 5);
       wing.addChild(wTitle);
 
+      // Wing Header Action Seals (Solo Opponent Random/Preset on Side 2, Clear, or Draft Indicator)
+      let utilX = side === 1 ? wingW - 12 : 12;
+      const placeUtilBtn = (label, bw, accent, onClick) => {
+        const bx = side === 1 ? (utilX - bw) : utilX;
+        const btn = makeSealButton(label, {
+          width: bw, height: 19, fontSize: 10, radius: 5, accent,
+          onClick,
+        });
+        btn.position.set(bx, 3);
+        wing.addChild(btn);
+        utilX = side === 1 ? (bx - 5) : (bx + bw + 5);
+      };
+
       if (editable && list.length && onClearSide) {
-        const clearButton = makeSealButton('清空', {
-          width: 42, height: 19, fontSize: 10, radius: 5, accent: INK.secondary,
-          onClick: () => onClearSide(side),
+        placeUtilBtn('清空', 40, INK.secondary, () => onClearSide(side));
+      }
+      if (side === 2 && editable && roomLobby?.onRandomizeOpponent) {
+        placeUtilBtn('随机同战力', 68, 0x1a825e, () => roomLobby.onRandomizeOpponent());
+      }
+      if (side === 2 && editable && roomLobby?.onCyclePresetOpponent) {
+        placeUtilBtn('预设阵容', 56, INK.goldDeep, () => roomLobby.onCyclePresetOpponent());
+      }
+      if (!editable && roomLobby?.draftTurnSide === side) {
+        const dtTxt = new PIXI.Text({
+          text: '◆ 对方轮选中',
+          style: { fontFamily: FONT_UI, fontSize: 10.4, fontWeight: '800', fill: INK.goldDeep },
         });
-        clearButton.position.set(side === 1 ? wingW - 56 : 14, 3);
-        wing.addChild(clearButton);
-      } else if (isEditing && editable) {
-        const edTxt = new PIXI.Text({
-          text: '◆ 正在编队',
-          style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '800', fill: INK.goldDeep },
-        });
-        edTxt.position.set(side === 1 ? wingW - 14 - edTxt.width : 14, 6);
-        wing.addChild(edTxt);
+        dtTxt.position.set(side === 1 ? wingW - 14 - dtTxt.width : 14, 6);
+        wing.addChild(dtTxt);
+      } else if (editable && !list.length && !(side === 2 && roomLobby?.onRandomizeOpponent)) {
+        const statusLabel = roomLobby?.draftTurnSide === side ? '◆ 轮到本方选人' : (isEditing ? '◆ 正在编队' : '');
+        if (statusLabel) {
+          const edTxt = new PIXI.Text({
+            text: statusLabel,
+            style: { fontFamily: FONT_UI, fontSize: 10.6, fontWeight: '800', fill: INK.goldDeep },
+          });
+          edTxt.position.set(side === 1 ? wingW - 14 - edTxt.width : 14, 6);
+          wing.addChild(edTxt);
+        }
       }
 
       if (editable) {
@@ -1888,24 +2289,48 @@ export function buildRosterOverlay(w, h, {
         });
       }
 
-      // Organic Dynamic Squad Rack:
-      //  - 0 picked: single clean invitation zone
-      //  - 1..5 picked: spacious horizontal living pedestals (centered/anchored cleanly, no 10 empty boxes!)
-      //  - 6+ picked: compact 2-row tactical formation rack
       const rackX = 10;
       const rackY = 30;
       const rackW = wingW - 20;
       const rackH = topH - 36;
 
-      if (displayed.length === 0) {
+      if (isMasked) {
+        const maskG = new PIXI.Graphics();
+        maskG.roundRect(rackX, rackY, rackW, rackH - 2, 9)
+          .fill({ color: INK.paperSoft, alpha: 0.92 })
+          .stroke({ width: 1.3, color: meta?.ready ? 0x1a825e : INK.gold, alpha: 0.85 });
+        wing.addChild(maskG);
+        const mainStr = sideCount > 0
+          ? `双盲保密 · 对手已编入 ${sideCount} 名角色（总战力 ${sidePower}${capBadge}）`
+          : '双盲选人 · 对手正在挑选阵容…';
+        const mTxt = new PIXI.Text({
+          text: mainStr,
+          style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '800', fill: INK.strong },
+        });
+        mTxt.anchor.set(0.5);
+        mTxt.position.set(rackX + rackW / 2, rackY + (rackH - 2) * 0.38);
+        wing.addChild(mTxt);
+
+        const subStr = meta?.ready ? '✓ 对手已准备就绪，双方准备后揭晓阵容' : '开战前双方阵容互不可见';
+        const sTxt = new PIXI.Text({
+          text: subStr,
+          style: { fontFamily: FONT_UI, fontSize: 10.8, fontWeight: '700', fill: meta?.ready ? 0x1a825e : INK.secondary },
+        });
+        sTxt.anchor.set(0.5);
+        sTxt.position.set(rackX + rackW / 2, rackY + (rackH - 2) * 0.68);
+        wing.addChild(sTxt);
+      } else if (displayed.length === 0) {
         const emptyG = new PIXI.Graphics();
         emptyG.roundRect(rackX, rackY, rackW, rackH - 2, 9)
-          .fill({ color: INK.paperSoft, alpha: isEditing ? 0.85 : 0.55 })
-          .stroke({ width: isEditing ? 1.4 : 1.0, color: isEditing ? t.border : INK.line, alpha: 0.85 });
+          .fill({ color: INK.paperSoft, alpha: isEditing && editable ? 0.85 : 0.55 })
+          .stroke({ width: isEditing && editable ? 1.4 : 1.0, color: isEditing && editable ? t.border : INK.line, alpha: 0.85 });
         wing.addChild(emptyG);
+        const emptyHint = !editable
+          ? (meta?.ready ? '✓ 该席位已准备' : '等待该席位选择角色…')
+          : (isEditing ? '点击下方角色加入编队' : '点击此处切换至本方编队');
         const hint = new PIXI.Text({
-          text: isEditing ? '点击下方角色加入编队' : '点击此处切换至本方编队',
-          style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: isEditing ? t.accent : INK.muted },
+          text: emptyHint,
+          style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: isEditing && editable ? t.accent : INK.muted },
         });
         hint.anchor.set(0.5);
         hint.position.set(rackX + rackW / 2, rackY + (rackH - 2) / 2);
@@ -2057,43 +2482,158 @@ export function buildRosterOverlay(w, h, {
     syncLiveActors();
   };
 
-  // Clean Center VS Medallion + Start / Cancel Seals (ZERO 1v1/3v3/5v5 or batch ×N clutter!)
+  // Clean Center Column: Room Code / Title + Draft Status + Ready/Unready/Start + Room Rules / Return
   const cx = w / 2;
-  const vsG = new PIXI.Graphics();
-  if (!roomLobby?.title) {
-    drawHeraldicCompass(vsG, cx, topY + 24, 22, INK.gold, INK.line);
-    drawLightStar(vsG, cx, topY + 24, 16, INK.gold, 0.92);
-  }
-  root.addChild(vsG);
-  const vsTxt = new PIXI.Text({
-    text: roomLobby?.title || 'VS',
-    style: { fontFamily: roomLobby?.title ? FONT_UI : FONT_NUM, fontSize: roomLobby?.title ? 17 : 14,
-      fontWeight: '900', fill: INK.strong, letterSpacing: 1 },
-  });
-  vsTxt.anchor.set(0.5);
-  vsTxt.position.set(cx, topY + 24);
-  root.addChild(vsTxt);
-
   renderWingRacks();
 
-  const valid = team1.length >= 1 && team2.length >= 1;
-  const startLabel = roomLobby?.sideNames ? '开战' : roomLobby ? '准备' : '开始对局';
+  if (roomLobby?.roomCode && roomLobby?.onCopyRoomCode) {
+    const codeBtn = makeSealButton(`房间码 ${roomLobby.roomCode} · 复制`, {
+      width: 174, height: 22, accent: 0x1a825e, fontSize: 11, radius: 11,
+      onClick: roomLobby.onCopyRoomCode,
+    });
+    codeBtn.position.set(cx - 87, topY + 2);
+    root.addChild(codeBtn);
+  } else {
+    const vsG = new PIXI.Graphics();
+    if (!roomLobby?.title) {
+      drawHeraldicCompass(vsG, cx, topY + 18, 19, INK.gold, INK.line);
+      drawLightStar(vsG, cx, topY + 18, 14, INK.gold, 0.92);
+    }
+    root.addChild(vsG);
+    const vsTxt = new PIXI.Text({
+      text: roomLobby?.title || 'VS',
+      style: {
+        fontFamily: roomLobby?.title ? FONT_UI : FONT_NUM,
+        fontSize: roomLobby?.title ? 16 : 13.5,
+        fontWeight: '900', fill: INK.strong, letterSpacing: 1,
+      },
+    });
+    vsTxt.anchor.set(0.5);
+    vsTxt.position.set(cx, topY + 16);
+    root.addChild(vsTxt);
+  }
+
+  if (rs?.pick_mode === 'draft' && roomLobby?.draftTurnSide) {
+    if (roomLobby.canPassFirstPick && roomLobby.onPassFirstPick) {
+      const passBtn = makeSealButton(`轮选 P${roomLobby.draftTurnSide} · 让先手`, {
+        width: 148, height: 20, accent: INK.goldDeep, fontSize: 10.5, radius: 10,
+        onClick: roomLobby.onPassFirstPick,
+      });
+      passBtn.position.set(cx - 74, topY + 27);
+      root.addChild(passBtn);
+    } else {
+      const dtBadge = new PIXI.Text({
+        text: `蛇形轮选 · 当前席位 ${roomLobby.draftTurnSide}`,
+        style: { fontFamily: FONT_UI, fontSize: 11, fontWeight: '800', fill: INK.goldDeep },
+      });
+      dtBadge.anchor.set(0.5);
+      dtBadge.position.set(cx, topY + 37);
+      root.addChild(dtBadge);
+    }
+  } else if (rs) {
+    const modeWord = rs.pick_mode === 'blind' ? '双盲' : rs.pick_mode === 'draft' ? '轮选' : '公开';
+    const capWord = powerCap != null ? `战力≤${powerCap}` : '战力不限';
+    const sumTxt = new PIXI.Text({
+      text: `${capWord} · ${modeWord}`,
+      style: { fontFamily: FONT_UI, fontSize: 10.8, fontWeight: '700', fill: INK.secondary },
+    });
+    sumTxt.anchor.set(0.5);
+    sumTxt.position.set(cx, topY + 37);
+    root.addChild(sumTxt);
+  }
+
+  const sideOk = (s, list) => {
+    if (s === 2 && roomLobby?.isChallenge) return list.length >= 1;
+    if (list.length < 1) return false;
+    if (powerCap != null && sidePowers[s] > powerCap) return false;
+    if (effectiveMaxChars != null && Number.isFinite(effectiveMaxChars) && list.length > effectiveMaxChars) return false;
+    return true;
+  };
+
+  let startLabel = '开始对局';
+  let startValid = sideOk(1, team1) && sideOk(2, team2);
+  let startAccent = 0x1c8a64;
+  let startSolid = startValid;
+  let startHandler = () => onStart([team1.slice(), team2.slice()]);
+
+  if (roomLobby?.isSpectator) {
+    startLabel = '观战席 · 等待开战';
+    startValid = false;
+    startSolid = false;
+  } else if (roomLobby?.isOnline) {
+    if (roomLobby.isReady) {
+      startLabel = '✓ 已准备 · 取消';
+      startValid = Boolean(roomLobby.onUnready);
+      startAccent = INK.goldDeep;
+      startSolid = false;
+      startHandler = () => roomLobby.onUnready?.();
+    } else {
+      const mySide = roomLobby.viewerSide || assignSide;
+      const myTeam = mySide === 1 ? team1 : team2;
+      startLabel = '准备就绪';
+      startValid = sideOk(mySide, myTeam);
+      startSolid = startValid;
+    }
+  } else if (roomLobby) {
+    startLabel = '开始对局';
+    startValid = sideOk(1, team1) && sideOk(2, team2);
+    startSolid = startValid;
+  }
+
   const startBtn = makeSealButton(startLabel, {
-    width: 164, height: 38, accent: valid ? 0x1c8a64 : INK.muted, solid: valid, disabled: !valid, fontSize: 14.5, radius: 19,
-    onClick: () => onStart([team1.slice(), team2.slice()]),
+    width: 172, height: 36,
+    accent: startValid ? startAccent : INK.muted,
+    solid: startSolid,
+    disabled: !startValid,
+    fontSize: 13.8,
+    radius: 18,
+    onClick: startHandler,
   });
-  startBtn.position.set(cx - 82, topY + 52);
+  startBtn.position.set(cx - 86, topY + 51);
   root.addChild(startBtn);
 
-  const cancelBtn = makeSealButton(roomLobby?.returnLabel || '返回', {
-    width: 106, height: 24, accent: INK.secondary, fontSize: 11.2, radius: 12, onClick: onCancel,
-  });
-  cancelBtn.position.set(cx - 53, topY + 96);
-  root.addChild(cancelBtn);
+  if (roomLobby?.onToggleRules) {
+    const rulesBtn = makeSealButton(roomLobby.rulesOpen ? '返回选人' : '房间规则', {
+      width: 92, height: 25,
+      accent: roomLobby.rulesOpen ? 0x1a825e : INK.goldDeep,
+      solid: Boolean(roomLobby.rulesOpen),
+      fontSize: 11.2, radius: 12,
+      onClick: roomLobby.onToggleRules,
+    });
+    rulesBtn.position.set(cx - 92, topY + 95);
+    root.addChild(rulesBtn);
 
-  // ── 2. LEFT HALF: INFINITE-ROSTER FACTION RIBBON + O(1) SMOOTH PORTRAIT GALLERY ──
+    const cancelBtn = makeSealButton(roomLobby.returnLabel || '返回', {
+      width: 84, height: 25, accent: INK.secondary, fontSize: 11.2, radius: 12, onClick: onCancel,
+    });
+    cancelBtn.position.set(cx + 8, topY + 95);
+    root.addChild(cancelBtn);
+  } else {
+    const cancelBtn = makeSealButton(roomLobby?.returnLabel || '返回', {
+      width: 106, height: 24, accent: INK.secondary, fontSize: 11.2, radius: 12, onClick: onCancel,
+    });
+    cancelBtn.position.set(cx - 53, topY + 95);
+    root.addChild(cancelBtn);
+  }
+
+  // ── 2. BODY: EITHER ROOM RULES FOLIO OR GALLERY + HERO SHOWCASE ──
   const bodyTop = topY + topH + 10;
   const bodyH = h - bodyTop - 16;
+
+  if (roomLobby?.rulesOpen) {
+    const rulesFolio = buildRoomRulesFolio(pad, bodyTop, w - pad * 2, bodyH, roomLobby);
+    root.addChild(rulesFolio);
+    syncLiveActors();
+    root._actors = rootActors;
+    root._galleryMaxScroll = 0;
+    root._inspectMaxScroll = 0;
+    root._gallerySplitX = w * 0.5;
+    root._maxPerSide = activeCap;
+    root.setGalleryScroll = () => 0;
+    root.setInspectScroll = () => 0;
+    return root;
+  }
+
   const galleryW = Math.floor((w - pad * 2 - 16) * 0.515);
   const galleryX = pad;
 
@@ -2242,34 +2782,40 @@ export function buildRosterOverlay(w, h, {
     card.addChild(actor);
     galleryActorEntries.push({ actor, ch: char, card });
 
-    // Rank crest pill (top-left)
+    // Rank + Power crest pill (top-left)
     const rankLabel = RANK_LABEL[char.rank] || '';
     if (rankLabel) {
       const rCol = RANK_COLOR[char.rank] || INK.secondary;
-      const rw = rankLabel.length * 9 + 10;
+      const rTxt = new PIXI.Text({
+        text: `${rankLabel} · ${charPower(char)}`,
+        style: { fontFamily: FONT_UI, fontSize: 9.2, fontWeight: '800', fill: rCol },
+      });
+      const rw = Math.ceil(rTxt.width) + 10;
       const rg = new PIXI.Graphics();
       rg.roundRect(6, 6, rw, 17, 5).fill({ color: INK.paper, alpha: 0.92 }).stroke({ width: 1.05, color: rCol, alpha: 0.85 });
       card.addChild(rg);
-      const rTxt = new PIXI.Text({
-        text: rankLabel,
-        style: { fontFamily: FONT_UI, fontSize: 9.2, fontWeight: '800', fill: rCol },
-      });
       rTxt.anchor.set(0.5);
       rTxt.position.set(6 + rw / 2, 14.5);
       card.addChild(rTxt);
     }
 
-    // Team ownership wax ribbon (top-right)
-    if (ownerSide) {
-      const cnt = teamCounts[ownerSide - 1].get(char.id);
-      const badgeLabel = openTeams && cnt > 1 ? `P${ownerSide}×${cnt}` : `P${ownerSide}`;
-      const bw = Math.max(34, badgeLabel.length * 8 + 12);
+    // Team ownership wax ribbon (top-right, supports mirror P1+P2 & ×N stacking)
+    if (in1 >= 0 || in2 >= 0) {
+      const cnt1 = teamCounts[0].get(char.id) || 0;
+      const cnt2 = teamCounts[1].get(char.id) || 0;
+      const bothSides = cnt1 > 0 && cnt2 > 0;
+      const badgeSide = cnt1 > 0 && (assignSide === 1 || cnt2 === 0) ? 1 : 2;
+      const cnt = badgeSide === 1 ? cnt1 : cnt2;
+      const badgeLabel = bothSides
+        ? (openTeams && (cnt1 > 1 || cnt2 > 1) ? `P1×${cnt1}·P2×${cnt2}` : 'P1·P2')
+        : (openTeams && cnt > 1 ? `P${badgeSide}×${cnt}` : `P${badgeSide}`);
+      const bw = Math.max(34, badgeLabel.length * 7.5 + 12);
       const tg = new PIXI.Graphics();
-      tg.roundRect(cellW - bw - 5, 6, bw, 18, 5).fill({ color: SIDE_THEME[ownerSide].accent });
+      tg.roundRect(cellW - bw - 5, 6, bw, 18, 5).fill({ color: bothSides ? INK.goldDeep : SIDE_THEME[badgeSide].accent });
       card.addChild(tg);
       const tTxt = new PIXI.Text({
         text: badgeLabel,
-        style: { fontFamily: FONT_NUM, fontSize: 10.2, fontWeight: '900', fill: INK.paper },
+        style: { fontFamily: FONT_NUM, fontSize: 9.8, fontWeight: '900', fill: INK.paper },
       });
       tTxt.anchor.set(0.5);
       tTxt.position.set(cellW - bw / 2 - 5, 15);
@@ -2428,6 +2974,7 @@ export function buildRosterOverlay(w, h, {
     // Visual Stat Badges Row
     const badgeY = inspY + 73;
     const pills = [
+      { label: `战力 ${charPower(target)}`, col: RANK_COLOR[target.rank] || INK.goldDeep, bg: INK.goldBg },
       { label: `生命 ${target.max_hp}`, col: 0xcf4330, bg: 0xfdece9 },
       { label: `交锋 ${target.base_duels || 1}`, col: INK.gold, bg: INK.goldBg },
       { label: `${(target.skills || []).length} 张技能`, col: pal.primary, bg: INK.paper },
@@ -2452,24 +2999,31 @@ export function buildRosterOverlay(w, h, {
     const activeName = roomLobby?.sideNames?.[assignSide] || activeTheme.name;
     const inActive = (assignSide === 1 ? in1 : in2) >= 0;
     const inOther = (assignSide === 1 ? in2 : in1) >= 0;
-    const actLabel = openTeams
-      ? `+ 编入${activeName}`
-      : inActive
-        ? `移出${activeName}`
-        : inOther && !(onInspectChar && target.mirror_allowed)
-          ? `调入${activeName}`
-          : `+ 编入${activeName}`;
+    const strictUnique = rs ? rs.duplicate_policy === 'strict_unique' : false;
+    const draftBlocked = Boolean(roomLobby?.isOnline && rs?.pick_mode === 'draft' && roomLobby?.draftTurnSide && roomLobby.draftTurnSide !== assignSide && !inActive);
+    const actLabel = draftBlocked
+      ? `轮选等待 P${roomLobby.draftTurnSide}`
+      : openTeams
+        ? `+ 编入${activeName}`
+        : inActive
+          ? `移出${activeName}`
+          : (inOther && strictUnique && !target.mirror_allowed)
+            ? (roomLobby?.editableSides?.length === 2 ? `调入${activeName}` : '对方已选')
+            : `+ 编入${activeName}`;
+    const blockedByOther = inOther && strictUnique && !target.mirror_allowed && (roomLobby?.editableSides?.length || 0) < 2;
     if ((!roomLobby || roomLobby.editableSides.includes(assignSide)) && !roomLobby?.lockedIds?.includes(target.id)) {
+      const actDisabled = draftBlocked || blockedByOther;
       const actBtn = makeSealButton(actLabel, {
-        width: 118,
+        width: 122,
         height: 32,
-        accent: openTeams ? activeTheme.accent : inActive ? 0xcf4932 : inOther ? INK.gold : activeTheme.accent,
-        solid: openTeams || !inActive,
-        fontSize: 12,
+        accent: actDisabled ? INK.muted : openTeams ? activeTheme.accent : inActive ? 0xcf4932 : activeTheme.accent,
+        solid: !actDisabled && (openTeams || !inActive),
+        disabled: actDisabled,
+        fontSize: 11.8,
         radius: 16,
         onClick: () => onToggleChar(target.id),
       });
-      actBtn.position.set(inspX + inspW - 132, inspY + 15);
+      actBtn.position.set(inspX + inspW - 136, inspY + 15);
       root.addChild(actBtn);
     }
 
@@ -3345,5 +3899,112 @@ export function buildFinishOverlay(w, h, { winnerSide, winnerName, turn = 1, his
 
   root._maxScroll = lMaxScroll;
   root.setScroll = setLedgerScroll;
+  return root;
+}
+
+// ── 10. IN-MATCH TABLETOP MENU OVERLAY (CONCEDE / REOPEN LOBBY / EXPORT / LEAVE) ──
+
+export function buildMatchMenuOverlay(w, h, {
+  roomCode = '',
+  confirmConcede = false,
+  canConcede = false,
+  canReopenLobby = false,
+  canExport = false,
+  canReturnLobby = false,
+  onCopyRoomCode = null,
+  onToggleConcede = null,
+  onConfirmConcede = null,
+  onReopenLobby = null,
+  onExport = null,
+  onReturnLobby = null,
+  onClose = null,
+}) {
+  const root = new PIXI.Container();
+  const veil = new PIXI.Graphics();
+  veil.rect(0, 0, w, h).fill({ color: 0xf4efe4, alpha: 0.82 });
+  veil.eventMode = 'static';
+  veil.on('pointertap', () => onClose?.());
+  root.addChild(veil);
+
+  const pw = Math.min(410, w - 48);
+  const ph = 346;
+  const px = Math.round((w - pw) / 2);
+  const py = Math.round((h - ph) / 2);
+
+  const card = new PIXI.Container();
+  card.eventMode = 'static';
+  card.on('pointertap', (e) => e.stopPropagation());
+  root.addChild(card);
+
+  const g = new PIXI.Graphics();
+  drawFolioFrame(g, px, py, pw, ph, {
+    accent: INK.gold,
+    bg: INK.paper,
+    radius: 15,
+    edgeDepth: 4.5,
+    shadowAlpha: 0.32,
+    topRibbonH: 48,
+    ribbonFill: INK.paperSoft,
+    cornerDiamonds: true,
+    diamondColor: INK.gold,
+  });
+  card.addChild(g);
+
+  const title = new PIXI.Text({
+    text: '牌桌菜单',
+    style: { fontFamily: FONT_UI, fontSize: 18, fontWeight: '900', fill: INK.strong, letterSpacing: 2 },
+  });
+  title.anchor.set(0.5);
+  title.position.set(w / 2, py + 24);
+  card.addChild(title);
+
+  let cy = py + 64;
+  const bw = pw - 56;
+  const bx = px + 28;
+  const addRowBtn = (label, opts) => {
+    const btn = makeSealButton(label, { width: bw, height: 38, fontSize: 13.5, radius: 10, ...opts });
+    btn.position.set(bx, cy);
+    card.addChild(btn);
+    cy += 47;
+  };
+
+  addRowBtn('继续对局', { accent: 0x1a825e, solid: true, onClick: onClose });
+
+  if (roomCode && onCopyRoomCode) {
+    addRowBtn(`复制房间码（${roomCode}）`, { accent: 0x1a825e, onClick: onCopyRoomCode });
+  }
+
+  if (canReopenLobby && onReopenLobby) {
+    addRowBtn('重返选人台（保留房间）', { accent: INK.goldDeep, onClick: onReopenLobby });
+  }
+
+  if (canExport && onExport) {
+    addRowBtn('导出当前战报', { accent: INK.gold, onClick: onExport });
+  }
+
+  if (canConcede) {
+    if (!confirmConcede) {
+      addRowBtn('投子认输', { accent: 0xcf4932, onClick: onToggleConcede });
+    } else {
+      const halfW = Math.floor((bw - 10) / 2);
+      const yesBtn = makeSealButton('确认认输结算', {
+        width: halfW, height: 38, accent: 0xcf4932, solid: true, fontSize: 13, radius: 10,
+        onClick: onConfirmConcede,
+      });
+      yesBtn.position.set(bx, cy);
+      const noBtn = makeSealButton('取消', {
+        width: halfW, height: 38, accent: INK.secondary, fontSize: 13, radius: 10,
+        onClick: onToggleConcede,
+      });
+      noBtn.position.set(bx + halfW + 10, cy);
+      card.addChild(yesBtn, noBtn);
+      cy += 47;
+    }
+  }
+
+  if (canReturnLobby && onReturnLobby) {
+    addRowBtn('离开房间返回大厅', { accent: INK.secondary, onClick: onReturnLobby });
+  }
+
   return root;
 }

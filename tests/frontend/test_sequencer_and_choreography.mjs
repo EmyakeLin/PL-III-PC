@@ -253,3 +253,152 @@ test('field_action_workspace renders Chinese captions on seals, supports include
   const hl = resolveFieldHighlights(analysis, { selectedCardId: 'h1' });
   assert.equal(hl.boardCardTargets.get('regular:1:1:rear:1'), 2);
 });
+
+test('roomTableState maps unified lobby, hotseat handoff curtain, unlimited pause_bank_ms, and disconnect claim flags', async () => {
+  const { roomTableState } = await import(new URL('transport.js', ENGINE));
+  const baseFrame = {
+    turn: 1,
+    mode: 'placement',
+    phase: 'placement',
+    is_over: false,
+    players: [
+      { side: 1, characters: [{ id: 'c1', name: '甲' }], hand: [] },
+      { side: 2, characters: [{ id: 'c2', name: '乙' }], hand: [] },
+    ],
+  };
+
+  const lobby = roomTableState({
+    started: false,
+    side: 1,
+    ready: false,
+    room_code: 'K7P9M2',
+    is_host: true,
+    frame: baseFrame,
+    options: [],
+  }, {});
+  assert.equal(lobby.mode, 'lobby');
+  assert.deepEqual(lobby.editable_sides, [1]);
+
+  const hotseatHandoff = roomTableState({
+    started: true,
+    side: 2,
+    hotseat: true,
+    hotseat_handoff_side: 2,
+    eligible_sides: [1, 2],
+    pause_bank_ms: null,
+    can_reopen_lobby: true,
+    can_concede: true,
+    can_claim_disconnect_win: false,
+    frame: baseFrame,
+    options: [],
+  }, {});
+  assert.equal(hotseatHandoff.mode, 'handoff');
+  assert.equal(hotseatHandoff.active_side, 2);
+  assert.equal(hotseatHandoff.pause_bank_ms, null);
+  assert.equal(hotseatHandoff.can_reopen_lobby, true);
+  assert.equal(hotseatHandoff.can_concede, true);
+});
+
+test('buildRosterOverlay renders blind-pick masking, power caps, and room rules panel with card-game wording', async () => {
+  const { Text } = await import('./pixi_stub.mjs');
+  const { buildRosterOverlay, buildMatchMenuOverlay } = await import(new URL('table_overlays.js', ENGINE));
+  const collectTexts = (node, out = []) => {
+    if (node instanceof Text) out.push(node.text);
+    for (const ch of node.children || []) collectTexts(ch, out);
+    return out;
+  };
+
+  const catalog = [
+    { id: 'c1', name: '林恩', rank: 'NORMAL', power: 1, max_hp: 15, base_duels: 1, skills: [], passives: [] },
+    { id: 'c2', name: '赫利斯', rank: 'BOSS', power: 3, max_hp: 30, base_duels: 2, skills: [], passives: [] },
+  ];
+  const ruleset = {
+    power_cap: 5,
+    max_chars: 3,
+    duplicate_policy: 'team_unique',
+    pick_mode: 'blind',
+    draft_first_side: 1,
+    draw_count: 2,
+    max_basic_cost: 5,
+    char_independent_cost: 1,
+    place_capacity: 2,
+    hp_scale_pct: 100,
+    pause_limit_s: null,
+    hotseat_curtain: true,
+  };
+
+  const blindOv = buildRosterOverlay(1280, 800, {
+    catalog,
+    team1: ['c1', 'c2'],
+    team2: [],
+    assignSide: 1,
+    roomLobby: {
+      editableSides: [1],
+      viewerSide: 1,
+      isOnline: true,
+      isHost: true,
+      isReady: false,
+      ruleset,
+      roomCode: 'K7P9M2',
+      onCopyRoomCode: () => {},
+      pickMeta: {
+        1: { count: 2, power: 4, masked: false, ready: false },
+        2: { count: 2, power: 5, masked: true, ready: true },
+      },
+      rulesOpen: false,
+      onToggleRules: () => {},
+      onUpdateRules: () => {},
+    },
+    onSetAssignSide: () => {},
+    onToggleChar: () => {},
+    onStart: () => {},
+    onCancel: () => {},
+  });
+  const blindTexts = collectTexts(blindOv).join(' | ');
+  assert.ok(blindTexts.includes('战力 4/5'), `Expected P1 power 4/5 in header: ${blindTexts}`);
+  assert.ok(blindTexts.includes('双盲保密 · 对手已编入 2 名角色（总战力 5/5）'), `Expected masked opponent summary: ${blindTexts}`);
+  assert.ok(blindTexts.includes('房间规则'), 'Expected 房间规则 button');
+
+  let patched = null;
+  const rulesOv = buildRosterOverlay(1280, 800, {
+    catalog,
+    team1: ['c1'],
+    team2: [],
+    assignSide: 1,
+    roomLobby: {
+      editableSides: [1],
+      viewerSide: 1,
+      isOnline: true,
+      isHost: true,
+      isReady: false,
+      ruleset,
+      rulesOpen: true,
+      onToggleRules: () => {},
+      onUpdateRules: (p) => { patched = p; },
+    },
+    onSetAssignSide: () => {},
+    onToggleChar: () => {},
+    onStart: () => {},
+    onCancel: () => {},
+  });
+  const rulesTexts = collectTexts(rulesOv).join(' | ');
+  assert.ok(rulesTexts.includes('房间规则设置'));
+  assert.ok(rulesTexts.includes('恢复标准规则'));
+  assert.ok(!rulesTexts.includes('调音' + '台'));
+  assert.equal(patched, null);
+
+  let conceded = false;
+  const menuOv = buildMatchMenuOverlay(1280, 800, {
+    roomCode: 'K7P9M2',
+    confirmConcede: true,
+    canConcede: true,
+    canReopenLobby: true,
+    onConfirmConcede: () => { conceded = true; },
+    onReopenLobby: () => {},
+    onClose: () => {},
+  });
+  const menuTexts = collectTexts(menuOv).join(' | ');
+  assert.ok(menuTexts.includes('重返选人台（保留房间）'));
+  assert.ok(menuTexts.includes('确认认输结算'));
+  assert.equal(conceded, false);
+});

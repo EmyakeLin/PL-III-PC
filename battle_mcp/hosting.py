@@ -1,32 +1,44 @@
-"""The mode catalog and the isolated tables hosted by one arena process."""
+"""The mode catalog, 6-character room codes, and isolated Room instances hosted by one arena process."""
 
 import secrets
 from functools import partial
 from threading import Lock
 
-from battle_ui.session import BattleSession
 from battle_ui.match import roster_art
 from loader import load_characters_from_packs
 from .challenges import CHALLENGES
 from .manual import ManualDesk
+from .room import Room
+from .ruleset import build_opponent_presets, default_ruleset, generate_room_code
 
 
 def mode_definitions():
-    """Each playable variant supplies a label and a factory accepting seed=."""
+    """All modes run on the unified real-time Room engine."""
     return {
-        "regular": ("常规对战", {"hotseat": ("热座", BattleSession),
-                             "solo": ("单人模式", partial(BattleSession, ai_side=2, open_rosters=True))}),
-        "challenge": ("挑战模式", {key: (c.name, partial(BattleSession, ai_side=2, open_rosters=True, challenge=c))
-                               for key, c in CHALLENGES.items()}),
+        "regular": ("常规对战", {
+            "online": ("联机开黑", partial(Room, selectable=True)),
+            "solo": ("单人演练", partial(Room, bot=True, selectable=True)),
+            "hotseat": ("同屏双人", partial(Room, hotseat=True, selectable=True)),
+        }),
+        "challenge": ("挑战模式", {
+            key: (c.name, partial(Room, bot=True, challenge=c, selectable=True))
+            for key, c in CHALLENGES.items()
+        }),
         "limit_battle": ("界限战斗", {}),
         "combat_contract": ("砺战合约", {}),
     }
 
 
 def mode_catalog():
-    return [{"id": key, "name": name, "available": bool(variants),
-             "variants": [{"id": vid, "name": label} for vid, (label, _) in variants.items()]}
-            for key, (name, variants) in mode_definitions().items()]
+    return [
+        {
+            "id": key,
+            "name": name,
+            "available": bool(variants),
+            "variants": [{"id": vid, "name": label} for vid, (label, _) in variants.items()],
+        }
+        for key, (name, variants) in mode_definitions().items()
+    ]
 
 
 class RequestError(ValueError):
@@ -37,17 +49,41 @@ class RequestError(ValueError):
 
 
 class HostedRoom:
-    def __init__(self, room):
+    def __init__(self, room, *, code=None):
         self.room = room
-        self.local_table = isinstance(room, BattleSession)
-        seats = (1,) if self.local_table else (1, 2)
-        self.tokens = {s: secrets.token_urlsafe(32) for s in seats if s != getattr(room, "bot_side", None)}
-        self.desk = None if self.local_table else ManualDesk(room)
+        self.local_table = False
+        self.code = code or getattr(room, "room_code", None)
+        self.hotseat = bool(getattr(room, "hotseat", False))
+        if self.hotseat:
+            tok = secrets.token_urlsafe(32)
+            self.tokens = {1: tok}
+            self.hotseat_token = tok
+            self.seat2_claimed = True
+        else:
+            self.hotseat_token = None
+            seats = (1, 2)
+            self.tokens = {s: secrets.token_urlsafe(32) for s in seats if s != getattr(room, "bot_side", None)}
+            self.seat2_claimed = bool(getattr(room, "bot_side", None) is not None)
+        self.desk = ManualDesk(room) if hasattr(room, "cv") else None
         self.desk_token = secrets.token_urlsafe(32)
 
     def close(self):
-        if not self.local_table:
-            self.room.close()
+        self.room.close()
+
+    def resolve_token(self, token):
+        """Return `(side, is_hotseat)` for a raw bearer/ws token string, or raise 403."""
+        if not token:
+            return None, False
+        if not isinstance(token, str) or not token.isascii():
+            raise RequestError(403, "席位凭据无效。")
+        if self.hotseat_token and secrets.compare_digest(self.hotseat_token, token):
+            return 1, True
+        for seat, secret in self.tokens.items():
+            if secrets.compare_digest(secret, token):
+                if seat == 2:
+                    self.seat2_claimed = True
+                return seat, False
+        raise RequestError(403, "席位凭据无效。")
 
     def authorized_seats(self, authorization, *, desk=False):
         if authorization is None:
@@ -55,15 +91,28 @@ class HostedRoom:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() == "bearer" and token and token.isascii():
             if desk and secrets.compare_digest(self.desk_token, token):
-                return tuple(self.tokens)
+                return (1, 2) if self.hotseat else tuple(self.tokens)
+            if self.hotseat_token and secrets.compare_digest(self.hotseat_token, token):
+                return (1, 2)
             for seat, secret in self.tokens.items():
                 if secrets.compare_digest(secret, token):
+                    if seat == 2:
+                        self.seat2_claimed = True
                     return (seat,)
         raise RequestError(403, "席位凭据无效。")
 
+    def auth_context(self, authorization):
+        """Return `(side, is_hotseat)` from an HTTP Authorization header."""
+        if authorization is None:
+            return None, False
+        scheme, _, token = authorization.partition(" ")
+        if scheme.lower() == "bearer" and token:
+            return self.resolve_token(token)
+        raise RequestError(403, "席位凭据无效。")
+
     def side_for(self, authorization):
-        seats = self.authorized_seats(authorization)
-        return seats[0] if seats else None
+        side, _ = self.auth_context(authorization)
+        return side
 
     def desk_command(self, name, seats, body):
         if name == "status" and body == {}:
@@ -87,6 +136,7 @@ class Lobby:
     def __init__(self, seed=None):
         self.seed = seed
         self._rooms = {}
+        self._by_code = {}
         self._lock = Lock()
         self._closed = False
 
@@ -112,31 +162,88 @@ class Lobby:
         challenge = CHALLENGES[variant] if mode == "challenge" else None
         pool = {c["id"]: c for c in load_characters_from_packs(extra_packs=challenge.packs if challenge else ())}
         _, sprites, catalog = roster_art(pool)
-        return {"catalog": catalog, "character_sprites": sprites,
-                "fixed_opponents": list(challenge.opponents) if challenge else [],
-                "hotseat": mode == "regular" and variant == "hotseat"}
+        is_online = mode == "regular" and variant == "online"
+        return {
+            "catalog": catalog,
+            "character_sprites": sprites,
+            "fixed_opponents": list(challenge.opponents) if challenge else [],
+            "opponent_presets": [] if (challenge or is_online) else build_opponent_presets(pool),
+            "default_ruleset": default_ruleset(online=is_online),
+            "hotseat": mode == "regular" and variant == "hotseat",
+            "online": is_online,
+        }
 
     def create(self, spec):
-        if not isinstance(spec, dict) or spec.keys() - {"mode", "variant", "roster"}:
+        if not isinstance(spec, dict) or spec.keys() - {"mode", "variant", "roster", "ruleset"}:
             raise RequestError(400, "请指定对战模式及玩法。")
         mode, variant = spec.get("mode"), spec.get("variant")
         _, factory = self.variant(mode, variant)
         args = {"seed": self.seed}
-        if "roster" in spec:
+        if "ruleset" in spec and spec["ruleset"] is not None:
+            args["ruleset"] = spec["ruleset"]
+        has_roster = "roster" in spec and spec["roster"] is not None
+        if has_roster:
             roster = spec["roster"]
             if not isinstance(roster, list) or len(roster) != 2 or not all(
                     isinstance(team, list) and team and all(isinstance(c, str) for c in team) for team in roster):
                 raise RequestError(400, "请为双方各选至少一名角色。")
             args["roster"] = roster
-        hosted = HostedRoom(factory(**args))
+            args["start_immediately"] = (variant != "online")
+
+        with self._lock:
+            if self._closed:
+                raise RequestError(503, "服务正在关闭。")
+            code = generate_room_code(self._by_code.keys())
+        args["room_code"] = code
+        try:
+            room = factory(**args)
+        except ValueError as exc:
+            raise RequestError(400, str(exc)) from None
+        hosted = HostedRoom(room, code=code)
         room_id = secrets.token_hex(16)
         with self._lock:
             if self._closed:
                 hosted.close()
                 raise RequestError(503, "服务正在关闭。")
             self._rooms[room_id] = hosted
-        return {"id": room_id, "mode": mode, "variant": variant,
-                "play_url": f"/rooms/{room_id}/table/#token={hosted.tokens[1]}"}
+            self._by_code[code] = room_id
+        resp = {
+            "id": room_id,
+            "code": code,
+            "mode": mode,
+            "variant": variant,
+            "play_url": f"/rooms/{room_id}/canvas/#token={hosted.tokens[1]}",
+            "spectate_url": f"/rooms/{room_id}/canvas/",
+        }
+        if 2 in hosted.tokens:
+            resp["guest_url"] = f"/rooms/{room_id}/canvas/#token={hosted.tokens[2]}"
+        return resp
+
+    def join(self, body):
+        if not isinstance(body, dict) or not isinstance(body.get("code"), str):
+            raise RequestError(400, "请输入 6 位房间码。")
+        code = body["code"].strip().upper()
+        with self._lock:
+            room_id = self._by_code.get(code)
+            hosted = self._rooms.get(room_id) if room_id else None
+            if hosted is None:
+                raise RequestError(404, "未找到该房间码，请确认房间是否仍在运行。")
+            if not hosted.seat2_claimed and 2 in hosted.tokens:
+                hosted.seat2_claimed = True
+                return {
+                    "id": room_id,
+                    "code": code,
+                    "role": "player",
+                    "side": 2,
+                    "play_url": f"/rooms/{room_id}/canvas/#token={hosted.tokens[2]}",
+                }
+            return {
+                "id": room_id,
+                "code": code,
+                "role": "spectator",
+                "side": None,
+                "play_url": f"/rooms/{room_id}/canvas/",
+            }
 
     def get(self, room_id):
         with self._lock:
@@ -148,9 +255,11 @@ class Lobby:
     def remove(self, room_id, authorization):
         hosted = self.get(room_id)
         if hosted.side_for(authorization) != 1:
-            raise RequestError(403, "关闭房间需要创建时的私人邀请。")
+            raise RequestError(403, "关闭房间需要房主的私人邀请。")
         with self._lock:
             removed = self._rooms.pop(room_id, None)
+            if removed and removed.code:
+                self._by_code.pop(removed.code, None)
         if removed is not None:
             removed.close()
 
@@ -158,5 +267,6 @@ class Lobby:
         with self._lock:
             self._closed = True
             rooms, self._rooms = self._rooms, {}
+            self._by_code.clear()
         for hosted in rooms.values():
             hosted.close()

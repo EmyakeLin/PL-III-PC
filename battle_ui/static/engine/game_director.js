@@ -80,6 +80,7 @@ import {
   buildCodexOverlay,
   buildPileOverlay,
   buildFinishOverlay,
+  buildMatchMenuOverlay,
 } from './table_overlays.js';
 
 const PHASE_NAMES = {
@@ -264,6 +265,20 @@ export class GameDirector {
     this._lastHandHoverSfxMs = 0;
     this.rosterModal = null;
     this.rosterActors = [];
+    this.lobbyUi = {
+      assignSide: 1,
+      hoveredChar: null,
+      factionFilter: null,
+      rulesOpen: false,
+      galleryScrollY: 0,
+      inspectScrollY: 0,
+      galleryMaxScroll: 0,
+      inspectMaxScroll: 0,
+      gallerySplitX: 0,
+      presetIdx: 0,
+      node: null,
+    };
+    this.matchMenu = null;
     this.codexModal = null;
     this.pileModal = null;
     this.drawSelected = new Set();
@@ -1146,12 +1161,14 @@ export class GameDirector {
     const rightIds = new Set(right.characters.map(character => character.id));
     this.mirroredIds = new Set(left.characters.map(character => character.id).filter(id => rightIds.has(id)));
     if (this.transport.isRoom) {
-      if (matchChanged || (!prevStarted && nextState.started) || (!nextState.can_rematch && !nextState.can_restart && (nextState.started || nextState.ready))) {
+      if (matchChanged || (!prevStarted && nextState.started) || !nextState.started) {
         this.rosterModal = null;
-      } else if (this.rosterModal && !nextState.bot_side) {
-        const other = 3 - nextState.side;
-        const player = nextState.frame.players.find(p => p.side === other);
-        this.rosterModal[`team${other}`] = player.characters.map(c => c.id);
+      }
+      if (matchChanged || (!prevStarted && nextState.started) || !nextState.started) {
+        this.matchMenu = null;
+      }
+      if (!prevStarted && nextState.started) {
+        this.lobbyUi.rulesOpen = false;
       }
     }
     if (nextState.character_sprites) {
@@ -1193,9 +1210,6 @@ export class GameDirector {
     }
 
     this._rebuildAll();
-    if (isInitial && this.transport.isRoom && nextState.side && !nextState.started && !nextState.ready) {
-      this._openRosterModal();
-    }
     if (!isInitial && !matchChanged && resumedPlay && prevTurn === nextTurn && prevRosterSig === nextRosterSig && !nextState.frame?.is_over) {
       const combat = nextState.frame?.combat;
       const restored = combat
@@ -1341,9 +1355,13 @@ export class GameDirector {
     const room = this.transport.isRoom ? this.state : null;
     let phaseLabel = this.state?.special_timing && ['timing', 'combat'].includes(this.state.mode) ? this.state.special_timing
       : (PHASE_NAMES[frame?.phase] || frame?.phase || '');
-    if (room?.mode === 'lobby') phaseLabel = room.ready ? '等待另一席准备' : room.bot_side ? '离线人机对战' : '对局准备';
+    if (room?.mode === 'lobby') {
+      phaseLabel = room.ready ? '等待另一席准备' : room.hotseat ? '同屏双人编队' : room.bot_side ? '单人演练编队' : '房间选人台';
+    }
     if (room?.mode === 'lobby' && room.challenge) phaseLabel = `挑战 · ${room.challenge}`;
-    if (room?.paused_by) {
+    if (room?.disconnect_frozen) {
+      phaseLabel = room.can_claim_disconnect_win ? '⚠ 对手离线超时 · 可等待或结算' : '⚠ 对手连接中断 · 已暂停保护';
+    } else if (room?.paused_by) {
       const remSec = room.pause_remaining_ms != null ? ` · 思考 ${Math.ceil(room.pause_remaining_ms / 1000)}s` : '';
       phaseLabel = room.paused_by === room.side ? `对局已暂停${remSec}` : `对方暂停${remSec}`;
     } else if (room?.mode === 'waiting') {
@@ -1355,7 +1373,7 @@ export class GameDirector {
       firstSide: this.sequencer.pendingSpeedReveal ? null : (frame?.first_side ?? null),
       autoPace: room && !room.client_paced ? !room.paused_by : this.autoPace,
       playbackEnabled: !room || room.client_paced || room.can_pause || (room.side !== null && room.paused_by === room.side),
-      rosterEnabled: !room || Boolean(room.side && ((!room.started && !room.ready) || room.can_restart || room.can_rematch)),
+      rosterEnabled: Boolean(this.state),
       muted: this.audio.muted,
       passivesOpen: Boolean(this.passiveDrawer),
       beatDurationMs: room?.beat_duration_ms || 0,
@@ -3431,7 +3449,7 @@ export class GameDirector {
           });
         }
       }
-      if ((this.state.eligible_sides || []).length > 1 && this.state.ai_side == null && !this.transport.isRoom) {
+      if ((this.state.eligible_sides || []).length > 1 && this.state.ai_side == null && !this.state.bot_side) {
         buttons.push({ label: '切换席位', h: 34, accent: 0x177d6b, solid: false, fn: () => this._sendAction('switch_side') });
       }
     } else if ((!this.transport.isRoom || this.state.can_advance) && ['reveal', 'combat', 'turn_end', 'timing'].includes(mode)
@@ -3450,6 +3468,31 @@ export class GameDirector {
         accent: 0x1a825e,
         solid: !this.state.next_voted,
         fn: () => { if (!this.sequencer.isRollAnimating) this._sendAction('next'); },
+      });
+    }
+
+    if (this.state.hotseat && this.state.ruleset?.hotseat_curtain === false
+        && !['lobby', 'finished', 'handoff', 'pre_attack', 'intercept'].includes(mode)
+        && !this._isFieldActionMode()
+        && ((this.state.eligible_sides || []).length > 1 || mode === 'placement')) {
+      if (!(mode === 'placement' && (this.state.eligible_sides || []).length <= 1)) {
+        buttons.push({
+          label: `切换席位（P${this.state.side || 1}）`,
+          h: 34,
+          accent: 0x177d6b,
+          solid: false,
+          fn: () => this._sendAction('switch_side'),
+        });
+      }
+    }
+
+    if (this.state.can_claim_disconnect_win && mode !== 'finished' && mode !== 'lobby') {
+      buttons.push({
+        label: '对手超时 · 提前获胜',
+        h: 38,
+        accent: 0xcf4932,
+        solid: true,
+        fn: () => this._sendAction('claim_disconnect_win'),
       });
     }
 
@@ -3628,12 +3671,292 @@ export class GameDirector {
     }
   }
 
+  _copyRoomCodeToast() {
+    const code = this.state?.room_code || this.state?.lobby_state?.room_code || '';
+    if (!code) return;
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(code).then(
+        () => this.showToast(`已复制房间码 ${code}，发给朋友即可在大厅输入加入！`, 0x1a825e, 2.4),
+        () => this.showToast(`本房房间码：${code}`, INK.gold, 3.0)
+      );
+    } else {
+      this.showToast(`本房房间码：${code}`, INK.gold, 3.0);
+    }
+  }
+
+  _buildLiveRoomLobbyOverlay(w, h) {
+    const ui = this.lobbyUi;
+    const catalog = this.state.roster_catalog || [];
+    const lob = this.state.lobby_state || {};
+    const rs = lob.ruleset || this.state.ruleset || {};
+    const rawPicks = lob.picks || {};
+    const pickMeta = lob.pick_meta || {};
+    const meta1 = pickMeta[1] || pickMeta['1'] || null;
+    const meta2 = pickMeta[2] || pickMeta['2'] || null;
+    const team1 = meta1?.masked ? [] : (rawPicks[1] || rawPicks['1'] || []).slice();
+    const team2 = meta2?.masked ? [] : (rawPicks[2] || rawPicks['2'] || []).slice();
+    const editableSides = this.state.editable_sides || [];
+
+    if (rs.pick_mode === 'draft' && lob.draft_turn_side && editableSides.includes(lob.draft_turn_side)) {
+      ui.assignSide = lob.draft_turn_side;
+    } else if (editableSides.length && !editableSides.includes(ui.assignSide)) {
+      ui.assignSide = editableSides[0];
+    } else if (!editableSides.length && this.state.side) {
+      ui.assignSide = this.state.side;
+    }
+
+    if (!ui.hoveredChar || !catalog.some((c) => c.id === ui.hoveredChar.id)) {
+      const prefId = (ui.assignSide === 2 ? team2[0] : team1[0]) || team1[0] || team2[0];
+      ui.hoveredChar = catalog.find((c) => c.id === prefId) || catalog[0] || null;
+    }
+
+    const isOnline = Boolean(!this.state.bot_side && !this.state.hotseat);
+    const isSpectator = Boolean(this.state.seat_role === 'spectator' || (!this.state.side && !this.state.hotseat));
+    const isHost = Boolean(lob.is_host ?? this.state.is_host);
+    const presets = lob.opponent_presets || [];
+    const allowStack = rs.duplicate_policy === 'free_duplicates';
+
+    const roomLobby = {
+      editableSides,
+      viewerSide: this.state.side || 1,
+      isOnline,
+      isHotseat: Boolean(this.state.hotseat),
+      isBot: Boolean(this.state.bot_side),
+      isChallenge: Boolean(this.state.challenge),
+      isSpectator,
+      isHost,
+      isReady: Boolean(this.state.ready),
+      ruleset: rs,
+      pickMeta,
+      draftTurnSide: lob.draft_turn_side || null,
+      canPassFirstPick: Boolean(isHost && rs.pick_mode === 'draft' && (meta1?.count || 0) === 0 && (meta2?.count || 0) === 0),
+      roomCode: isOnline ? (this.state.room_code || lob.room_code || '') : '',
+      onCopyRoomCode: isOnline ? () => this._copyRoomCodeToast() : null,
+      title: this.state.challenge || (this.state.hotseat ? '同屏双人' : this.state.bot_side ? '单人演练' : '联机牌桌'),
+      lockedIds: this.state.challenge ? team2 : [],
+      returnLabel: this.returnToLobby ? '返回大厅' : null,
+      sideNames: this.state.bot_side
+        ? { 1: '我方阵容', 2: this.state.challenge ? '挑战首领' : '电脑对手' }
+        : (isOnline && this.state.side
+            ? { [this.state.side]: `我方（P${this.state.side}）`, [3 - this.state.side]: `对手（P${3 - this.state.side}）` }
+            : { 1: '1号席阵容', 2: '2号席阵容' }),
+      openTeams: allowStack,
+      rulesOpen: Boolean(ui.rulesOpen),
+      onToggleRules: () => {
+        ui.rulesOpen = !ui.rulesOpen;
+        this.hoveredCard = null;
+        this._renderInspection();
+        this._rebuildOverlay();
+      },
+      onUpdateRules: (patch) => {
+        this.audio.coinClink(1.05);
+        this._sendAction('update_rules', { ruleset: patch });
+      },
+      onPassFirstPick: () => {
+        this.audio.coinClink(1.05);
+        this._sendAction('pass_first_pick');
+      },
+      onUnready: () => {
+        this.audio.coinClink(0.95);
+        this._sendAction('unready');
+      },
+      onRandomizeOpponent: (this.state.bot_side && !this.state.challenge)
+        ? () => {
+            this.audio.coinClink(1.08);
+            this._sendAction('randomize_bot_team', {});
+          }
+        : null,
+      onCyclePresetOpponent: (this.state.bot_side && !this.state.challenge && presets.length > 0)
+        ? () => {
+            const p = presets[ui.presetIdx % presets.length];
+            ui.presetIdx = (ui.presetIdx + 1) % presets.length;
+            this.audio.coinClink(1.08);
+            this.showToast(`切换对手阵容：${p.name}`, INK.gold, 1.8);
+            this._sendAction('randomize_bot_team', { preset_id: p.id });
+          }
+        : null,
+    };
+
+    const inspectCharacter = (ch) => {
+      if (!ch || ui.hoveredChar?.id === ch.id) return;
+      ui.hoveredChar = ch;
+      ui.inspectScrollY = 0;
+      this.hoveredCard = null;
+      this._renderInspection();
+      this._rebuildOverlay();
+    };
+
+    return buildRosterOverlay(w, h, {
+      catalog,
+      team1,
+      team2,
+      assignSide: ui.assignSide,
+      hoveredChar: ui.hoveredChar,
+      factionFilter: ui.factionFilter,
+      maxPerSide: rs.max_chars ?? Infinity,
+      roomLobby,
+      galleryScrollY: ui.galleryScrollY || 0,
+      inspectScrollY: ui.inspectScrollY || 0,
+      onSetAssignSide: (s) => {
+        if (!editableSides.includes(s)) return;
+        ui.assignSide = s;
+        this._rebuildOverlay();
+      },
+      onClearSide: (s) => {
+        if (!editableSides.includes(s)) return;
+        ui.assignSide = s;
+        this.audio.coinClink(0.95);
+        this._sendAction('update_team', { team: [], target_side: s });
+      },
+      onSetFaction: (fac) => {
+        ui.factionFilter = fac;
+        ui.galleryScrollY = 0;
+        this.hoveredCard = null;
+        this._renderInspection();
+        this._rebuildOverlay();
+      },
+      onToggleChar: async (cid) => {
+        const s = ui.assignSide;
+        if (!editableSides.includes(s)) {
+          if (this.state.ready) this.showToast('请先点击「已准备 · 取消」后再调整阵容。', INK.gold, 2.0);
+          return;
+        }
+        const own = (s === 1 ? team1 : team2).slice();
+        const other = (s === 1 ? team2 : team1).slice();
+        const picked = catalog.find((c) => c.id === cid);
+        if (this.state.challenge && s === 1 && other.includes(cid)) {
+          this.showToast('这名角色是本场挑战首领。', INK.gold, 1.8);
+          return;
+        }
+        if (allowStack) {
+          own.push(cid);
+        } else {
+          const idx = own.indexOf(cid);
+          if (idx >= 0) {
+            own.splice(idx, 1);
+          } else {
+            if (rs.duplicate_policy === 'strict_unique' && other.includes(cid) && !picked?.mirror_allowed) {
+              if (editableSides.length === 2) {
+                const oIdx = other.indexOf(cid);
+                if (oIdx >= 0) other.splice(oIdx, 1);
+                await this._sendAction('update_team', { team: other, target_side: 3 - s });
+              } else {
+                this.showToast('全场唯一规则下，该角色已被对方选入。', INK.gold, 1.9);
+                return;
+              }
+            }
+            own.push(cid);
+          }
+        }
+        if (picked && ui.hoveredChar?.id !== picked.id) {
+          ui.hoveredChar = picked;
+          ui.inspectScrollY = 0;
+        }
+        this.hoveredCard = null;
+        this._renderInspection();
+        this.audio.coinClink(1.1);
+        await this._sendAction('update_team', { team: own, target_side: s });
+      },
+      onRemoveFromSide: (s, cid) => {
+        if (!editableSides.includes(s)) return;
+        const own = (s === 1 ? team1 : team2).slice();
+        const idx = allowStack ? own.lastIndexOf(cid) : own.indexOf(cid);
+        if (idx < 0) return;
+        own.splice(idx, 1);
+        ui.assignSide = s;
+        this.hoveredCard = null;
+        this._renderInspection();
+        this.audio.coinClink(0.95);
+        this._sendAction('update_team', { team: own, target_side: s });
+      },
+      onInspectChar: allowStack ? inspectCharacter : null,
+      onHoverChar: allowStack ? null : inspectCharacter,
+      onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
+        const cid = card?.character_id || ui.hoveredChar?.id || null;
+        this.hoveredCard = card
+          ? {
+              card, side, accentColor: this._resolveCharColor(cid, side),
+              ownerName, anchorX: cardX, anchorY: cardY, cardH: cardH || 172, source: 'roster', sourceSprite: spr,
+            }
+          : null;
+        this._renderInspection();
+      },
+      onGalleryScrollChange: (val) => { ui.galleryScrollY = val; },
+      onInspectScrollChange: (val) => { ui.inspectScrollY = val; },
+      onStart: async (teams) => {
+        this.hoveredCard = null;
+        this._renderInspection();
+        this.three.clearDice();
+        this.physics.clearClashGroups();
+        await this._sendAction('new', { roster: teams });
+      },
+      onCancel: () => {
+        if (this.returnToLobby) this.returnToLobby();
+      },
+    });
+  }
+
   _rebuildOverlay() {
     clearContainer(this.overlayLayer);
     this.rosterActors = [];
+    this.lobbyUi.node = null;
     this._activeOverlayNode = null;
     if (!this.state) return;
     const { w, h } = this.layout;
+
+    if (this.matchMenu) {
+      const isOnline = Boolean(!this.state.bot_side && !this.state.hotseat);
+      const ov = buildMatchMenuOverlay(w, h, {
+        roomCode: isOnline ? (this.state.room_code || '') : '',
+        confirmConcede: Boolean(this.matchMenu.confirmConcede),
+        canConcede: Boolean(this.state.can_concede),
+        canReopenLobby: Boolean(this.state.can_reopen_lobby),
+        canExport: Boolean(this.openBattleRecord && this.state.started),
+        canReturnLobby: Boolean(this.returnToLobby),
+        onCopyRoomCode: isOnline ? () => this._copyRoomCodeToast() : null,
+        onToggleConcede: () => {
+          this.matchMenu.confirmConcede = !this.matchMenu.confirmConcede;
+          this._rebuildOverlay();
+        },
+        onConfirmConcede: () => {
+          this.matchMenu = null;
+          this._rebuildOverlay();
+          this._sendAction('concede');
+        },
+        onReopenLobby: () => {
+          this.matchMenu = null;
+          this._rebuildOverlay();
+          this._sendAction('reopen_lobby');
+        },
+        onExport: () => {
+          this.matchMenu = null;
+          this._rebuildOverlay();
+          this.openBattleRecord?.();
+        },
+        onReturnLobby: () => {
+          this.matchMenu = null;
+          this.returnToLobby?.();
+        },
+        onClose: () => {
+          this.matchMenu = null;
+          this._rebuildOverlay();
+        },
+      });
+      this._activeOverlayNode = { kind: 'match_menu', node: ov };
+      this.overlayLayer.addChild(ov);
+      return;
+    }
+
+    if (this.transport.isRoom && this.state.mode === 'lobby') {
+      const ov = this._buildLiveRoomLobbyOverlay(w, h);
+      this.rosterActors = ov._actors || [];
+      this.lobbyUi.galleryMaxScroll = ov._galleryMaxScroll || 0;
+      this.lobbyUi.inspectMaxScroll = ov._inspectMaxScroll || 0;
+      this.lobbyUi.gallerySplitX = ov._gallerySplitX || w * 0.5;
+      this.lobbyUi.node = ov;
+      this.overlayLayer.addChild(ov);
+      return;
+    }
 
     if (this.rosterModal) {
       const m = this.rosterModal;
@@ -3967,6 +4290,7 @@ export class GameDirector {
     } else if (mode === 'finished') {
       const winnerSide = this.state.frame.winner_side;
       const canRematch = !this.transport.isRoom || this.state.can_rematch;
+      const canReopen = !this.transport.isRoom || this.state.can_reopen_lobby;
       const ov = buildFinishOverlay(w, h, {
         winnerSide,
         winnerName: winnerSide && winnerSide === (this.state.ai_side ?? this.state.bot_side) ? (this.state.challenge || '电脑对手') : null,
@@ -3983,7 +4307,13 @@ export class GameDirector {
           this.physics.clearClashGroups();
           this._sendAction('new', { roster: teams });
         } : null,
-        onNewRoster: canRematch ? () => this._openRosterModal() : null,
+        onNewRoster: canReopen ? () => {
+          if (this.transport.isRoom) {
+            this._sendAction('reopen_lobby');
+            return;
+          }
+          this._openRosterModal();
+        } : null,
       });
       this._activeOverlayNode = { kind: 'finished', node: ov };
       this.overlayLayer.addChild(ov);
@@ -3991,12 +4321,26 @@ export class GameDirector {
   }
 
   _openRosterModal() {
-    const room = this.transport.isRoom ? this.state : null;
-    if (room && (!room.side || (!room.can_rematch && !room.can_restart && (room.started || room.ready)))) return;
+    if (this.transport.isRoom) {
+      this.activeHeroPanel = null;
+      this.passiveDrawer = null;
+      this.codexModal = null;
+      this.pileModal = null;
+      this.hoveredCard = null;
+      this.hoveredInfo = null;
+      this._renderInspection();
+      this._rebuildCornerHud();
+      this._rebuildSidePanels();
+      if (this.state?.mode === 'lobby') {
+        this.lobbyUi.rulesOpen = !this.lobbyUi.rulesOpen;
+      } else {
+        this.matchMenu = this.matchMenu ? null : { confirmConcede: false };
+      }
+      this._rebuildOverlay();
+      return;
+    }
     const players = this.state?.frame?.players || [];
-    const awaitingLineup = this.returnToLobby && room?.bot_side && !room.started;
-    const team = index => awaitingLineup && room.editable_sides.includes(index + 1)
-      ? [] : (players[index]?.characters || []).map(c => c.printed_id || c.id);
+    const team = index => (players[index]?.characters || []).map(c => c.printed_id || c.id);
     const t1 = team(0), t2 = team(1);
     const catalog = this.state?.roster_catalog || [];
     this.activeHeroPanel = null;
@@ -4583,9 +4927,12 @@ export class GameDirector {
   }
 
   _onWheel(e) {
-    // 1. O(1) Wheel Scroll for Roster Modal (ZERO rebuild on wheel!)
-    if (this.rosterModal) {
-      const m = this.rosterModal;
+    // 1. O(1) Wheel Scroll for Live Room Lobby or Roster Modal (ZERO rebuild on wheel!)
+    const activeRosterUi = (this.transport.isRoom && this.state?.mode === 'lobby' && this.lobbyUi.node)
+      ? this.lobbyUi
+      : this.rosterModal;
+    if (activeRosterUi) {
+      const m = activeRosterUi;
       const inGallery = this.lastPointerX < (m.gallerySplitX || this.w * 0.5);
       if (inGallery && m.galleryMaxScroll > 0) {
         const nextY = Math.max(0, Math.min(m.galleryMaxScroll, (m.galleryScrollY || 0) + e.deltaY * 0.65));
@@ -4780,6 +5127,12 @@ export class GameDirector {
       return;
     }
     if (e.key === 'Escape') {
+      if (this.matchMenu || (this.state?.mode === 'lobby' && this.lobbyUi.rulesOpen)) {
+        this.matchMenu = null;
+        this.lobbyUi.rulesOpen = false;
+        this._rebuildOverlay();
+        return;
+      }
       if (this.rosterModal || this.codexModal || this.pileModal) {
         this.rosterModal = null;
         this.codexModal = null;
@@ -5231,7 +5584,7 @@ export class GameDirector {
     const holdLocalInteraction = (!this.transport.isRoom || this.state?.client_paced)
       && Boolean(this.dragState || this.selectedHandCardId || this.activeFieldAbilityKey || this.localQueuedAction);
     if (this.autoPace && !holdLocalInteraction && this.sequencer.isSettled && !this.sequencer.isRollAnimating && !this.transport.busy
-      && !this.passiveDrawer && !this.rosterModal && !this.codexModal && !this.pileModal) {
+      && !this.passiveDrawer && !this.rosterModal && !this.matchMenu && !this.codexModal && !this.pileModal) {
       const m = this.state?.mode;
       const autoModes = this.state?.client_paced || this.transport.isRoom
         ? ['combat', 'reveal', 'timing', 'turn_end']

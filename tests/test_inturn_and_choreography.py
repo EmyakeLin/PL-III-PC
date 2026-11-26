@@ -6,7 +6,6 @@ import unittest
 
 from battle_mcp.room import Room
 from battle_ui.match import BattleMatch
-from battle_ui.session import BattleSession
 from models.card import Card
 
 
@@ -106,9 +105,9 @@ class HitCausalOrderAndMidDuelCutInTests(unittest.TestCase):
         for d_idx in dmg_indices:
             self.assertLess(strike_idx, d_idx, "combat_strike must strictly precede every hit/ignite damage event!")
 
-    def test_vs_ai_session_keeps_live_hand_and_mid_duel_place_clashes_third_die_inline(self):
-        session = BattleSession(seed=15, roster=["cang_feng_ji_lan", "plan_b_heck"], ai_side=2)
-        match = session.match
+    def test_vs_ai_room_keeps_live_hand_and_mid_duel_place_clashes_third_die_inline(self):
+        room = Room(["cang_feng_ji_lan", "plan_b_heck"], seed=15, bot=True, start_immediately=True)
+        match = room.engine
         human, bot = match.game.players
 
         for slot in match.game.duelspace.space:
@@ -144,66 +143,57 @@ class HitCausalOrderAndMidDuelCutInTests(unittest.TestCase):
         human.characters[0].skills.append(cut_in)
         human.cardspace.hand.add_card(cut_in)
 
-        state = session.state()
-        for _ in range(20):
-            m = state["mode"]
-            if m == "draw_select":
-                ids = [c["action_key"] for c in state["draw_select"]["candidates"][:state["draw_select"]["discard_count"]]]
-                _, state = session.command({"action": "draw_bottom", "revision": state["revision"], "card_ids": ids})
-            elif m == "timing" and not state["frame"]["cards_revealed"]:
-                _, state = session.command({"action": "next", "revision": state["revision"]})
-            elif m == "placement":
-                _, state = session.command({"action": "end", "revision": state["revision"]})
-            elif m == "pre_attack":
-                _, state = session.command({"action": "end_attack", "revision": state["revision"]})
-            elif m == "intercept":
-                _, state = session.command({
-                    "action": "let_through",
-                    "revision": state["revision"],
-                    "duel_number": state["pending_responses"][0],
-                })
+        for idx in range(25):
+            state = room.canvas_state(1)
+            if state["frame"]["cards_revealed"]:
+                break
+            opts = state["options"]
+            end_m = next((m for m in opts if m["kind"] in ("end", "end_attack", "let_through")), None)
+            if end_m:
+                room.act(1, end_m["id"], state["revision"], f"pre-{idx}")
+            elif state["can_advance"]:
+                room.next_beat(1, state["revision"], f"prenx-{idx}")
             else:
                 break
 
-        for _ in range(30):
+        for idx in range(30):
+            state = room.canvas_state(1)
             strikes = [e for e in state["fx_events"] if e["kind"] == "combat_strike"]
-            if len(strikes) == 2 and not state.get("effect_choice"):
+            if len(strikes) == 2 and not state["frame"].get("effect_choice"):
                 break
-            if state["mode"] == "special" and state.get("effect_choice"):
-                decline_idx = next(i for i, o in enumerate(state["special_options"]) if o["kind"].startswith("decline_"))
-                _, state = session.command({"action": "use_special", "revision": state["revision"], "option": decline_idx})
+            opts = state["options"]
+            dec = next((m for m in opts if m["kind"].startswith("special_decline_")), None)
+            if dec:
+                room.act(1, dec["id"], state["revision"], f"dec-{idx}")
             else:
-                _, state = session.command({"action": "next", "revision": state["revision"]})
+                room.next_beat(1, state["revision"], f"s1-{idx}")
 
+        state = room.canvas_state(1)
         strikes = [e for e in state["fx_events"] if e["kind"] == "combat_strike"]
         self.assertEqual(len(strikes), 2, "Opponent should have completed exactly 2 solo strikes!")
         human_view = next(p for p in state["frame"]["players"] if p["side"] == 1)
-        self.assertIsNotNone(human_view["hand"], "VS-AI must keep human hand visible during combat!")
-        place_idx = next(
-            i for i, opt in enumerate(state["inline_special_options"])
-            if opt["kind"] == "place" and opt.get("card_id") == "ji_lan_test_cutin" and opt.get("duel_number") == 1
+        self.assertIsNotNone(human_view["hand"], "VS-AI Room must keep human hand visible during combat!")
+        place_move = next(
+            opt for opt in state["options"]
+            if opt["kind"] == "special_place" and opt.get("card_id") == "ji_lan_test_cutin" and opt.get("duel_number") == 1
         )
 
-        status, state = session.command({
-            "action": "use_special",
-            "revision": state["revision"],
-            "option": place_idx,
-        })
-        self.assertEqual(status, 200)
-        self.assertNotEqual(state["mode"], "special_handoff")
+        room.act(1, place_move["id"], state["revision"], "cutin-act")
 
-        for _ in range(15):
+        for idx in range(15):
+            state = room.canvas_state(1)
             clashes = [e for e in state["fx_events"] if e["kind"] == "dice_clash"]
             if clashes:
                 break
-            if state["mode"] == "special" and state.get("effect_choice"):
-                decline_idx = next(i for i, o in enumerate(state["special_options"]) if o["kind"].startswith("decline_"))
-                _, state = session.command({"action": "use_special", "revision": state["revision"], "option": decline_idx})
-            elif state["mode"] in ("combat", "timing", "reveal"):
-                _, state = session.command({"action": "next", "revision": state["revision"]})
+            dec = next((m for m in state["options"] if m["kind"].startswith("special_decline_")), None)
+            if dec:
+                room.act(1, dec["id"], state["revision"], f"dec2-{idx}")
+            elif state["can_advance"]:
+                room.next_beat(1, state["revision"], f"s2-{idx}")
             else:
                 break
 
+        state = room.canvas_state(1)
         clashes = [e for e in state["fx_events"] if e["kind"] == "dice_clash"]
         self.assertEqual(len(clashes), 1, "Newly placed card's Die 1 must clash with Opponent's Die 3!")
         clash = clashes[0]

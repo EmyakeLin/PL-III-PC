@@ -19,14 +19,25 @@ def hand_card_label(card):
 
 
 class ArenaEngine(BattleMatch):
-    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=()):
-        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs)
+    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=(), ruleset=None):
+        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs, ruleset=ruleset)
         for player in self.game.players:
             if player.side == bot_side:
                 player.target_priority = (("hp", 1), ("lightcore_hp", 1))
         self.game.pipeline.pause_on_clash_scores = True
+        self.auto_claim_sides = {1, 2}
         self.event = {"kind": "setup", "turn": 0}
         self._hidden_ability_targets = {player.side: {} for player in self.game.players}
+
+    def _auto_skip_unclaimed_pre_attack(self):
+        phase = self.game.pre_reveal
+        while (phase.phase == "attack" and phase.actor is not None
+               and phase.can_attack(phase.actor)
+               and not self._pre_reveal_claimed.get(phase.actor.side)
+               and not self._pre_reveal_plans.get(phase.actor.side)):
+            if phase.actor.side in self.auto_claim_sides and phase.attack_cards(phase.actor):
+                break
+            phase.end_attack(phase.actor)
 
     def _advance(self):
         # BattleMatch normally moves to the next window immediately after an
@@ -95,10 +106,13 @@ class ArenaEngine(BattleMatch):
         mode = self._mode()
         choices = []
         if mode == "placement" and player is self.game.placing:
+            staged_keys = {entry["card_id"] for entry in self._pre_reveal_plans.get(side, ())}
             choices.extend({"kind": "place", "card_id": hand_key(c), "label": f"扣置{hand_card_label(c)}"}
-                           for c in self._legal_cards())
+                           for c in self._legal_cards() if hand_key(c) not in staged_keys)
             for card, duel_indices in self.game.legal_rear_placements().items():
                 key, name = hand_key(card), hand_card_label(card)
+                if key in staged_keys:
+                    continue
                 for idx in duel_indices:
                     choices.append({
                         "kind": "place_rear",
@@ -257,4 +271,107 @@ class ArenaEngine(BattleMatch):
         self.event = self._event("finished" if self.game_over else "action")
         self.event.update(actor_side=side, action_kind=kind, text=public_text)
         self.event.update(public_fields)
+        return self.event
+
+    def canvas_extras(self, side):
+        card_owners = {
+            "duels": {
+                f"{num}:{p.side}": [
+                    {
+                        "character_id": c.character.id,
+                        "printed_id": c.character.data.get("id"),
+                        "character_name": c.character.name,
+                        "character_color": self._character_colors.get(c.character.id) or self._character_colors.get(c.character.data.get("id")),
+                        "card_back": self._character_card_backs.get(c.character.id) or self._character_card_backs.get(c.character.data.get("id")),
+                    }
+                    for c in slot.get_content(p.side)
+                ]
+                for num, slot in enumerate(self.game.duelspace.space, 1)
+                for p in self.game.players
+            },
+            "duels_rear": {
+                f"{num}:{p.side}": [
+                    {
+                        "character_id": c.character.id,
+                        "printed_id": c.character.data.get("id"),
+                        "character_name": c.character.name,
+                        "character_color": self._character_colors.get(c.character.id) or self._character_colors.get(c.character.data.get("id")),
+                        "card_back": self._character_card_backs.get(c.character.id) or self._character_card_backs.get(c.character.data.get("id")),
+                    }
+                    for c in slot.get_rear_content(p.side)
+                ]
+                for num, slot in enumerate(self.game.duelspace.space, 1)
+                for p in self.game.players
+            },
+            "pre_reveal": {
+                f"{num}:{p.side}": [
+                    {
+                        "character_id": c.character.id,
+                        "printed_id": c.character.data.get("id"),
+                        "character_name": c.character.name,
+                        "character_color": self._character_colors.get(c.character.id) or self._character_colors.get(c.character.data.get("id")),
+                        "card_back": self._character_card_backs.get(c.character.id) or self._character_card_backs.get(c.character.data.get("id")),
+                    }
+                    for c in slot.get_content(p.side)
+                ]
+                for num, slot in enumerate(self.game.pre_reveal.space.space, 1)
+                for p in self.game.players
+            },
+        }
+        mode = self._mode()
+        pre_claimed = False
+        pre_plan = []
+        pre_elig = []
+        pre_targets = {}
+        if side in (1, 2) and mode in ("placement", "pre_reveal"):
+            player = self._choose_seat(side, self.game.players)
+            early = self.game.pre_reveal
+            pre_claimed = bool(self._pre_reveal_claimed.get(side, False))
+            pre_plan = self._validate_pre_reveal_plans(player)
+            if mode == "placement" and player is self.game.placing:
+                staged_keys = {entry["card_id"] for entry in self._pre_reveal_plans.get(side, ())}
+                for c in self._pre_reveal_eligible_hand(player):
+                    k = hand_key(c)
+                    if k in staged_keys:
+                        continue
+                    pre_elig.append(k)
+                    pre_targets[k] = [
+                        {"kind": "character", "id": actor.id} if actor is not None else {"kind": "duel", "number": i + 1}
+                        for actor, i in early.attack_targets(c)
+                    ]
+        return {
+            "card_owners": card_owners,
+            "speed_rolls": list(self.presentation.speed_rolls),
+            "pre_reveal_claimed": pre_claimed,
+            "pre_reveal_plan": pre_plan,
+            "pre_reveal_eligible_cards": pre_elig,
+            "pre_reveal_stage_targets": pre_targets,
+        }
+
+    def pre_reveal_plan_command(self, side, action, *, card_id=None, target=None):
+        player = self._choose_seat(side, self.game.players)
+        mode = self._mode()
+        if action in ("claim_pre_reveal", "stage_pre_reveal"):
+            if mode != "placement" or player is not self.game.placing:
+                raise ValueError("当前不在本席的常规置卡窗口。")
+        elif action == "unstage_pre_reveal":
+            if mode not in ("placement", "pre_reveal"):
+                raise ValueError("当前阶段无法修改开牌前预排。")
+        elif action == "commit_pre_reveal_plan":
+            if mode != "pre_reveal":
+                raise ValueError("当前不在开牌前交锋主动进攻阶段。")
+        else:
+            raise ValueError("未知的预排操作。")
+        self._pre_reveal_plan_action(action, player, card_id, target)
+        self.revision += 1
+        if action == "commit_pre_reveal_plan":
+            self.event = self._event("finished" if self.game_over else "action")
+            self.event.update(actor_side=side, action_kind="attack", text=self._history[-1])
+        return self.event
+
+    def forfeit_match(self, side, *, reason="宣布认输"):
+        super().forfeit(side, reason=reason)
+        self.revision += 1
+        self.event = self._event("finished")
+        self.event.update(actor_side=side, action_kind="concede", text=self._history[-1])
         return self.event

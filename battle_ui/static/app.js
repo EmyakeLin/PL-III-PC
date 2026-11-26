@@ -1,20 +1,20 @@
 /**
  * 《光点计划 III》纯 WebGL 主入口
- * 对战控件绘制于 WebGL，战报复制使用原生文本框：
  *  - Three.js WebGL（动态亮色光场 GLSL Shader + 真实 3D 多面体骰子 + 3D 双面翻牌与牵制弧 + InstancedMesh 碰撞火花）
  *  - Matter.js（固定 60Hz 时间步：真实拼点双骰碰撞与击退 + 可控阻尼手牌惯性 + 护盾磨损碎裂）
  *  - PixiJS v8 WebGL（透明叠加层：正面无畸变清晰卡牌、紧凑角色牌与实体叠牌、四层拼点条与全部交互）
+ *  - 原生 RFC 6455 WebSocket 实时双工通信
  */
 
 import * as PIXI from './vendor/pixi.min.mjs';
-import { LocalBattleTransport, RoomSeatTransport } from './engine/transport.js';
+import { RoomSeatTransport } from './engine/transport.js';
 import { bindBattleRecord } from './engine/battle_record.js';
 import { TabletopAudio } from './engine/audio.js';
 import { TabletopPhysics } from './engine/physics.js';
 import { ThreeWorld } from './engine/three_world.js';
 import { GameDirector } from './engine/game_director.js';
 import { makeSealButton } from './engine/table_overlays.js';
-import { FONT_UI, INK } from './engine/design_system.js';
+import { FONT_NUM, FONT_UI, INK } from './engine/design_system.js';
 import { savedRooms, saveRoom } from './engine/lobby_rooms.js';
 
 async function boot() {
@@ -29,13 +29,9 @@ async function boot() {
     });
   }
 
-  // 1. Three.js WebGL bright light-field shader + 3D dice + 3D card flips
   const threeWorld = new ThreeWorld(threeCanvas);
-
-  // 2. Fixed-60Hz Matter.js physics engine
   const physics = new TabletopPhysics(window.innerWidth, window.innerHeight);
 
-  // 3. PixiJS v8 WebGL transparent crisp 2D layer
   const app = new PIXI.Application();
   await app.init({
     canvas: pixiCanvas,
@@ -50,30 +46,53 @@ async function boot() {
   const audio = new TabletopAudio();
   const table = location.pathname.match(/^(.*)\/(canvas|table)\/(?:index\.html)?$/);
   const baseUrl = table?.[1] || '';
-  const isRoom = table?.[2] === 'canvas';
   const token = new URLSearchParams(location.hash.slice(1)).get('token');
-  const transport = isRoom ? new RoomSeatTransport(token, baseUrl) : new LocalBattleTransport(baseUrl, token);
+  const transport = new RoomSeatTransport(token, baseUrl);
   const openBattleRecord = bindBattleRecord(transport);
   const hosted = baseUrl.startsWith('/rooms/');
-  const returnToLobby = hosted ? () => {
-    const id = baseUrl.split('/').pop();
-    if (token && director.state && !savedRooms().some(r => r.id === id)) {
-      saveRoom({ id, label: roomName.text, play_url: location.pathname + location.hash });
+  const returnToLobby = () => {
+    if (hosted) {
+      const id = baseUrl.split('/').pop();
+      if (token && director.state && !savedRooms().some(r => r.id === id)) {
+        saveRoom({
+          id,
+          code: director.state.room_code || '',
+          label: roomName ? roomName.text : '对局房间',
+          play_url: location.pathname + location.hash,
+        });
+      }
     }
+    transport.close();
     location.assign('/lobby/');
-  } : null;
+  };
+
   const director = new GameDirector(app, physics, threeWorld, audio, transport, openBattleRecord, returnToLobby);
   const footerHeight = hosted ? 38 : 0;
-  let footer, footerPaper, roomName;
+  let footer, footerPaper, roomName, copyCodeBtn;
+  let currentRoomCode = '';
   if (hosted) {
     footer = new PIXI.Container();
     footerPaper = new PIXI.Graphics();
-    roomName = new PIXI.Text({ text: '', style: { fontFamily: FONT_UI, fontSize: 14, fill: INK.secondary } });
-    roomName.position.set(128, 9);
-    const leave = makeSealButton('返回大厅', { width: 98, height: 27, fontSize: 13, accent: INK.goldDeep,
-      onClick: returnToLobby });
-    leave.position.set(16, 4);
-    footer.addChild(footerPaper, roomName, leave);
+    roomName = new PIXI.Text({ text: '', style: { fontFamily: FONT_UI, fontSize: 13.5, fontWeight: '700', fill: INK.secondary } });
+    roomName.position.set(126, 9);
+    const leave = makeSealButton('返回大厅', {
+      width: 98, height: 27, fontSize: 13, accent: INK.goldDeep, onClick: returnToLobby,
+    });
+    leave.position.set(16, 5);
+    copyCodeBtn = makeSealButton('复制房间码', {
+      width: 118, height: 27, fontSize: 12, accent: 0x1a825e,
+      onClick: async () => {
+        if (!currentRoomCode) return;
+        try {
+          await navigator.clipboard.writeText(currentRoomCode);
+          director.showToast(`已复制房间码 ${currentRoomCode}，发给朋友即可在大厅输入加入！`, 0x1a825e, 2.4);
+        } catch {
+          director.showToast(`本房房间码：${currentRoomCode}`, INK.gold, 3.2);
+        }
+      },
+    });
+    copyCodeBtn.visible = false;
+    footer.addChild(footerPaper, roomName, leave, copyCodeBtn);
     app.stage.addChild(footer);
   }
 
@@ -89,31 +108,31 @@ async function boot() {
       footer.y = h;
       footerPaper.clear().rect(0, 0, w, footerHeight).fill(INK.paperSoft)
         .moveTo(0, 0).lineTo(w, 0).stroke({ color: INK.line, width: 1 });
+      if (copyCodeBtn) copyCodeBtn.position.set(w - 134, 5);
     }
   };
   window.addEventListener('resize', handleResize);
   if (hosted) handleResize();
 
-  const applyFrame = state => {
+  const applyFrame = (state) => {
     director.applyState(state, { isInitial: !director.state });
-    if (roomName) roomName.text = state.challenge || (state.ai_side || state.bot_side ? '单人对战' : '热座对战');
+    if (roomName) {
+      const modeTitle = state.challenge
+        || (state.hotseat ? '同屏双人' : state.bot_side ? '单人演练' : state.seat_role === 'spectator' ? '观战席' : '联机房间');
+      currentRoomCode = state.room_code || '';
+      roomName.text = currentRoomCode ? `${modeTitle}　·　房间码 ${currentRoomCode}` : modeTitle;
+      if (copyCodeBtn) {
+        copyCodeBtn.visible = Boolean(currentRoomCode && !state.bot_side && !state.hotseat);
+      }
+    }
   };
 
-  if (isRoom) {
-    transport.follow(applyFrame, error => {
-      const message = error?.status === 404 ? '房间已关闭，请返回大厅。'
-        : error?.status === 403 ? '邀请已失效，请用本局的私人邀请。'
-        : error ? '房间连接中断，正在重连。' : '已重新连接房间。';
-      director.showToast(message, error ? 0xcf4932 : 0x1a825e, 5);
-    });
-  } else {
-    try {
-      const initial = await transport.fetchState();
-      applyFrame(initial);
-    } catch (err) {
-      director.showToast(`连接战局失败：${err.message || err}`, 0xcf4932, 6);
-    }
-  }
+  transport.follow(applyFrame, (error) => {
+    const message = error?.status === 404 ? '房间已关闭，请返回大厅。'
+      : error?.status === 403 ? '邀请凭据无效，请返回大厅重新加入。'
+      : error ? (error.message || '房间连接中断，正在自动重连…') : '已重新连接房间。';
+    director.showToast(message, error ? 0xcf4932 : 0x1a825e, error ? 3.2 : 1.8);
+  });
 
   let lastTime = performance.now();
   const tick = (now) => {

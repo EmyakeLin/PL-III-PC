@@ -60,7 +60,7 @@ def main():
                                     roster=args.roster, port=args.port, seed=args.seed)
         address = args.address if args.address is not None else (lan_address() if args.lan else "127.0.0.1")
         room = None if args.lobby else Room(
-            args.roster, seed=args.seed, selectable=multiplayer)
+            args.roster, seed=args.seed, selectable=multiplayer or args.roster is None)
         server = ArenaServer(room, args.port, address=address, public_url=args.public_url, seed=args.seed)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))

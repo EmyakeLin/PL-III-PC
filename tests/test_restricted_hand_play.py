@@ -4,7 +4,6 @@ import unittest
 from battle_mcp.bot import choose_move
 from battle_mcp.challenges import CHALLENGES
 from battle_mcp.engine import ArenaEngine
-from battle_ui.session import BattleSession
 from displayer import hand_key
 from models.card import Card
 
@@ -71,14 +70,16 @@ class RestrictedHandPlayTests(unittest.TestCase):
         remaining = next(c for c in engine.state(2)["players"][1]["hand"] if c["id"] == first.id)
         self.assertEqual((remaining["action_key"], remaining["use_restricted"]), (first.id, True))
 
-    def test_local_ai_plays_lowest_cost_at_equal_restriction(self):
-        session = BattleSession(seed=7, roster=("plan_b_annolin", "witness_residue"))
-        match = session.match
-        player = match.game.placing
-        match.act("ready", match.revision, side=player.side)
+    def test_bot_plays_unrestricted_lowest_cost_at_equal_restriction(self):
+        engine = ArenaEngine(roster=("plan_b_annolin", "witness_residue"), seed=7)
+        while engine._mode() != "placement":
+            engine.advance()
+        player = engine.game.placing
         player.characters[0].add_status("限制", len(player.cardspace.hand.content))
-        session.ai_side = player.side
         before = list(player.cardspace.hand.content)
-        self.assertTrue(session._ai_step(match.snapshot()))
+        frame = engine.state(player.side)
+        moves = [m for m in engine.options(player.side) if m["kind"] in ("place", "end")]
+        picked = choose_move(frame, moves)
+        engine.apply(player.side, picked)
         played, = set(before) - set(player.cardspace.hand.content)
         self.assertEqual(played.cost, min(c.cost for c in before))

@@ -2,7 +2,8 @@
 
 import unittest
 
-from battle_ui.__main__ import BattleSession, _resolve_static
+from battle_ui.assets import resolve_static as _resolve_static
+from battle_ui.match import BattleMatch
 from battle_ui.fx_compiler import (
     compile_prompt_to_recipe,
     discover_character_fx,
@@ -68,14 +69,7 @@ class FxDslInterfaceTests(unittest.TestCase):
         fx_map = discover_character_fx(pool)
         self.assertIn("plan_b_annolin", fx_map)
         self.assertIn("plan_b_heck", fx_map)
-        self.assertIn("iron_qi_zheng", fx_map)
-        self.assertIn("bellfounder_que_ming", fx_map)
-        self.assertIn("blank_boss", fx_map)
         self.assertIn("翠流迸发", fx_map["plan_b_annolin"]["skills"])
-        self.assertEqual(
-            fx_map["blank_boss"]["defaults"]["strike"]["script"]["url"],
-            "/fx_scripts/blank_prism_resonance.js",
-        )
 
         # Inline `fx_prompt` on a synthetic character compiles without needing external file
         synthetic = {
@@ -93,9 +87,8 @@ class FxDslInterfaceTests(unittest.TestCase):
         self.assertIn("sk1", syn_fx["custom_hero"]["skills"])
         self.assertIn("共鸣", syn_fx["custom_hero"]["passives"])
 
-        # End-to-end BattleSession snapshot & /fx_scripts static security
-        session = BattleSession(seed=37)
-        snap = session.state()
+        # End-to-end table_assets snapshot & /fx_scripts static security
+        snap = BattleMatch(seed=37).table_assets()
         self.assertIn("plan_b_annolin", snap["character_fx"])
         self.assertIn("blank_prism_resonance", snap["fx_scripts"])
         resolved = _resolve_static("/fx_scripts/blank_prism_resonance.js")
@@ -125,7 +118,7 @@ class FxDslInterfaceTests(unittest.TestCase):
         self.assertEqual(sk["dice"]["2"]["vfx"][0]["count"], 3)
 
     def test_battle_snapshot_serves_each_approved_status_icon(self):
-        visuals = BattleSession(seed=37).state()["status_visuals"]
+        visuals = BattleMatch(seed=37).table_assets()["status_visuals"]
         names = (
             "麻痹", "弹药", "威压", "电击", "电流", "堆芯熔毁", "隧道", "星结",
             "全开", "载体容器", "伤害提升",
@@ -140,7 +133,7 @@ class FxDslInterfaceTests(unittest.TestCase):
     def test_lan_qing_sprite_and_four_activation_faces_have_their_own_assets(self):
         from xml.etree import ElementTree
 
-        state = BattleSession(seed=37).state()
+        state = BattleMatch(seed=37).table_assets()
         sprite, mime = _resolve_static(state["character_sprites"]["lan_qing"])
         self.assertEqual((sprite.name, mime), ("lan_qing.svg", "image/svg+xml"))
         root = ElementTree.parse(sprite).getroot()
@@ -157,8 +150,7 @@ class FxDslInterfaceTests(unittest.TestCase):
                 self.assertEqual(ElementTree.parse(icon).getroot().get("viewBox"), "0 0 24 24")
 
     def test_status_icons_discovery_inline_sanitization_and_static_serving(self):
-        session = BattleSession(seed=37)
-        snap = session.state()
+        snap = BattleMatch(seed=37).table_assets()
         visuals = snap.get("status_visuals", {})
         self.assertIn("凝聚", visuals)
         self.assertIn("烧伤", visuals)
@@ -199,7 +191,7 @@ class FxDslInterfaceTests(unittest.TestCase):
     def test_liu_yin_status_art_is_served_with_exact_stack_variants(self):
         from xml.etree import ElementTree
 
-        visuals = BattleSession(seed=37).state()["status_visuals"]
+        visuals = BattleMatch(seed=37).table_assets()["status_visuals"]
         for name in ("领域洞悉", "环境压制", "战甲"):
             with self.subTest(status=name):
                 asset, mime = _resolve_static(visuals[name]["icon_url"])

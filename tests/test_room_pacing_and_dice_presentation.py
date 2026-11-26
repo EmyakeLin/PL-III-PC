@@ -5,7 +5,6 @@ from itertools import count
 
 from battle_mcp.room import Room
 from battle_ui.match import BattleMatch
-from battle_ui.session import BattleSession
 from models.opcode import OpCode
 
 
@@ -420,16 +419,12 @@ class DestroyAndLightcoreBridgeTests(unittest.TestCase):
         self.assertEqual(card_ev["instance_id"], card.instance_id)
         self.assertEqual(card_ev["card_name"], card.name)
 
-    def test_battle_session_increments_match_number_on_new_match(self):
-        session = BattleSession(seed=5, roster=["plan_b_annolin", "plan_b_heck"])
-        first = session.state()
+    def test_room_increments_match_number_on_rematch(self):
+        room = Room(["plan_b_annolin", "plan_b_heck"], seed=5, bot=True, start_immediately=True)
+        first = room.canvas_state(1)
         self.assertEqual(first["match_number"], 1)
-        status, second = session.command({
-            "action": "new",
-            "revision": first["revision"],
-            "roster": ["plan_b_heck", "plan_b_annolin"],
-        })
-        self.assertEqual(status, 200)
+        room.rematch(1, first["revision"], "rematch-1", roster=[["plan_b_heck"], ["plan_b_annolin"]])
+        second = room.canvas_state(1)
         self.assertEqual(second["match_number"], 2)
 
 

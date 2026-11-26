@@ -793,7 +793,7 @@ export function createDiegeticTopBar({
     { key: 'audio', label: '音效', width: 62, activeAccent: INK.secondary, accent: INK.secondary, onClick: onToggleMute },
     { key: 'passives', label: '被动', width: 62, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onTogglePassives },
     { key: 'codex', label: '典籍', width: 62, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onOpenCodex },
-    { key: 'roster', label: '编队', width: 62, activeAccent: PALETTE.jade, accent: PALETTE.jade, onClick: onOpenRoster },
+    { key: 'roster', label: '菜单', width: 62, activeAccent: PALETTE.jade, accent: PALETTE.jade, onClick: onOpenRoster },
   ];
 
   const sealH = 26;
