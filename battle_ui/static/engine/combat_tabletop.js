@@ -215,6 +215,8 @@ export class CombatTabletop {
     onCardLand,
     onHoverCard,
     onSlotTap,
+    onCutInSlotTap,
+    onCancelQueuedGhost,
     onRearSlotTap,
     onAttackDuel,
     onInterceptDuel,
@@ -229,6 +231,8 @@ export class CombatTabletop {
     this.onCardLand = onCardLand || null;
     this.onHoverCard = onHoverCard || null;
     this.onSlotTap = onSlotTap || null;
+    this.onCutInSlotTap = onCutInSlotTap || null;
+    this.onCancelQueuedGhost = onCancelQueuedGhost || null;
     this.onRearSlotTap = onRearSlotTap || null;
     this.onAttackDuel = onAttackDuel || null;
     this.onInterceptDuel = onInterceptDuel || null;
@@ -266,6 +270,8 @@ export class CombatTabletop {
     this.pendingResponses = new Set();
     this.attackableDuels = new Set();
     this.rearSlotTargets = new Set();
+    this.cutInRegularDuels = new Map();
+    this.queuedGhosts = [];
     this.canClickIntercept = false;
     this.canTapEmptySlot = false;
 
@@ -294,6 +300,7 @@ export class CombatTabletop {
     this.hoveredStackChoice = new Map();
     this.inspectedCardKey = null;
     this.interactiveCardRects = []; // [{ cardKey, x, y, w, h, node, isInspecting }]
+    this.boardCardRects = [];       // [{ kind, number, side, lane, position, x, y, w, h, cx, cy }]
     this.combatCardRects = new Map();
     this.placementSlotRects = new Map();
     this.rearSlotRects = new Map();
@@ -449,6 +456,8 @@ export class CombatTabletop {
     pendingResponses = null,
     attackableDuels = null,
     rearSlotTargets = null,
+    cutInRegularDuels = null,
+    queuedGhosts = null,
     canClickIntercept = false,
     interceptableNumbers = null,
     canTapEmptySlot = false,
@@ -465,6 +474,8 @@ export class CombatTabletop {
     this.pendingResponses = pendingResponses instanceof Set ? pendingResponses : new Set(pendingResponses || []);
     this.attackableDuels = attackableDuels instanceof Set ? attackableDuels : new Set(attackableDuels || []);
     this.rearSlotTargets = rearSlotTargets instanceof Set ? rearSlotTargets : new Set(rearSlotTargets || []);
+    this.cutInRegularDuels = cutInRegularDuels instanceof Map ? cutInRegularDuels : new Map();
+    this.queuedGhosts = Array.isArray(queuedGhosts) ? queuedGhosts : [];
     this.canClickIntercept = Boolean(canClickIntercept);
     this.interceptableNumbers = interceptableNumbers || this.pendingResponses;
     this.canTapEmptySlot = Boolean(canTapEmptySlot);
@@ -931,6 +942,7 @@ export class CombatTabletop {
                 container: rearContainer, homeRow: row, frontNode: backNode, cardKey: rearCardKey,
                 card: { ...rearCard, hidden: true, character_id: ownerId },
                 ownerId, ownerName, ownerColor, cardMotion: rcm, screenRect: null, lane: 'rear',
+                cardPosition: rearIdx + 1,
               };
             } else {
               const cs = isLive ? (this.combat?.sides || []).find((s) => s.side === side) : null;
@@ -967,6 +979,7 @@ export class CombatTabletop {
               rearWidgets[side] = {
                 container: rearContainer, homeRow: row, frontNode: rearNode, cardKey: rearCardKey,
                 card: rearCard, cardMotion: rcm, tabWidgets: [], screenRect: null, lane: 'rear',
+                cardPosition: rearIdx + 1,
               };
             }
           }
@@ -1084,20 +1097,87 @@ export class CombatTabletop {
             continue;
           }
 
+          const mySide = this.viewerSide ?? this.activeSide;
+          const cutInInfo = (duel.kind === 'regular' && side === mySide)
+            ? this.cutInRegularDuels.get(duel.number)
+            : null;
+          const queuedGhost = (duel.kind === 'regular' && side === mySide)
+            ? this.queuedGhosts.find((q) => q.duelNumber === duel.number && q.side === side && (q.lane || 'front') === 'front')
+            : null;
           const isDropTarget = isPlacement && side === this.activeSide;
           const ghost = new PIXI.Graphics();
-          ghost.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 8)
-            .fill({ color: isDropTarget ? INK.goldBg : INK.paperSoft, alpha: isDropTarget ? 0.3 : 0.2 })
-            .stroke({ width: isDropTarget ? 1.5 : 1, color: isDropTarget ? INK.gold : INK.line, alpha: isDropTarget ? 0.8 : 0.45 });
-          if (isDropTarget && this.canTapEmptySlot && this.onSlotTap) {
-            ghost.eventMode = 'static';
-            ghost.cursor = 'pointer';
-            ghost.on('pointertap', (e) => {
-              e.stopPropagation();
-              this.onSlotTap(duel.number, side);
+          if (queuedGhost) {
+            ghost.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 8)
+              .fill({ color: 0xe6f5ef, alpha: 0.86 })
+              .stroke({ width: 2.1, color: 0x1a825e, alpha: 0.96 });
+            sideContainer.addChild(ghost);
+            const qBadge = new PIXI.Text({
+              text: '⏳ 已预约置入',
+              style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '900', fill: 0x126146 },
             });
+            qBadge.anchor.set(0.5, 0);
+            qBadge.position.set(0, -cardH / 2 + 18);
+            const qName = new PIXI.Text({
+              text: `${queuedGhost.cardName || '手牌'}\n${queuedGhost.modeLabel || '本轮后生效'}`,
+              style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '900', fill: INK.primary, align: 'center', lineHeight: 17, wordWrap: true, wordWrapWidth: cardW - 20 },
+            });
+            qName.anchor.set(0.5, 0.5);
+            qName.position.set(0, -4);
+            const qCancel = new PIXI.Text({
+              text: '点击撤回预约',
+              style: { fontFamily: FONT_UI, fontSize: 10, fontWeight: '800', fill: 0xc8452e },
+            });
+            qCancel.anchor.set(0.5, 1);
+            qCancel.position.set(0, cardH / 2 - 16);
+            sideContainer.addChild(qBadge, qName, qCancel);
+            if (this.onCancelQueuedGhost) {
+              ghost.eventMode = 'static';
+              ghost.cursor = 'pointer';
+              ghost.on('pointertap', (e) => {
+                e.stopPropagation();
+                this.onCancelQueuedGhost(queuedGhost);
+              });
+            }
+          } else if (cutInInfo) {
+            ghost.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 8)
+              .fill({ color: 0xe9f7f1, alpha: cutInInfo.armed ? 0.68 : 0.42 })
+              .stroke({ width: cutInInfo.armed ? 2.2 : 1.7, color: 0x1a825e, alpha: 0.92 });
+            sideContainer.addChild(ghost);
+            const cTitle = new PIXI.Text({
+              text: cutInInfo.label || '⊕ 即时置入',
+              style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: 0x126146, align: 'center' },
+            });
+            cTitle.anchor.set(0.5, 0.5);
+            cTitle.position.set(0, -10);
+            const cSub = new PIXI.Text({
+              text: cutInInfo.subLabel || '拖入或点击手牌切入',
+              style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '800', fill: INK.secondary, align: 'center', lineHeight: 15, wordWrap: true, wordWrapWidth: cardW - 18 },
+            });
+            cSub.anchor.set(0.5, 0.5);
+            cSub.position.set(0, 14);
+            sideContainer.addChild(cTitle, cSub);
+            if (this.onCutInSlotTap) {
+              ghost.eventMode = 'static';
+              ghost.cursor = 'pointer';
+              ghost.on('pointertap', (e) => {
+                e.stopPropagation();
+                this.onCutInSlotTap(duel.number, side);
+              });
+            }
+          } else {
+            ghost.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 8)
+              .fill({ color: isDropTarget ? INK.goldBg : INK.paperSoft, alpha: isDropTarget ? 0.3 : 0.2 })
+              .stroke({ width: isDropTarget ? 1.5 : 1, color: isDropTarget ? INK.gold : INK.line, alpha: isDropTarget ? 0.8 : 0.45 });
+            if (isDropTarget && this.canTapEmptySlot && this.onSlotTap) {
+              ghost.eventMode = 'static';
+              ghost.cursor = 'pointer';
+              ghost.on('pointertap', (e) => {
+                e.stopPropagation();
+                this.onSlotTap(duel.number, side);
+              });
+            }
+            sideContainer.addChild(ghost);
           }
-          sideContainer.addChild(ghost);
           sideWidgets[side] = { container: sideContainer, homeRow: row, frontNode: null, cardKey: null, card: null, cardMotion: null, screenRect: null };
           continue;
         }
@@ -1144,6 +1224,11 @@ export class CombatTabletop {
           backNode.rotation = 0;
           sideContainer.addChild(backNode);
           this.markEffectTarget?.(sideContainer, duel.kind, duel.number, side, frontIdx + 1, -cardW / 2, -cardH / 2, cardW, cardH);
+          const mySideFd = this.viewerSide ?? this.activeSide;
+          const qReplaceFd = (duel.kind === 'regular' && side === mySideFd)
+            ? this.queuedGhosts.find((q) => q.duelNumber === duel.number && q.side === side && (q.lane || 'front') === 'front')
+            : null;
+          if (qReplaceFd) this._attachQueuedCardOverlay(sideContainer, qReplaceFd, cardW, cardH);
           sideWidgets[side] = {
             container: sideContainer,
             homeRow: row,
@@ -1155,6 +1240,7 @@ export class CombatTabletop {
             ownerColor,
             cardMotion: cm,
             screenRect: null,
+            cardPosition: frontIdx + 1,
           };
           continue;
         }
@@ -1242,7 +1328,22 @@ export class CombatTabletop {
 
         sideContainer.addChild(frontNode);
         this.markEffectTarget?.(sideContainer, duel.kind, duel.number, side, frontIdx + 1, -cardW / 2, -cardH / 2, cardW, cardH);
-        sideWidgets[side] = { container: sideContainer, homeRow: row, frontNode, cardKey, card: frontCard, cardMotion: cm, tabWidgets, screenRect: null };
+        const mySide = this.viewerSide ?? this.activeSide;
+        const qReplace = (duel.kind === 'regular' && side === mySide)
+          ? this.queuedGhosts.find((q) => q.duelNumber === duel.number && q.side === side && (q.lane || 'front') === 'front')
+          : null;
+        if (qReplace) this._attachQueuedCardOverlay(sideContainer, qReplace, cardW, cardH);
+        sideWidgets[side] = {
+          container: sideContainer,
+          homeRow: row,
+          frontNode,
+          cardKey,
+          card: frontCard,
+          cardMotion: cm,
+          tabWidgets,
+          screenRect: null,
+          cardPosition: frontIdx + 1,
+        };
       }
 
       this.depthLayer.addChild(row);
@@ -1251,6 +1352,37 @@ export class CombatTabletop {
     if (isPlacement && this.duels.length > 0) {
       this._hasRenderedInitialPlacement = true;
     }
+  }
+
+  _attachQueuedCardOverlay(host, ghost, cardW, cardH) {
+    const ov = new PIXI.Container();
+    const bg = new PIXI.Graphics();
+    bg.roundRect(-cardW / 2 + 6, cardH / 2 - 58, cardW - 12, 50, 7)
+      .fill({ color: 0xe8f6ef, alpha: 0.95 })
+      .stroke({ width: 1.8, color: 0x1a825e, alpha: 0.95 });
+    const t1 = new PIXI.Text({
+      text: `⏳ 预约换入 · ${ghost.cardName || '手牌'}`,
+      style: { fontFamily: FONT_UI, fontSize: 10.5, fontWeight: '900', fill: 0x126146 },
+    });
+    t1.anchor.set(0.5, 0);
+    t1.position.set(0, cardH / 2 - 52);
+    const t2 = new PIXI.Text({
+      text: `${ghost.modeLabel || '本轮后生效'} · 点击撤回`,
+      style: { fontFamily: FONT_UI, fontSize: 9.8, fontWeight: '800', fill: 0xc8452e },
+    });
+    t2.anchor.set(0.5, 0);
+    t2.position.set(0, cardH / 2 - 33);
+    ov.addChild(bg, t1, t2);
+    if (this.onCancelQueuedGhost) {
+      ov.eventMode = 'static';
+      ov.cursor = 'pointer';
+      ov.hitArea = new PIXI.Rectangle(-cardW / 2 + 6, cardH / 2 - 58, cardW - 12, 50);
+      ov.on('pointertap', (e) => {
+        e.stopPropagation();
+        this.onCancelQueuedGhost(ghost);
+      });
+    }
+    host.addChild(ov);
   }
 
   /**
@@ -1523,6 +1655,7 @@ export class CombatTabletop {
 
     if (updateRects) {
       this.interactiveCardRects = [];
+      this.boardCardRects = [];
       this.combatCardRects.clear();
       this.placementSlotRects.clear();
       this.rearSlotRects.clear();
@@ -1718,6 +1851,8 @@ export class CombatTabletop {
             if (entry.duel.kind === 'regular') {
               const slotMap = isRear ? this.rearSlotRects : this.placementSlotRects;
               slotMap.set(`${entry.duel.number}:${side}`, {
+                duelNumber: entry.duel.number,
+                side,
                 x: restX - (cardW * baseScale) / 2,
                 y: restY - (cardH * baseScale) / 2,
                 w: cardW * baseScale,
@@ -1726,6 +1861,24 @@ export class CombatTabletop {
                 cy: restY,
                 visible: restY + (cardH * baseScale) / 2 > stageTop && restY - (cardH * baseScale) / 2 < stageTop + stageH,
               });
+            }
+            if (sw.card && entry.row.visible) {
+              const rectEntry = {
+                kind: entry.duel.kind,
+                number: entry.duel.number,
+                side,
+                lane: isRear ? 'rear' : 'front',
+                position: sw.cardPosition || 1,
+                x: curWorldX - worldW / 2,
+                y: curWorldY - worldH / 2,
+                w: worldW,
+                h: worldH,
+                cx: curWorldX,
+                cy: curWorldY,
+                isLifted,
+              };
+              if (isLifted) this.boardCardRects.unshift(rectEntry);
+              else this.boardCardRects.push(rectEntry);
             }
             if (sw.frontNode && !sw.card?.hidden && (isLifted || (combatBlend > 0.7 && ad < 0.35))) {
               const rectItem = {

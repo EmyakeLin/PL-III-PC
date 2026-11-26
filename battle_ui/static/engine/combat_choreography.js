@@ -777,7 +777,9 @@ export function createDiegeticTopBar({
   });
   initText.anchor.set(0, 0.5);
 
-  crestGroup.addChild(crestBg, turnText, phaseText, initText);
+  const progressBar = new PIXI.Graphics();
+
+  crestGroup.addChild(crestBg, progressBar, turnText, phaseText, initText);
   root.addChild(crestGroup);
 
   // ── Right Brass/Parchment Pressmark Seal Strip (Persistent) ──
@@ -917,6 +919,26 @@ export function createDiegeticTopBar({
     autoPace: false,
     muted: false,
     passivesOpen: false,
+    beatDurationMs: 0,
+    beatRemainingMs: 0,
+    pauseRemainingMs: null,
+    pauseBankLimitMs: 20000,
+    crestW: 160,
+    phaseAccent: INK.gold,
+  };
+
+  const redrawProgressBar = () => {
+    progressBar.clear();
+    const w = Math.max(40, lastSync.crestW - 20);
+    if (lastSync.pauseRemainingMs != null && lastSync.pauseRemainingMs > 0) {
+      const ratio = Math.max(0, Math.min(1, lastSync.pauseRemainingMs / Math.max(1000, lastSync.pauseBankLimitMs)));
+      progressBar.moveTo(10, barH - 2.0).lineTo(10 + w * ratio, barH - 2.0)
+        .stroke({ width: 2.2, color: INK.gold, alpha: 0.9, cap: 'round' });
+    } else if (lastSync.beatDurationMs > 0 && lastSync.beatRemainingMs > 0) {
+      const ratio = Math.max(0, Math.min(1, lastSync.beatRemainingMs / lastSync.beatDurationMs));
+      progressBar.moveTo(10, barH - 2.0).lineTo(10 + w * ratio, barH - 2.0)
+        .stroke({ width: 2.0, color: lastSync.phaseAccent, alpha: 0.72, cap: 'round' });
+    }
   };
 
   const layoutBar = () => {
@@ -965,6 +987,8 @@ export function createDiegeticTopBar({
     initText.visible = showInit;
 
     const crestW = Math.min(maxCrestW, Math.max(140, cx + 6));
+    lastSync.crestW = crestW;
+    lastSync.phaseAccent = phaseStyle.accent;
     crestBg.clear();
 
     drawChamferedPlaque(crestBg, 2, 3.5, crestW, barH, 7).fill({ color: INK.shadow, alpha: 0.22 });
@@ -1006,6 +1030,7 @@ export function createDiegeticTopBar({
         ex - 1.4, cy,
       ]).fill({ color: firstTheme.accent, alpha: 0.94 });
     }
+    redrawProgressBar();
   };
 
   const sync = ({
@@ -1017,6 +1042,9 @@ export function createDiegeticTopBar({
     rosterEnabled = true,
     muted = lastSync.muted,
     passivesOpen = lastSync.passivesOpen,
+    beatDurationMs = 0,
+    beatRemainingMs = 0,
+    pauseRemainingMs = null,
   } = {}) => {
     lastSync.turn = turn;
     lastSync.phaseLabel = phaseLabel;
@@ -1024,6 +1052,9 @@ export function createDiegeticTopBar({
     lastSync.autoPace = Boolean(autoPace);
     lastSync.muted = Boolean(muted);
     lastSync.passivesOpen = Boolean(passivesOpen);
+    lastSync.beatDurationMs = Math.max(0, Number(beatDurationMs) || 0);
+    lastSync.beatRemainingMs = Math.max(0, Number(beatRemainingMs) || 0);
+    lastSync.pauseRemainingMs = pauseRemainingMs != null ? Math.max(0, Number(pauseRemainingMs) || 0) : null;
 
     const autoNode = sealNodes.get('auto');
     if (autoNode) {
@@ -1057,8 +1088,30 @@ export function createDiegeticTopBar({
     layoutBar();
   };
 
+  const tick = (dtSec) => {
+    const dtMs = Math.max(0, (Number(dtSec) || 0) * 1000);
+    if (dtMs <= 0) return;
+    let changed = false;
+    if (lastSync.pauseRemainingMs != null && lastSync.pauseRemainingMs > 0) {
+      const prevSec = Math.ceil(lastSync.pauseRemainingMs / 1000);
+      lastSync.pauseRemainingMs = Math.max(0, lastSync.pauseRemainingMs - dtMs);
+      const nextSec = Math.ceil(lastSync.pauseRemainingMs / 1000);
+      if (nextSec !== prevSec && lastSync.phaseLabel.includes('思考')) {
+        lastSync.phaseLabel = lastSync.phaseLabel.replace(/\d+s/, `${nextSec}s`);
+        layoutBar();
+        return;
+      }
+      changed = true;
+    } else if (lastSync.beatDurationMs > 0 && lastSync.beatRemainingMs > 0) {
+      lastSync.beatRemainingMs = Math.max(0, lastSync.beatRemainingMs - dtMs);
+      changed = true;
+    }
+    if (changed) redrawProgressBar();
+  };
+
   root.container = root;
   root.sync = sync;
+  root.tick = tick;
   root.resize = resize;
   root.setWidth = resize;
   root.getHeight = () => barY + barH;

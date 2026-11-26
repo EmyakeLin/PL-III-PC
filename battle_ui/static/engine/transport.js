@@ -55,13 +55,20 @@ export function roomTableState(room, assets) {
   const { frame, options, side } = room;
   const attacks = options.filter(move => move.kind === 'attack');
   const intercepts = options.filter(move => move.kind === 'intercept');
+  const placeRears = options.filter(move => move.kind === 'place_rear');
   const pending = options.filter(move => move.kind === 'let_through');
   const specials = options.filter(move => move.kind.startsWith('special_') || move.kind === 'decline');
+  const normalizedSpecials = specials.map(move => ({ ...move, kind: move.kind.replace(/^special_/, '') }));
   const canPlace = options.some(move => move.kind === 'end');
   const canEndAttack = options.some(move => move.kind === 'end_attack');
   const canLeaveSpecial = side !== null && room.paused_by === side;
   const specialPending = Boolean(frame.effect_choice) || specials.some(move => move.kind === 'special_pass_intercept');
-  const regularSpecials = specials.length > 0 && !canPlace && !canEndAttack && !pending.length && !canLeaveSpecial;
+  const mandatorySpecials = specials.some(move => (
+    move.kind === 'decline'
+    || move.kind.startsWith('special_choose_')
+    || move.kind.startsWith('special_decline_')
+  ));
+  const regularSpecials = mandatorySpecials && !canPlace && !canEndAttack && !pending.length && !canLeaveSpecial;
   let mode = frame.mode;
   if (!room.started) mode = 'lobby';
   else if (frame.is_over) mode = 'finished';
@@ -77,6 +84,10 @@ export function roomTableState(room, assets) {
       ? { kind: 'character', id: move.character_id } : { kind: 'duel', number: move.duel_number };
     (attackTargets[move.card_id] ??= []).push(target);
   }
+  const rearTargets = Object.create(null);
+  for (const move of placeRears) {
+    if (move.duel_number != null) (rearTargets[move.card_id] ??= []).push(move.duel_number);
+  }
   const canPick = room.can_rematch || room.can_restart || (room.selectable && !room.ready && side !== null);
   const editableSides = canPick
     ? (room.bot_side && !room.challenge ? [side, room.bot_side] : [side]) : [];
@@ -89,10 +100,14 @@ export function roomTableState(room, assets) {
       tableAssets[field] = { ...originals, ...Object.fromEntries(aliases) };
     }
   }
+  const exposeModalSpecials = mode === 'special' || canLeaveSpecial;
+  const tableActions = normalizedSpecials.filter(move => move.kind === 'ability');
   return {
     ...tableAssets, ...room, mode, active_side: side, editable_sides: editableSides,
     draw_select: frame.draw_select,
     legal_cards: options.filter(move => move.kind === 'place').map(move => move.card_id),
+    legal_rear_cards: [...new Set(placeRears.map(move => move.card_id))],
+    rear_targets: rearTargets,
     legal_attack_cards: Object.keys(attackTargets),
     legal_intercept_cards: [...new Set(intercepts.map(move => move.card_id))],
     attack_targets: attackTargets,
@@ -105,18 +120,32 @@ export function roomTableState(room, assets) {
     can_advance: Boolean(room.can_advance),
     can_restart: Boolean(room.can_restart),
     next_voted: Boolean(room.next_voted),
+    beat_duration_ms: room.beat_duration_ms ?? 0,
+    beat_remaining_ms: room.beat_remaining_ms ?? 0,
+    pause_bank_ms: room.pause_bank_ms ?? 0,
+    pause_remaining_ms: room.pause_remaining_ms ?? null,
+    declarations: room.declarations || [],
     special_available: Boolean(room.has_special_actions),
     special_pending: specialPending || !canLeaveSpecial,
-    special_options: specials.map(move => ({ ...move, kind: move.kind.replace(/^special_/, '') })),
+    special_options: exposeModalSpecials ? normalizedSpecials : [],
+    inline_special_options: normalizedSpecials,
+    table_actions: tableActions,
     special_timing: frame.timing, effect_choice: frame.effect_choice,
     response_times: frame.response_times,
   };
 }
 
 function findRoomMove(state, action, payload) {
-  if (action === 'use_special') return state.special_options[payload.option];
+  if (action === 'use_special') {
+    const list = state.special_options?.length ? state.special_options : (state.inline_special_options || []);
+    return list[payload.option];
+  }
+  if (action === 'trigger_table_action') {
+    return (state.table_actions || [])[payload.option];
+  }
   return state.options.find(move => {
     if (move.kind !== action || (payload.card_id && move.card_id !== payload.card_id)) return false;
+    if (action === 'place_rear') return move.duel_number === payload.duel_number;
     if (action === 'attack') {
       const target = payload.target;
       return target?.kind === 'character' ? move.character_id === target.id : move.duel_number === target?.number;
@@ -233,6 +262,9 @@ export class RoomSeatTransport {
     } else if (action === 'set_default_target') {
       path = 'canvas/target';
       args.character_id = payload.character_id;
+    } else if (action === 'prepare') {
+      path = 'prepare';
+      args.declaration = payload.declaration;
     } else {
       const move = findRoomMove(state, action, payload);
       if (!move) throw new Error('这个动作在当前时点不可用。');
