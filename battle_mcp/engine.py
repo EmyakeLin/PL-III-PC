@@ -348,6 +348,7 @@ class ArenaEngine(BattleMatch):
             "pre_reveal_plan": pre_plan,
             "pre_reveal_eligible_cards": pre_elig,
             "pre_reveal_stage_targets": pre_targets,
+            "chronicle": self.chronicle.snapshot(viewer_side=side),
         }
 
     def pre_reveal_plan_command(self, side, action, *, card_id=None, target=None):

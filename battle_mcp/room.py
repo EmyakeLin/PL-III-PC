@@ -635,6 +635,7 @@ class Room:
             "pre_reveal_plan": [],
             "pre_reveal_eligible_cards": [],
             "pre_reveal_stage_targets": {},
+            "chronicle": {"unlocked_all": False, "total_events": 0, "turns": []},
         }
         conn_info = self._peer_connection_status(rev_side if not hotseat else None)
         lobby_info = self._lobby_snapshot(rev_side, hotseat=hotseat)
@@ -710,27 +711,70 @@ class Room:
         with self.cv:
             return self.engine.table_assets()
 
-    def battle_record(self):
+    def _hotseat_record_side_locked(self):
+        """Pure read-only effective side for hotseat exports/queries (does not mutate handoff state)."""
+        if not self.started or self.engine.game_over:
+            return None
+        curtain = bool(self.ruleset.get("hotseat_curtain", True))
+        if self.paused_by in SEATS:
+            if curtain and self._hotseat_revealed != self.paused_by:
+                return None
+            return self.paused_by
+        req = self.engine.required_sides()
+        if req:
+            target = self._hotseat_side if self._hotseat_side in req else req[0]
+            if curtain and self._hotseat_revealed != target:
+                return None
+            return target
+        return None if curtain else self._hotseat_side
+
+    def battle_record(self, viewer_side=None, *, hotseat=False):
         with self.cv:
             if not self.started:
                 raise ValueError("开战后可导出战报。")
             game = self.engine.game
-            frame = self.engine.state(None)
-            journal = self._journal[None]
-            history_start = self._history_start[None]
+            if game.is_over:
+                eff_side = None
+                unlock_all = True
+            elif hotseat:
+                eff_side = self._hotseat_record_side_locked()
+                unlock_all = False
+            elif viewer_side in SEATS:
+                eff_side = viewer_side
+                unlock_all = False
+            else:
+                eff_side = None
+                unlock_all = False
+            frame = self.engine.state(eff_side)
+            hist_key = eff_side if eff_side in SEATS else None
+            journal = self._journal[hist_key]
+            history_start = self._history_start[hist_key]
+            players_meta = [
+                {"side": p.side, "characters": [{"name": c.name} for c in p.characters]}
+                for p in game.players
+            ]
+            winner = frame.get("winner_side")
+            res_str = (
+                (f"玩家 {winner} 获胜（第 {frame['turn']} 回合）" if winner else f"双方平局（第 {frame['turn']} 回合）")
+                if game.is_over
+                else f"对局进行中（第 {frame['turn']} 回合）"
+            )
             return {
                 "match_number": self._match_number,
                 "history": [e["text"] for e in journal[history_start:] if e["kind"] not in ("ready", "unready", "select_character")],
+                "chronicle": self.engine.chronicle.snapshot(viewer_side=eff_side, unlock_all=unlock_all),
+                "markdown": self.engine.chronicle.to_markdown(
+                    viewer_side=eff_side,
+                    unlock_all=unlock_all,
+                    header_meta={"players": players_meta, "result": res_str},
+                ),
                 "challenge": self.challenge.name if self.challenge else None,
                 "bot_side": self.bot_side,
                 "finished": game.is_over,
-                "winner_side": frame.get("winner_side"),
+                "winner_side": winner,
                 "frame": {
                     "turn": frame["turn"],
-                    "players": [
-                        {"side": p.side, "characters": [{"name": c.name} for c in p.characters]}
-                        for p in game.players
-                    ],
+                    "players": players_meta,
                 },
             }
 

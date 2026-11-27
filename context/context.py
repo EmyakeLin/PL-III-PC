@@ -290,7 +290,9 @@ class Context:
         }
 
         self.record("skill_payment", side=card.player.side, character_id=card.character.id if card.character else None,
-                    card_id=card.id, card_name=card.name, **receipt)
+                    card_id=card.id, card_name=card.name,
+                    active_form=(getattr(card, "_form", None) if getattr(card, "printed_data", {}).get("forms") else None),
+                    **receipt)
         return receipt
 
     def pay_action_costs(self, actor, ability_costs, status_costs):

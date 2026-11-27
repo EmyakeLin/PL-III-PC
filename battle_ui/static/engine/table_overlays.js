@@ -33,6 +33,7 @@ import {
   buildUnifiedSkillRow,
 } from './card_print.js';
 import { createCharacterActor, actorPalette } from './stage_actors.js';
+import { renderChronicleSection } from './chronicle_view.js';
 
 function passiveContents(character, passive) {
   const stored = character.stored_dice?.[passive.name];
@@ -3233,6 +3234,13 @@ export function buildCodexOverlay(w, h, {
   catalog,
   characterColors = {},
   history = [],
+  chronicle = null,
+  chronicleUi = {},
+  onChronicleUiChange = null,
+  onCopyChronicle = null,
+  onHoverCard = null,
+  onHoverStatus = null,
+  onOpenHero = null,
   onExport,
   onTab,
   onScrollChange = null,
@@ -3245,8 +3253,8 @@ export function buildCodexOverlay(w, h, {
   veil.on('pointertap', onClose);
   root.addChild(veil);
 
-  const pw = Math.min(860, w - 72);
-  const ph = Math.min(640, h - 72);
+  const pw = Math.min(980, w - 56);
+  const ph = Math.min(690, h - 56);
   const px = (w - pw) / 2;
   const py = (h - ph) / 2;
   const headerH = 58;
@@ -3270,10 +3278,11 @@ export function buildCodexOverlay(w, h, {
   const closeWidth = pw < 600 ? 52 : 84;
   const tabGap = pw < 600 ? 6 : 10;
   const tabWidth = Math.min(144, Math.floor((pw - 44 - closeWidth - 3 * tabGap) / 3));
+  const eventCount = chronicle?.total_events ?? history.length;
   const tabs = [
     { id: 'rules', label: '正式规则' },
     { id: 'catalog', label: '本局图鉴' },
-    { id: 'history', label: tabWidth < 94 ? '战报' : `战报 (${history.length})` },
+    { id: 'history', label: tabWidth < 94 ? '战报' : `战报 (${eventCount})` },
   ];
   tabs.forEach((t, idx) => {
     const active = tab === t.id;
@@ -3292,20 +3301,41 @@ export function buildCodexOverlay(w, h, {
   closeBtn.position.set(px + pw - closeWidth - 22, py + 12);
   root.addChild(closeBtn);
 
-  const showExport = tab === 'history' && onExport;
-  const historyToolsH = showExport ? 40 : 0;
-  if (showExport) {
-    const exportBtn = makeSealButton('导出战报', {
-      width: 110, height: 32, accent: INK.goldDeep, fontSize: 12.5, radius: 9, onClick: onExport,
-    });
-    exportBtn.position.set(px + pw - 132, py + headerH + 2);
-    root.addChild(exportBtn);
-  }
-
   const vx = px + 22;
+  let clipTop = py + headerH + 10;
+  const clipBot = py + ph - 14;
+  let chronicleHelper = null;
+  let historyToolsH = 0;
+  if (tab === 'history') {
+    const toolbarLayer = new PIXI.Container();
+    root.addChild(toolbarLayer);
+    chronicleHelper = renderChronicleSection({
+      toolbarHost: toolbarLayer,
+      toolbarX: vx,
+      toolbarY: py + headerH + 6,
+      toolbarW: pw - 44,
+      chronicle,
+      history,
+      catalog,
+      uiState: chronicleUi,
+      makeSealButton,
+      onUiChange: onChronicleUiChange,
+      onCopyMarkdown: onCopyChronicle,
+      onExportModal: onExport,
+      onHoverCard,
+      onHoverStatus,
+      onOpenHero,
+      viewportCheck: (gp) => {
+        const lp = root.toLocal(gp);
+        return lp.y >= clipTop && lp.y <= clipBot;
+      },
+    });
+    historyToolsH = chronicleHelper.toolbarH + 6;
+  }
   const vy = py + headerH + 10 + historyToolsH;
+  clipTop = vy;
   const vw = pw - 44;
-  const vh = ph - headerH - 24 - historyToolsH;
+  const vh = Math.max(80, ph - headerH - 24 - historyToolsH);
   const contentW = vw - 14;
 
   const vpBg = new PIXI.Graphics();
@@ -3451,41 +3481,8 @@ export function buildCodexOverlay(w, h, {
         y += plate._height + 7;
       }
     }
-  } else if (tab === 'history') {
-    if (!history.length) {
-      addLine('尚无战报。', { size: 12.8, color: INK.muted });
-    } else {
-      history.slice().reverse().forEach((line, i) => {
-        const row = new PIXI.Container();
-        const txt = new PIXI.Text({
-          text: wrapCjkText(`${history.length - i}. ${line}`, maxChars - 3),
-          style: {
-            fontFamily: FONT_UI,
-            fontSize: 12.5,
-            fontWeight: i === 0 ? '800' : '400',
-            fill: i === 0 ? INK.goldDeep : INK.primary,
-            lineHeight: 19.5,
-            wordWrap: true,
-            breakWords: true,
-            wordWrapWidth: contentW - 22,
-          },
-        });
-        const rh = Math.ceil(txt.height) + 12;
-        const rg = new PIXI.Graphics();
-        rg.roundRect(0, 0, contentW, rh, 5)
-          .fill({ color: i === 0 ? INK.goldBg : i % 2 === 0 ? INK.paper : INK.paperSoft, alpha: 0.92 })
-          .stroke({ width: 0.75, color: i === 0 ? INK.gold : INK.hairline, alpha: 0.75 });
-        rg.roundRect(0, 2, 3, rh - 4, 1.5).fill({ color: i === 0 ? INK.gold : INK.line });
-        row.addChild(rg);
-        txt.position.set(11, 6);
-        row.addChild(txt);
-        row.position.set(0, y);
-        row._itemTop = y;
-        row._itemBottom = y + rh;
-        body.addChild(row);
-        y += rh + 6;
-      });
-    }
+  } else if (tab === 'history' && chronicleHelper) {
+    y = chronicleHelper.buildBody(body, contentW);
   }
 
   const totalH = y + 12;
@@ -3718,7 +3715,7 @@ export function buildPileOverlay(w, h, {
 
 // ── 9. CEREMONIAL VICTORY/DEFEAT CREST & MATCH LEDGER (FINISH OVERLAY) ──
 
-export function buildFinishOverlay(w, h, { winnerSide, winnerName, turn = 1, history = [], onRematch, onNewRoster, onExport }) {
+export function buildFinishOverlay(w, h, { winnerSide, winnerName, turn = 1, history = [], chronicle = null, onRematch, onNewRoster, onOpenChronicle, onExport }) {
   const root = new PIXI.Container();
   const theme = winnerSide ? SIDE_THEME[winnerSide] : { accent: INK.gold, border: INK.gold, softBg: INK.goldBg, warmTint: INK.paperSoft, name: '双方平局' };
   const cx = w / 2;
@@ -3772,10 +3769,12 @@ export function buildFinishOverlay(w, h, { winnerSide, winnerName, turn = 1, his
   head.position.set(cx, py + 128);
   root.addChild(head);
 
-  // Match Summary Stat Pills (Turn Count + Chronicle Count)
+  // Match Summary Stat Pills (Turn Count + Chronicle Count + Full Fog Unlock Notice)
+  const totalChronicleEvents = chronicle?.total_events ?? history.length;
   const badges = [
     { label: `历经 ${turn} 回合`, col: theme.accent, bg: theme.softBg || INK.goldBg },
-    { label: `战报 ${history.length} 条`, col: INK.goldDeep, bg: INK.goldBg },
+    { label: `战报 ${totalChronicleEvents} 项`, col: INK.goldDeep, bg: INK.goldBg },
+    ...(chronicle?.unlocked_all ? [{ label: '终局公开全部置牌', col: 0x1a825e, bg: 0xecf7f2 }] : []),
   ];
   const badgeG = new PIXI.Graphics();
   root.addChild(badgeG);
@@ -3891,6 +3890,7 @@ export function buildFinishOverlay(w, h, { winnerSide, winnerName, turn = 1, his
 
   const actions = [
     { label: '原阵容再战', onClick: onRematch, accent: theme.accent, solid: true },
+    { label: '查阅详细战报', onClick: onOpenChronicle, accent: 0x1a825e },
     { label: '重新选人', onClick: onNewRoster, accent: INK.gold },
     { label: '导出战报', onClick: onExport, accent: INK.goldDeep },
   ].filter(action => action.onClick);

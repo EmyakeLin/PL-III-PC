@@ -16,6 +16,7 @@ from models.dice import TYPE_NAMES
 from pipeline.pipeline_errors import PipelineFinished
 from player.player import Player
 
+from .chronicle import BattleChronicle
 from .fx_compiler import discover_character_fx, discover_fx_scripts
 from .table_bridge import TableBridge
 from .status_icons import discover_status_visuals
@@ -207,6 +208,7 @@ class BattleMatch:
             return {**spec, "max_hp": scaled_hp}
 
         self.presentation = TableBridge(self.game.context)
+        self.chronicle = BattleChronicle(self.game)
         self.game.deploy_rosters([[_spec_for_deploy(pool[key]) for key in team] for team in teams])
         counts = Counter(key for team in teams for key in team)
         if open_rosters or any(cnt > 1 for cnt in counts.values()):
@@ -445,6 +447,7 @@ class BattleMatch:
             "can_pass": self.mode == "placement" and self.game.placed_this_window > 0,
             "window_remaining": self._window_size - self.game.placed_this_window if self.mode == "placement" else 0,
             "history": list(islice(reversed(self._history), 100))[::-1],
+            "chronicle": self.chronicle.snapshot(viewer_side=view_side),
         }
 
     def act(self, action, revision, *, card_id=None, card_ids=None, target=None, side=None,
@@ -566,8 +569,15 @@ class BattleMatch:
         by_id = self._draw_candidate_keys(pending)
         if any(cid not in by_id for cid in card_ids):
             raise ValueError("所选置底牌不在当前候选范围内。")
+        chosen_cards = [by_id[cid] for cid in card_ids]
         self.presentation.emit("draw_bottom", side=player.side, count=discard_count)
-        self.game.complete_draw(pending, [by_id[cid] for cid in card_ids])
+        self.game.complete_draw(pending, chosen_cards)
+        self.chronicle.record_action(
+            "draw_bottom",
+            side=player.side,
+            count=discard_count,
+            card_names=[c.name for c in chosen_cards],
+        )
         self._history.append(f"{player.name}看顶选 {discard_count} 张置底，保留 {pending.keep} 张手牌。")
         if self.game.pending_draw:
             self._draw_seat = self.game.pending_draw.player
@@ -980,13 +990,42 @@ class BattleMatch:
             card = next((c for c in self._legal_cards() if hand_key(c) == card_id), None)
             if card is None:
                 raise ValueError("这张手牌当前无法扣置。")
+            fallback_slot = game.duelspace.locate_nearest_empty_duel(player.side) + 1
             game.submit_placement(player, card)
+            slot_num = next(
+                (i + 1 for i, d in enumerate(game.duelspace.space) if card in d.get_content(player.side)),
+                fallback_slot,
+            )
+            self.chronicle.record_action(
+                "place",
+                side=player.side,
+                actor_id=card.character.id,
+                actor_name=card.character.name,
+                card_id=card.id,
+                card_name=card.name,
+                cost=card.cost,
+                duel_number=slot_num,
+                face_up=(card.state.name == "PLACED_FACE_UP"),
+                instance_id=card.instance_id,
+            )
         elif action == "place_rear":
             rear_map = game.legal_rear_placements()
             card = next((c for c in rear_map if hand_key(c) == card_id), None)
             if card is None or type(duel_number) is not int:
                 raise ValueError("这张手牌当前无法扣置到后置交锋。")
             game.submit_placement(player, card, rear_duel_index=duel_number - 1)
+            self.chronicle.record_action(
+                "place_rear",
+                side=player.side,
+                actor_id=card.character.id,
+                actor_name=card.character.name,
+                card_id=card.id,
+                card_name=card.name,
+                cost=card.cost,
+                duel_number=duel_number,
+                face_up=(card.state.name == "PLACED_FACE_UP"),
+                instance_id=card.instance_id,
+            )
         else:
             game.submit_placement(player, after=action)
         if game.is_over:
@@ -1330,6 +1369,7 @@ class BattleMatch:
         winner = next(p for p in self.game.players if p is not loser)
         self.game.is_over = True
         self.game.winner = winner
+        self.chronicle.record_action("concede", side=loser_side)
         self._history.append(f"{loser.name}{reason}。")
         self._finish()
 

@@ -401,7 +401,7 @@ class ArenaHandler(BaseHTTPRequestHandler):
                     continue
                 if mtype == "battle_record":
                     try:
-                        rec = room.battle_record()
+                        rec = room.battle_record(viewer_side=side, hotseat=hotseat)
                         ws.send_json({"type": "battle_record", "req_id": msg.get("req_id"), "data": rec})
                     except Exception as exc:
                         ws.send_json({"type": "error", "req_id": msg.get("req_id"), "error": str(exc)})
@@ -456,7 +456,8 @@ class ArenaHandler(BaseHTTPRequestHandler):
                     return self._send(200, filename.read_bytes(), mime)
             hosted, path = self._route(path)
             if hosted is not None and path == "/api/battle_record":
-                return self._send(200, hosted.room.battle_record())
+                v_side, is_hs = hosted.auth_context(self.headers.get("Authorization"))
+                return self._send(200, hosted.room.battle_record(viewer_side=v_side, hotseat=is_hs))
             if path == "/mcp" and hosted is not None:
                 self._send(405)
             elif hosted is not None and hosted is self.server.default_room and path in ASSETS:

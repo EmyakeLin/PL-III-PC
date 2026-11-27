@@ -145,7 +145,11 @@ function findRoomMove(state, action, payload) {
   });
 }
 
-function battleRecordText({ bot_side: botSide, challenge, events = [], history, match_number = 1, finished, frame, winner_side: winnerSide }) {
+function battleRecordText(recordData) {
+  if (recordData?.markdown && typeof recordData.markdown === 'string') {
+    return recordData.markdown;
+  }
+  const { bot_side: botSide, challenge, events = [], history, match_number = 1, finished, frame, winner_side: winnerSide } = recordData;
   let matchNumber = match_number;
   let start = 0;
   for (const [index, event] of events.entries()) {
@@ -221,7 +225,7 @@ export class RoomSeatTransport {
   }
 
   async fetchBattleRecord() {
-    const record = await this.requestHttp('battle_record', null, { method: 'GET', publicView: true });
+    const record = await this.requestHttp('battle_record', null, { method: 'GET' });
     return battleRecordText(record);
   }
 

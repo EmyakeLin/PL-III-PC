@@ -82,6 +82,7 @@ import {
   buildFinishOverlay,
   buildMatchMenuOverlay,
 } from './table_overlays.js';
+import { formatChronicleMarkdown } from './chronicle_view.js';
 
 const PHASE_NAMES = {
   setup: '准备',
@@ -280,6 +281,12 @@ export class GameDirector {
     };
     this.matchMenu = null;
     this.codexModal = null;
+    this.chronicleUi = {
+      turnFilter: 'all',
+      categoryFilter: 'all',
+      charFilter: null,
+      collapsedBlocks: new Set(),
+    };
     this.pileModal = null;
     this.drawSelected = new Set();
     this.drawSelectScrollX = 0;
@@ -1236,6 +1243,12 @@ export class GameDirector {
     this.lightcoreRevealAlpha.clear();
     this.actorMotion.clear();
     this.passivePulses.clear();
+    this.chronicleUi = {
+      turnFilter: 'all',
+      categoryFilter: 'all',
+      charFilter: null,
+      collapsedBlocks: new Set(),
+    };
     this.floaters.length = 0;
     clearContainer(this.fxTextLayer);
     this.banner = this.toast = null;
@@ -4137,10 +4150,95 @@ export class GameDirector {
         catalog: this.state.catalog,
         characterColors: this.state.character_colors || {},
         history: this.state.history || [],
+        chronicle: this.state.chronicle || null,
+        chronicleUi: this.chronicleUi,
+        onChronicleUiChange: (patch) => {
+          if (patch.turnFilter !== undefined) this.chronicleUi.turnFilter = patch.turnFilter;
+          if (patch.categoryFilter !== undefined) this.chronicleUi.categoryFilter = patch.categoryFilter;
+          if (patch.charFilter !== undefined) this.chronicleUi.charFilter = patch.charFilter;
+          if (patch.collapsedBlocks !== undefined) this.chronicleUi.collapsedBlocks = patch.collapsedBlocks;
+          if (patch.scrollY !== undefined) m.scrollY = patch.scrollY;
+          this.hoveredCard = null;
+          this.hoveredInfo = null;
+          this._renderInspection();
+          this._rebuildOverlay();
+        },
+        onCopyChronicle: async () => {
+          const md = formatChronicleMarkdown(this.state.chronicle, {
+            players: this.state.frame?.players || [],
+            winnerSide: this.state.frame?.is_over ? this.state.frame?.winner_side : null,
+            turn: this.state.frame?.turn || 1,
+            history: this.state.history || [],
+          });
+          try {
+            await navigator.clipboard.writeText(md);
+            this.showToast('已复制战报。', 0x1a825e, 2.0);
+          } catch {
+            if (this.openBattleRecord) this.openBattleRecord();
+            else this.showToast('当前环境不支持剪贴板直写，可使用全文弹窗复制。', INK.gold, 2.2);
+          }
+        },
+        onHoverCard: (sk, side, ownerName, ax, ay) => {
+          this.hoveredCard = sk
+            ? {
+                card: sk,
+                side,
+                accentColor: this._resolveCharColor(sk.character_id, side),
+                ownerName,
+                anchorX: ax,
+                anchorY: ay,
+                cardH: 280,
+                source: 'chronicle',
+                sourceSprite: null,
+              }
+            : null;
+          this._renderInspection();
+        },
+        onHoverStatus: (stName, ax, ay) => {
+          if (!stName) {
+            if (this.hoveredInfo?.kind === 'statuses') {
+              this.hoveredInfo = null;
+              this._renderInspection();
+            }
+            return;
+          }
+          const rl = this.state?.catalog?.statuses?.[stName];
+          const text = (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[stName]) || '';
+          this.hoveredInfo = {
+            kind: 'statuses',
+            title: `状态词条 · ${stName}`,
+            items: [{ name: stName, value: '', burst: false, color: getStatusColor(stName, INK.secondary), text }],
+            side: ax < w * 0.5 ? 1 : 2,
+            y: Math.max(58, Math.min(h - 180, ay - 24)),
+          };
+          this._renderInspection();
+        },
+        onOpenHero: this.state.mode !== 'finished'
+          ? (cid, s) => {
+              this.codexModal = null;
+              this._syncTopBar();
+              this._openHeroSheet(cid, s);
+            }
+          : null,
         onExport: !this.transport.isRoom || this.state.started ? this.openBattleRecord : null,
-        onTab: (tab) => { m.tab = tab; m.scrollY = 0; this._rebuildOverlay(); },
+        onTab: (tab) => {
+          m.tab = tab;
+          m.scrollY = 0;
+          this.hoveredCard = null;
+          this.hoveredInfo = null;
+          this._renderInspection();
+          this._syncTopBar();
+          this._rebuildOverlay();
+        },
         onScrollChange: (val) => { m.scrollY = val; },
-        onClose: () => { this.codexModal = null; this._rebuildOverlay(); },
+        onClose: () => {
+          this.codexModal = null;
+          this.hoveredCard = null;
+          this.hoveredInfo = null;
+          this._renderInspection();
+          this._syncTopBar();
+          this._rebuildOverlay();
+        },
       });
       m.maxScroll = ov._maxScroll || 0;
       m.node = ov;
@@ -4302,6 +4400,12 @@ export class GameDirector {
         winnerName: winnerSide && winnerSide === (this.state.ai_side ?? this.state.bot_side) ? (this.state.challenge || '电脑对手') : null,
         turn: this.state.frame.turn,
         history: this.state.history || [],
+        chronicle: this.state.chronicle || null,
+        onOpenChronicle: () => {
+          this.codexModal = { tab: 'history', scrollY: 0, maxScroll: 0, node: null };
+          this._syncTopBar();
+          this._rebuildOverlay();
+        },
         onExport: this.openBattleRecord,
         onRematch: canRematch ? () => {
           if (this.transport.isRoom) {

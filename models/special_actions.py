@@ -675,11 +675,35 @@ class SpecialActions:
         if action.kind == "place":
             if not game.place_in_duel(player.side, card, action.duel_index, special=True):
                 return False
-            game.context.record("special_placement", player=player.name, number=action.duel_index + 1)
+            game.context.record(
+                "special_placement",
+                player=player.name,
+                number=action.duel_index + 1,
+                side=player.side,
+                actor_id=card.character.id,
+                actor_name=card.character.name,
+                card_id=card.id,
+                card_name=card.name,
+                cost=card.cost,
+                instance_id=card.instance_id,
+                face_up=(card.state.name == "PLACED_FACE_UP"),
+            )
         elif action.kind == "place_rear":
             if not game.place_in_duel(player.side, card, action.duel_index, special=True, rear=True):
                 return False
-            game.context.record("special_rear_placement", player=player.name, number=action.duel_index + 1)
+            game.context.record(
+                "special_rear_placement",
+                player=player.name,
+                number=action.duel_index + 1,
+                side=player.side,
+                actor_id=card.character.id,
+                actor_name=card.character.name,
+                card_id=card.id,
+                card_name=card.name,
+                cost=card.cost,
+                instance_id=card.instance_id,
+                face_up=(card.state.name == "PLACED_FACE_UP"),
+            )
         elif action.kind == "replace":
             with game.context.binding(source=card.character, side=player.side):
                 return game.context.eval_block([card, action.target_card, OpCode.REPLACE_SKILL])
@@ -780,8 +804,26 @@ class SpecialActions:
             hand._on_size_changed(len(hand.content) + 1, len(hand.content))
         else:
             old.reset_for_draw()
+        duel_num = self.game.duelspace.space.index(slot) + 1 if slot in self.game.duelspace.space else None
+        lane = "rear" if card in slot.get_rear_content(player.side) else "front"
         if card.state == CardState.PLACED_FACE_DOWN:
-            self.game.context.record("hidden_card_replaced", player=player.name, dissolved=old.temporary)
+            self.game.context.record(
+                "hidden_card_replaced",
+                player=player.name,
+                dissolved=old.temporary,
+                side=player.side,
+                old_card_id=old.id,
+                old_card_name=old.name,
+                old_instance_id=old.instance_id,
+                new_card_id=card.id,
+                new_card_name=card.name,
+                new_cost=card.cost,
+                new_actor_id=card.character.id,
+                new_actor_name=card.character.name,
+                new_instance_id=card.instance_id,
+                duel_number=duel_num,
+                lane=lane,
+            )
         else:
             self.game.context.record("card_replaced", actor=card.character.name, card=card.name,
                                      replaced=old.name, dissolved=old.temporary)
