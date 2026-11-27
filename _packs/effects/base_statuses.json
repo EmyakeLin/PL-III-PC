@@ -3,6 +3,7 @@
   "pack_type": "status_effects",
   "turn_end_statuses": ["强壮", "虚弱", "迅捷", "束缚", "骰子等级提升", "骰子等级降低"],
   "status_rules": {
+    "光点碎裂": {"description":"受到有对位骰的攻击时，若自身变动点数不高于层数，承受1光点伤害并增加1计数。计数达到层数时解除。预留状态，当前没有发动词条。"},
     "威压": {"cap":12,"description":"最多12层，跨回合保留。"},
     "强壮": {"per_stack": {"final_score": 1}, "description": "每层使自身非空白骰最终点数+1。"},
     "虚弱": {"per_stack": {"final_score": -1}, "description": "每层使自身非空白骰最终点数−1。"},

@@ -20,6 +20,7 @@ _DAMAGE_SEGMENTS = frozenset({
 
 
 _NON_MUTATING_OPCODES = frozenset({
+    OpCode.ATTEMPT_HIT,
     OpCode.RESOLVE_DAMAGE_BASE, OpCode.RESOLVE_TURN_DRAW_COUNT,
     OpCode.ENTRY, OpCode.CHOOSE_CARD, OpCode.CHOOSE_OPTION, OpCode.CHOOSE_CHARACTER, OpCode.CHOOSE_SLOT,
     OpCode.OPPONENT, OpCode.BOARD_SLOTS, OpCode.ZONE_CARDS, OpCode.SLOT_CARDS, OpCode.REMAINING_CARDS,
@@ -208,7 +209,7 @@ class Context:
         # Selection and inspection do not apply an effect to the selected object.
         if opcode in (OpCode.CAPTURE_SKILL_DIE, OpCode.SELECT_ENEMY_CHARACTER, OpCode.SELECT_SKILL_TARGET,
                       OpCode.STAGE_PRE_ATTACK, OpCode.ROUTE_DIE_ATTACK,
-                      OpCode.QUEUE_TARGET_HIT, OpCode.RESOLVE_HIT):
+                      OpCode.QUEUE_TARGET_HIT, OpCode.ATTEMPT_HIT, OpCode.RESOLVE_HIT):
             keys = ("die",) if opcode in (OpCode.ROUTE_DIE_ATTACK, OpCode.QUEUE_TARGET_HIT) else ()
         elif opcode == OpCode.ENTRY:
             keys = ("execution",)
@@ -430,7 +431,7 @@ class Context:
         if opcode == OpCode.CHECK_DEATH:
             fields.setdefault("lethal", False)
         if self._protected_op(opcode, fields) or (
-                opcode == OpCode.RESOLVE_HIT and (fields["die"].range_deficit
+                opcode in (OpCode.ATTEMPT_HIT, OpCode.RESOLVE_HIT) and (fields["die"].range_deficit
                                                   or self.has_no_hit_carrier(fields["target"]))):
             del self.stack[mark:]
             return None
@@ -506,6 +507,7 @@ class Context:
             fields.setdefault("base_amount", fields["amount"])
             if opcode == OpCode.DAMAGE:
                 fields.setdefault("damage_precomputed", False)
+                fields.setdefault("keep_fraction", False)
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
                 fields["incoming_modifiers"] = []
                 fields["reduction_protections"] = []
@@ -517,6 +519,8 @@ class Context:
                 fields.update(damage_part=False, damage_die=None, damage_card=None, damage_status=None,
                               penetration=None, attack_type=None, modifiers=None)
                 if opcode == OpCode.LIGHTCORE_DAMAGE:
+                    fields.setdefault("lightcore_type", None)
+                    fields.setdefault("attribute", None)
                     owner = originating_entry.entry.owner if originating_entry else None
                     credit = (self.event.get("damage_die") if fields.get("credit") == "damage_die"
                               else owner if kind_of(owner) == "die" else None)
@@ -974,8 +978,14 @@ class Context:
                                      damage_cause=damage_cause, **fields)
             return no_result if result is None else result
 
-    def resolve_hit(self, die, target, **fields):
+    def attempt_hit(self, die, target, **fields):
+        with self.binding(**{**fields, "source": die.card.character, "target": target, "die": die, "card": die.card}):
+            return self.eval_block([die, target, OpCode.ATTEMPT_HIT])
+
+    def resolve_hit(self, die, target, *, attempted=False, **fields):
         if not (die.is_attack or fields.get("simultaneous_solo") and die.is_passive):
+            return
+        if not attempted and not self.attempt_hit(die, target, **fields):
             return
         card = die.card
         source = card.character

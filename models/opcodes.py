@@ -811,28 +811,33 @@ def handle_roll(ctx):
     return die.value
 
 
-def handle_reroll_clash_die(ctx):
+def handle_reroll_die(ctx):
     die = ctx.pop()
     pair = ctx.game.pipeline.current_clash_pair
-    if (pair is None or ctx.event.get("clash_pair") is not pair
-            or die not in pair.all_dice() or not _usable_component(die)):
+    if die is None or not _usable_component(die):
         return False
-    opponent = next((other for side, other in pair.dice_dict.items() if side != die.card.player.side), None)
-    if opponent is None or not _usable_component(opponent):
-        return False
-    # Both dice already participated in this clash. Reroll the selected die at
-    # its resolved level, without spending another clash advantage or die use.
+    if pair is None:
+        if not ctx.event.get("solo_score_ready") or ctx.event.get("die") is not die:
+            return False
+        fields = dict(target=ctx.event.get("target"))
+    else:
+        if ctx.event.get("clash_pair") is not pair or die not in pair.all_dice():
+            return False
+        opponent = next((other for side, other in pair.dice_dict.items() if side != die.card.player.side), None)
+        if opponent is None or not _usable_component(opponent):
+            return False
+        fields = dict(target=opponent.card.character, opponent_card=opponent.card, opponent_die=opponent)
     previous = die.value, die.final_score, die.clash_score
     ctx.stack.extend((1, die.roll_max, 0, die))
     if ctx.execute_op(OpCode.ROLL, clash_roll=False) is None:
         return False
-    fields = dict(target=opponent.card.character, opponent_card=opponent.card, opponent_die=opponent)
     final = die.resolve_value(OpCode.RESOLVE_FINAL_SCORE, die.calculate_final_score(), **fields)
-    if final is None or die.resolve_value(OpCode.RESOLVE_CLASH_SCORE, final, **fields) is None:
+    if final is None or (pair is not None and die.resolve_value(OpCode.RESOLVE_CLASH_SCORE, final, **fields) is None):
         die.value, die.final_score, die.clash_score = previous
         return False
-    pair.rerolls += 1
-    pair.compare_scores()
+    if pair is not None:
+        pair.rerolls += 1
+        pair.compare_scores()
     return True
 
 
@@ -963,8 +968,17 @@ def handle_for_each_target(ctx):
                 ctx.eval_block(block)
 
 
+def _damage_amount(ctx, value):
+    return max(0, value if ctx.event.get("keep_fraction") else int(value))
+
+
+def handle_attempt_hit(ctx):
+    target, die = ctx.pop(), ctx.pop()
+    return target.is_alive and _usable_component(die)
+
+
 def handle_resolve_damage(ctx):
-    amount = max(0, int(ctx.pop()))
+    amount = _damage_amount(ctx, ctx.pop())
     target = ctx.pop()
     ctx.stack.extend((target, amount))
     amount = ctx.execute_op(OpCode.FINALIZE_DAMAGE, base_amount=ctx.event["base_amount"])
@@ -978,8 +992,8 @@ def handle_resolve_damage(ctx):
 def handle_finalize_damage(ctx):
     amount = ctx.pop()
     ctx.pop()  # target
-    final = max(0, int(ctx.event["value_ref"].apply(amount)))
-    final = max(0, int(adjusted_value(ctx, "final_damage", final)))
+    final = _damage_amount(ctx, ctx.event["value_ref"].apply(amount))
+    final = _damage_amount(ctx, adjusted_value(ctx, "final_damage", final))
     if ctx.executions and ctx.executions[-1].cancelled:
         ctx.current_op = None
         return
@@ -1112,7 +1126,7 @@ def handle_damage(ctx):
     mult, add = damage_adjustments(outgoing, grade, 1, protections)
     if not precomputed:
         mult = adjusted_value(ctx, "damage_multiplier", mult)
-    ctx.event["outgoing_amount"] = max(0, int(amount * mult + add))
+    ctx.event["outgoing_amount"] = _damage_amount(ctx, amount * mult + add)
     modifiers = () if precomputed else [*source_modifiers, *ctx.event["incoming_modifiers"]]
     status_factor = 1
     suppressed = []
@@ -1121,7 +1135,7 @@ def handle_damage(ctx):
         if factor is None or precomputed:
             continue
         multiplier, fixed = damage_adjustments(modifiers, grade, status_factor, protections)
-        preview = max(0, int(amount * adjusted_value(ctx, "damage_multiplier", multiplier) + fixed))
+        preview = _damage_amount(ctx, amount * adjusted_value(ctx, "damage_multiplier", multiplier) + fixed)
         ctx.stack.extend((target, name, grade, factor))
         receipt = ctx.execute_op(OpCode.RESOLVE_DAMAGE_STATUS, result_field=None, incoming=preview)
         if receipt is None or receipt["result"] is None:
@@ -1138,7 +1152,7 @@ def handle_damage(ctx):
         if ctx.executions and ctx.executions[-1].cancelled:
             ctx.current_op = None
             return
-    proposed = max(0, int(amount * multiplier + fixed))
+    proposed = _damage_amount(ctx, amount * multiplier + fixed)
     ctx.stack.extend((target, proposed))
     damage = ctx.execute_op(OpCode.RESOLVE_DAMAGE, base_amount=amount)
     if damage is None or not target.is_alive or (ctx.executions and ctx.executions[-1].cancelled):
@@ -1200,8 +1214,13 @@ def handle_lightcore_damage(ctx):
         lost = min(target.lightcore_hp, remaining)
         target.lightcore_hp -= lost
         ctx.event["lightcore_lost"] += lost
+        kind = ctx.event.get("lightcore_type")
+        subtype = {"lightcore_type": kind, "attribute": ctx.event.get("attribute")} if kind else {}
         target.record(fact, source=getattr(source, "combat_name", None), target=target.combat_name,
-                      amount=remaining, lost=lost, hp=target.lightcore_hp, maximum=target.max_lightcore_hp)
+                      amount=remaining, lost=lost, hp=target.lightcore_hp, maximum=target.max_lightcore_hp, **subtype)
+        if lost:
+            ctx.dispatch_pipeline("on_lightcore_lost", source=source, target=target, die=die,
+                                  card=getattr(die, "card", None), lost=lost, maximum=target.max_lightcore_hp)
         if not lost or target.lightcore_hp > 0:
             break
 
@@ -1606,7 +1625,7 @@ DISPATCH_TABLE = {
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.SET_TURN_STATE: handle_set_character_state,
     OpCode.PROTECT_DAMAGE_AMOUNT: lambda ctx: ctx.pop().append(ctx.action_authority()),
-    OpCode.REROLL_CLASH_DIE: handle_reroll_clash_die, OpCode.SET_MAX_HP: handle_set_max_hp,
+    OpCode.REROLL_DIE: handle_reroll_die, OpCode.SET_MAX_HP: handle_set_max_hp,
     OpCode.SET_SUSTAINED_STACKS: handle_set_sustained_stacks,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.CHOOSE_OPTION: handle_choose_option,
     OpCode.CHOOSE_CHARACTER: handle_choose_character,
@@ -1656,7 +1675,7 @@ DISPATCH_TABLE = {
     OpCode.RESTORE_STATUS_STACKS: handle_restore_status_stacks,
     OpCode.BLANK_DIE: lambda ctx: ctx.pop().make_blank(ctx.action_authority()), OpCode.SELECT_ENEMY_CHARACTER: handle_select_enemy_character,
     OpCode.REAL_DAMAGE: handle_real_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
-    OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
+    OpCode.ATTEMPT_HIT: handle_attempt_hit, OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
     OpCode.RESOLVE_STATUS_AMOUNT: handle_resolve_status_amount, OpCode.STATUS: handle_status, OpCode.STAGGER: handle_stagger,
     OpCode.SPEND_STATUS: handle_spend_status,
     OpCode.ABILITY_EFFECT: handle_ability_effect, OpCode.SPEND_ABILITY_EFFECT: handle_ability_effect,
@@ -1703,7 +1722,7 @@ OPERANDS = {
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.SET_TURN_STATE: ("target", "key", "value"),
     OpCode.PROTECT_DAMAGE_AMOUNT: ("protections",),
-    OpCode.REROLL_CLASH_DIE: ("die",), OpCode.SET_MAX_HP: ("target", "amount"),
+    OpCode.REROLL_DIE: ("die",), OpCode.SET_MAX_HP: ("target", "amount"),
     OpCode.SET_SUSTAINED_STACKS: ("target", "status", "grant_source", "amount"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.CHOOSE_OPTION: ("specification",),
     OpCode.CHOOSE_CHARACTER: ("candidates", "specification"),
@@ -1764,5 +1783,5 @@ OPERANDS = {
     OpCode.SHIELD: ("target", "shield_kind", "amount"), OpCode.STAGGER: ("target",),
     OpCode.DESTROY: ("target",),
     OpCode.NEGATE_SKILL: ("target",),
-    OpCode.CLASH: ("clash_pair",), OpCode.RESOLVE_HIT: ("die", "target"),
+    OpCode.CLASH: ("clash_pair",), OpCode.ATTEMPT_HIT: ("die", "target"), OpCode.RESOLVE_HIT: ("die", "target"),
 }

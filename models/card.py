@@ -11,12 +11,12 @@ RANGE_NAMES = ("近战", "普通远程", "强化远程", "极限远程")
 COMPARISON_SIGNS = {"lt": "<", "le": "≤", "eq": "=", "ne": "≠", "ge": "≥", "gt": ">"}
 
 
-def range_trait(data, key, card):
+def range_trait(data, key, card, *, target=None):
     """Combine printed range with the amount supplied by its rule expression."""
     value = data.get(key, 0)
     amount = data.get(key + "_amount")
     if amount is not None and card is not None:
-        result = read_value(compile_value(amount["value"]), card.character, {"card": card})
+        result = read_value(compile_value(amount["value"]), card.character, {"card": card, "target": target})
         if type(result) is not int or not 0 <= result <= 3:
             raise ValueError(f"{key}_amount 的计算结果须为 0 到 3 的整数，实际为 {result!r}")
         value = max(value, result)
@@ -54,12 +54,9 @@ def validate_skill_traits(data):
         raise ValueError("保护远程等级须为布尔值")
     if type(data.get("match_opposing_range", False)) is not bool:
         raise ValueError("匹配对方远程等级须为布尔值")
-    reduction = data.get("opponent_range_reduction", 0)
-    if type(reduction) is not int or not 0 <= reduction <= 3:
-        raise ValueError("对方远程等级减量须为0～3的整数")
     if (data.get("form_when") or {}).get("snapshot") not in (None, "use"):
         raise ValueError("形态快照的时点必须是 use")
-    for key in ("range_level", "ignore_range"):
+    for key in ("range_level", "ignore_range", "opponent_range_reduction"):
         validate_range_trait(data, key)
     for key in ("pre_reveal", "interceptable", "preserve_pre_reveal_target", "anytime_replace", "before_duel_attack"):
         if key in data and type(data[key]) is not bool:
@@ -376,11 +373,13 @@ class Card:
         return self.range_ignored(self.data, self.range_opponent)
 
     def range_ignored(self, face, opponent):
+        target = opponent.character if opponent is not None else self.range_target
+        personal = range_trait(self.character.data, "ignore_range", self, target=target) if self.character else 0
         strength = trait_rank(face, "ignore_range")
         if (self.explicitly_disables(strength, protected=True)
                 or opponent is not None and action_by(opponent).overcomes(strength, self.player)):
-            return 0
-        return range_trait(face, "ignore_range", self)
+            return personal
+        return max(personal, range_trait(face, "ignore_range", self, target=target))
 
     def set_range_opponent(self, opponent, *, own_range=None, opposing_range=None, ignore_range=None):
         """Retain this pairing for excess dice, until the next skill joins."""
@@ -459,7 +458,7 @@ class Card:
 
     def paired_ranges(self, opponent, own_range=None, opposing_range=None):
         def levels(card, opposing, supplied):
-            reduction = opposing.data.get("opponent_range_reduction", 0)
+            reduction = range_trait(opposing.data, "opponent_range_reduction", opposing)
             if reduction:
                 strength = trait_rank(opposing.data, "opponent_range_reduction")
                 guard = trait_rank(card.data, "protect_range_level")

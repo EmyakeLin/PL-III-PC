@@ -137,7 +137,7 @@ def _character_forms(pack):
 
 
 def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
-    from models.card import validate_skill_traits
+    from models.card import validate_range_trait, validate_skill_traits
     from models.conditions import validate_skill_gate
     from models.character import CharacterRank, RANK_SKILL_COUNT
     from models.dice import Dice
@@ -157,6 +157,7 @@ def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
                             status_entries=definitions.status_entries, status_rules=definitions.status_rules,
                             ability_rules=definitions.ability_rules, turn_end_statuses=definitions.turn_end_statuses)
                 rank = CharacterRank[char["rank"]]
+                validate_range_trait(char, "ignore_range")
                 if char["id"] in ids:
                     raise ValueError(f"重复的角色 ID {char['id']}")
                 ids.add(char["id"])
@@ -172,8 +173,11 @@ def load_characters_from_packs(packs_dir=None, *, extra_packs=()):
                     raise ValueError(f"{char['name']} 的交锋额度下限须为非负整数")
                 regular = [card for card in char["skills"] if not card.get("out_of_combat")]
                 deck_rank = CharacterRank[inherited_deck_rank] if inherited_deck_rank else rank
-                if len(regular) != RANK_SKILL_COUNT[deck_rank]:
-                    raise ValueError(f"{char['name']} 应有 {RANK_SKILL_COUNT[deck_rank]} 张常规技能")
+                regular_count = char.get("regular_skill_count", RANK_SKILL_COUNT[deck_rank])
+                if type(regular_count) is not int or regular_count < 0:
+                    raise ValueError(f"{char['name']} 的常规技能牌数必须为非负整数")
+                if len(regular) != regular_count:
+                    raise ValueError(f"{char['name']} 应有 {regular_count} 张常规技能")
                 card_ids = set()
                 for card in char["skills"]:
                     validate_skill_traits(card)

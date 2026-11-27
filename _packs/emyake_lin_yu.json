@@ -412,12 +412,6 @@
     ]
   },
   "turn_end_statuses": ["破甲"],
-  "ability_rules": {
-    "置卡或换卡机会": {
-      "permissions": ["place", "replace"],
-      "turn_end": true
-    }
-  },
   "characters": [
     {
       "id": "emyake_lin_yu",

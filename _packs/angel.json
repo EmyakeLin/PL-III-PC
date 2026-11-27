@@ -1,0 +1,1911 @@
+{
+  "status_rules": {
+    "光涌": {"description":"光属性标记。","attribute":"光","polarity":"neutral"},
+    "暗涌": {"description":"暗属性标记。","attribute":"暗","polarity":"neutral"},
+    "暗笼": {"description":"拦截即将命中自身的骰子。成功拦截消耗1层，回合末减少1层。"},
+    "灰界": {"cap":8,"description":"每次开牌每4层提高两种涌的共同上限1，至多8。每溢出一档回复1生命。"},
+    "黑白共舞": {"cap":1,"per_stack":{"speed":4},"description":"速度+4，费用上限+2、交锋数+1。回合末失去2灰界。"}
+  },
+  "characters": [
+    {
+      "id": "angel",
+      "name": "光暗使 安吉尔",
+      "rank": "EMPOWERED_BOSS",
+      "regular_skill_count": 7,
+      "max_hp": 15,
+      "passive_skills": [
+        {
+          "name": "灰度光暗/光暗使",
+          "entries": [
+            {
+              "trigger": "on_battle_start",
+              "description": "光涌、暗涌全场各3层，缺额由安吉尔持有。",
+              "operation": {
+                "op": "program",
+                "code": ["$self","光暗上限",3,"SET_CHARACTER_STATE","angel_balance_marks",{"literal":{}},"PUBLISH"]
+              }
+            },
+            {
+              "trigger": "on_status_changed",
+              "description": "光涌或暗涌被移除后补足全场存量。",
+              "subject": "any",
+              "when": [{"left":"$event.actual_delta","op":"lt","right":0}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  {"literal":["光涌","暗涌"]}, "$event.status", "CONTAINS",
+                  ["$self.rule_state","光暗转移中",false,"LOOKUP","NOT",["angel_balance_marks",{"literal":{}},"PUBLISH"],"WHEN"],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "AFTER CHECK_DEATH",
+              "description": "阵亡者离场时补足标记。",
+              "subject": "any",
+              "when": [{"left":"$event.result","op":"eq","right":true}],
+              "operation": {"op":"program","code":["angel_balance_marks",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "angel_balance_marks",
+              "description": "分别统计在场角色的两种涌；被暗笼封存的暗涌仍占用上限。",
+              "trigger_type": "event",
+              "subject": "any",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.players", ["$event.item.characters"], "MAP", "FLATTEN", ["$event.item.is_alive"], "FILTER", "holders",
+                  "STORE", 0, "sum", "STORE", "$local.holders",
+                  ["$local.sum","$event.item","光涌","STATUS_COUNT","ADD","sum","STORE"], "EACH", "$self.rule_state", "光暗上限", 3,
+                  "LOOKUP", "$local.sum", "SUB", "missing", "STORE", "$local.missing", 0, "GT",
+                  ["$self","光涌","$local.missing","STATUS"], "WHEN", "$self.rule_state", "暗笼封存", 0, "LOOKUP", "sum", "STORE",
+                  "$local.holders", ["$local.sum","$event.item","暗涌","STATUS_COUNT","ADD","sum","STORE"], "EACH",
+                  "$self.rule_state", "光暗上限", 3, "LOOKUP", "$local.sum", "SUB", "missing", "STORE", "$local.missing", 0, "GT",
+                  ["$self","暗涌","$local.missing","STATUS"], "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_reveal",
+              "description": "灰界每4层提高共同上限1，超过8的部分每档回复1生命。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "灰界", "STATUS_COUNT", 4, "FLOOR_DIV", "$self.rule_state", "光暗上限", 3, "LOOKUP", "ADD", "newCap",
+                  "STORE", "$self", "光暗上限", "$local.newCap", 8, "MIN", "SET_CHARACTER_STATE", "angel_balance_marks",
+                  {"literal":{}}, "PUBLISH", "$local.newCap", 8, "GT", ["$self","$local.newCap",8,"SUB","HEAL"], "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_status_changed",
+              "description": "暗笼耗尽时返还此前封存的全部暗涌。",
+              "when": [{"left":"$event.status","op":"eq","right":"暗笼"},{"left":"$event.current_stacks","op":"eq","right":0}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.rule_state", "暗笼封存", 0, "LOOKUP", "released", "STORE", "$self", "暗笼封存", 0, "SET_CHARACTER_STATE",
+                  "$self", "暗涌", "$local.released", "STATUS"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESOLVE_ROLL_VALUE",
+              "description": "暗影凝集预约的变动点数下限。",
+              "when": [
+                {"left":{"field":"$self.turn_state","key":"暗影下限","default":0},"op":"gt","right":0},
+                {"left":"$event.die.card","op":"ne","right":null}
+              ],
+              "operation": {"op":"program","code":["$self.turn_state","暗影下限",0,"LOOKUP",1,"ADD","MAX"]}
+            },
+            {
+              "trigger": "BEFORE RESOLVE_STATUS_AMOUNT",
+              "description": "外部新增的光涌、暗涌也受全场硬上限约束。暗笼封存照常占用暗涌名额。",
+              "subject": "any",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {"literal":["光涌","暗涌"]}, "$event.status", "CONTAINS",
+                  [
+                    "$event.status", "暗涌", "EQ", ["$self.rule_state","暗笼封存",0,"LOOKUP"], [0], "IF_ELSE", "total", "STORE",
+                    "$game.players", ["$event.item.characters"], "MAP", "FLATTEN", ["$event.item.is_alive"], "FILTER",
+                    ["$local.total","$event.item","$event.status","STATUS_COUNT","ADD","total","STORE"], "EACH",
+                    "$event.value_ref", "$self.rule_state", "光暗上限", 3, "LOOKUP", "$local.total", "SUB", 0, "MAX", "VALUE_CEILING"
+                  ],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESTORE_STATUS_STACKS",
+              "description": "状态回退也须为其他在场角色和暗笼封存的份额留出位置。",
+              "subject": "any",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {"literal":["光涌","暗涌"]}, "$event.status", "CONTAINS",
+                  [
+                    "$event.status", "暗涌", "EQ", ["$self.rule_state","暗笼封存",0,"LOOKUP"], [0], "IF_ELSE", "occupied", "STORE",
+                    "$game.players", ["$event.item.characters"], "MAP", "FLATTEN", ["$event.item.is_alive"], "FILTER",
+                    [
+                      "$event.item", "$event.target", "IS", "NOT",
+                      ["$local.occupied","$event.item","$event.status","STATUS_COUNT","ADD","occupied","STORE"], "WHEN"
+                    ],
+                    "EACH", "$self.rule_state", "光暗上限", 3, "LOOKUP", "$local.occupied", "SUB", 0, "MAX", "MIN"
+                  ],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "AFTER RESTORE_STATUS_STACKS",
+              "description": "状态回退完成后补足全场缺额。",
+              "subject": "any",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {"literal":["光涌","暗涌"]}, "$event.status", "CONTAINS", ["angel_balance_marks",{"literal":{}},"PUBLISH"], "WHEN"
+                ]
+              }
+            }
+          ],
+          "description": "光破属光，对应光涌；暗蚀属暗，对应暗涌。若目标的异属性标记多于同属性标记，特殊光点伤害增加其差值。命中时从自身向目标转移1层同属性标记；无法转移时，改为造成原始伤害÷3（四舍五入）的物理伤害。光涌与暗涌的全场上限各为3，始终相等。缺额补给安吉尔。"
+        },
+        {
+          "name": "光暗均衡",
+          "entries": [
+            {
+              "trigger": "on_turn_end",
+              "description": "全场按各自两种涌的层差折半向上取整承受真实伤害；随后收回其他存活角色等量的光涌和暗涌。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.players", ["$event.item.characters"], "MAP", "FLATTEN", ["$event.item.is_alive"], "FILTER", "holders",
+                  "STORE", "$local.holders",
+                  [
+                    "$event.item", "光涌", "STATUS_COUNT", "$event.item", "暗涌", "STATUS_COUNT", "SUB", "delta", "STORE",
+                    "$event.item", "$local.delta", 0, "$local.delta", "SUB", "MAX", 2, "CEIL_DIV", "$event.item", "$self", "IS",
+                    [2,"SUB",0,"MAX"], "WHEN", "REAL_DAMAGE"
+                  ],
+                  "EACH", "$local.holders",
+                  [
+                    "$event.item", "$self", "IS", "NOT", "$event.item", {"field":"is_alive"}, "AND",
+                    [
+                      "$event.item", "光涌", "STATUS_COUNT", "$event.item", "暗涌", "STATUS_COUNT", "MIN", "pairs", "STORE", "$self",
+                      "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.item $self 光涌 $local.pairs", "moved", "STORE",
+                      "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$self",
+                      "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.item $self 暗涌 $local.pairs", "moved", "STORE",
+                      "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                    ],
+                    "WHEN"
+                  ],
+                  "EACH"
+                ]
+              }
+            }
+          ],
+          "description": "回合末，全场各角色受到自身光涌与暗涌之差绝对值的一半（向上取整）的真实伤害，安吉尔自身少受2点。随后其他角色的两类标记逐对抵消，返还安吉尔。"
+        },
+        {
+          "name": "光点解构",
+          "entries": [
+            {
+              "trigger": "on_lightcore_lost",
+              "description": "每名敌人独立累计本条完整度实损，每满1/4上限造成一段10%小数超穿甲，每条至多三次。",
+              "subject": "any",
+              "when": [{"left":"$event.target.player","op":"ne","right":"$self.player"}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target.rule_state", "光点解构累计", 0, "LOOKUP", "$event.lost", "ADD", "lost", "STORE", "$event.target",
+                  "光点解构累计", "$local.lost", "SET_CHARACTER_STATE", "$local.lost", 4, "MUL", "$event.maximum", "FLOOR_DIV", 3,
+                  "MIN", "$event.target.rule_state", "光点解构次数", 0, "LOOKUP", "MAX", "earned", "STORE", "$local.earned",
+                  "$event.target.rule_state", "光点解构次数", 0, "LOOKUP", "SUB", 0, "MAX", "new", "STORE", "$event.target", "光点解构次数",
+                  "$local.earned", "SET_CHARACTER_STATE", "$local.new", ["$event.target.is_alive"],
+                  [
+                    "$event.target", "$event.target.max_hp", 10, "DIVIDE", "concept", "none",
+                    {"call":"DAMAGE","with":{"percentage_damage":true,"damage_cause":"光点解构","keep_fraction":true}}
+                  ],
+                  "REPEAT_WHILE"
+                ]
+              }
+            },
+            {
+              "trigger": "after_lightcore_collapse",
+              "description": "崩塌后为下一条完整度重新计数。",
+              "subject": "any",
+              "when": [{"left":"$event.target.player","op":"ne","right":"$self.player"}],
+              "operation": {
+                "op": "program",
+                "code": ["$event.target","光点解构累计",0,"SET_CHARACTER_STATE","$event.target","光点解构次数",0,"SET_CHARACTER_STATE"]
+              }
+            }
+          ],
+          "description": "在场时，每名敌方角色每实际失去当前形态群上限1/4的完整度，受到其生命上限10%的小数超穿甲伤害。每次崩塌前至多触发3次。"
+        },
+        {
+          "name": "解放家·黑白共舞",
+          "entries": [
+            {
+              "trigger": "on_turn_prepared",
+              "description": "回合开始以6灰界决定是否共舞，先于本回合速度判定。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "灰界", "STATUS_COUNT", 6, "GE", ["$self","黑白共舞",1,"STATUS"], ["$self","黑白共舞","all","SPEND_STATUS"],
+                  "IF_ELSE", "angel_dance_started", {"literal":{}}, "PUBLISH"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESET_COST",
+              "description": "共舞时通用回补上限增加2。",
+              "when": [
+                {"left":"$event.refill","op":"eq","right":true},
+                {"left":{"field":"$self.statuses","key":"黑白共舞","default":0},"op":"ge","right":1}
+              ],
+              "operation": {"op":"program","code":["SWAP",2,"ADD","SWAP"]}
+            },
+            {
+              "trigger": "angel_dance_started",
+              "description": "共舞增加1交锋；首次进入时两张决战技入手。",
+              "when": [{"left":{"field":"$self.statuses","key":"黑白共舞","default":0},"op":"gt","right":0}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", 1, "TURN_DUELS_ADD", "$self.rule_state", "决战技已入手", false, "LOOKUP", "NOT",
+                  [
+                    "$self", "决战技已入手", true, "SET_CHARACTER_STATE", "$player", "out_of_combat", "ZONE_CARDS",
+                    ["$event.item.character","$self","IS",["$event.item","hand","MOVE_CARD"],"WHEN"], "EACH"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "trigger_type": "event"
+            },
+            {
+              "trigger": "on_turn_end",
+              "description": "共舞回合末消耗2灰界。",
+              "when": [{"left":{"field":"$self.statuses","key":"黑白共舞","default":0},"op":"gt","right":0}],
+              "operation": {"op":"program","code":["$self","灰界",2,"SPEND_STATUS"]}
+            }
+          ],
+          "description": "回合开始时，灰界至少6层则进入黑白共舞，否则退出。首次进入时，两张决战技立即入手并参与正常循环。共舞时费用上限+2、交锋数+1、速度+4，回合末失去2灰界。"
+        },
+        {
+          "name": "与光竞速",
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+              "description": "每快2速度最终点数+1，共舞叠加一层，总计至多3。",
+              "when": [{"left":"$event.target","op":"ne","right":null}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.speed", "$event.target.speed", "SUB", 2, "FLOOR_DIV", 0, "MAX", "$self", "黑白共舞", "STATUS_COUNT", "ADD",
+                  3, "MIN", "ADD"
+                ]
+              }
+            }
+          ],
+          "description": "速度每高于目标2点，最终点数+1并无视1级远程。共舞额外叠加1层，两项加成都至多3。"
+        },
+        {
+          "name": "与暗争变",
+          "entries": [
+            {
+              "trigger": "on_clash_scores_ready",
+              "description": "拼点结果前可选择重投。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.turn_state", "与暗争变已用", 0, "LOOKUP", 2, "$self", "黑白共舞", "STATUS_COUNT", "ADD", "LT",
+                  [
+                    {
+                      "literal": {
+                        "title": "与暗争变",
+                        "optional": true,
+                        "options": [
+                          {
+                            "id": "reroll",
+                            "label": "重投本骰，最终点数+1",
+                            "then": {
+                              "op": "program",
+                              "code": [
+                                "$event.die", "本骰重投", "$event.die.use_state", "本骰重投", 0, "LOOKUP", 1, "ADD", "SET_DIE_STATE", "$event.die",
+                                {"call":"REROLL_DIE","result":"result","default":false},
+                                ["$self","与暗争变已用","$self.turn_state","与暗争变已用",0,"LOOKUP",1,"ADD","SET_TURN_STATE"],
+                                ["$event.die","本骰重投","$event.die.use_state","本骰重投",0,"LOOKUP",1,"SUB","SET_DIE_STATE"], "IF_ELSE"
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "CHOOSE_OPTION"
+                  ],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_solo_score_ready",
+              "description": "单方面攻击骰得分后、命中前可选择重投。",
+              "operation": {"op":"program","code":["angel_solo_again",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "angel_solo_again",
+              "description": "本回合还有次数时，同一枚单方面攻击骰可继续重投。",
+              "trigger_type": "event",
+              "subject": "any",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.turn_state", "与暗争变已用", 0, "LOOKUP", 2, "$self", "黑白共舞", "STATUS_COUNT", "ADD", "LT",
+                  [
+                    {
+                      "literal": {
+                        "title": "与暗争变",
+                        "optional": true,
+                        "options": [
+                          {
+                            "id": "reroll",
+                            "label": "重投本骰，最终点数+1",
+                            "then": {
+                              "op": "program",
+                              "code": [
+                                "$event.die", "本骰重投", "$event.die.use_state", "本骰重投", 0, "LOOKUP", 1, "ADD", "SET_DIE_STATE", "$event.die",
+                                {"call":"REROLL_DIE","result":"result","default":false},
+                                [
+                                  "$self", "与暗争变已用", "$self.turn_state", "与暗争变已用", 0, "LOOKUP", 1, "ADD", "SET_TURN_STATE", "angel_solo_again",
+                                  {"literal":{}}, "PUBLISH"
+                                ],
+                                ["$event.die","本骰重投","$event.die.use_state","本骰重投",0,"LOOKUP",1,"SUB","SET_DIE_STATE"], "IF_ELSE"
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "CHOOSE_OPTION"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "reentrant": true
+            },
+            {
+              "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+              "description": "每次以机会重投，使本骰最终点数+1。",
+              "operation": {"op":"program","code":["$event.die.use_state","本骰重投",0,"LOOKUP","ADD"]}
+            }
+          ],
+          "description": "每回合有2次可选重投，共舞额外1次。可在骰出结果后、拼点结算或单方面攻击命中前重投自身骰子。同一枚骰每经此机会重投一次，最终点数再+1。"
+        }
+      ],
+      "skills": [
+        {
+          "id": "angel_gray_cover",
+          "name": "灰界覆盖",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "获得1灰界，选择整张技能的吸收与转移属性。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN", "recipient", "STORE",
+                  "$self", "灰界", 1, "STATUS",
+                  {
+                    "literal": {
+                      "title": "灰界覆盖",
+                      "optional": false,
+                      "options": [
+                        {
+                          "id": "normal",
+                          "label": "吸收光涌，转移暗涌",
+                          "then": {
+                            "op": "program",
+                            "code": [
+                              "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $local.recipient $self 光涌 2", "moved", "STORE",
+                              "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                            ]
+                          }
+                        },
+                        {
+                          "id": "swap",
+                          "label": "吸收暗涌，转移光涌",
+                          "then": {
+                            "op": "program",
+                            "code": [
+                              "$event.card", "光暗互换", true, "SET_SKILL_STATE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                              "TRANSFER_STATUS $local.recipient $self 暗涌 2", "moved", "STORE", "$self", "光暗转移中", false,
+                              "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "回复1生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ],
+              "printed_text": "招架 1～8：回复1生命值"
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "获得2灰界、抽1张牌，再按使用时的选择转移至多2层。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "灰界", 2, "STATUS", "DRAW 1", "$event.card", {"field":"use_state"}, "光暗互换", false, "LOOKUP",
+                      [
+                        "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 2", "moved", "STORE",
+                        "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                      ],
+                      [
+                        "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 2", "moved", "STORE",
+                        "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                      ],
+                      "IF_ELSE"
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～6：获得2灰界，抽1卡，转移至多2暗涌（互换时转移光涌）"
+            }
+          ],
+          "description": "【使用时】获得1灰界，选择整张技能吸收与转移的属性。吸收目标至多2光涌；互换时改为吸收暗涌。"
+        },
+        {
+          "id": "angel_light_form",
+          "name": "光华幻形",
+          "cost": 2,
+          "anytime_replace": true,
+          "no_hit_carrier": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "消耗2灰界。",
+              "operation": {"op":"program","code":["$self","灰界",2,"SPEND_STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 1,
+              "entries": [
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "未拼赢，末骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card","末骰加值","$event.card.use_state","末骰加值",0,"LOOKUP",4,"ADD","SET_SKILL_STATE"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_draw",
+                  "description": "未拼赢，末骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card","末骰加值","$event.card.use_state","末骰加值",0,"LOOKUP",4,"ADD","SET_SKILL_STATE"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "未拼赢，末骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card","末骰加值","$event.card.use_state","末骰加值",0,"LOOKUP",4,"ADD","SET_SKILL_STATE"]
+                  }
+                }
+              ],
+              "printed_text": "闪避 1～4：【未拼点胜利】末骰最终点数+4"
+            },
+            {
+              "type": "evade",
+              "level": 1,
+              "entries": [
+                {
+                  "trigger": "on_clash_skip",
+                  "description": "未拼赢，末骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card","末骰加值","$event.card.use_state","末骰加值",0,"LOOKUP",4,"ADD","SET_SKILL_STATE"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_draw",
+                  "description": "未拼赢，末骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card","末骰加值","$event.card.use_state","末骰加值",0,"LOOKUP",4,"ADD","SET_SKILL_STATE"]
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "未拼赢，末骰最终点数+4。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.card","末骰加值","$event.card.use_state","末骰加值",0,"LOOKUP",4,"ADD","SET_SKILL_STATE"]
+                  }
+                }
+              ],
+              "printed_text": "闪避 1～4：【未拼点胜利】末骰最终点数+4"
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "before_dice_use",
+                  "description": "末骰取得之前闪避积累的加值，共舞再加4。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.die", "$event.card.use_state", "末骰加值", 0, "LOOKUP", "$self", "黑白共舞", "STATUS_COUNT", 4, "MUL", "ADD",
+                      "DIE_FINAL_ADD"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3光破，共舞+2",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":3,"grade":"lightcore","text":"3 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      3, "$self", "黑白共舞", "STATUS_COUNT", 2, "MUL", "ADD", "base", "STORE", "$self", "光暗转移中", true,
+                      "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1", "moved", "STORE", "$self", "光暗转移中", false,
+                      "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "after_dice_hit",
+                  "description": "共舞下命中后立即回手。",
+                  "when": [{"left":{"field":"$self.statuses","key":"黑白共舞","default":0},"op":"ge","right":1}],
+                  "operation": {"op":"program","code":["$event.card","hand","MOVE_CARD"]}
+                }
+              ],
+              "printed_text": "突刺 1～12：3光破。共舞时伤害+2、最终点数+4，命中后本技能回手"
+            }
+          ],
+          "description": "可在任意时刻替换自身一张已置技能。整张技能无受击载体。【使用时】消耗2灰界。"
+        },
+        {
+          "id": "angel_dark_choice",
+          "name": "取暗弃光",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "获得1灰界，抽1张牌。",
+              "operation": {"op":"program","code":["$self","灰界",1,"STATUS","DRAW 1"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 1,
+              "multiplier": 2,
+              "entries": [
+                {
+                  "trigger": "before_dice_use",
+                  "description": "共舞时本骰复制一次并顺延余骰。",
+                  "when": [
+                    {"left":"$event.die.is_repeat","op":"eq","right":false},
+                    {"left":{"field":"$self.statuses","key":"黑白共舞","default":0},"op":"ge","right":1}
+                  ],
+                  "operation": {"op":"program","code":["$event.die","REPEAT_DIE"]}
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "1暗蚀",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":1,"grade":"lightcore","text":"1 暗蚀"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "光涌", "STATUS_COUNT", "$event.target", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      1, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"暗蚀","attribute":"暗"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "after_dice_hit",
+                  "description": "命中后，每3暗涌下回合施加1虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", 3, "FLOOR_DIV", "weak", "STORE",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱","$event.scheduled.capture.weak","STATUS"],
+                          "capture": {"weak":"$local.weak"}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～4×2：1暗蚀。命中后目标每3暗涌，下回合施加1虚弱。共舞时本骰复制一次，于下一轮使用"
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "2光破",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":2,"grade":"lightcore","text":"2 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      2, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "吸收1暗涌，转移1光涌。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 暗涌 1", "moved", "STORE",
+                      "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$self",
+                      "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1", "moved", "STORE", "$self",
+                      "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "突刺 1～8：2光破，吸收1暗涌，转移1光涌"
+            }
+          ],
+          "description": "【使用时】获得1灰界，抽1卡。"
+        },
+        {
+          "id": "angel_shadow",
+          "name": "暗影凝集",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "每少1暗涌+3最终点数；目标每有2暗涌获得1灰界。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN", "recipient", "STORE",
+                  "$event.card", "$self", "光涌", "STATUS_COUNT", "$self", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", 3, "MUL",
+                  "SKILL_FINAL_ADD", "$self", "灰界", "$local.recipient", "暗涌", "STATUS_COUNT", 2, "FLOOR_DIV", "STATUS"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3暗蚀",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":3,"grade":"lightcore","text":"3 暗蚀"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "光涌", "STATUS_COUNT", "$event.target", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      3, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"暗蚀","attribute":"暗"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "暗少于光时吸收目标暗涌至平衡或其暗涌耗尽。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "光涌", "STATUS_COUNT", "$self", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "short", "STORE",
+                      "$local.short", 0, "GT",
+                      [
+                        "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 暗涌 $local.short", "moved",
+                        "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                      ],
+                      "WHEN"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合费用上限+2并获得一次置卡机会；再下回合按此时持有的暗涌提高变动点数最小值。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", 2, "NEXT_TURN_COST",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","置卡机会",1,"ABILITY_EFFECT"]
+                        }
+                      },
+                      "$self", "暗涌", "STATUS_COUNT", "dark", "STORE",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 2,
+                          "through_turns": 2,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": [
+                            "$event.target", "暗影下限", "$event.target.turn_state", "暗影下限", 0, "LOOKUP", "$event.scheduled.capture.dark",
+                            "ADD", "SET_TURN_STATE"
+                          ],
+                          "capture": {"dark":"$local.dark"}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "打击 1～12：3暗蚀。若暗少于光，吸收目标暗涌至平衡或其暗涌耗尽。下回合费用上限+2并获得一次置卡机会，再下回合按自身暗涌提升变动点数最小值"
+            }
+          ],
+          "description": "远程技能。【使用时】自身暗涌每少于光涌1，最终点数+3；目标每有2暗涌，获得1灰界。"
+        },
+        {
+          "id": "angel_radiance",
+          "name": "耀光周身",
+          "cost": 3,
+          "forms": {
+            "转1": {
+              "name": "耀光周身",
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "抽1卡，吸收至多3光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "DRAW 1", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 3", "moved",
+                          "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "evade",
+                  "level": 4,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "evade",
+                  "level": 4,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "evade",
+                  "level": 4,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "抽1卡，获得1灰界。",
+                      "operation": {"op":"program","code":["DRAW 1","$self","灰界",1,"STATUS"]}
+                    }
+                  ]
+                }
+              ]
+            },
+            "转2": {
+              "name": "耀光周身",
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "抽1卡，吸收至多3光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "DRAW 1", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 3", "moved",
+                          "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    "2光点",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "evade",
+                  "level": 4,
+                  "multiplier": 2,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "evade",
+                  "level": 4,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "抽1卡，获得1灰界。",
+                      "operation": {"op":"program","code":["DRAW 1","$self","灰界",1,"STATUS"]}
+                    }
+                  ]
+                }
+              ]
+            },
+            "转3": {
+              "name": "耀光周身",
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "抽1卡，吸收至多3光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "DRAW 1", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 3", "moved",
+                          "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    "2光点",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    "2光点",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "evade",
+                  "level": 4,
+                  "multiplier": 3,
+                  "entries": [
+                    {
+                      "trigger": "on_clash_win",
+                      "description": "抽1卡，获得1灰界。",
+                      "operation": {"op":"program","code":["DRAW 1","$self","灰界",1,"STATUS"]}
+                    }
+                  ]
+                }
+              ]
+            },
+            "转4": {
+              "name": "耀光周身",
+              "dice": [
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "抽1卡，吸收至多3光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "DRAW 1", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 3", "moved",
+                          "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    "2光点",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    "2光点",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "回复1生命，吸收1光涌。",
+                      "operation": {
+                        "op": "program",
+                        "code": [
+                          "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                          "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                          "PUBLISH"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "slash",
+                  "level": 6,
+                  "entries": [
+                    "4光点",
+                    {
+                      "trigger": "on_dice_hit",
+                      "description": "抽1卡，获得1灰界。",
+                      "operation": {"op":"program","code":["DRAW 1","$self","灰界",1,"STATUS"]}
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "每少1光涌，依序转一枚闪避为1～20斩击。每3灰界使本技能变动点数+2。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "暗涌", "STATUS_COUNT", "$self", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", 4, "MIN", "changed", "STORE",
+                  "$local.changed", 0, "GT",
+                  ["$event.card",{"literal":["","转1","转2","转3","转4"]},"$local.changed",null,"LOOKUP","SET_SKILL_FORM"], "WHEN",
+                  "$event.card", "变动加值", "$self", "灰界", "STATUS_COUNT", 3, "FLOOR_DIV", 2, "MUL", "SET_SKILL_STATE"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESOLVE_ROLL_VALUE",
+              "description": "提升本技能的变动点数。",
+              "operation": {"op":"program","code":["$event.card.use_state","变动加值",0,"LOOKUP","ADD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "evade",
+              "level": 4,
+              "multiplier": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "抽1卡，吸收至多3光涌。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "DRAW 1", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 3", "moved",
+                      "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "闪避 1～12×2：抽1卡，吸收至多3光涌"
+            },
+            {
+              "type": "evade",
+              "level": 4,
+              "multiplier": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "回复1生命，吸收1光涌。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH"
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "闪避 1～12×2：2光点（转化后激活），回复1生命值，吸收1光涌"
+            },
+            {
+              "type": "evade",
+              "level": 4,
+              "multiplier": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "回复1生命，吸收1光涌。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", 1, "HEAL", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $event.target $self 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH"
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "闪避 1～12×2：2光点（转化后激活），回复1生命值，吸收1光涌"
+            },
+            {
+              "type": "evade",
+              "level": 4,
+              "multiplier": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "抽1卡，获得1灰界。",
+                  "operation": {"op":"program","code":["DRAW 1","$self","灰界",1,"STATUS"]}
+                }
+              ],
+              "printed_text": "闪避 1～12×3：4光点（转化后激活），抽1卡，获得1灰界"
+            }
+          ],
+          "description": "【使用时】自身光涌每少于暗涌1，依序将一枚闪避转为1～20斩击，移除原倍率并激活伤害部分。每3灰界使本技能变动点数+2。"
+        },
+        {
+          "id": "angel_current",
+          "name": "光影乱流",
+          "cost": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "每多1光涌，最终点数+4、变动点数−2。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "光涌", "STATUS_COUNT", "$self", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "gap", "STORE", "$event.card",
+                  "$local.gap", 4, "MUL", "SKILL_FINAL_ADD", "$event.card", "变动惩罚", "$local.gap", 2, "MUL", "SET_SKILL_STATE"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE RESOLVE_ROLL_VALUE",
+              "description": "按使用时的光暗差扣除变动点数。",
+              "operation": {"op":"program","code":["$event.card.use_state","变动惩罚",0,"LOOKUP","SUB"]}
+            },
+            {
+              "trigger": "before_dice_clash",
+              "description": "与远程攻击拼点，对方每有1级远程，本骰最终点数+1。对骰本次取劣势。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.opponent_die.paired_range", 0, "GT",
+                  [
+                    "$event.die", "$event.opponent_die.paired_range", "DIE_FINAL_ADD", "$event.opponent_die", "本次劣势", true,
+                    "SET_DIE_STATE"
+                  ],
+                  "WHEN"
+                ]
+              },
+              "when": [{"left":"$event.opponent_die.is_attack","op":"eq","right":true}]
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3光破",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":3,"grade":"lightcore","text":"3 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      3, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～8：3光破"
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3光破",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":3,"grade":"lightcore","text":"3 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      3, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～8：3光破"
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3光破",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":3,"grade":"lightcore","text":"3 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      3, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～8：3光破"
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "5光破",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":5,"grade":"lightcore","text":"5 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      5, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ],
+              "printed_text": "突刺 1～12：5光破"
+            }
+          ],
+          "description": "【使用时】自身光涌每多于暗涌1，本技能最终点数+4、变动点数−2。与远程攻击拼点时，按对方远程等级增加最终点数，对方本次取劣势。"
+        },
+        {
+          "id": "angel_winter",
+          "name": "至暗冬韵",
+          "cost": 4,
+          "dice": [
+            {
+              "type": "slash",
+              "level": 5,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "3暗蚀",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":3,"grade":"lightcore","text":"3 暗蚀"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "光涌", "STATUS_COUNT", "$event.target", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      3, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"暗蚀","attribute":"暗"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "将本骰预约到下回合的反击池。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.card", 1, "CAPTURE_SKILL_DIE", "sample", "STORE",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": [
+                            "$event.target", "$event.scheduled.capture.sample", 1, "before_one_sided_attack", "$game.turn_number", "use",
+                            1, "GRANT_DIE_RESPONSE"
+                          ],
+                          "capture": {"sample":"$local.sample"}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "base_value": 4,
+              "printed_text": "斩击 1～16+4：3暗蚀；下回合将本骰加入反击池"
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "multiplier": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "4暗蚀",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":4,"grade":"lightcore","text":"4 暗蚀"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "光涌", "STATUS_COUNT", "$event.target", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      4, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"暗蚀","attribute":"暗"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ],
+              "range_level": 1,
+              "printed_text": "突刺 1～8×3：4暗蚀，远程骰子"
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "multiplier": 4,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "4暗蚀；共舞追加命中各1暗蚀",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":4,"grade":"lightcore","text":"4 暗蚀"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "光涌", "STATUS_COUNT", "$event.target", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      "$event.hit_origin", "冬韵追加", "EQ", [1], [4], "IF_ELSE", "base", "STORE", "$self", "光暗转移中", true,
+                      "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 1", "moved", "STORE", "$self", "光暗转移中", false,
+                      "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"暗蚀","attribute":"暗"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "转移2暗涌，共舞再造成三次仅1暗蚀的命中。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 2", "moved", "STORE",
+                      "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$self",
+                      "黑白共舞", "STATUS_COUNT", [3,[true],["$event.die","damage_only","冬韵追加","QUEUE_HIT"],"REPEAT_WHILE"], "WHEN"
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～6×4：4暗蚀，转移2暗涌；共舞时追加3次仅造成1暗蚀的命中"
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "multiplier": 5,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "2光破",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":2,"grade":"lightcore","text":"2 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      2, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 光涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "依本技能实际命中的骰数消耗灰界；目标暗涌每4层向上取整，下回合减少等量费用并获得等量虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "灰界", "$event.card.instantiated_dice",
+                      ["$event.item",null,"IS",[false],["$event.item.landed_hits",0,"GT"],"IF_ELSE"], "FILTER", "SIZE",
+                      "SPEND_STATUS", "$event.target", "暗涌", "STATUS_COUNT", 4, "CEIL_DIV", "penalty", "STORE",
+                      "$event.target.player", 0, "$local.penalty", "SUB", "NEXT_TURN_COST",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱","$event.scheduled.capture.penalty","STATUS"],
+                          "capture": {"penalty":"$local.penalty"}
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "printed_text": "斩击 1～6×5：2光破；消耗等同于本技能已命中骰数的灰界。下回合目标按其暗涌÷4（向上取整）减少费用并获得等量虚弱"
+            }
+          ]
+        },
+        {
+          "id": "angel_cage",
+          "name": "黑暗笼中",
+          "cost": 2,
+          "out_of_combat": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "暗少于光时获得一次置卡或换卡机会，每少2层获得1场内费（至多2）。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "光涌", "STATUS_COUNT", "$self", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "gap", "STORE", "$local.gap", 0,
+                  "GT", ["$player","$local.gap",2,"FLOOR_DIV",2,"MIN","TURN_COST_ADD","$self","置卡或换卡机会",1,"ABILITY_EFFECT"],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "封存实耗暗涌，获得等量暗笼。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "$self", "暗涌", "all",
+                  {"call":"SPEND_STATUS","result":"result","default":0}, "used", "STORE", "$self", "暗笼封存", "$self.rule_state",
+                  "暗笼封存", 0, "LOOKUP", "$local.used", "ADD", "SET_CHARACTER_STATE", "$self", "暗笼", "$local.used", "STATUS",
+                  "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                ]
+              }
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "吸收目标全部暗涌。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "暗涌", "STATUS_COUNT", "quantity", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                  "TRANSFER_STATUS $event.target $self 暗涌 $local.quantity", "moved", "STORE", "$self", "光暗转移中", false,
+                  "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                ]
+              }
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "本技能回到手中。",
+              "operation": {"op":"program","code":["$event.card","hand","MOVE_CARD"]},
+              "when": [{"left":{"field":"$event.card.use_state","key":"回手","default":false},"op":"eq","right":true}]
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "before_dice_use",
+                  "description": "本骰基础值增加自身光涌与灰界之和。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.die","$self","光涌","STATUS_COUNT","$self","灰界","STATUS_COUNT","ADD","DIE_BASE_ADD"]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "摧毁目标技能，技能使用后回手。",
+                  "operation": {"op":"program","code":["$event.opponent_card","DESTROY","$event.card","回手",true,"SET_SKILL_STATE"]}
+                }
+              ],
+              "base_value": 6,
+              "printed_text": "打击 1～20+6：每1光涌、每1灰界各提升1基础值；摧毁目标技能，技能使用后回手"
+            }
+          ],
+          "description": "决战技。【使用时】暗涌低于光涌时，获得一次置卡或换卡机会，每少2层获得1场内费（至多2）。消耗并封存全部暗涌，获得等量暗笼。封存占用上限，暗笼耗尽时返还。【使用后】吸收目标全部暗涌。"
+        },
+        {
+          "id": "angel_annihilation",
+          "name": "烁光幻灭",
+          "cost": 6,
+          "out_of_combat": true,
+          "entries": [
+            {
+              "trigger": "BEFORE PAY_COST",
+              "description": "每3目标暗涌减1费。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.target", "DUP", "NOT", ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN", "recipient", "STORE",
+                  "$local.recipient", "暗涌", "STATUS_COUNT", 3, "FLOOR_DIV", "SUB", 0, "MAX"
+                ]
+              }
+            },
+            {
+              "trigger": "after_skill_use",
+              "description": "消耗6灰界。",
+              "operation": {"op":"program","code":["$self","灰界",6,"SPEND_STATUS"]}
+            },
+            {
+              "trigger": "BEFORE DESTROY",
+              "subject": "any",
+              "description": "已受保护的下骰无法被摧毁词条摧毁。",
+              "when": [
+                {"left":"$event.target","op":"ne","right":null},
+                {
+                  "left": "$event.target",
+                  "op": "eq",
+                  "right": {"field":"$event.target.card.use_state","key":"幻灭下骰","default":null}
+                }
+              ],
+              "operation": {"op":"cancel"}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "multiplier": 3,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "2暗蚀",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "damage_part": {"amount":2,"grade":"lightcore","text":"2 暗蚀"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "光涌", "STATUS_COUNT", "$event.target", "暗涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      2, "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE", "TRANSFER_STATUS $self $event.target 暗涌 1",
+                      "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}},
+                      "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"暗蚀","attribute":"暗"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下骰期间使对方远程等级−3并保护下骰免受摧毁；共舞时吸收等同灰界的光涌。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.card", "幻灭保护", true, "SET_SKILL_STATE", "$event.card", "幻灭下骰", "$event.card", "NEXT_DIE_ON_CARD",
+                      "SET_SKILL_STATE", "$self", "黑白共舞", "STATUS_COUNT",
+                      [
+                        "$self", "灰界", "STATUS_COUNT", "quantity", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                        "TRANSFER_STATUS $event.target $self 光涌 $local.quantity", "moved", "STORE", "$self", "光暗转移中", false,
+                        "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH"
+                      ],
+                      "WHEN"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "共舞时驻留。",
+                  "when": [{"left":{"field":"$self.statuses","key":"黑白共舞","default":0},"op":"ge","right":1}],
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ],
+              "printed_text": "斩击 1～8×3：2暗蚀。下一骰持续期间对方远程等级−3，下一骰免受摧毁。下一骰使用时若自身光涌至少6层，其全部效果取得最高话语权。共舞时本骰驻留，吸收等同于灰界的光涌"
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "roll_max": 100,
+              "multiplier": 2,
+              "entries": [
+                {
+                  "trigger": "before_dice_use",
+                  "description": "使用本骰时光涌至少6层且首骰已命中，本骰效果取得最高话语权。",
+                  "authority": "最高话语权",
+                  "when": [
+                    {"left":{"field":"$event.card.use_state","key":"幻灭保护","default":false},"op":"eq","right":true},
+                    {"left":{"field":"$self.statuses","key":"光涌","default":0},"op":"ge","right":6}
+                  ],
+                  "operation": {"op":"program","code":["$event.die","幻灭最高权",true,"SET_DIE_STATE"]}
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "10光破加自身光涌",
+                  "when": [
+                    {"left":"$event.result","op":"eq","right":true},
+                    {"left":{"field":"$event.die.use_state","key":"幻灭最高权","default":false},"op":"eq","right":false}
+                  ],
+                  "damage_part": {"amount":"10＋自身光涌","grade":"lightcore","text":"10＋自身光涌 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      10, "$self", "光涌", "STATUS_COUNT", "ADD", "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                      "TRANSFER_STATUS $self $event.target 光涌 1", "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE",
+                      "angel_balance_marks", {"literal":{}}, "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "10光破加自身光涌",
+                  "when": [
+                    {"left":"$event.result","op":"eq","right":true},
+                    {"left":{"field":"$event.die.use_state","key":"幻灭最高权","default":false},"op":"eq","right":true}
+                  ],
+                  "damage_part": {"amount":"10＋自身光涌","grade":"lightcore","text":"10＋自身光涌 光破"},
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "暗涌", "STATUS_COUNT", "$event.target", "光涌", "STATUS_COUNT", "SUB", 0, "MAX", "diff", "STORE",
+                      10, "$self", "光涌", "STATUS_COUNT", "ADD", "base", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                      "TRANSFER_STATUS $self $event.target 光涌 1", "moved", "STORE", "$self", "光暗转移中", false, "SET_CHARACTER_STATE",
+                      "angel_balance_marks", {"literal":{}}, "PUBLISH", "$local.moved", 0, "GT",
+                      [
+                        "$event.target", "$local.base", "$local.diff", "ADD",
+                        {"call":"LIGHTCORE_DAMAGE","with":{"lightcore_type":"光破","attribute":"光"}}
+                      ],
+                      ["$event.target","$local.base",3,"DIVIDE",0.5,"ADD",1,"FLOOR_DIV","normal","$event.die.type","DAMAGE"],
+                      "IF_ELSE"
+                    ],
+                    "damage_part": true
+                  },
+                  "authority": "最高话语权",
+                  "hidden": true
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "转移自身全部光涌，摧毁目标技能。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "光涌", "STATUS_COUNT", "quantity", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                      "TRANSFER_STATUS $self $event.target 光涌 $local.quantity", "moved", "STORE", "$self", "光暗转移中", false,
+                      "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$event.opponent_card", "DESTROY"
+                    ]
+                  },
+                  "when": [{"left":{"field":"$event.die.use_state","key":"幻灭最高权","default":false},"op":"eq","right":false}]
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "转移自身全部光涌，摧毁目标技能。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$self", "光涌", "STATUS_COUNT", "quantity", "STORE", "$self", "光暗转移中", true, "SET_CHARACTER_STATE",
+                      "TRANSFER_STATUS $self $event.target 光涌 $local.quantity", "moved", "STORE", "$self", "光暗转移中", false,
+                      "SET_CHARACTER_STATE", "angel_balance_marks", {"literal":{}}, "PUBLISH", "$event.opponent_card", "DESTROY"
+                    ]
+                  },
+                  "authority": "最高话语权",
+                  "when": [{"left":{"field":"$event.die.use_state","key":"幻灭最高权","default":false},"op":"eq","right":true}]
+                },
+                {
+                  "trigger": "after_lightcore_collapse",
+                  "description": "本骰造成崩塌，额外降低4点完整度上限。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.damage_die","$owner","IS",["$event.target",-4,"CHANGE_LIGHTCORE_MAX"],"WHEN"]
+                  },
+                  "when": [{"left":{"field":"$event.die.use_state","key":"幻灭最高权","default":false},"op":"eq","right":false}]
+                },
+                {
+                  "trigger": "after_lightcore_collapse",
+                  "description": "本骰造成崩塌，额外降低4点完整度上限。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.damage_die","$owner","IS",["$event.target",-4,"CHANGE_LIGHTCORE_MAX"],"WHEN"]
+                  },
+                  "authority": "最高话语权",
+                  "when": [{"left":{"field":"$event.die.use_state","key":"幻灭最高权","default":false},"op":"eq","right":true}]
+                }
+              ],
+              "printed_text": "斩击 1～100×2：10光破，伤害加自身光涌层数。命中时转移全部光涌并摧毁目标技能；本骰造成崩塌时，目标完整度上限额外−4"
+            }
+          ],
+          "opponent_range_reduction_amount": {
+            "description": "首骰命中后，下一骰期间令对手远程等级−3。",
+            "value": {
+              "if": {"left":{"field":"$event.card.use_state","key":"幻灭保护","default":false},"op":"eq","right":true},
+              "then": {"if":{"left":"$event.card.current_dice_index","op":"eq","right":1},"then":3,"else":0},
+              "else": 0
+            }
+          },
+          "description": "决战技。目标每持有3暗涌，本技能费用−1。【使用后】消耗6灰界。"
+        }
+      ],
+      "ignore_range_amount": {
+        "value": {
+          "if": {"left":"$event.target","op":"ne","right":null},
+          "then": {
+            "left": {
+              "left": {
+                "left": {
+                  "left": {"left":"$self.speed","op":"sub","right":{"field":"$event.target.speed","default":0}},
+                  "op": "floor_div",
+                  "right": 2
+                },
+                "op": "max",
+                "right": 0
+              },
+              "op": "add",
+              "right": {"field":"$self.statuses","key":"黑白共舞","default":0}
+            },
+            "op": "min",
+            "right": 3
+          },
+          "else": {"field":"$self.statuses","key":"黑白共舞","default":0}
+        },
+        "description": "每快2速度无视1级远程，共舞额外1层，至多3。"
+      }
+    }
+  ],
+  "status_entries": {
+    "暗笼": [
+      {
+        "trigger": "BEFORE ATTEMPT_HIT",
+        "subject": "target",
+        "protection": true,
+        "description": "即将命中时消耗1暗笼，取消此次命中。",
+        "operation": {"op":"program","code":["$self","暗笼",1,"SPEND_STATUS",{"op":"cancel"}]}
+      },
+      {
+        "trigger": "on_turn_end",
+        "description": "暗笼减少1层。",
+        "operation": {"op":"program","code":["$self","暗笼",1,"SPEND_STATUS"]}
+      }
+    ]
+  }
+}

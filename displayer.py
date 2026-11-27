@@ -59,7 +59,7 @@ def _split_die_entries(entries):
             amount = spec.get("amount")
             grade = spec.get("grade", "normal")
             aoe = bool(spec.get("aoe", False))
-            formatted = format_damage_part(amount, grade, aoe=aoe)
+            formatted = spec.get("text") or format_damage_part(amount, grade, aoe=aoe)
             damage_parts.append({
                 "amount": amount,
                 "grade": grade,

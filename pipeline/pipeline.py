@@ -1289,6 +1289,10 @@ class Pipeline:
             with self.game.context.binding(**event):
                 score = pipe.die.roll()
                 pipe.die.resolve_value(OpCode.RESOLVE_FINAL_SCORE, score)
+            if any(entry.trigger == "on_solo_score_ready" for entry in self.game.context.entries):
+                self.game.context.dispatch_pipeline("on_solo_score_ready", solo_score_ready=True, **event)
+                while self.game.special.decision_owner is not None and not self.game.is_over:
+                    yield tuple("solo_score_ready" for _ in self.game.players)
             yield from self._hit(pipe)
 
     def _clash(self, participants):
@@ -1457,6 +1461,8 @@ class Pipeline:
                 if not die.hit_target.is_alive or self.game.context.has_no_hit_carrier(die.hit_target):
                     continue
                 die.hit_index = die.landed_hits + 1
+                if not self.game.context.attempt_hit(**self._event(pipe)):
+                    continue
                 pipe.push_pack(steps.HIT)
                 yield from self._run_to([pipe], "after_dice_hit")
                 if die.landed_hits < die.hit_index and not recipient:
@@ -1597,6 +1603,6 @@ class Pipeline:
             with self.game.context.binding(**event):
                 pipe.die.roll(clash=True)
         elif name == "logic_dice_hit" and event["target"] and event["target"].is_alive:
-            if self.game.context.resolve_hit(**event):
+            if self.game.context.resolve_hit(attempted=True, **event):
                 pipe.die.landed_hits += 1
         return name

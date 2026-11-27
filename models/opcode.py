@@ -21,7 +21,9 @@ class OpCode(Enum):
     
     # 战斗与拼点核心
     CLASH = auto()
-    REROLL_CLASH_DIE = auto()
+    REROLL_DIE = auto()
+    REROLL_CLASH_DIE = REROLL_DIE
+    ATTEMPT_HIT = auto()
     RESOLVE_HIT = auto()
     RESOLVE_DIE_LEVEL = auto()
     RESOLVE_FINAL_SCORE = auto()
