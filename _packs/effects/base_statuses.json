@@ -3,6 +3,7 @@
   "pack_type": "status_effects",
   "turn_end_statuses": ["强壮", "虚弱", "迅捷", "束缚", "骰子等级提升", "骰子等级降低"],
   "status_rules": {
+    "威压": {"cap":12,"description":"最多12层，跨回合保留。"},
     "强壮": {"per_stack": {"final_score": 1}, "description": "每层使自身非空白骰最终点数+1。"},
     "虚弱": {"per_stack": {"final_score": -1}, "description": "每层使自身非空白骰最终点数−1。"},
     "迅捷": {"per_stack": {"speed": 1}, "description": "每层使持有角色的速度+1。"},

@@ -279,6 +279,7 @@ class ClashPair:
             else {(side, "front"): die for side, die in self.dice_dict.items()}
         )
         self.lane_results = {}
+        self.rerolls = 0
         self.split = False
         self.skipped = False
         self.drawn = False
@@ -322,6 +323,10 @@ class ClashPair:
                 if die.resolve_value(opcode, initial, target=target,
                                      opponent_card=opposing.card, opponent_die=opposing) is None:
                     return None
+        return self.compare_scores()
+
+    def compare_scores(self):
+        a, b = self.dice_dict
         lane_results = {}
         for (side, lane), die in self.lane_dice.items():
             my_score = die.clash_score

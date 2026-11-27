@@ -1314,6 +1314,22 @@ class Pipeline:
                                            participants=actors):
                 side_results = self.game.context.eval_block([pair, OpCode.CLASH])
             lane_results = dict(pair.lane_results) if side_results else None
+            if lane_results and any(e.trigger == "on_clash_scores_ready" for e in self.game.context.entries):
+                while not self.game.is_over:
+                    revision = pair.rerolls
+                    for pipe in live:
+                        if not all(self._die_live(p) for p in live):
+                            break
+                        enemy_score, _ = pair.opposing_threshold(pipe.side, pipe.lane)
+                        self.game.context.dispatch_pipeline("on_clash_scores_ready", **self._event(pipe),
+                                                            clash_pair=pair, opposing_score=enemy_score)
+                        while self.game.special.decision_owner is not None:
+                            yield tuple("clash_scores_ready" for _ in self.game.players)
+                        if pair.rerolls != revision:
+                            break
+                    if pair.rerolls == revision:
+                        break
+                lane_results = dict(pair.lane_results)
             if (self.pause_on_clash_scores and lane_results and not self.game.is_over
                     and all(self._die_live(p) and p.die.clash_score is not None for p in live)):
                 # Scores have settled. Leave the result branches uncommitted until

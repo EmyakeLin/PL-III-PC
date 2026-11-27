@@ -1,7 +1,6 @@
 {
   "turn_end_statuses": ["伤害提升"],
   "status_rules": {
-    "威压": {"cap":12,"description":"最多12层，跨回合保留。"},
     "堆芯熔毁": {"cap":9,"track_overflow":true,"description":"回合末结算自伤并衰减。上限9，溢出记为无效堆芯熔毁。"}
   },
   "status_entries": {

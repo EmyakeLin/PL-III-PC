@@ -88,6 +88,7 @@ class Character:
         self._sustained_stacks = {}
         self._sustained_sources = {}
         self._status_listeners = {}
+        self.resident_statuses = frozenset(data.get("resident_statuses", ()))
         self.activating_statuses = set()
         self.active_statuses = set()
         self.round_triggers = Counter()
@@ -110,6 +111,8 @@ class Character:
             self._standalone_status_rules = {**shared.status_rules, **data.get("status_rules", {})}
             self._standalone_status_entries = {**shared.status_entries, **data.get("status_entries", {})}
             self._standalone_ability_rules = {**shared.ability_rules, **data.get("ability_rules", {})}
+        for name in self.resident_statuses:
+            self._set_status(name, 0, 0, notify=False)
 
     @property
     def won_clash_this_turn(self):
@@ -382,10 +385,10 @@ class Character:
             self._sustained_stacks.pop(name, None)
         cap = self.status_cap(name)
         value = ordinary + sustained if cap is None else min(cap, ordinary + sustained)
-        if value:
+        if value or name in self.resident_statuses:
             balances[name] = value
             definitions = self.game.status_entries if self.game else self._standalone_status_entries
-            if not previous and name in definitions:
+            if name not in self._status_listeners and name in definitions:
                 listeners = self._effect_context.register_entries(self, definitions[name])
                 for listener in listeners:
                     listener.origin, listener.status_name = "status", name

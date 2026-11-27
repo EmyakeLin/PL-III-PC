@@ -2,7 +2,7 @@ from decimal import Decimal
 import operator
 import random
 
-from entry.authority import trait_rank
+from entry.authority import action_by, trait_rank
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.effects import GRADE_RANK
 from entry.play_conditions import record_card_play
@@ -688,6 +688,18 @@ def handle_roll_update(ctx):
         die.value = min(updated, die.value) if die.increases_suppressed else updated
 
 
+class RankedDamageModifier(tuple):
+    """Keep the public (kind, amount, grade) while retaining the issuing action."""
+
+    def __new__(cls, values, action):
+        mod = super().__new__(cls, values)
+        mod.action = action
+        return mod
+
+    def __getnewargs__(self):
+        return tuple(self), self.action
+
+
 def handle_damage_modifier(ctx):
     grade, amount, kind, channel = ctx.pop(), ctx.pop(), ctx.pop(), ctx.pop()
     ctx.pop()  # Subject of the range/authority check.
@@ -695,7 +707,19 @@ def handle_damage_modifier(ctx):
         raise ValueError("修正需要待结算的命中或伤害通道")
     if kind not in ("damage_add", "damage_multiply", "armor") or grade not in GRADE_RANK:
         raise ValueError(f"无效的伤害修正 {kind!r} / {grade!r}")
-    channel.append((kind, amount, grade))
+    modifier = (kind, amount, grade)
+    if is_damage_reduction(kind, amount):
+        modifier = RankedDamageModifier(modifier, ctx.action_authority())
+    channel.append(modifier)
+
+
+def is_damage_reduction(kind, value):
+    return (kind == "armor" and value > 0 or kind == "damage_add" and value < 0
+            or kind == "damage_multiply" and value < 1)
+
+
+def reduction_blocked(protections, action):
+    return any(not action.overcomes(guard.authority, guard.player) for guard in protections)
 
 
 def handle_shield_defense(ctx):
@@ -785,6 +809,31 @@ def handle_roll(ctx):
         ctx.dispatch_pipeline("on_variable_value_set", source=die.card.character, die=die,
                               card=die.card, value=die.value, duel=ctx.event.get("duel"))
     return die.value
+
+
+def handle_reroll_clash_die(ctx):
+    die = ctx.pop()
+    pair = ctx.game.pipeline.current_clash_pair
+    if (pair is None or ctx.event.get("clash_pair") is not pair
+            or die not in pair.all_dice() or not _usable_component(die)):
+        return False
+    opponent = next((other for side, other in pair.dice_dict.items() if side != die.card.player.side), None)
+    if opponent is None or not _usable_component(opponent):
+        return False
+    # Both dice already participated in this clash. Reroll the selected die at
+    # its resolved level, without spending another clash advantage or die use.
+    previous = die.value, die.final_score, die.clash_score
+    ctx.stack.extend((1, die.roll_max, 0, die))
+    if ctx.execute_op(OpCode.ROLL, clash_roll=False) is None:
+        return False
+    fields = dict(target=opponent.card.character, opponent_card=opponent.card, opponent_die=opponent)
+    final = die.resolve_value(OpCode.RESOLVE_FINAL_SCORE, die.calculate_final_score(), **fields)
+    if final is None or die.resolve_value(OpCode.RESOLVE_CLASH_SCORE, final, **fields) is None:
+        die.value, die.final_score, die.clash_score = previous
+        return False
+    pair.rerolls += 1
+    pair.compare_scores()
+    return True
 
 
 def handle_sample_roll_value(ctx):
@@ -979,6 +1028,15 @@ def handle_set_hp(ctx):
         return target.hp
 
 
+def handle_set_max_hp(ctx):
+    amount, target = ctx.pop(), ctx.pop()
+    if target is not None and target.is_alive:
+        target.max_hp = max(0, amount)
+        target.hp = min(target.exact_hp, target.max_hp)
+        target.check_death()
+        return target.max_hp
+
+
 def handle_restore_status_stacks(ctx):
     amount, name, holder = ctx.pop(), ctx.pop(), ctx.pop()
     if holder is not None and holder.is_alive:
@@ -1007,12 +1065,12 @@ def handle_random_int(ctx):
     ctx.push(roll)
 
 
-def damage_adjustments(modifiers, grade, multiplier):
+def damage_adjustments(modifiers, grade, multiplier, protections=()):
     fixed = 0
-    for kind, value, defense_grade in modifiers:
-        reduction = (kind == "armor" or kind == "damage_add" and value < 0
-                     or kind == "damage_multiply" and value < 1)
-        if reduction and GRADE_RANK[defense_grade] < GRADE_RANK[grade]:
+    for modifier in modifiers:
+        kind, value, defense_grade = modifier
+        if is_damage_reduction(kind, value) and (GRADE_RANK[defense_grade] < GRADE_RANK[grade]
+                or protections and reduction_blocked(protections, getattr(modifier, "action", action_by(None)))):
             continue
         if kind == "damage_multiply":
             multiplier *= value
@@ -1050,7 +1108,8 @@ def handle_damage(ctx):
     precomputed = ctx.event["damage_precomputed"]
     source_modifiers = () if precomputed else ctx.event["modifiers"]
     outgoing = (item for item in source_modifiers if item[0] != "armor")
-    mult, add = damage_adjustments(outgoing, grade, 1)
+    protections = ctx.event["reduction_protections"]
+    mult, add = damage_adjustments(outgoing, grade, 1, protections)
     if not precomputed:
         mult = adjusted_value(ctx, "damage_multiplier", mult)
     ctx.event["outgoing_amount"] = max(0, int(amount * mult + add))
@@ -1061,7 +1120,7 @@ def handle_damage(ctx):
         factor = target.status_rules.get(name, {}).get("incoming_damage_multiplier")
         if factor is None or precomputed:
             continue
-        multiplier, fixed = damage_adjustments(modifiers, grade, status_factor)
+        multiplier, fixed = damage_adjustments(modifiers, grade, status_factor, protections)
         preview = max(0, int(amount * adjusted_value(ctx, "damage_multiplier", multiplier) + fixed))
         ctx.stack.extend((target, name, grade, factor))
         receipt = ctx.execute_op(OpCode.RESOLVE_DAMAGE_STATUS, result_field=None, incoming=preview)
@@ -1069,9 +1128,11 @@ def handle_damage(ctx):
             suppressed.append(name)
         else:
             grade = receipt["penetration"]
-            status_factor *= receipt["result"]
+            factor = receipt["result"]
+            if factor >= 1 or not reduction_blocked(protections, action_by(target)):
+                status_factor *= factor
     ctx.event.update(suppressed_damage_statuses=suppressed, penetration=grade)
-    multiplier, fixed = damage_adjustments(modifiers, grade, status_factor)
+    multiplier, fixed = damage_adjustments(modifiers, grade, status_factor, protections)
     if not precomputed:
         multiplier = adjusted_value(ctx, "damage_multiplier", multiplier)
         if ctx.executions and ctx.executions[-1].cancelled:
@@ -1544,6 +1605,8 @@ DISPATCH_TABLE = {
     OpCode.ACTIVATE_STATUS: handle_activate_status, OpCode.SET_DIE_STATE: handle_set_component_state,
     OpCode.SET_CHARACTER_STATE: handle_set_character_state,
     OpCode.SET_TURN_STATE: handle_set_character_state,
+    OpCode.PROTECT_DAMAGE_AMOUNT: lambda ctx: ctx.pop().append(ctx.action_authority()),
+    OpCode.REROLL_CLASH_DIE: handle_reroll_clash_die, OpCode.SET_MAX_HP: handle_set_max_hp,
     OpCode.SET_SUSTAINED_STACKS: handle_set_sustained_stacks,
     OpCode.CHOOSE_CARD: handle_choose_card, OpCode.CHOOSE_OPTION: handle_choose_option,
     OpCode.CHOOSE_CHARACTER: handle_choose_character,
@@ -1639,6 +1702,8 @@ OPERANDS = {
     OpCode.ACTIVATE_STATUS: ("target", "status"), OpCode.SET_DIE_STATE: ("die", "key", "value"),
     OpCode.SET_CHARACTER_STATE: ("target", "key", "value"),
     OpCode.SET_TURN_STATE: ("target", "key", "value"),
+    OpCode.PROTECT_DAMAGE_AMOUNT: ("protections",),
+    OpCode.REROLL_CLASH_DIE: ("die",), OpCode.SET_MAX_HP: ("target", "amount"),
     OpCode.SET_SUSTAINED_STACKS: ("target", "status", "grant_source", "amount"),
     OpCode.CHOOSE_CARD: ("candidates", "specification"), OpCode.CHOOSE_OPTION: ("specification",),
     OpCode.CHOOSE_CHARACTER: ("candidates", "specification"),

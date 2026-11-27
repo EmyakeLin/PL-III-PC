@@ -2,7 +2,7 @@ from enum import Enum, auto
 
 from entry.authority import (CARD_TRAITS, DIE_TRAITS, NORMAL, action_by, printed_entries, printed_power,
                              printed_traits, trait_rank, validate_trait_authority)
-from entry.predicates import Calculation, Conditional, Rank, Reference, compile_value, read_value
+from entry.predicates import Calculation, Conditional, Rank, Reference, compile_value, compile_when, read_value
 from models.conditions import matches_value, skill_state_allows
 from models.opcode import OpCode
 
@@ -48,6 +48,8 @@ def validate_range_trait(data, key):
 
 def validate_skill_traits(data):
     validate_trait_authority(data, CARD_TRAITS)
+    if "use_when" in data:
+        compile_when(data["use_when"], None, None)
     if type(data.get("protect_range_level", False)) is not bool:
         raise ValueError("保护远程等级须为布尔值")
     if type(data.get("match_opposing_range", False)) is not bool:
@@ -148,6 +150,7 @@ class Card:
         self.temporary = temporary
         self.printed_data = data
         self.data = data
+        self.use_conditions = compile_when(data.get("use_when", []), None, None)
         self._form = None
         self.form_locked = False
         self.id = data["id"]
@@ -179,8 +182,11 @@ class Card:
             self.refresh_status_form()
 
     def meets_use_requirements(self):
-        return self.ignore_conditions or all(self.character is not None and self.character.statuses.get(name, 0) >= minimum
-                   for name, minimum in self.data.get("requires_status", {}).items())
+        if self.ignore_conditions:
+            return True
+        return (all(self.character is not None and self.character.statuses.get(name, 0) >= minimum
+                    for name, minimum in self.data.get("requires_status", {}).items())
+                and all(test.evaluate(self.character, {"card": self}) for test in self.use_conditions))
 
     @property
     def home_deck(self):
@@ -258,6 +264,7 @@ class Card:
         form = self.printed_data["forms"][key] if key is not None else {}
         self._form = key
         self.data = {**self.printed_data, **form} if form else self.printed_data
+        self.use_conditions = compile_when(self.data.get("use_when", []), None, None)
         self._release_dice()
         self.name = self.data["name"]
         self.cost = self.data["cost"]

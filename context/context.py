@@ -4,11 +4,11 @@ from copy import copy
 import random
 
 from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
-from entry.authority import Action, NORMAL, player_of
+from entry.authority import Action, NORMAL, action_by, player_of
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.scheduling import deliver_scheduled
 from models.opcode import OpCode
-from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
+from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS, reduction_blocked
 from models.values import ValueBounds
 from pipeline.pipeline_errors import PipelineSystemError, StackUnderflowError
 
@@ -508,6 +508,7 @@ class Context:
                 fields.setdefault("damage_precomputed", False)
                 fields["modifiers"] = list(self.event.get("hit_modifiers", ())) if self.event.get("damage_part") else []
                 fields["incoming_modifiers"] = []
+                fields["reduction_protections"] = []
             elif opcode in (OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE):
                 fields["damage_amount"] = fields["amount"]
                 if opcode == OpCode.FINALIZE_DAMAGE:
@@ -760,6 +761,20 @@ class Context:
                         # Each listener sees the operand left by the preceding listener.
                         self.event.update(amount=self.peek(0), damage_amount=self.peek(0))
                     if entry in self.entries and self._matches(entry):
+                        guards = self.event.get("reduction_protections")
+                        if (guards and timing == "BEFORE" and trigger in (OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE,
+                                OpCode.FINALIZE_DAMAGE, OpCode.APPLY_DAMAGE)
+                                and reduction_blocked(guards, action_by(entry.owner, entry.authority))):
+                            operands = OPERANDS[trigger]
+                            amount_slot = operands.index("amount") - len(operands)
+                            amount = self.stack[amount_slot]
+                            bounds = self.event.get("value_ref") if trigger == OpCode.FINALIZE_DAMAGE else None
+                            ceiling = bounds.maximum if bounds else None
+                            self._invoke(entry)
+                            self.stack[amount_slot] = max(amount, self.stack[amount_slot])
+                            if bounds:
+                                bounds.maximum = max(bounds.maximum, ceiling)
+                            continue
                         if not suppress_increases:
                             self._invoke(entry)
                             continue

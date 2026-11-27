@@ -21,6 +21,7 @@ class OpCode(Enum):
     
     # 战斗与拼点核心
     CLASH = auto()
+    REROLL_CLASH_DIE = auto()
     RESOLVE_HIT = auto()
     RESOLVE_DIE_LEVEL = auto()
     RESOLVE_FINAL_SCORE = auto()
@@ -32,11 +33,13 @@ class OpCode(Enum):
     # 状态与业务原子操作
     DAMAGE = auto()
     RESOLVE_DAMAGE_BASE = auto()
+    PROTECT_DAMAGE_AMOUNT = auto()
     LIGHTCORE_DAMAGE = auto()
     HEAL_LIGHTCORE = auto()
     CHANGE_LIGHTCORE_MAX = auto()
     INSTANT_DEATH = auto()
     SET_HP = auto()
+    SET_MAX_HP = auto()
     RESTORE_STATUS_STACKS = auto()
     BLANK_DIE = auto()
     END_DUEL = auto()

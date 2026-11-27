@@ -1,0 +1,1013 @@
+{
+  "faction": "帝国",
+  "status_rules": {
+    "崩解": {
+      "cap": 5,
+      "description": "常态持有，0 层仍然保留。0／1／2 层时所有骰子最终点数分别 +3／+2／+1，0 或 1 层时回合开始额外抽 1 卡。4 层时费用上限 −2。5 层时回合结束先于自愈即死，忽略毁灭生死。"
+    },
+    "毁灭模式": {"cap":1,"description":"回合开始获得 1 崩解。自愈失效。普通定值直伤转为受者当前生命上限的（原伤害 × 10%），原有百分比保留。"}
+  },
+  "status_entries": {
+    "崩解": [
+      {
+        "trigger": "BEFORE RESOLVE_FINAL_SCORE",
+        "description": "按当前崩解层数增加最终点数。",
+        "operation": {"op":"program","code":[3,"$self","崩解","STATUS_COUNT","SUB",0,"MAX","ADD"]}
+      },
+      {
+        "trigger": "on_turn_start",
+        "description": "0、1 层时额外抽 1 卡。",
+        "when": [{"left":{"field":"$self.statuses","key":"崩解","default":0},"op":"le","right":1}],
+        "operation": {"op":"program","code":["DRAW 1"]}
+      },
+      {
+        "trigger": "BEFORE RESET_COST",
+        "description": "4 层时通用费回补上限 −2。",
+        "when": [
+          {"left":"$event.refill","op":"eq","right":true},
+          {"left":{"field":"$self.statuses","key":"崩解","default":0},"op":"eq","right":4}
+        ],
+        "operation": {"op":"program","code":["SWAP",2,"SUB","SWAP"]}
+      },
+      {
+        "trigger": "on_turn_end",
+        "description": "5 层时忽略毁灭生死，先于自愈即死。",
+        "when": [{"left":{"field":"$self.statuses","key":"崩解","default":0},"op":"ge","right":5}],
+        "operation": {"op":"program","code":["$self",{"call":"INSTANT_DEATH","with":{"skip_sequence_revival":true}}]}
+      }
+    ],
+    "毁灭模式": [
+      {
+        "trigger": "on_turn_start",
+        "description": "每回合开始获得 1 崩解。",
+        "operation": {"op":"program","code":["$self","崩解",1,"STATUS"]}
+      },
+      {
+        "trigger": "BEFORE RESOLVE_DAMAGE_BASE",
+        "description": "将本段定值直伤转为受者生命上限的（原伤害 × 10%），向上取整。",
+        "subject": "source",
+        "when": [{"left":"$event.percentage_damage","op":"eq","right":false}],
+        "operation": {"op":"program","code":["POP","POP","$event.target.max_hp","MUL",10,"CEIL_DIV","concept",true]}
+      }
+    ]
+  },
+  "characters": [
+    {
+      "id": "empire_first_sequence",
+      "name": "帝国第一序列兵",
+      "rank": "EMPOWERED_BOSS",
+      "max_hp": 18,
+      "resident_statuses": ["崩解"],
+      "passive_skills": [
+        {
+          "name": "阴黑无明",
+          "description": "自身拼点点数小于对手时，可以重投自身骰子。重投后仍较低可再选，本回合合计至多 3 次。",
+          "entries": [
+            {
+              "trigger": "on_clash_scores_ready",
+              "description": "选择是否重投本骰。",
+              "when": [
+                {"left":"$event.die.clash_score","op":"lt","right":"$event.opposing_score"},
+                {"left":{"field":"$self.turn_state","key":"阴黑无明","default":0},"op":"lt","right":3}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "literal": {
+                      "title": "阴黑无明",
+                      "optional": true,
+                      "options": [
+                        {
+                          "id": "reroll",
+                          "label": "重新投掷自身骰子",
+                          "then": {
+                            "op": "program",
+                            "code": [
+                              "$event.die", {"call":"REROLL_CLASH_DIE","result":"result","default":false},
+                              ["$self","阴黑无明","$self.turn_state","阴黑无明",0,"LOOKUP",1,"ADD","SET_TURN_STATE"],
+                              "WHEN"
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "CHOOSE_OPTION"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "肃清者",
+          "description": "存活对手至少有 2 名时，通用费用上限 +2。",
+          "entries": [
+            {
+              "trigger": "BEFORE RESET_COST",
+              "description": "回补时按存活敌人数检查费用上限。",
+              "when": [{"left":"$event.refill","op":"eq","right":true}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER", "SIZE", 2,
+                  "GE", ["SWAP",2,"ADD","SWAP"], "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "毁灭",
+          "description": "自身百分比伤害向上取整，造成超穿甲伤害且无法被减伤（最高话语权）。",
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_DAMAGE_BASE",
+              "description": "百分比段向上取整，使用超穿甲等级。",
+              "subject": "source",
+              "authority": "最高话语权",
+              "when": [{"left":"$pending.percentage_damage","op":"eq","right":true}],
+              "operation": {"op":"program","code":["POP","POP",1,"CEIL_DIV","concept",true]}
+            },
+            {
+              "trigger": "AFTER RESOLVE_DAMAGE_BASE",
+              "description": "保护本段百分比伤害，保留增伤及概念护盾结算。",
+              "subject": "source",
+              "authority": "最高话语权",
+              "when": [{"left":"$event.reduction_protections","op":"ne","right":null}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.result", 2, false, "LOOKUP",
+                  ["$event.reduction_protections","PROTECT_DAMAGE_AMOUNT"], "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "自愈",
+          "description": "回合结束时减少 1 崩解。毁灭模式期间失效；待复活时先结算复活。",
+          "entries": [
+            {
+              "trigger": "on_turn_end",
+              "description": "减少 1 崩解。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"毁灭模式","default":0},"op":"eq","right":0},
+                {"left":{"field":"$self.statuses","key":"崩解","default":0},"op":"lt","right":5},
+                {"left":{"field":"$self.turn_state","key":"待复活","default":false},"op":"eq","right":false}
+              ],
+              "operation": {"op":"program","code":["$self","崩解",-1,"STATUS"]}
+            }
+          ]
+        },
+        {
+          "name": "毁灭生死",
+          "description": "生命归零时本回合不死（最高话语权）。回合末在自愈前按崩解层数复活、解除崩解，生命上限向下减半。0 层无法复活，上限归零即死。",
+          "entries": [
+            {
+              "trigger": "BEFORE CHECK_DEATH",
+              "description": "生命归零，登记待复活并拦截本次阵亡。",
+              "subject": "target",
+              "protection": true,
+              "authority": "最高话语权",
+              "when": [
+                {"left":"$event.skip_sequence_revival","op":"ne","right":true},
+                {"left":{"field":"$self.turn_state","key":"待复活","default":false},"op":"eq","right":false},
+                {"left":"$self.hp","op":"eq","right":0},
+                {"left":"$self.max_hp","op":"gt","right":0}
+              ],
+              "operation": {"op":"program","code":["$self","待复活",true,"SET_TURN_STATE",{"op":"cancel"}]}
+            },
+            {
+              "trigger": "BEFORE CHECK_DEATH",
+              "description": "本回合内继续持有免死。",
+              "subject": "target",
+              "protection": true,
+              "authority": "最高话语权",
+              "when": [
+                {"left":"$event.skip_sequence_revival","op":"ne","right":true},
+                {"left":{"field":"$self.turn_state","key":"待复活","default":false},"op":"eq","right":true},
+                {"left":"$self.max_hp","op":"gt","right":0}
+              ],
+              "operation": {"op":"cancel"}
+            },
+            {
+              "trigger": "on_turn_end",
+              "description": "先取崩解，再复活并清除层数。",
+              "authority": "最高话语权",
+              "when": [
+                {"left":{"field":"$self.turn_state","key":"待复活","default":false},"op":"eq","right":true},
+                {"left":{"field":"$self.statuses","key":"崩解","default":0},"op":"lt","right":5}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "崩解", "STATUS_COUNT", "layers", "STORE", "$local.layers", 0, "GT",
+                  [
+                    "$self.max_hp",
+                    2,
+                    "FLOOR_DIV",
+                    "maximum",
+                    "STORE",
+                    "$self",
+                    "$local.maximum",
+                    "SET_MAX_HP",
+                    "$local.maximum",
+                    0,
+                    "GT",
+                    [
+                      "$self", "$local.layers", "SET_HP", "$self", "崩解", "all", "SPEND_STATUS", "$self", "待复活",
+                      false, "SET_TURN_STATE"
+                    ],
+                    "WHEN"
+                  ],
+                  ["$self",{"call":"INSTANT_DEATH","with":{"skip_sequence_revival":true}}], "IF_ELSE"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "sequence_shatter",
+          "name": "破碎",
+          "cost": 1,
+          "range_level": 1,
+          "use_when": [
+            {"left":"$self.game.pre_reveal.phase","op":"ne","right":"idle"},
+            {"left":"$self.game.pre_reveal.phase","op":"ne","right":"done"}
+          ],
+          "description": "普通远程。仅可在开牌前使用。【使用时】指定对方场上的一张卡牌并将其无效化。",
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "指定一张敌方场上牌并无效化。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", "OPPONENT", {"field":"side"}, "enemy", "STORE", "BOARD_SLOTS",
+                  ["$event.item","$local.enemy","SLOT_CARDS"], "MAP", "FLATTEN",
+                  {
+                    "literal": {"optional":false,"then":{"op":"program","code":["$event.chosen_card","NEGATE_SKILL"]}}
+                  },
+                  "CHOOSE_CARD"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成目标当前生命上限的 10% 伤害，向上取整。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target.max_hp", 10, "DIVIDE", "normal", "$event.die.type",
+                      {"call":"DAMAGE","with":{"percentage_damage":true}}
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount":"10%","grade":"concept"}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "回复 2 生命，获得 1 崩解，施加 1 威压。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self",2,"HEAL","$self","崩解",1,"STATUS","$event.target","威压",1,"STATUS"]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时回复 4 生命。",
+                  "operation": {"op":"program","code":["$self",4,"HEAL"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_slay",
+          "name": "灭杀",
+          "cost": 1,
+          "entries": [
+            {
+              "trigger": "on_dice_hit",
+              "description": "本次技能首次以打击骰命中时获得 1 崩解。",
+              "when": [{"left":"$event.die.type","op":"eq","right":"blunt"}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$owner", "$event.card", "IS", "$owner.use_state", "打击命中", false, "LOOKUP", "NOT", "AND",
+                  ["$event.card","打击命中",true,"SET_SKILL_STATE","$self","崩解",1,"STATUS"], "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 2,
+              "base_value": 1,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成目标当前生命上限的 10% 伤害，向上取整。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target.max_hp", 10, "DIVIDE", "normal", "$event.die.type",
+                      {"call":"DAMAGE","with":{"percentage_damage":true}}
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount":"10%","grade":"concept"}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 2,
+              "base_value": 1,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成目标当前生命上限的 10% 伤害，向上取整。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target.max_hp", 10, "DIVIDE", "normal", "$event.die.type",
+                      {"call":"DAMAGE","with":{"percentage_damage":true}}
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount":"10%","grade":"concept"}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_thwart",
+          "name": "挫败",
+          "cost": 1,
+          "dice": [
+            {
+              "type": "block",
+              "level": 5,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时反震 1。",
+                  "operation": {"op":"program","code":["$event.target",1,"normal","none","DAMAGE"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时反震 1。",
+                  "operation": {"op":"program","code":["$event.target",1,"normal","none","DAMAGE"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_dismantle",
+          "name": "瓦解",
+          "cost": 2,
+          "dice": [
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时反震 1。",
+                  "operation": {"op":"program","code":["$event.target",1,"normal","none","DAMAGE"]}
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "description": "下回合向目标施加 1 虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 5,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "description": "下回合向目标施加 1 虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合向目标施加 1 虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合向目标施加 1 虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_despair",
+          "name": "绝望",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "获得 1 崩解。本回合内，敌方技能开始时若无对位，将该牌无效化。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "崩解", 1, "STATUS",
+                  {
+                    "schedule": {
+                      "event": "before_skill_start",
+                      "source": "$self",
+                      "target": "$self",
+                      "after_turns": 0,
+                      "through_turns": 0,
+                      "uses": null,
+                      "require_source_alive": false,
+                      "require_target_alive": false,
+                      "when": [
+                        {"left":"$event.source.player","op":"ne","right":"$self.player"},
+                        {"left":"$event.opponent_card","op":"eq","right":null}
+                      ],
+                      "then": ["$event.observed.card","NEGATE_SKILL"]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 5,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合对方费用 −1。",
+                  "operation": {"op":"program","code":["$event.target.player",-1,"NEXT_TURN_COST"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合对方费用 −1。",
+                  "operation": {"op":"program","code":["$event.target.player",-1,"NEXT_TURN_COST"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "下回合向目标施加 4 虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.scheduled.target","虚弱",4,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_purge",
+          "name": "肃清",
+          "cost": 4,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "获得 1 崩解，向主目标施加 2 威压。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "崩解", 1, "STATUS", "$event.target", "DUP", "NOT",
+                  ["POP","$event.card","SELECT_SKILL_TARGET"], "WHEN", "威压", 2, "STATUS"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 6,
+              "base_value": 1,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成目标当前生命上限的 1/3 伤害，向上取整。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target.max_hp", 3, "DIVIDE", "normal", "$event.die.type",
+                      {"call":"DAMAGE","with":{"percentage_damage":true}}
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount":"1/3","grade":"concept"}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时获得 1 崩解。",
+                  "operation": {"op":"program","code":["$self","崩解",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 5,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_punish",
+          "name": "惩戒",
+          "cost": 3,
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {"type":"pierce","level":4,"range_level":1,"entries":["1物理"]},
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "拼赢时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时抽 1 卡。",
+                  "operation": {"op":"program","code":["DRAW 1"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_erase",
+          "name": "抹除",
+          "cost": 2,
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时抽 1 卡。",
+                  "operation": {"op":"program","code":["DRAW 1"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成目标当前生命上限的 20% 伤害，向上取整。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target.max_hp", 5, "DIVIDE", "normal", "$event.die.type",
+                      {"call":"DAMAGE","with":{"percentage_damage":true}}
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount":"20%","grade":"concept"}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时获得 1 崩解。",
+                  "operation": {"op":"program","code":["$self","崩解",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_sentence",
+          "name": "制裁",
+          "cost": 3,
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 6,
+              "base_value": 1,
+              "range_level": 1,
+              "entries": [
+                {
+                  "trigger": "AFTER RESOLVE_HIT",
+                  "description": "造成目标当前生命上限的 20% 伤害，向上取整。",
+                  "when": [{"left":"$event.result","op":"eq","right":true}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target.max_hp", 5, "DIVIDE", "normal", "$event.die.type",
+                      {"call":"DAMAGE","with":{"percentage_damage":true}}
+                    ],
+                    "damage_part": true
+                  },
+                  "damage_part": {"amount":"20%","grade":"concept"}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时获得 1 崩解。",
+                  "operation": {"op":"program","code":["$self","崩解",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 5,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {"type":"block","level":3,"entries":[]}
+          ]
+        },
+        {
+          "id": "sequence_will",
+          "name": "贯彻他的意志",
+          "cost": 3,
+          "description": "生命值低于 9 方可用。【使用时】进入毁灭模式。",
+          "use_when": [{"left":"$self.exact_hp","op":"lt","right":9}],
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "进入毁灭模式。",
+              "operation": {"op":"program","code":["$self","毁灭模式",1,"STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 5,
+              "base_value": 4,
+              "entries": [
+                "3物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时自身骰级永久提升 1 级。",
+                  "operation": {
+                    "schedule": {
+                      "event": "before_dice_use",
+                      "source": "$self",
+                      "target": "$self",
+                      "after_turns": 0,
+                      "through_turns": null,
+                      "uses": null,
+                      "require_source_alive": true,
+                      "require_target_alive": true,
+                      "when": [{"left":"$event.source","op":"eq","right":"$self"}],
+                      "then": ["$event.observed.die",1,"DIE_LEVEL_ADD"]
+                    }
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "驻留，拼输后仍可命中。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sequence_ruin",
+          "name": "毁灭",
+          "cost": 4,
+          "requires_status": {"毁灭模式":1},
+          "entries": [
+            {
+              "trigger": "after_skill_use",
+              "description": "退出毁灭模式，获得 2 崩解。",
+              "operation": {"op":"program","code":["$self","毁灭模式","all","SPEND_STATUS","$self","崩解",2,"STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 6,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时回复 1 生命。",
+                  "operation": {"op":"program","code":["$self",1,"HEAL"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "命中时施加 1 威压。",
+                  "operation": {"op":"program","code":["$event.target","威压",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
