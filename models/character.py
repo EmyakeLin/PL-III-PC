@@ -636,6 +636,7 @@ class Character:
         if settlement["borrowed_eroded"]:
             extra["borrowed_eroded"] = settlement["borrowed_eroded"]
         self.record("damage_settled", grade=grade, incoming=incoming, multiplier=multiplier,
+                    source_side=getattr(getattr(ctx.event.get("source"), "player", None), "side", None),
                     absorbed=absorbed, eroded=eroded, hp_lost=lost, hp=self.hp, maximum=self.max_hp,
                     cause=ctx.event.get("damage_cause"), **extra)
         return lost

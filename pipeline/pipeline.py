@@ -1408,9 +1408,15 @@ class Pipeline:
                 if len(live_sides) == 1:
                     self.game.context.record("clash_win_suppressed", actor=winner.card.character.combat_name)
         if len(live_sides) == 2:
-            self.game.context.record("clash_scored", sides=tuple(
-                (p.card.character.combat_name, p.die.type, p.die.final_score, p.die.clash_score,
-                 lane_results[p.key], p.die.win_branch_skipped) for p in live))
+            self.game.context.record(
+                "clash_scored",
+                sides=tuple(
+                    (p.card.character.combat_name, p.die.type, p.die.final_score, p.die.clash_score,
+                     lane_results[p.key], p.die.win_branch_skipped)
+                    for p in live
+                ),
+                details=tuple(self._die_roll_detail(p, result=lane_results.get(p.key)) for p in live),
+            )
         stops = {}
         result_pipes = []
         for p in live:
@@ -1433,6 +1439,45 @@ class Pipeline:
             if p not in active_winners and p.die.queued_hits:
                 yield from self._hit(p, automatic=False)
 
+    @staticmethod
+    def _die_roll_detail(pipe, *, result=None):
+        die = pipe.die
+        card = pipe.card
+        actor = card.character
+        is_skip = die.type == "skip"
+        raw_calc = die.calculate_final_score() if (not is_skip and die.final_score is not None) else None
+        final_effect_bonus = (die.final_score - raw_calc) if (raw_calc is not None and die.final_score != raw_calc) else 0
+        return {
+            "side": pipe.side,
+            "lane": pipe.lane,
+            "character_id": actor.id,
+            "character_name": actor.combat_name,
+            "card_id": card.id,
+            "card_name": card.name,
+            "position": die.position,
+            "step_index": card.current_dice_index + 1,
+            "is_repeat": bool(die.is_repeat),
+            "die_type": die.type,
+            "printed_level": None if is_skip else die.printed_level.value,
+            "level": None if is_skip else die.level.value,
+            "roll_max": None if is_skip else die.roll_max,
+            "rolled_value": die.value,
+            "base_value": die.effective_modifier(die, "base_value"),
+            "multiplier": die.multiplier,
+            "die_final_bonus": die.effective_modifier(die, "final_bonus"),
+            "card_final_bonus": 0 if die.fixed_scores else die.effective_modifier(card, "final_bonus"),
+            "status_final_bonus": (
+                0 if (die.fixed_scores or die.type == "blank")
+                else actor.status_modifier("final_score")
+            ),
+            "final_effect_bonus": final_effect_bonus,
+            "formula": die.calc_formula,
+            "final_score": die.final_score,
+            "clash_score": die.clash_score,
+            "range_deficit": die.range_deficit,
+            "result": result,
+            "win_branch_skipped": bool(die.win_branch_skipped),
+        }
     def _hit(self, pipe, *, automatic=True):
         split = self.current_clash_pair and self.current_clash_pair.split
         passive_split = bool(split and pipe.lane == "front" and pipe.die.is_passive)
@@ -1448,8 +1493,16 @@ class Pipeline:
         if target is None or not target.is_alive:
             return
         if not self.current_clash_pair:
-            self.game.context.record("solo_attack", actor=pipe.card.character.combat_name, target=target.combat_name,
-                                     rolled=pipe.die.value, final_score=pipe.die.final_score)
+            self.game.context.record(
+                "solo_attack",
+                actor=pipe.card.character.combat_name,
+                target=target.combat_name,
+                target_id=target.id,
+                target_side=target.player.side,
+                rolled=pipe.die.value,
+                final_score=pipe.die.final_score,
+                detail=self._die_roll_detail(pipe, result="solo"),
+            )
         die = pipe.die
         die.hit_target = target
         if automatic:

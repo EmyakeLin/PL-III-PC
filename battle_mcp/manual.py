@@ -49,8 +49,8 @@ def _parse_reply(reply):
     if not isinstance(data, dict) or not isinstance(data.get("reply_to"), str):
         raise ValueError("回复需要包含原样复制的 reply_to。")
     keys = data.keys() - {"reply_to"}
-    if len(keys) != 1 or not keys <= {"choice", "ready", "prepare", "wait", "rules"}:
-        raise ValueError("一次回复只能指定 choice、ready、prepare、wait 或 rules 中的一项。")
+    if len(keys) != 1 or not keys <= {"choice", "draw_bottom", "ready", "prepare", "wait", "rules"}:
+        raise ValueError("一次回复只能指定 choice、draw_bottom、ready、prepare、wait 或 rules 中的一项。")
     operation, = keys
     argument = data[operation]
     if operation in ("ready", "wait") and argument is not True:
@@ -81,6 +81,7 @@ _INSTRUCTIONS = (
     "由操作者转交你的回复，请根据本席可见的信息制定战术。"
     "每次只回复一个 json 代码块，将本次局面的 reply_to 原样写入，并搭配一个动作字段。\n"
     '选择当前选项用 "choice":"A"（字母见 options）；赛前用 "ready":true 预留常规决策并准备。'
+    '抽牌时用 draw_bottom 提交要置底的 action_key 列表。'
     '用 "wait":true 表示继续观察，原有迎击与决策资格保留。'
     '用 "rules":"3.3" 等章节号查条文，也可查 index、full、catalog。\n'
     '在事件发生前用 "prepare":{"event":"scores_ready","mode":"reserve","when":{"score":"lt"},'
@@ -115,7 +116,7 @@ class ManualDesk:
                 own = self.room.observe(side)
                 player = next(p for p in frame["players"] if p["side"] == side)
                 seats.append(dict(side=side, name="、".join(c["name"] for c in player["characters"]),
-                                  ready=side in public["ready_sides"], has_decision=bool(own["options"]),
+                                   ready=side in public["ready_sides"], has_decision=bool(own["options"] or own["frame"].get("draw_select")),
                                   revision=own["revision"]))
             return dict(turn=frame["turn"], started=public["started"], finished=public["finished"],
                         winner_side=public["winner_side"], pending=pending, seats=seats)
@@ -141,7 +142,9 @@ class ManualDesk:
             text = f"你是《光点计划 III》的席位 {side}。\n"
             if not view["finished"]:
                 example = {"reply_to": ticket.code}
-                if choices:
+                if draw := view["frame"].get("draw_select"):
+                    example["draw_bottom"] = [c["action_key"] for c in draw["candidates"][:draw["discard_count"]]]
+                elif choices:
                     example["choice"] = next(iter(choices))
                 elif side not in observed["ready_sides"]:
                     example["ready"] = True
@@ -149,7 +152,7 @@ class ManualDesk:
                     example["wait"] = True
                 text += _INSTRUCTIONS + "以下示例演示回复格式，请自行选择行动。\n```json\n" + _json(example) + "\n```\n"
             if briefing:
-                text += "赛前读本及双方公开印刷牌面\n" + _json(self.room.rules("briefing")) + "\n"
+                text += "赛前读本及双方公开印刷牌面\n" + _json(self.room.rules("briefing", viewer_side=side)) + "\n"
                 text += ("可订阅事件 " + "、".join(declarations.EVENTS)
                          + "\n可匹配的动作 " + "、".join(sorted(declarations.KINDS))
                          + "\nwhen 可筛选 " + "、".join(sorted(declarations.CONDITIONS))
@@ -186,11 +189,14 @@ class ManualDesk:
             elif operation == "ready":
                 view = self.room.ready(side, **args)
                 message = "已预留常规决策并准备。"
+            elif operation == "draw_bottom":
+                view = self.room.draw_bottom(side, argument, **args)
+                message = "已将选中的牌置底。"
             elif operation == "prepare":
                 view = self.room.prepare(side, argument, **args)
                 message = "已更新本席的提前声明。"
             elif operation == "rules":
-                reading = self.room.rules(argument)
+                reading = self.room.rules(argument, viewer_side=side)
                 message = "已取回指定规则，可送回模型。"
             else:
                 message = "本席选择继续观察；房间保留当前决定。"

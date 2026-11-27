@@ -8,7 +8,7 @@ SHIELDS = {"shield": "normal", "reinforced_shield": "reinforced", "concept_shiel
 class TableBridge:
     def __init__(self, context):
         self._pending = context.observe_facts()
-        self._events = deque(maxlen=220)
+        self._events = deque(maxlen=2048)
         self._sequence = 0
         self._turn = 0
         self._rolls = {}
@@ -18,7 +18,11 @@ class TableBridge:
     @property
     def events(self):
         self.flush()
-        return tuple(self._events)
+        if not self._events:
+            return ()
+        min_turn = max(0, self._turn - 1)
+        recent = [ev for ev in self._events if ev.get("turn", 0) >= min_turn]
+        return tuple(recent[-600:] if len(recent) > 600 else recent)
 
     @property
     def speed_rolls(self):

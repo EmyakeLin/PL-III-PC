@@ -13,6 +13,7 @@ from . import declarations as plans
 from .bot import choose_draw_bottom, choose_inturn_move, choose_move
 from .engine import ArenaEngine, action_fields
 from .ruleset import (
+    ROOM_RULE_BOUNDS,
     build_opponent_presets,
     default_ruleset,
     generate_matched_team,
@@ -164,6 +165,7 @@ class Room:
         self._wake = self._revision.copy()
         self._receipts = {s: {} for s in SEATS}
         self._match_number = 1
+        self._match_revision_floor = dict.fromkeys((*SEATS, "hotseat"), 0)
         self._history_start = self._revision.copy()
         self._state_epoch = 0
 
@@ -220,7 +222,6 @@ class Room:
         roster = [list(picks[1]), list(picks[2])]
         if self.challenge:
             self.challenge.validate_roster(roster)
-        validate_match_teams(roster, self._pool, self.ruleset)
         open_rosters = self.ruleset.get("duplicate_policy") != "strict_unique"
         eng = ArenaEngine(
             roster,
@@ -228,6 +229,7 @@ class Room:
             bot_side=self.bot_side,
             open_rosters=open_rosters,
             extra_packs=self.challenge.packs if self.challenge else (),
+            fixed_opponent=self.challenge is not None,
             ruleset=self.ruleset,
         )
         return eng
@@ -428,6 +430,9 @@ class Room:
             if side in wake or side is None:
                 self._wake[side] = cursor
         self._state_epoch += 1
+        if kind in ("match_start", "reopen_lobby"):
+            self._match_revision_floor = {s: self._revision[s] for s in SEATS}
+            self._match_revision_floor["hotseat"] = max(self._revision[s] for s in SEATS) + self._state_epoch
         self.cv.notify_all()
 
     @staticmethod
@@ -496,6 +501,7 @@ class Room:
             "host_side": self.host_side,
             "is_host": bool(hotseat or viewer_side == self.host_side),
             "picks": visible_picks,
+            "rule_bounds": dict(ROOM_RULE_BOUNDS),
             "pick_meta": pick_meta,
             "ready_sides": sorted(self.seated),
             "draft_turn_side": self._current_draft_turn(),
@@ -558,7 +564,10 @@ class Room:
             return 1, None, []
         curtain = bool(self.ruleset.get("hotseat_curtain", True))
         if self.paused_by in SEATS:
-            return self.paused_by, None, [s for s in SEATS if self._has_seat_special_options(s)]
+            eligible = [s for s in SEATS if self._has_seat_special_options(s)]
+            if curtain and self._hotseat_revealed != self.paused_by:
+                return None, self.paused_by, eligible
+            return self.paused_by, None, eligible
         req = self.engine.required_sides()
         if req:
             target = self._hotseat_side if self._hotseat_side in req else req[0]
@@ -593,8 +602,8 @@ class Room:
         view_for_engine = eff_side if self.started else None
         frame = self.engine.state(view_for_engine)
         options = self._options(eff_side) if eff_side in SEATS else []
-        journal = self._journal[rev_side]
-        history_start = max(self._history_start[rev_side], len(journal) - 100)
+        journal = self._journal[eff_side]
+        history_start = max(self._history_start[eff_side], len(journal) - 100)
 
         default_targets = {}
         if self.started:
@@ -626,6 +635,7 @@ class Room:
             "pre_reveal_plan": [],
             "pre_reveal_eligible_cards": [],
             "pre_reveal_stage_targets": {},
+            "chronicle": {"unlocked_all": False, "total_events": 0, "turns": []},
         }
         conn_info = self._peer_connection_status(rev_side if not hotseat else None)
         lobby_info = self._lobby_snapshot(rev_side, hotseat=hotseat)
@@ -675,7 +685,7 @@ class Room:
             "can_pause": self._can_pause(ctrl_side),
             "window_remaining": self.engine._window_size - self.engine.game.placed_this_window
             if any(move["kind"] == "end" for move in options) else 0,
-            "catalog": self.engine.catalog(),
+            "catalog": self._catalog(eff_side, hotseat=hotseat),
             "default_targets": default_targets,
             "history": [entry["text"] for entry in journal[history_start:]],
             "fx_events": list(self.engine.presentation.events) if self.started else [],
@@ -701,27 +711,70 @@ class Room:
         with self.cv:
             return self.engine.table_assets()
 
-    def battle_record(self):
+    def _hotseat_record_side_locked(self):
+        """Pure read-only effective side for hotseat exports/queries (does not mutate handoff state)."""
+        if not self.started or self.engine.game_over:
+            return None
+        curtain = bool(self.ruleset.get("hotseat_curtain", True))
+        if self.paused_by in SEATS:
+            if curtain and self._hotseat_revealed != self.paused_by:
+                return None
+            return self.paused_by
+        req = self.engine.required_sides()
+        if req:
+            target = self._hotseat_side if self._hotseat_side in req else req[0]
+            if curtain and self._hotseat_revealed != target:
+                return None
+            return target
+        return None if curtain else self._hotseat_side
+
+    def battle_record(self, viewer_side=None, *, hotseat=False):
         with self.cv:
             if not self.started:
                 raise ValueError("开战后可导出战报。")
             game = self.engine.game
-            frame = self.engine.state(None)
-            journal = self._journal[None]
-            history_start = self._history_start[None]
+            if game.is_over:
+                eff_side = None
+                unlock_all = True
+            elif hotseat:
+                eff_side = self._hotseat_record_side_locked()
+                unlock_all = False
+            elif viewer_side in SEATS:
+                eff_side = viewer_side
+                unlock_all = False
+            else:
+                eff_side = None
+                unlock_all = False
+            frame = self.engine.state(eff_side)
+            hist_key = eff_side if eff_side in SEATS else None
+            journal = self._journal[hist_key]
+            history_start = self._history_start[hist_key]
+            players_meta = [
+                {"side": p.side, "characters": [{"name": c.name} for c in p.characters]}
+                for p in game.players
+            ]
+            winner = frame.get("winner_side")
+            res_str = (
+                (f"玩家 {winner} 获胜（第 {frame['turn']} 回合）" if winner else f"双方平局（第 {frame['turn']} 回合）")
+                if game.is_over
+                else f"对局进行中（第 {frame['turn']} 回合）"
+            )
             return {
                 "match_number": self._match_number,
                 "history": [e["text"] for e in journal[history_start:] if e["kind"] not in ("ready", "unready", "select_character")],
+                "chronicle": self.engine.chronicle.snapshot(viewer_side=eff_side, unlock_all=unlock_all),
+                "markdown": self.engine.chronicle.to_markdown(
+                    viewer_side=eff_side,
+                    unlock_all=unlock_all,
+                    header_meta={"players": players_meta, "result": res_str},
+                ),
                 "challenge": self.challenge.name if self.challenge else None,
                 "bot_side": self.bot_side,
                 "finished": game.is_over,
-                "winner_side": frame.get("winner_side"),
+                "winner_side": winner,
                 "frame": {
                     "turn": frame["turn"],
-                    "players": [
-                        {"side": p.side, "characters": [{"name": c.name} for c in p.characters]}
-                        for p in game.players
-                    ],
+                    "players": players_meta,
                 },
             }
 
@@ -749,7 +802,7 @@ class Room:
             if request_id in receipts:
                 if signature != receipts[request_id]:
                     raise RoomConflict("此 request_id 已用于另一个操作。")
-                return self.observe(rec_side)
+                return self._canvas_snapshot_locked(side, hotseat=True) if hotseat else self.observe(rec_side)
             while self._timer and not self._closed and self.started and not self.engine.game_over:
                 due = min(self._timers(), default=None)
                 if due is None or due[0] > time.monotonic():
@@ -774,7 +827,7 @@ class Room:
             cursor = len(self._journal[rec_side])
             run()
             receipts[request_id] = signature
-            return self.observe(rec_side, cursor)
+            return self._canvas_snapshot_locked(side, hotseat=True) if hotseat else self.observe(rec_side, cursor)
 
     # ── Room Lobby, Ruleset, Ready / Unready & Rematch / Reopen ──
 
@@ -785,10 +838,6 @@ class Room:
             if not hotseat and side != self.host_side:
                 raise PermissionError("只有房主可以调整房间规则。")
             next_rules = normalize_ruleset(patch, base=self.ruleset, online=self.is_online)
-            if self.challenge and next_rules.get("power_cap") is not None:
-                opp_p = team_power(self.challenge.opponents, self._pool)
-                if opp_p > next_rules["power_cap"]:
-                    pass  # Challenge opponent is fixed; power_cap applies to human squad
             self.ruleset = next_rules
             self._engine_dirty = True
             # Re-check any already-ready seat against new constraints
@@ -953,9 +1002,22 @@ class Room:
             else:
                 validate_single_team(picks[side], self._pool, self.ruleset, allow_empty=False)
 
-            if picks != self._lobby_picks:
-                self._lobby_picks = picks
-                self._engine_dirty = True
+            starting = hotseat or self.bot_side is not None or (3 - side) in self.seated
+            rebuild = self._engine_dirty or picks != self._lobby_picks
+            if starting and not self.challenge:
+                try:
+                    validate_match_teams([picks[1], picks[2]], self._pool, self.ruleset)
+                except ValueError as exc:
+                    self.seated.clear()
+                    self.human_seats.clear()
+                    self.canvas_seats.clear()
+                    self._lobby_picks = picks
+                    self._engine_dirty = rebuild
+                    self._note("collision", f"{exc} 请双方调整阵容后重新准备。", wake=SEATS)
+                    return
+            engine = self._build_engine(picks) if starting and rebuild else None
+            self._lobby_picks = picks
+            self._engine_dirty = rebuild
 
             if hotseat:
                 self.seated = {1, 2}
@@ -971,18 +1033,8 @@ class Room:
                     self.seated.add(self.bot_side)
 
             if len(self.seated) == 2:
-                try:
-                    if not self.challenge:
-                        validate_match_teams([picks[1], picks[2]], self._pool, self.ruleset)
-                    else:
-                        self.challenge.validate_roster([picks[1], picks[2]])
-                except ValueError as exc:
-                    self.seated.clear()
-                    self._note("collision", f"{exc} 请双方调整阵容后重新准备。", wake=SEATS)
-                    return
-                if self._engine_dirty:
-                    self._reset_match_decisions()
-                    self.engine = self._build_engine(picks)
+                if engine is not None:
+                    self.engine = engine
                     self._engine_dirty = False
                     self._history_start = {s: len(events) for s, events in self._journal.items()}
                 self._sync_engine_auto_claim()
@@ -997,6 +1049,11 @@ class Room:
             if not self.hotseat:
                 raise ValueError("仅同屏双人模式使用接手确认。")
             self._seat(side)
+            _, handoff, eligible = self._resolve_hotseat_view()
+            if handoff is None or side not in eligible:
+                raise ValueError("请由当前待行动的席位接手。")
+            if self.paused_by is not None:
+                self.paused_by = side
             self._hotseat_side = side
             self._hotseat_revealed = side
             self._bump()
@@ -1007,6 +1064,10 @@ class Room:
             if not self.hotseat:
                 raise ValueError("仅同屏双人模式支持切换席位视角。")
             next_s = 3 - self._hotseat_side
+            if self.paused_by in SEATS:
+                if not self._has_seat_special_options(next_s):
+                    raise ValueError("该席位当前没有场内行动。")
+                self.paused_by = next_s
             self._hotseat_side = next_s
             if not self.ruleset.get("hotseat_curtain", True):
                 self._hotseat_revealed = next_s
@@ -1015,8 +1076,13 @@ class Room:
             self._bump()
         return self._command(side, revision, request_id, "switch_side", None, commit, hotseat=True)
 
-    def concede(self, side, revision, request_id, *, hotseat=False):
+    def concede(self, side, revision, request_id, *, hotseat=False, match_number=None):
         def commit():
+            if match_number is None:
+                if revision is None or revision < self._match_revision_floor["hotseat" if hotseat else side]:
+                    raise RoomConflict("请核对当前对局后再认输。")
+            elif type(match_number) is not int or match_number != self._match_number:
+                raise RoomConflict("这次认输不属于当前对局。")
             if not self.started or self.engine.game_over:
                 raise ValueError("当前没有正在进行的对局。")
             loser = self._hotseat_side if hotseat else side
@@ -1024,7 +1090,7 @@ class Room:
             self._cancel_match_timers()
             self.engine.forfeit_match(loser, reason="宣布认输")
             self._note("concede", self.engine.event["text"], wake=SEATS)
-        return self._command(side, revision, request_id, "concede", None, commit, hotseat=hotseat)
+        return self._command(side, revision, request_id, "concede", match_number, commit, hotseat=hotseat)
 
     def claim_disconnect_win(self, side, revision, request_id):
         def commit():
@@ -1241,6 +1307,11 @@ class Room:
     def pause(self, side, revision, request_id, *, hotseat=False):
         def commit():
             p_side = side if side in SEATS else self._hotseat_side
+            if hotseat:
+                eligible = [s for s in SEATS if self._has_seat_special_options(s)]
+                if not eligible:
+                    raise ValueError("当前没有席位可以进行场内行动。")
+                p_side = self._hotseat_side if self._hotseat_side in eligible else eligible[0]
             if not self._can_pause(p_side):
                 limit = self.pause_bank_limit
                 if not self._client_paced and limit is not None and (self._remaining_pause_s(p_side) or 0.0) <= 0.05:
@@ -1250,7 +1321,7 @@ class Room:
             self.paused_by = p_side
             if hotseat:
                 self._hotseat_side = p_side
-                self._hotseat_revealed = p_side
+                self._hotseat_revealed = None if self.ruleset["hotseat_curtain"] else p_side
             self._pause_started_at = time.monotonic()
             if self._pause_timer is not None:
                 self._pause_timer.cancel()
@@ -1296,7 +1367,8 @@ class Room:
                 self._serial[side] += 1
                 key = f"p{self._serial[side]}"
                 entries[key] = plan
-                self._bind_or_expire(side, key, plan, self.engine.state(side), self.engine.event)
+                if self.started:
+                    self._bind_or_expire(side, key, plan, self.engine.state(side), self.engine.event)
             self._note("prepare", "已更新自己的提前声明。", audiences=(side,))
             self._schedule()
         return self._command(side, revision, request_id, "prepare", declaration, commit)
@@ -1488,6 +1560,8 @@ class Room:
         for side in SEATS:
             ordinary = [m for m in self.engine.options(side) if m["kind"] in plans.ORDINARY] if side in required else []
             key = tuple(move_id(side, m) for m in ordinary)
+            if side in required and self.engine._mode() == "draw_select":
+                key = ("draw_select", self.engine.revision)
             if key and key != self._previous_choices[side]:
                 mode = self.engine.state(side)["mode"]
                 edges[side] = mode if mode != "instant_response" else "decision"
@@ -1680,10 +1754,16 @@ class Room:
                 return dict(side=side, cursor=cursor, timeout=True)
             return self.observe(side, cursor)
 
-    def rules(self, topic=None):
+    def _catalog(self, side, *, hotseat=False):
+        if self.started or (not self._selectable and not self._engine_dirty):
+            return self.engine.catalog()
+        visible = self._lobby_snapshot(side, hotseat=hotseat)["picks"]
+        return self.engine.catalog({s: [self._pool[cid] for cid in team] for s, team in visible.items()})
+
+    def rules(self, topic=None, *, viewer_side=None):
         if topic == "catalog":
             with self.cv:
-                return {"catalog": self.engine.catalog()}
+                return {"catalog": self._catalog(viewer_side)}
         book = (Path(__file__).resolve().parents[1] / RULEBOOK).read_text(encoding="utf-8")
         edition = book.split("\n\n", 2)[1].strip("*")
         source = dict(source=RULEBOOK.as_posix(), version=edition)
@@ -1708,7 +1788,7 @@ class Room:
                               if not p.startswith(('<a id=', '*例。', '*计数例。', '*桌面裁例。', '**算例**'))]
                 articles.append(dict(id=key, title=title, text="\n\n".join(paragraphs)))
             with self.cv:
-                catalog = self.engine.catalog()
+                catalog = self._catalog(viewer_side)
             return dict(source, sections=articles, catalog=catalog, guide=GUIDE)
         if topic in (None, "", "index"):
             return dict(source, reading="首次参赛先读 briefing；完整阅读可用 full 和 catalog。",

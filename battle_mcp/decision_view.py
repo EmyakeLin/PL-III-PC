@@ -82,6 +82,8 @@ def decision_view(room):
         frame["timing"] = source["timing"]
     if source.get("effect_choice"):
         frame["effect_choice"] = source["effect_choice"]
+    if draw := source.get("draw_select"):
+        frame["draw_select"] = {**draw, "candidates": [card_view(card) for card in draw["candidates"]]}
     frame["players"] = [player_view(p) for p in source["players"]]
     if source["duels"]:
         frame["duels"] = [duel_view(s) for s in source["duels"]]

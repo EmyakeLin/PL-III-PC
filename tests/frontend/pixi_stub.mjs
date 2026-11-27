@@ -20,7 +20,14 @@ export class Container {
   addChild(...cs) { for (const c of cs) { c.parent = this; this.children.push(c); } return cs[0]; }
   addChildAt(c, i) { c.parent = this; this.children.splice(i, 0, c); return c; }
   removeChildren() { const r = this.children; this.children = []; return r; }
-  setChildIndex() {}
+  getChildIndex(c) { return this.children.indexOf(c); }
+  setChildIndex(c, idx) {
+    const cur = this.children.indexOf(c);
+    if (cur < 0) return c;
+    this.children.splice(cur, 1);
+    this.children.splice(Math.max(0, Math.min(idx, this.children.length)), 0, c);
+    return c;
+  }
   on(ev, fn) { (this._handlers[ev] ||= []).push(fn); return this; }
   emit(ev, arg = { stopPropagation() {} }) { for (const fn of this._handlers[ev] || []) fn(arg); }
   destroy() { if (this.destroyed) return; this.destroyed = true; this.emit('destroyed'); if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }
@@ -48,7 +55,11 @@ export class Text extends Container {
   get height() { return (this.style.fontSize || 12) * 1.3; }
 }
 export class Sprite extends Container {}
-export class Rectangle { constructor(x, y, w, h) { Object.assign(this, { x, y, w, h }); } }
+export class Rectangle {
+  constructor(x, y, w, h) { Object.assign(this, { x, y, w, h }); }
+  get width() { return this.w; }
+  get height() { return this.h; }
+}
 export class Circle { constructor(x, y, r) { Object.assign(this, { x, y, r }); } }
 export const Ticker = { shared: { fns: new Set(), add(fn) { this.fns.add(fn); }, remove(fn) { this.fns.delete(fn); } } };
 export const Assets = { load: async () => null };

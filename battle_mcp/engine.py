@@ -19,8 +19,10 @@ def hand_card_label(card):
 
 
 class ArenaEngine(BattleMatch):
-    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=(), ruleset=None):
-        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs, ruleset=ruleset)
+    def __init__(self, roster=None, seed=None, *, bot_side=None, open_rosters=False, extra_packs=(), ruleset=None,
+                 fixed_opponent=False):
+        super().__init__(roster=roster, seed=seed, open_rosters=open_rosters, extra_packs=extra_packs,
+                         ruleset=ruleset, fixed_opponent=fixed_opponent)
         for player in self.game.players:
             if player.side == bot_side:
                 player.target_priority = (("hp", 1), ("lightcore_hp", 1))
@@ -85,6 +87,7 @@ class ArenaEngine(BattleMatch):
         if side is not None:
             self._choose_seat(side, self.game.players)
         frame = self._views[side].snapshot()
+        self._inject_dissolved_clashes(frame)
         frame.update(mode=self._mode(), timing=self._timing,
                      response_times=[dict(t) for t in self._response_times])
         effect_choice = self._views[side].effect_choice()
@@ -96,8 +99,8 @@ class ArenaEngine(BattleMatch):
                 frame["draw_select"] = draw
         return frame
 
-    def catalog(self):
-        return self._views[None].catalog()
+    def catalog(self, rosters=None):
+        return self._views[None].catalog(rosters)
 
     def options(self, side):
         if side is None or self.game_over or self._mode() == "draw_select":
@@ -346,6 +349,7 @@ class ArenaEngine(BattleMatch):
             "pre_reveal_plan": pre_plan,
             "pre_reveal_eligible_cards": pre_elig,
             "pre_reveal_stage_targets": pre_targets,
+            "chronicle": self.chronicle.snapshot(viewer_side=side),
         }
 
     def pre_reveal_plan_command(self, side, action, *, card_id=None, target=None):

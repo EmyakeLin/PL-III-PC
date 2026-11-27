@@ -16,6 +16,7 @@ from models.dice import TYPE_NAMES
 from pipeline.pipeline_errors import PipelineFinished
 from player.player import Player
 
+from .chronicle import BattleChronicle
 from .fx_compiler import discover_character_fx, discover_fx_scripts
 from .table_bridge import TableBridge
 from .status_icons import discover_status_visuals
@@ -26,7 +27,7 @@ class StaleActionError(ValueError):
     """The client submitted an action for an earlier position."""
 
 
-def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None):
+def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None, fixed_opponent=False):
     if roster is None:
         roster = ("plan_b_annolin", "plan_b_heck")
     if not isinstance(roster, (tuple, list)) or len(roster) != 2:
@@ -38,7 +39,7 @@ def _normalize_roster(roster, pool, *, open_rosters=False, ruleset=None):
     else:
         raise ValueError("请为双方选择有效的出战角色。")
     if ruleset is not None:
-        return tuple(validate_match_teams(teams, pool, ruleset))
+        return tuple(validate_match_teams(teams, pool, ruleset, fixed_opponent=fixed_opponent))
     seen = set()
     for team in teams:
         if not team or (not open_rosters and len(team) > 3):
@@ -142,6 +143,7 @@ def _roster_preview(spec, color=None, sprite_url=None):
         "rank": spec["rank"],
         "power": RANK_POWER.get(spec["rank"], 1),
         "max_hp": spec["max_hp"],
+        "max_lightcore_hp": Character.initial_lightcore_max(spec["max_hp"]),
         "base_duels": Character.base_duels(spec),
         "mirror_allowed": bool(spec.get("mirror_allowed")),
         "faction": spec.get("faction", ""),
@@ -164,10 +166,11 @@ class BattleMatch:
     """Drive the normal pipeline up to its next decision or public combat result."""
 
     def __init__(self, roster=None, *, seed=None, initial_handoff=False, open_rosters=False,
-                 extra_packs=(), full_history=False, viewer_side=None, ruleset=None):
+                 extra_packs=(), full_history=False, viewer_side=None, ruleset=None, fixed_opponent=False):
         pool = {c["id"]: c for c in load_characters_from_packs(extra_packs=extra_packs)}
         self.ruleset = dict(ruleset) if ruleset is not None else None
-        teams = _normalize_roster(roster, pool, open_rosters=open_rosters, ruleset=self.ruleset)
+        teams = _normalize_roster(roster, pool, open_rosters=open_rosters, ruleset=self.ruleset,
+                                  fixed_opponent=fixed_opponent)
         self._character_colors, self._character_sprites, self._roster_catalog = roster_art(pool)
         self._character_card_backs = {
             cid: spec["card_back"]
@@ -206,6 +209,7 @@ class BattleMatch:
             return {**spec, "max_hp": scaled_hp}
 
         self.presentation = TableBridge(self.game.context)
+        self.chronicle = BattleChronicle(self.game)
         self.game.deploy_rosters([[_spec_for_deploy(pool[key]) for key in team] for team in teams])
         counts = Counter(key for team in teams for key in team)
         if open_rosters or any(cnt > 1 for cnt in counts.values()):
@@ -216,7 +220,7 @@ class BattleMatch:
                         character.id = f"@{player.side}.{position}:{key}"
                         if teammates[key] > 1:
                             character.name += f"（{position}号）"
-                        for assets in (self._character_colors, self._character_sprites, self._character_fx):
+                        for assets in (self._character_colors, self._character_sprites, self._character_fx, self._character_card_backs):
                             if key in assets:
                                 assets[character.id] = assets[key]
         self.viewer_side = viewer_side if viewer_side in (1, 2) else None
@@ -284,6 +288,18 @@ class BattleMatch:
             "roster_catalog": self._roster_catalog,
         }
 
+    def _inject_dissolved_clashes(self, frame):
+        for (kind, number, seat, card), settled in self._temporary_clashes.items():
+            if not card.destroyed:
+                continue
+            slots = {"regular": frame["duels"], "pre_reveal": frame["pre_reveal"]["duels"],
+                     "instant": frame["special_duels"]}[kind]
+            if not 1 <= number <= len(slots):
+                continue
+            row = next(item for item in slots[number - 1]["sides"] if item["side"] == seat)
+            if not any(item.get("instance_id") == card.instance_id for item in row["cards"]):
+                row.setdefault("resolved_cards", []).append({**settled, "dissolved": True, "used": True})
+
     def snapshot(self):
         deciding = self.mode in ("placement", "pre_attack", "intercept", "draw_select")
         early = self.game.pre_reveal
@@ -337,16 +353,7 @@ class BattleMatch:
             if self.mode != "draw_select" and view_side in (1, 2):
                 inline_special_options = self._views[view_side].special_actions()
         frame = self._views[view_side].snapshot()
-        for (kind, number, seat, card), settled in self._temporary_clashes.items():
-            if not card.destroyed:
-                continue
-            slots = {"regular": frame["duels"], "pre_reveal": frame["pre_reveal"]["duels"],
-                     "instant": frame["special_duels"]}[kind]
-            if not 1 <= number <= len(slots):
-                continue
-            row = next(item for item in slots[number - 1]["sides"] if item["side"] == seat)
-            if not any(item.get("instance_id") == card.instance_id for item in row["cards"]):
-                row.setdefault("resolved_cards", []).append({**settled, "dissolved": True, "used": True})
+        self._inject_dissolved_clashes(frame)
         card_owners = {
             "duels": {
                 f"{num}:{p.side}": [
@@ -444,6 +451,7 @@ class BattleMatch:
             "can_pass": self.mode == "placement" and self.game.placed_this_window > 0,
             "window_remaining": self._window_size - self.game.placed_this_window if self.mode == "placement" else 0,
             "history": list(islice(reversed(self._history), 100))[::-1],
+            "chronicle": self.chronicle.snapshot(viewer_side=view_side),
         }
 
     def act(self, action, revision, *, card_id=None, card_ids=None, target=None, side=None,
@@ -565,8 +573,15 @@ class BattleMatch:
         by_id = self._draw_candidate_keys(pending)
         if any(cid not in by_id for cid in card_ids):
             raise ValueError("所选置底牌不在当前候选范围内。")
+        chosen_cards = [by_id[cid] for cid in card_ids]
         self.presentation.emit("draw_bottom", side=player.side, count=discard_count)
-        self.game.complete_draw(pending, [by_id[cid] for cid in card_ids])
+        self.game.complete_draw(pending, chosen_cards)
+        self.chronicle.record_action(
+            "draw_bottom",
+            side=player.side,
+            count=discard_count,
+            card_names=[c.name for c in chosen_cards],
+        )
         self._history.append(f"{player.name}看顶选 {discard_count} 张置底，保留 {pending.keep} 张手牌。")
         if self.game.pending_draw:
             self._draw_seat = self.game.pending_draw.player
@@ -606,12 +621,38 @@ class BattleMatch:
         # Face-down placements and replacements must remain hidden in the public log.
         if move.kind == "place":
             message = "特殊置卡"
+            if succeeded is not False and move.card.state.name == "PLACED_FACE_UP":
+                self.presentation.emit(
+                    "special_place",
+                    side=player.side,
+                    character_id=move.card.character.id,
+                    card_id=move.card.id,
+                    card_name=move.card.name,
+                    duel_number=(move.duel_index + 1 if move.duel_index is not None else None),
+                    lane="front",
+                )
         elif move.kind == "place_rear":
             message = f"在常规交锋 {move.duel_index + 1} 置入后置交锋"
+            if succeeded is not False and move.card.state.name == "PLACED_FACE_UP":
+                self.presentation.emit(
+                    "special_place",
+                    side=player.side,
+                    character_id=move.card.character.id,
+                    card_id=move.card.id,
+                    card_name=move.card.name,
+                    duel_number=(move.duel_index + 1 if move.duel_index is not None else None),
+                    lane="rear",
+                )
         elif move.kind == "replace":
             message = "替换技能"
             if succeeded is not False:
-                public_cards = {"old_card_id": move.target_card.id, "new_card_id": move.card.id} if public_replacement else {}
+                public_cards = {
+                    "character_id": move.card.character.id,
+                    "card_id": move.card.id,
+                    "card_name": move.card.name,
+                    "old_card_id": move.target_card.id,
+                    "new_card_id": move.card.id,
+                } if public_replacement else {}
                 self.presentation.emit("card_replace", side=player.side, **public_cards)
         elif move.kind == "pass_intercept":
             message = f"放行即时交锋 {move.response_number}"
@@ -979,13 +1020,42 @@ class BattleMatch:
             card = next((c for c in self._legal_cards() if hand_key(c) == card_id), None)
             if card is None:
                 raise ValueError("这张手牌当前无法扣置。")
+            fallback_slot = game.duelspace.locate_nearest_empty_duel(player.side) + 1
             game.submit_placement(player, card)
+            slot_num = next(
+                (i + 1 for i, d in enumerate(game.duelspace.space) if card in d.get_content(player.side)),
+                fallback_slot,
+            )
+            self.chronicle.record_action(
+                "place",
+                side=player.side,
+                actor_id=card.character.id,
+                actor_name=card.character.name,
+                card_id=card.id,
+                card_name=card.name,
+                cost=card.cost,
+                duel_number=slot_num,
+                face_up=(card.state.name == "PLACED_FACE_UP"),
+                instance_id=card.instance_id,
+            )
         elif action == "place_rear":
             rear_map = game.legal_rear_placements()
             card = next((c for c in rear_map if hand_key(c) == card_id), None)
             if card is None or type(duel_number) is not int:
                 raise ValueError("这张手牌当前无法扣置到后置交锋。")
             game.submit_placement(player, card, rear_duel_index=duel_number - 1)
+            self.chronicle.record_action(
+                "place_rear",
+                side=player.side,
+                actor_id=card.character.id,
+                actor_name=card.character.name,
+                card_id=card.id,
+                card_name=card.name,
+                cost=card.cost,
+                duel_number=duel_number,
+                face_up=(card.state.name == "PLACED_FACE_UP"),
+                instance_id=card.instance_id,
+            )
         else:
             game.submit_placement(player, after=action)
         if game.is_over:
@@ -1329,6 +1399,7 @@ class BattleMatch:
         winner = next(p for p in self.game.players if p is not loser)
         self.game.is_over = True
         self.game.winner = winner
+        self.chronicle.record_action("concede", side=loser_side)
         self._history.append(f"{loser.name}{reason}。")
         self._finish()
 

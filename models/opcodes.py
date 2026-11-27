@@ -1170,10 +1170,26 @@ def handle_damage(ctx):
     damage_die = ctx.event["damage_die"]
     if damage_die is not None:
         damage_die.did_deal_damage = True
-    ctx.record("direct_damage", source=ctx.event.get("damage_cause") or getattr(source, "combat_name", None),
-               target=target.combat_name, amount=damage, outgoing_amount=ctx.event["outgoing_amount"],
-               grade=grade, lost=hp_lost, hp=target.hp,
-               maximum=target.max_hp, alive=target.is_alive)
+    ctx.record(
+        "direct_damage",
+        source=ctx.event.get("damage_cause") or getattr(source, "combat_name", None),
+        source_id=getattr(source, "id", None),
+        source_side=getattr(getattr(source, "player", None), "side", None),
+        target=target.combat_name,
+        target_id=target.id,
+        target_side=target.player.side,
+        base_amount=amount,
+        outgoing_amount=ctx.event["outgoing_amount"],
+        multiplier=multiplier,
+        amount=damage,
+        grade=grade,
+        lost=hp_lost,
+        hp=target.hp,
+        maximum=target.max_hp,
+        alive=target.is_alive,
+        card_id=getattr(ctx.event.get("card"), "id", None),
+        card_name=getattr(ctx.event.get("card"), "name", None),
+    )
     if ctx.event.get("damage_part") and target.is_alive:
         target.after_damage_part()
     return damage
@@ -1259,8 +1275,11 @@ def handle_real_damage(ctx):
     if not target.is_alive and ctx.game.is_over:
         ctx.close_combat_effects()
     ctx.event.update(amount=amount, hp_lost=lost)
-    ctx.record("real_damage", source=ctx.event.get("damage_cause") or getattr(ctx.event.get("source"), "combat_name", None),
-               target=target.combat_name, amount=amount, lost=lost, hp=target.hp, maximum=target.max_hp, alive=target.is_alive)
+    source = ctx.event.get("source")
+    ctx.record("real_damage", source=ctx.event.get("damage_cause") or getattr(source, "combat_name", None),
+               source_id=getattr(source, "id", None), source_side=getattr(getattr(source, "player", None), "side", None),
+               target=target.combat_name, target_id=target.id, target_side=target.player.side,
+               amount=amount, lost=lost, hp=target.hp, maximum=target.max_hp, alive=target.is_alive)
     return amount
 
 

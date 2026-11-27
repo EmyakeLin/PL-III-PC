@@ -135,7 +135,11 @@ class CanvasBattleEngineTests(unittest.TestCase):
         for actors in ([a for a in state["roster_catalog"] if a["id"] in roster], selected):
             lines = {group["name"]: group["display_lines"] for actor in actors for group in actor["passives"]}
             for name, group in groups.items():
-                expected = [group["description"]] if "description" in group else [e["description"] for e in group["entries"]]
+                expected = (
+                    [line for line in group["description"].splitlines() if line.strip()]
+                    if "description" in group
+                    else [e["description"] for e in group["entries"]]
+                )
                 self.assertEqual(lines[name], expected, name)
 
     @unittest.skipUnless(shutil.which("node"), "WebGL card text requires a JavaScript runtime")
@@ -170,7 +174,8 @@ class CanvasBattleEngineTests(unittest.TestCase):
                 const tagTexts = texts(buildBoardCardTag(card));
                 assert.ok(tagTexts.some(t => t.text === card.name));
                 assert.ok(tagTexts.some(t => t.text === String(card.cost)));
-                assert.ok(!texts(buildFullCard(card, {rangeDeficit: 3})).some(t => t.text.includes('拼点逆转')));
+                const blankedCard = {...card, live_dice: card.dice.map((_, i) => ({position: i + 1, type: 'blank'}))};
+                assert.ok(!texts(buildFullCard(blankedCard, {rangeDeficit: 3})).some(t => t.text.includes('拼点逆转')));
             }
             const rewind = actor.skills.find(s => s.id === 'liu_rewind');
             const rwTexts = texts(buildFullCard(rewind, {width: 300, ownerName: actor.name}));
@@ -367,6 +372,8 @@ class CanvasBattleEngineTests(unittest.TestCase):
 
     def test_director_wires_all_wave1_modules_and_scalable_10v10_roster(self):
         director_src = (STATIC_DIR / "engine" / "game_director.js").read_text(encoding="utf-8")
+        fx_src = (STATIC_DIR / "engine" / "presentation_fx.js").read_text(encoding="utf-8")
+        combined_src = director_src + "\n" + fx_src
         for symbol in (
             "createDiegeticTopBar",
             "createFactionCostHud",
@@ -374,7 +381,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
             "computeFormationLayout",
             "createDelayedHpBar",
             "renderFocusSightlines",
-            "buildScalableDuelRail",
+            "CombatTabletop",
             "buildHitstopBanner",
             "setIntent(",
             "setIntentFocus(",
@@ -388,7 +395,7 @@ class CanvasBattleEngineTests(unittest.TestCase):
             "setScrollX(",
             "onSetMaxPerSide",
         ):
-            self.assertIn(symbol, director_src, f"Expected Wave-1 integration symbol {symbol!r} in game_director.js")
+            self.assertIn(symbol, combined_src, f"Expected Wave-1 integration symbol {symbol!r} in engine")
         self.assertNotIn("每方最多选 3 名角色", director_src)
         self.assertNotIn("clearContainer(this.cornerHudLayer)", director_src)
 

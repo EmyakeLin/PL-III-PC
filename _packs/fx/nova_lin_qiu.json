@@ -1,0 +1,43 @@
+{
+  "color": "#238a9e",
+  "dice_style": {
+    "body": "#3b9cb0",
+    "edge": "#195c6b"
+  },
+  "status_auras": {
+    "隧道": { "color": "#238a9e", "style": "ring", "radius": 54, "period_ms": 1500 },
+    "星结": { "color": "#d99b26", "style": "pulse", "radius": 50, "period_ms": 1300 }
+  },
+  "defaults": {
+    "slash": "星青疾速剑弧挥斩与清脆金属蜂鸣",
+    "pierce": "星芒突刺破空与金色散射粒子"
+  },
+  "skills": {
+    "拔剑相向": "星青残影疾步与双道刀光挥斩",
+    "铭刻逆流": "星芒圆环波纹与金色光束",
+    "羽流剑术": "星青三连剑弧连斩与风鸣",
+    "空断": {
+      "on_form_change": {
+        "vfx": [
+          { "primitive": "skill_banner", "text": "空断", "color": "#238a9e" },
+          { "primitive": "sprite_vfx", "asset": "star_knot_ring.svg", "to": "attacker.center", "scale": 1.15, "spin": 3.2, "duration_ms": 520 }
+        ],
+        "sfx": "bell"
+      },
+      "on_strike": {
+        "vfx": [
+          { "primitive": "afterimage", "from": "attacker.center", "to": "defender.center", "color": "#238a9e", "count": 2 },
+          { "primitive": "cross_slash", "from": "attacker.bone_weapon", "to": "defender.center", "color": "#238a9e", "count": 2, "stagger_ms": 80 },
+          { "primitive": "sprite_vfx", "asset": "star_knot_ring.svg", "to": "defender.center", "scale": 1.0, "spin": -4.0, "duration_ms": 420 },
+          { "primitive": "sparks", "to": "defender.center", "color": "#d99b26", "count": 28, "heavy": true }
+        ],
+        "hitstop_ms": 80,
+        "camera": { "shake": 9.5, "duration_ms": 260, "zoom_punch": 0.024 },
+        "sfx": "clash_heavy"
+      }
+    },
+    "分界": {
+      "on_strike": "星芒十字重斩与两圈扩散光环伴随顿帧"
+    }
+  }
+}

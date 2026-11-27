@@ -70,7 +70,7 @@ export function roomTableState(room, assets = {}) {
     .flatMap(player => player.characters || [])
     .filter(c => c.printed_id && c.printed_id !== c.id);
   if (copies.length) {
-    for (const field of ['character_colors', 'character_sprites', 'character_fx']) {
+    for (const field of ['character_colors', 'character_sprites', 'character_fx', 'character_card_backs']) {
       const originals = assets[field] || {};
       const aliases = copies.filter(c => originals[c.printed_id] != null).map(c => [c.id, originals[c.printed_id]]);
       tableAssets[field] = { ...originals, ...Object.fromEntries(aliases) };
@@ -145,7 +145,11 @@ function findRoomMove(state, action, payload) {
   });
 }
 
-function battleRecordText({ bot_side: botSide, challenge, events = [], history, match_number = 1, finished, frame, winner_side: winnerSide }) {
+function battleRecordText(recordData) {
+  if (recordData?.markdown && typeof recordData.markdown === 'string') {
+    return recordData.markdown;
+  }
+  const { bot_side: botSide, challenge, events = [], history, match_number = 1, finished, frame, winner_side: winnerSide } = recordData;
   let matchNumber = match_number;
   let start = 0;
   for (const [index, event] of events.entries()) {
@@ -221,7 +225,7 @@ export class RoomSeatTransport {
   }
 
   async fetchBattleRecord() {
-    const record = await this.requestHttp('battle_record', null, { method: 'GET', publicView: true });
+    const record = await this.requestHttp('battle_record', null, { method: 'GET' });
     return battleRecordText(record);
   }
 
@@ -292,7 +296,7 @@ export class RoomSeatTransport {
           this._onState?.(this.state);
           return;
         }
-        if (msg.type === 'ack' || msg.type === 'conflict') {
+        if (msg.type === 'ack') {
           const waiter = this._pending.get(msg.request_id);
           if (waiter) {
             this._pending.delete(msg.request_id);
@@ -300,14 +304,14 @@ export class RoomSeatTransport {
           }
           return;
         }
-        if (msg.type === 'error') {
+        if (msg.type === 'conflict' || msg.type === 'error') {
           const waiter = msg.request_id ? this._pending.get(msg.request_id) : null;
           const err = new Error(msg.error || '操作未通过校验。');
           err.status = msg.status || 400;
           if (waiter) {
             this._pending.delete(msg.request_id);
             waiter.reject(err);
-          } else if (err.status === 403 || err.status === 404) {
+          } else if (!msg.request_id && (err.status === 403 || err.status === 404)) {
             fatalStop = true;
             this._stopped = true;
             this._onError?.(err);
@@ -320,7 +324,7 @@ export class RoomSeatTransport {
       ws.addEventListener('close', () => {
         this._clearPing();
         for (const [, waiter] of this._pending) {
-          waiter.resolve(null);
+          waiter.reject(new Error('连接已断开，操作结果未知。请在重连后核对局面。'));
         }
         this._pending.clear();
         if (this._stopped || fatalStop) return;
@@ -367,7 +371,7 @@ export class RoomSeatTransport {
     }
     if (action === 'rematch') return { ...base, cmd: 'rematch', roster: payload.roster };
     if (action === 'reopen_lobby') return { ...base, cmd: 'reopen_lobby' };
-    if (action === 'concede') return { ...base, cmd: 'concede' };
+    if (action === 'concede') return { ...base, cmd: 'concede', match_number: state.match_number };
     if (action === 'claim_disconnect_win') return { ...base, cmd: 'claim_disconnect_win' };
     if (action === 'ready' && state?.hotseat && state?.started) {
       return { ...base, cmd: 'hotseat_ready', side: payload.side };
@@ -389,8 +393,8 @@ export class RoomSeatTransport {
   }
 
   async send(action, payload = {}) {
-    if (!this.state) return null;
-    if (!this.state.side && !this.state.hotseat) return null;
+    if (!this.state) throw new Error('房间状态尚未就绪。');
+    if (!this.state.side && !this.state.hotseat) throw new Error('观战席不能执行对战操作。');
     const msg = this._buildCommandPayload(action, payload);
 
     // Primary path: full-duplex WebSocket frame (zero extra HTTP round-trip; state arrives via server push!)
@@ -398,13 +402,19 @@ export class RoomSeatTransport {
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           this._pending.delete(msg.request_id);
-          resolve(null);
+          reject(new Error('房间未及时确认，操作结果未知。请核对最新局面。'));
         }, 8000);
         this._pending.set(msg.request_id, {
           resolve: (val) => { clearTimeout(timer); resolve(val); },
           reject: (err) => { clearTimeout(timer); reject(err); },
         });
-        this.ws.send(JSON.stringify(msg));
+        try {
+          this.ws.send(JSON.stringify(msg));
+        } catch (err) {
+          this._pending.delete(msg.request_id);
+          clearTimeout(timer);
+          reject(err);
+        }
       });
     }
 

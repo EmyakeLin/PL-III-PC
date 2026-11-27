@@ -4,6 +4,9 @@ import { FONT_NUM } from './design_system.js';
 import { makeSealButton, buildRosterOverlay } from './table_overlays.js';
 import { setCharacterSpriteUrls } from './stage_actors.js';
 import { savedRooms, saveRoom, forgetRoom } from './lobby_rooms.js';
+import { ThreeWorld } from './three_world.js';
+import { TabletopAudio } from './audio.js';
+import { FxDirector } from './fx_director.js';
 
 const app = new PIXI.Application();
 const status = document.querySelector('#menu-status');
@@ -24,6 +27,99 @@ let joinCode = '';
 let pending = false;
 let previewRequest = null;
 let elapsed = 0;
+let previewEngine = null;
+let previewRestoreAt = 0;
+let previewBannerTimer = 0;
+let lastPointerX = null;
+const previewOverlayLayer = new PIXI.Container();
+previewOverlayLayer.eventMode = 'none';
+
+function showLobbySkillBanner(titleText, colorHex = 0xd99426) {
+  for (const child of previewOverlayLayer.removeChildren()) child.destroy?.({ children: true });
+  clearTimeout(previewBannerTimer);
+  if (!titleText || !app.screen) return;
+  const { width } = app.screen;
+  const label = new PIXI.Text({
+    text: titleText,
+    style: { fontFamily: FONT_UI, fontSize: 16, fontWeight: '900', fill: INK.strong },
+  });
+  const bw = Math.max(196, Math.ceil(label.width) + 46);
+  const bh = 36;
+  const box = new PIXI.Container();
+  const bg = new PIXI.Graphics();
+  bg.roundRect(-bw / 2, -bh / 2, bw, bh, 10)
+    .fill({ color: INK.paper, alpha: 0.96 })
+    .stroke({ width: 2.2, color: colorHex });
+  label.anchor.set(0.5);
+  box.addChild(bg, label);
+  box.position.set(width * 0.72, 148);
+  previewOverlayLayer.addChild(box);
+  app.stage.addChild(previewOverlayLayer);
+  previewBannerTimer = setTimeout(() => {
+    for (const child of previewOverlayLayer.removeChildren()) child.destroy?.({ children: true });
+  }, 1150);
+}
+
+function ensurePreviewEngine() {
+  if (previewEngine) return previewEngine;
+  let threeCanvas = document.getElementById('three-canvas');
+  if (!threeCanvas) {
+    threeCanvas = document.createElement('canvas');
+    threeCanvas.id = 'three-canvas';
+    canvas.parentNode?.insertBefore(threeCanvas, canvas);
+  }
+  threeCanvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:1;display:block;visibility:hidden;';
+  const three = new ThreeWorld(threeCanvas);
+  three.setOverlayPreviewMode(false);
+  const audio = new TabletopAudio();
+  const fxDirector = new FxDirector({
+    three,
+    physics: null,
+    audio,
+    getActorNode: () => null,
+    getActorPos: () => ({ x: 180, y: 180 }),
+    getMotion: () => ({ lunge: 0, recoil: 0, evade: 0, hitFlash: 0, healGlow: 0, passiveFlare: 0 }),
+    getMatchNumber: () => 0,
+    getClashCenter: () => ({ x: (canvas.clientWidth || window.innerWidth) * 0.5, y: (canvas.clientHeight || window.innerHeight) * 0.45 }),
+    showSkillBanner: (text, opts = {}) => showLobbySkillBanner(text, opts.colorHex ?? 0xd99426),
+  });
+  previewEngine = { threeCanvas, three, audio, fxDirector };
+  return previewEngine;
+}
+
+function previewLobbyFx(spec = {}) {
+  const eng = ensurePreviewEngine();
+  if (!eng || !lineup) return;
+  eng.fxDirector.sync(lineup.character_fx || {}, lineup.fx_scripts || {});
+  const s = scene?.scale?.x || 1;
+  const sxOff = scene?.x || 0;
+  const syOff = scene?.y || 0;
+  const scalePt = (pt) => (pt ? { x: sxOff + pt.x * s, y: syOff + pt.y * s } : null);
+  const cid = spec.charId;
+  const defColStr = lineup.character_colors?.[cid];
+  const defaultColor = defColStr ? parseInt(String(defColStr).replace('#', ''), 16) : 0xd99426;
+  const vw = window.innerWidth || canvas.clientWidth || 1280;
+  const vh = window.innerHeight || canvas.clientHeight || 800;
+  eng.threeCanvas.style.display = 'block';
+  eng.threeCanvas.style.visibility = 'visible';
+  eng.three.resize(vw, vh);
+  eng.three.setOverlayPreviewMode(true);
+  const ok = eng.fxDirector.previewCharacterFx(cid, {
+    side: spec.side || 1,
+    originPt: scalePt(spec.originPt),
+    targetPt: scalePt(spec.targetPt),
+    cardId: spec.cardId || null,
+    cardName: spec.cardName || null,
+    dieType: spec.dieType || null,
+    passiveName: spec.passiveName || null,
+    charName: spec.charName || '',
+    defaultColor: Number.isFinite(defaultColor) ? defaultColor : 0xd99426,
+  });
+  const bannerTitle = [spec.charName, spec.cardName || spec.passiveName].filter(Boolean).join(' · ');
+  if (bannerTitle) showLobbySkillBanner(bannerTitle, Number.isFinite(defaultColor) ? defaultColor : 0xd99426);
+  eng.three.update(0.016);
+  previewRestoreAt = ok ? performance.now() + 1350 : performance.now() + 1150;
+}
 
 function notice(text = '') {
   status.textContent = text;
@@ -236,11 +332,15 @@ async function start(teams) {
   }
 }
 
-function inspect(ch) {
-  if (pending || draft.hero?.id === ch.id) return;
+function setInspectedCharacter(ch) {
+  if (draft.hero?.id === ch.id) return false;
   draft.hero = ch;
   draft.inspect = 0;
-  render();
+  return true;
+}
+
+function inspect(ch) {
+  if (!pending && setInspectedCharacter(ch)) render();
 }
 
 function toggle(id) {
@@ -257,23 +357,22 @@ function toggle(id) {
 
   if (!allowDup && index >= 0) {
     own.splice(index, 1);
-    notice();
-    render();
-    return;
+  } else {
+    if (rules.max_chars != null && own.length >= rules.max_chars) {
+      return notice(`当前房间规则限制每方最多出战 ${rules.max_chars} 人。`);
+    }
+    const byId = new Map(lineup.catalog.map(c => [c.id, c]));
+    const curPower = own.reduce((s, cid) => s + (byId.get(cid)?.power || 1), 0);
+    const addPower = ch.power || 1;
+    if (rules.power_cap != null && curPower + addPower > rules.power_cap) {
+      return notice(`加入「${ch.name}」（战力 ${addPower}）将超出总战力上限 ${rules.power_cap}。`);
+    }
+    if (strictUnique && other.includes(id) && !ch.mirror_allowed) {
+      other.splice(other.indexOf(id), 1);
+    }
+    own.push(id);
   }
-  if (rules.max_chars != null && own.length >= rules.max_chars) {
-    return notice(`当前房间规则限制每方最多出战 ${rules.max_chars} 人。`);
-  }
-  const byId = new Map(lineup.catalog.map(c => [c.id, c]));
-  const curPower = own.reduce((s, cid) => s + (byId.get(cid)?.power || 1), 0);
-  const addPower = ch.power || 1;
-  if (rules.power_cap != null && curPower + addPower > rules.power_cap) {
-    return notice(`加入「${ch.name}」（战力 ${addPower}）将超出总战力上限 ${rules.power_cap}。`);
-  }
-  if (strictUnique && other.includes(id) && !ch.mirror_allowed) {
-    other.splice(other.indexOf(id), 1);
-  }
-  own.push(id);
+  setInspectedCharacter(ch);
   notice();
   render();
 }
@@ -305,8 +404,10 @@ function picker(w, h) {
       returnLabel: '返回玩法',
       isHost: true,
       ruleset: d.ruleset,
+      ruleBounds: lineup.rule_bounds,
       rulesOpen: Boolean(d.rulesOpen),
-      hotseatMode: Boolean(lineup.hotseat),
+      isHotseat: Boolean(lineup.hotseat),
+      isChallenge: fixed.length > 0,
       opponentPresets: presets,
       onToggleRules: redraw(() => { d.rulesOpen = !d.rulesOpen; }),
       onUpdateRules: redraw((patch) => {
@@ -339,6 +440,8 @@ function picker(w, h) {
     }),
     onInspectChar: inspect,
     onHoverChar: inspect,
+    canPreviewFx: (q) => Boolean(q?.charId && lineup?.character_fx?.[q.charId]),
+    onPreviewFx: (spec) => previewLobbyFx(spec),
     onToggleChar: toggle,
     onGalleryScrollChange: (y) => { d.gallery = y; },
     onInspectScrollChange: (y) => { d.inspect = y; },
@@ -558,6 +661,7 @@ function render() {
   app.stage.addChild(view);
   scene?.destroy({ children: true });
   scene = view;
+  app.stage.addChild(previewOverlayLayer);
 }
 
 window.addEventListener('keydown', (e) => {
@@ -632,9 +736,24 @@ try {
     autoDensity: true,
     resizeTo: window,
   });
-  app.renderer.on('resize', render);
+  app.renderer.on('resize', () => {
+    render();
+    if (previewEngine?.three) {
+      previewEngine.three.resize(window.innerWidth, window.innerHeight);
+    }
+  });
   app.ticker.add(({ deltaMS }) => {
     elapsed += deltaMS / 1000;
+    if (previewEngine?.three) {
+      if (previewRestoreAt > 0) {
+        previewEngine.three.update(deltaMS / 1000);
+        if (performance.now() >= previewRestoreAt) {
+          previewRestoreAt = 0;
+          previewEngine.three.setOverlayPreviewMode(false);
+          previewEngine.threeCanvas.style.visibility = 'hidden';
+        }
+      }
+    }
     for (const item of scene?._actors || []) item.actor?.tick(elapsed, null, item.ch);
     if (page === 'lineup') return;
     const cards = scene?.children[0]?.children;
@@ -643,10 +762,21 @@ try {
       cards[1].y = 32 - Math.sin(elapsed * 1.4) * 4;
     }
   });
-  canvas.addEventListener('wheel', (event) => {
+  const trackPointer = (event) => {
+    if (Number.isFinite(event.clientX)) lastPointerX = event.clientX;
+  };
+  window.addEventListener('pointermove', trackPointer, { passive: true });
+  window.addEventListener('mousemove', trackPointer, { passive: true });
+  window.addEventListener('pointerdown', trackPointer, { passive: true });
+  window.addEventListener('wheel', (event) => {
     if (page !== 'lineup' || !scene || draft?.rulesOpen) return;
     event.preventDefault();
-    if (event.offsetX < scene._gallerySplitX * scene.scale.x) scene.setGalleryScroll(draft.gallery + event.deltaY * 0.65);
+    const rect = canvas.getBoundingClientRect();
+    const hasClient = Number.isFinite(event.clientX) && (event.clientX !== 0 || event.clientY !== 0);
+    const clientX = hasClient ? event.clientX : (Number.isFinite(lastPointerX) ? lastPointerX : (rect.left + event.offsetX));
+    const ptrX = clientX - rect.left;
+    const splitScreenX = (scene.x || 0) + (scene._gallerySplitX || (canvas.clientWidth * 0.5)) * (scene.scale?.x || 1);
+    if (ptrX < splitScreenX) scene.setGalleryScroll(draft.gallery + event.deltaY * 0.65);
     else scene.setInspectScroll(draft.inspect + event.deltaY * 0.65);
   }, { passive: false });
   await loadMenu();

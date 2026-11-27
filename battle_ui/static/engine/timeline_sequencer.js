@@ -102,6 +102,7 @@ export class TimelineSequencer {
     this.pendingClashOutcomeKeys = new Set();
     this.deferredHpOverrides = new Map();
     this.deferredLightcoreOverrides = new Map();
+    this.deferredActorStateOverrides = new Map();
     this._timers = new Set();
     this._scheduleFn = hooks.schedule || ((fn, ms) => setTimeout(fn, ms));
     this._cancelFn = hooks.cancel || ((id) => clearTimeout(id));
@@ -154,6 +155,8 @@ export class TimelineSequencer {
     this.pendingClashOutcomeKeys.clear();
     this.deferredHpOverrides.clear();
     this.deferredLightcoreOverrides.clear();
+    this.deferredActorStateOverrides.clear();
+    this.deferredActorStateOverrides.clear();
     this.hooks.clearDice?.();
     this.hooks.clearClashGroups?.();
     this.hooks.onRollLockChanged?.(false, null);
@@ -241,6 +244,7 @@ export class TimelineSequencer {
     this.pendingClashOutcomeKeys.clear();
     this.deferredHpOverrides.clear();
     this.deferredLightcoreOverrides.clear();
+    this.deferredActorStateOverrides.clear();
 
     let initialSpeed = null;
     let initialPassives = [];
@@ -310,7 +314,7 @@ export class TimelineSequencer {
         }
       }
 
-      // Defer HP & Lightcore bar drops until dice reveal & strike impact!
+      // Defer HP, Lightcore, Shields, Statuses & Alive flags until dice reveal & strike impact!
       const hasDeferredGate = this.pendingCombatRollKeys.size > 0
         || this.pendingClashOutcomeKeys.size > 0
         || fresh.some((e) => e.kind === 'combat_strike');
@@ -321,11 +325,26 @@ export class TimelineSequencer {
             prevChars.set(characterKeyFn(c.id, p.side), c);
           }
         }
+        const deferActorVisualState = (cid, side) => {
+          if (!cid || !side) return;
+          const ck = characterKeyFn(cid, side);
+          if (this.deferredActorStateOverrides.has(ck)) return;
+          const prev = prevChars.get(ck);
+          if (!prev) return;
+          this.deferredActorStateOverrides.set(ck, {
+            alive: prev.alive,
+            shields: prev.shields ? { ...prev.shields } : {},
+            statuses: prev.statuses ? { ...prev.statuses } : {},
+            status_details: prev.status_details ? { ...prev.status_details } : {},
+            bleed_burst: Boolean(prev.bleed_burst),
+          });
+        };
         for (const ev of fresh) {
           if (ev.kind === 'damage' || ev.kind === 'lose_hp' || ev.kind === 'heal') {
             const ck = characterKeyFn(ev.target_id, ev.target_side);
             const prev = prevChars.get(ck);
             if (prev) this.deferredHpOverrides.set(ck, prev.hp);
+            deferActorVisualState(ev.target_id, ev.target_side);
           } else if (LIGHTCORE_KINDS.has(ev.kind)) {
             const ck = characterKeyFn(ev.target_id, ev.target_side);
             const prev = prevChars.get(ck);
@@ -335,6 +354,11 @@ export class TimelineSequencer {
                 max: prev.max_lightcore_hp,
               });
             }
+            deferActorVisualState(ev.target_id, ev.target_side);
+          } else if (ev.kind === 'status_change' || ev.kind === 'shield_gain' || ev.kind === 'character_death') {
+            deferActorVisualState(ev.character_id, ev.side);
+          } else if (ev.kind === 'stagger_check') {
+            deferActorVisualState(ev.target_id, ev.target_side);
           }
         }
       }
@@ -388,10 +412,12 @@ export class TimelineSequencer {
     this.pendingCombatRollKeys.clear();
     this.pendingClashOutcomeKeys.clear();
     this._setActiveRollKind(null);
-    if (this.deferredHpOverrides.size || this.deferredLightcoreOverrides.size) {
+    if (this.deferredHpOverrides.size || this.deferredLightcoreOverrides.size || this.deferredActorStateOverrides.size) {
+      const hadActorState = this.deferredActorStateOverrides.size > 0;
       this.deferredHpOverrides.clear();
       this.deferredLightcoreOverrides.clear();
-      this.hooks.releaseDeferredVitals?.();
+      this.deferredActorStateOverrides.clear();
+      this.hooks.releaseDeferredVitals?.({ rebuildActors: hadActorState });
     }
     this.isSettled = true;
     this.hooks.onBeatSettled?.();
@@ -525,10 +551,12 @@ export class TimelineSequencer {
       const impactMs = Math.max(40, Math.min(650, Number(fxTiming.impactMs) || 95));
       this._later(gen, impactMs, () => {
         if (this.beatGen !== gen) return;
-        if (this.deferredHpOverrides.size || this.deferredLightcoreOverrides.size) {
+        if (this.deferredHpOverrides.size || this.deferredLightcoreOverrides.size || this.deferredActorStateOverrides.size) {
+          const hadActorState = this.deferredActorStateOverrides.size > 0;
           this.deferredHpOverrides.clear();
           this.deferredLightcoreOverrides.clear();
-          this.hooks.releaseDeferredVitals?.();
+          this.deferredActorStateOverrides.clear();
+          this.hooks.releaseDeferredVitals?.({ rebuildActors: hadActorState });
         }
         this._runQueue(gen, queue, index + 1, nextTurn);
       });

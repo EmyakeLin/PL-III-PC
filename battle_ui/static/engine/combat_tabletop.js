@@ -480,7 +480,12 @@ export class CombatTabletop {
     this.interceptableNumbers = interceptableNumbers || this.pendingResponses;
     this.canTapEmptySlot = Boolean(canTapEmptySlot);
 
-    this.combatBlendSpring.setTarget(this.phaseState === 'combat' ? 1 : 0);
+    const snapInitial = this.duelMotionMap.size === 0;
+    if (snapInitial) {
+      this.combatBlendSpring.snap(this.phaseState === 'combat' ? 1 : 0);
+    } else {
+      this.combatBlendSpring.setTarget(this.phaseState === 'combat' ? 1 : 0);
+    }
 
     const activeDuel = this.duels[this.activeIndex];
     const activeKey = activeDuel ? activeDuel.key : null;
@@ -488,7 +493,7 @@ export class CombatTabletop {
       this._lastActiveKey = activeKey;
       this.cameraState = 'auto_follow';
       this.focusSpring.setTarget(this.activeIndex);
-      if (this.duels.length && Math.abs(this.focusSpring.value - this.activeIndex) > this.duels.length) {
+      if (snapInitial || (this.duels.length && Math.abs(this.focusSpring.value - this.activeIndex) > this.duels.length)) {
         this.focusSpring.snap(this.activeIndex);
       }
     } else if (this.cameraState === 'auto_follow') {
@@ -498,9 +503,9 @@ export class CombatTabletop {
     }
 
     this._computeCardMetrics();
-    this._syncOriginTarget(false);
+    this._syncOriginTarget(snapInitial);
     this._rebuildDepthPool();
-    this._applyStateMachineTargets(false);
+    this._applyStateMachineTargets(snapInitial);
     this._layoutDepthFrame(true);
   }
 
@@ -745,7 +750,7 @@ export class CombatTabletop {
 
   _cardStatusBadge(duel, side, card, isActiveCard) {
     if (card.dissolved) return 'dissolved';
-    if (card.skipped) return 'skipped';
+    if (card.skipped || (card.state === 'negated' && !card.destroyed)) return 'skipped';
     if (duel.status === 'completed') return 'settled';
     if (duel.status === 'active' && !isActiveCard && card.used) return 'settled';
     return null;
@@ -965,6 +970,7 @@ export class CombatTabletop {
                 centered: true,
                 activeCard: isRearLiveExecuting,
                 activeDieNumber: isRearLiveExecuting ? (rcs?.die?.position ?? rcs?.die_number ?? null) : null,
+                activeStepIndex: isRearLiveExecuting ? (rcs?.die_number ?? rcs?.die?.step_index ?? null) : null,
                 concealActiveScore: Boolean(conceal.score),
                 concealActiveOutcome: Boolean(conceal.outcome),
                 rangeDeficit: (isRearLiveExecuting ? rcs?.range_deficit : 0) || rearCard.range_deficit || 0,
@@ -1316,6 +1322,7 @@ export class CombatTabletop {
           centered: true,
           activeCard: isLiveExecuting,
           activeDieNumber: isLiveExecuting ? (cs?.die?.position ?? cs?.die_number ?? null) : null,
+          activeStepIndex: isLiveExecuting ? (cs?.die_number ?? cs?.die?.step_index ?? null) : null,
           concealActiveScore: Boolean(conceal.score),
           concealActiveOutcome: Boolean(conceal.outcome),
           rangeDeficit: (isLiveExecuting ? cs?.range_deficit : 0) || frontCard.range_deficit || 0,

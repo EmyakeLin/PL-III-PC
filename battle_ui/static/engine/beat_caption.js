@@ -5,10 +5,10 @@
 
 import * as PIXI from '../vendor/pixi.min.mjs';
 
-const LIGHTCORE_FILL = 0x2698c8;
-const LIGHTCORE_TRAIL = 0xb9e9fb;
-const LIGHTCORE_TRACK = 0xe3edf2;
-const LIGHTCORE_BORDER = 0x7ab9d4;
+const LIGHTCORE_FILL = 0x1a8f9c;
+const LIGHTCORE_TRAIL = 0xbae8ee;
+const LIGHTCORE_TRACK = 0xe6f2f3;
+const LIGHTCORE_BORDER = 0x7ac2cc;
 
 export function createLightcoreBar({
   width = 100,
@@ -43,7 +43,7 @@ export function createLightcoreBar({
     fillG.clear();
     trackG.roundRect(0, 0, width, height, radius)
       .fill({ color: LIGHTCORE_TRACK, alpha: 0.94 })
-      .stroke({ width: 0.8, color: flashTime > 0 ? 0x8b46d4 : LIGHTCORE_BORDER, alpha: 0.9 });
+      .stroke({ width: 0.8, color: flashTime > 0 ? 0xb83862 : LIGHTCORE_BORDER, alpha: 0.9 });
 
     if (maxVal <= 0) return;
     const trailFrac = Math.max(0, Math.min(1, trailVal / maxVal));
@@ -53,7 +53,7 @@ export function createLightcoreBar({
         .fill({ color: LIGHTCORE_TRAIL, alpha: 0.95 });
     }
     if (fillFrac > 0) {
-      const col = flashTime > 0 ? 0x62c2ee : LIGHTCORE_FILL;
+      const col = flashTime > 0 ? 0x46b8c4 : LIGHTCORE_FILL;
       fillG.roundRect(0.5, 0.5, Math.max(2, (width - 1) * fillFrac), height - 1, Math.max(1, radius - 0.5))
         .fill({ color: col, alpha: 0.96 });
     }

@@ -1,0 +1,43 @@
+{
+  "color": "#c95a2b",
+  "dice_style": {
+    "body": "#d96c38",
+    "edge": "#8a3616"
+  },
+  "status_auras": {
+    "拔芯": { "color": "#d95724", "style": "pulse", "radius": 54, "period_ms": 1300 },
+    "剑芯过热": { "color": "#c93832", "style": "ring", "radius": 58, "period_ms": 1000 }
+  },
+  "defaults": {
+    "slash": "烈焰刀光挥斩与火星飞溅",
+    "blunt": "琥珀重锤震地冲击波与低沉轰鸣",
+    "on_heavy_hit": {
+      "threshold": 7,
+      "hitstop_ms": 75,
+      "vfx": [
+        { "primitive": "shockwave_ring", "to": "defender.center", "color": "#d95724", "count": 2 },
+        { "primitive": "sparks", "to": "defender.center", "color": "#e08e24", "count": 28, "heavy": true }
+      ],
+      "camera": { "shake": 9.0, "duration_ms": 240, "zoom_punch": 0.02 }
+    }
+  },
+  "skills": {
+    "寸火返": "烈焰双弧刀光与护盾招架火花",
+    "瞬拔·一线火": "赤红残影疾步与月弧飞刃突进",
+    "重城断岳": "烈焰重锤砸地与三圈冲击波伴随顿帧",
+    "飞城破阵·踏鞘归火": {
+      "on_skill_use": {
+        "vfx": [
+          { "primitive": "skill_banner", "text": "飞城破阵·踏鞘归火", "color": "#c95a2b" },
+          { "primitive": "shockwave_ring", "to": "attacker.center", "color": "#d95724", "count": 2 }
+        ],
+        "sfx": "bell"
+      },
+      "on_strike": {
+        "fx_prompt": "烈焰十字重斩与重锤砸地爆裂火星伴随顿帧",
+        "hitstop_ms": 90,
+        "camera": { "shake": 11.5, "duration_ms": 300, "zoom_punch": 0.028 }
+      }
+    }
+  }
+}

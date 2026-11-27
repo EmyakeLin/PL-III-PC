@@ -17,6 +17,36 @@ from loader import load_characters_from_packs
 
 
 class FxDslInterfaceTests(unittest.TestCase):
+    def test_void_cut_ring_is_served_for_both_effects(self):
+        import http.client
+        import threading
+        from xml.etree import ElementTree
+        from battle_mcp.transport import ArenaServer
+
+        pool = {spec["id"]: spec for spec in load_characters_from_packs()}
+        recipe = discover_character_fx(pool)["nova_lin_qiu"]["skills"]["空断"]
+        with ArenaServer(None, port=0) as server:
+            worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+            worker.start()
+            try:
+                for hook, anchor in (("on_form_change", "attacker.center"), ("on_strike", "defender.center")):
+                    with self.subTest(hook=hook):
+                        ring, = [atom for atom in recipe[hook]["vfx"] if atom["primitive"] == "sprite_vfx"]
+                        self.assertEqual(ring["to"], anchor)
+                        self.assertEqual(ring["url"], "/fx_assets/star_knot_ring.svg")
+                        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                        try:
+                            conn.request("GET", ring["url"])
+                            response = conn.getresponse()
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(response.getheader("Content-Type").split(";")[0], "image/svg+xml")
+                            self.assertEqual(ElementTree.fromstring(response.read()).tag, "{http://www.w3.org/2000/svg}svg")
+                        finally:
+                            conn.close()
+            finally:
+                server.shutdown()
+                worker.join()
+
     def test_natural_language_prompt_compiles_multi_hit_vfx_and_synth_audio(self):
         rec = compile_prompt_to_recipe("翠绿三连风刃回旋重斩，伴随金色散射粒子与清脆风鸣")
         self.assertIn("vfx", rec)
@@ -217,6 +247,46 @@ class FxDslInterfaceTests(unittest.TestCase):
         pool = {"fixture": {"status_rules": {"测试图标": {"icons_by_stack": mapping}}}}
         visuals = discover_status_visuals(pool)
         self.assertEqual(visuals["测试图标"]["icon_urls_by_stack"], {"7": visuals["凝聚"]["icon_url"]})
+
+    def test_extended_fx_hooks_primitives_hitstop_auras_and_fx_assets_security(self):
+        rec = validate_fx_recipe({
+            "hitstop_ms": 999,
+            "threshold": 7,
+            "vfx": [
+                {"primitive": "cross_slash", "count": 2, "color": "#238a9e"},
+                {"primitive": "sprite_vfx", "asset": "star_knot_ring.svg", "scale": 1.2, "spin": 3.0},
+                {"primitive": "sprite_vfx", "asset": "../secret.svg"},
+                {"primitive": "skill_banner", "text": "空断", "subtext": "林秋"},
+            ],
+            "camera": {"shake": 9.5, "zoom_punch": 0.9},
+            "sfx": {"url": "clang.ogg", "gain": 2.0},
+        })
+        self.assertEqual(rec["hitstop_ms"], 140)
+        self.assertEqual(rec["threshold"], 7)
+        self.assertEqual(rec["camera"]["zoom_punch"], 0.045)
+        self.assertEqual(rec["sfx"], {"url": "/sfx/clang.ogg", "gain": 0.6})
+        prims = [a["primitive"] for a in rec["vfx"]]
+        self.assertEqual(prims, ["cross_slash", "sprite_vfx", "skill_banner"])
+        sprite_atom = rec["vfx"][1]
+        self.assertEqual(sprite_atom["url"], "/fx_assets/star_knot_ring.svg")
+
+        # Static asset serving resolves `/fx_assets/star_knot_ring.svg` and blocks traversal
+        fx_asset = _resolve_static("/fx_assets/star_knot_ring.svg")
+        self.assertIsNotNone(fx_asset)
+        self.assertEqual(fx_asset[1], "image/svg+xml")
+        self.assertIsNone(_resolve_static("/fx_assets/../lan_qing.json"))
+        self.assertIsNone(_resolve_static("/sfx/../lan_qing.json"))
+
+        # Verify authored character FX packs normalize with status_auras, dice_style, and lifecycle hooks
+        pool = {c["id"]: c for c in load_characters_from_packs() if "emyake" not in c["id"]}
+        fx_map = discover_character_fx(pool)
+        for cid in ("lan_qing", "nova_lin_qiu", "liu_yin", "cang_feng_he_lian"):
+            with self.subTest(character=cid):
+                self.assertIn(cid, fx_map)
+                self.assertIn("status_auras", fx_map[cid])
+                self.assertIn("skills", fx_map[cid])
+        self.assertIn("on_form_change", fx_map["nova_lin_qiu"]["skills"]["空断"])
+        self.assertEqual(fx_map["cang_feng_he_lian"]["defaults"]["on_heavy_hit"]["threshold"], 7)
 
 
 if __name__ == "__main__":

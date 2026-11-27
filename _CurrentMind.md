@@ -1,5 +1,53 @@
 # 当前设计与工作记录
 
+## 合入战斗演出与新版林羽（2026-11-27）
+
+合并演出分支的 `ee99748`。林羽沿该分支的新版牌面加载，`master` 的话语权裁决继续决定实际生效的射程。战报的骰面读取同一次裁决的结果，并保留演出分支的实时点数与骰面。
+
+角色、战报与射程相关的 59 项测试和前端 36 项测试通过。新增投影专测中，同一枚写有无视两级射程的骰子面对相同对手时，较低话语权显示 0，常规话语权显示 2。
+
+## 林秋「空断」的星环（2026-11-27）
+
+房间服务提供星环的 SVG 图片。「空断」变换形态时在使用者身上显示星环，出击时在目标身上显示。专测从两个效果的实际配置取得图片地址，分别核对位置、HTTP 200、图片类型和 SVG 内容。独立副本通过 309 项测试。用编译后的「空断」效果调用前端播放入口，两次绘制分别收到使用者和受击者的坐标。
+
+## 战报的伤害归属和暗牌记录（2026-11-27）
+
+战报按实际伤害来源统计。己方受到自己造成的伤害时，伤害计入己方。开牌时公开留在场上的牌；开牌前被换回手里的暗牌，对手和观战者在对局结束前看不到牌名。导出的战报按当前席位显示。
+
+独立副本通过 299 项战报与词条测试，3 个战报界面模块通过 JavaScript 语法检查。
+
+## 房间开局、热座交接和联机操作（2026-11-27）
+
+本地提交 `e5ae9ea`。房间先验证阵容并建立对局，再登记开战。挑战的固定首领保留指定阵容，玩家编队遵守房间上限。赛前声明保留到开战。公开选人按当前阵容给出牌面，双盲选人时每方只读到己方已选角色。预约换牌记住所选场上牌的实例，即使两张牌同名也能区分。
+
+在临时 Chrome 和本机游戏服务中，从主菜单选安诺琳对纪岚。双方结束置卡后点击“场内行动”，画面要求玩家二接手。交接前双方手牌数据均为 0 张，接手后分别为 0 张和 3 张。另一局从挑战菜单把战力上限设为 3，把个人费加至 10 后再点一次加号，数值保持 10。安诺琳对固定首领结构化载体进入第一回合。
+
+真实 WebSocket 测试在房间生成首帧后换人，客户端在下一帧收到这次变化。两个 MCP 席位经 HTTP 完成准备，轮到抽牌的一方收到私有候选并成功置底，重发相同请求只结算一次。前端专测核对了换牌目标、服务器拒绝、断线、超时和成功回执。旧局的认输请求到达新局会被拒绝。
+
+当前工作区的 363 项 Python 专测和 30 项前端测试通过，包含 294 项词条专测。战报自伤归属在现有未跟踪的战报实现及其测试中修正，分别核对了直接伤害和真实伤害的同侧、异侧来源。暗牌撤回后的保密和星环资源 HTTP 200 已由工作区现有集成测试验证。
+
+单独导出房间修复提交后，330 项 Python 测试通过。该副本的前端测试有两项沿用旧的战桌测试对象，缺少 `tabletop`。在修复前的原始提交 `222ea16` 上也复现了相同的两项失败。另行运行的旧 `tests.test_canvas_room` 四项均在加载归档角色 `ember_wen_sheng` 时退出。
+
+## 全链路真实缺陷排查、战报视角与大厅/战桌交互修复（2026-11-27）
+
+1. **网络路由、静默 404 与未公开信息隔离修复**：
+   - `battle_mcp/transport.py`：`do_GET` 静态资源前缀补齐 `"/fx_assets/"` 与 `"/sfx/"`，解决 `/fx_assets/star_knot_ring.svg` 等资源 404；WS `battle_record` 与 HTTP `GET /api/battle_record` 透传 `viewer_side` 与 `hotseat` 视角。
+   - `battle_mcp/room.py`：新增只读 `_hotseat_record_side_locked()` 与视角投影版 `battle_record(viewer_side=None, *, hotseat=False)`；`battle_ui/static/engine/transport.js` 的 `fetchBattleRecord()` 移除强制 `publicView: true`，按席位凭据拉取对应视角战报。
+   - `battle_mcp/hosting.py`：`Lobby.lineup()` 补充下发 `character_colors`、`character_fx`、`fx_scripts`、`status_visuals`，供 `/lobby/` 选人预览特效使用。
+2. **内核统计、投掷算式与战报记录一致性修复**：
+   - `displayer.py`：`_effective_card_die_view` 创建预览 `Dice` 时从 `card.player.game` 读取 `game`；角色快照新增 `initial_max_lightcore_hp`，避免 `hp_scale_pct != 100` 时首回合误判露出光点生命栏。
+   - `context/context.py` 与 `pipeline/pipeline.py`：`skill_payment` 在多形态技能上附带 `active_form`；`_die_roll_detail` 计算并记录 `final_effect_bonus`（`die.final_score - die.calculate_final_score()`），确保自定义公式与乘区下左右算式严格守恒。
+   - `models/special_actions.py` 与 `battle_ui/match.py`：`special_placement`、`special_rear_placement`、`hidden_card_replaced` 补齐角色/技能/位置元数据；`_place_action` 回填真实 `duel_number` 与 `instance_id`；`cards_revealed` 之前被调换回手的原扣置技能通过 `_mark_hidden_withdrawn` 与 `reveal_text`/`reveal_entities` 双层遮罩持续对对手保密（开牌后仅暴露换上场的新牌，完局才全量解锁）。
+   - `battle_ui/chronicle.py`：修正 `format_die_formula` 自定义 `formula` 判重顺序与 `final_effect_bonus` 展示；修复 `to_markdown` 交锋标题末尾多余 `$` 与 `turn_ended` 回合回收字典直出；用 `_pending_damage_settled` 与事件边界冲刷替代全局布尔去重，修复 `AFTER APPLY_DAMAGE` 触发时直接伤害漏记与护盾抵消丢失问题；统一句柄化直接 `Character` 状态/生命/护盾变更（去重 Opcode 重复记账）及 `attack_declared(duel_index=None)`、后置失效、接牌、翻正、锁定、次数能力等漏记事件。
+3. **大厅与战桌 WebGL / Pixi 实机交互与渲染修复**：
+   - `battle_ui/static/lobby.html` & `battle_ui/static/engine/lobby.js`：补齐 `/lobby/` `#three-canvas`，改为使用 `ThreeWorld.update(...)`（修正原 `three.tick` 不存在导致的三维特效不渲染），绑定 `showSkillBanner` 浮层并支持显式屏幕尺寸重排，修正 `wheel` 监听改用全局指针追踪与屏幕坐标换算，解决右侧英雄详情栏滚轮误滚左侧图鉴问题。
+   - `battle_ui/static/engine/fx_director.js`：`deferFx` 默认及实例封装改为 `(fn, ms) => setTimeout(fn, ms)`，消除浏览器中 `this.deferFx(...)` 直接绑定 `setTimeout` 引发的 `TypeError: Illegal invocation`。
+   - `battle_ui/static/engine/table_overlays.js` & `game_director.js` & `three_world.js` & `presentation_fx.js`：扩展 `slotHost.hitArea` 涵盖技能卡下方 `预览特效` 按钮；修复侧边检查器行点击关闭与按钮/骰区重叠、标题与编入按钮碰撞、剪裁外战报胶囊误悬停及 `topBar` 与速度横幅碰撞；调整 `sidePanelsLayer` 到手牌与按钮层上方；弹窗打开时屏蔽背景槽位悬停浮标并在预览时启用透明背景 `setOverlayPreviewMode(true)`（`zIndex: '4'`）与 `fxTextLayer` 置顶；骰子对撞补充 `resolveDiceStyle` 专属外观与状态光环 `"pulse"` 驱动。
+4. **验证范围（全部在末次修改后通过）**：
+   - Python：`python -m unittest tests.test_end_to_end_audit tests.test_battle_chronicle tests.test_canvas_battle_engine tests.test_fx_dsl tests.test_displayer tests.test_private_table_and_ws tests.test_room_pacing_and_dice_presentation tests.test_sp_characters tests.test_liu_yin tests.test_carrier_challenge tests.entry_semantics` —— `442` 项全部通过（`OK`；另 `test_canvas_room` / `test_mcp_transport` / `test_match` / `test_special_actions` 中原本指向已退场测试角色的旧用例未在本次改动范围，维持原状）。
+   - 前端：`node --check` 全部改动 `.js` 通过；`node --import ./tests/frontend/register.mjs --test tests/frontend/test_game_stage.mjs tests/frontend/test_data_driven_display.mjs tests/frontend/test_sequencer_and_choreography.mjs tests/frontend/test_director_stage.mjs` —— `28/28` 通过。
+   - 真实浏览器（Chromium WebGL，端口 `8771`）：大厅选人滚轮、贺敛标题与技能 `预览特效` 三维斩击/粒子与横幅、林秋/澜清进入战斗、速度横幅与面板分层、林秋 `空断` `预览特效`（`/fx_assets/star_knot_ring.svg` HTTP 200）、第一回合置牌与回合末战报全文弹窗全部实测通过，控制台 `0` 报错，网络请求 `0` 失败。
+
 ## 私人牌桌、房主全权房间规则与原生 WebSocket 实时架构重构（2026-11-27）
 
 - **已确认语义与私人牌桌规则体系**：
@@ -32,6 +80,32 @@
   - 新增后端与联机集成专测 [test_inturn_and_choreography.py](tests/test_inturn_and_choreography.py)（5 项，覆盖因果事件序、人机常驻手牌切入接第 3 骰、联机零暂停同窗直出、联机 `prepare` 跨轮零泄密预约及 `20s` 思考时间银行连招保持与超时恢复）。
   - 新增前端确定性专测 [test_sequencer_and_choreography.mjs](tests/frontend/test_sequencer_and_choreography.mjs)（5 项，覆盖 `normalizeBeatEvents` 前置事件保序、状态机快速退场与换卡退骰、`impactMs` 风压受击分离、`roomTableState` 内联投影与中文标注印章）。
   - `python -m unittest tests.entry_semantics tests.test_displayer tests.test_inturn_and_choreography tests.test_room_pacing_and_dice_presentation tests.test_mode_lobby tests.test_cang_feng tests.test_lan_qing tests.test_liu_yin tests.test_heris tests.test_carrier_challenge` **454/454 通过**；前端专测套件 **21/21 通过**。
+
+## 林羽（Emyake）卡包重做补强、平衡性定稿、旧版归档与裂伤可视化（2026-11-26）
+
+- **已确认文义与归档**：
+  - 原版卡包完整归档至 [emyake_lin_yu_legacy.json](_packs_legacy/emyake_lin_yu_legacy.json)；全部改动严格限定于 [emyake_lin_yu.json](_packs/emyake_lin_yu.json)、新增状态图标与专测文件（零内核 Python 代码改动）。
+  - **`裂伤` 与 `羽流·延攻` 存储曲线重调**：
+    - `裂伤`（上限 25）：受到骰子造成的伤害时，裂伤存伤改为增加 `X/5（向下取整）*10%` 的伤害量（`20~24` 层均为 `+40%`，无需卡死 `24` 层即可吃满基础档位）。
+    - `羽流·延攻`（最大 3）：存储裂伤伤害时，存储数额增加改为 `X*50%`（3 层延攻即 `250% × 40% = 100%` 等效翻倍）。
+  - **重做并平衡 `刻刃风暴`（4 费，`range_level: 3` 极限远程，非不可摧毁）**：
+    - 技能词条：`本技能骰子等级不受外部效果影响`；`【使用时】消耗3铭刻以使本技能骰子等级提升1、最终点数+2`（遵循 `铭刻视界`：`3~12` 铭刻弹出可选 `CHOOSE_OPTION`，`>12` 自动触发，`<3` 静默跳过）。
+    - 第一骰 `斩击 1~6×3`：无直伤；【命中时】锁定**下一交锋**的敌方槽位，使该槽位中敌方所有骰子最终点数 `÷4`（向下取整）。
+    - 第二骰 `斩击 1~6×3`：【命中时】若本技能消耗了铭刻，造成群体 `2` 超穿甲伤害；锁定**本交锋后第二交锋**的敌方槽位，使该槽位中当前及后续置入的所有敌方技能无效化（`NEGATE_SKILL`），且仅当以此实际使敌方技能无效化时获得 `1` 层 `羽流·终`（单次结算至多触发 `1` 次，中盘润滑折影铭刻回转）。
+    - 第三骰 `斩击 1~12×2`：群体 `1` 超穿甲；【命中时】若本技能消耗了铭刻，群体使下次裂伤爆发伤害 `+20%`（可叠加无上限，向上取整前乘算，爆发后一次性清空）。
+  - **低费裂伤联动与平衡定稿**：
+    - `铭刻闪动`（1 费远程，双斩击骰不变）：技能词条 `目标每持有8层裂伤，本技能骰子最终点数+1（至多+3）`；第二骰 `若目标裂伤不低于16，额外抽1卡`。
+    - `刻刃护卫`（1 费）：前两颗斩击骰 `施加1裂伤；若目标裂伤不低于8，获得1护盾`（先叠层后判阈值）；第三颗远程斩击骰 `0穿甲；远程骰子；消耗1铭刻以使伤害+1；目标每持有12层裂伤，伤害+1（至多+2）`。
+  - **`裂伤` 存伤展示与状态图标**：
+    - 新增日光高对比配色与自定义 SVG 图标 [裂伤.svg](_packs/status_icons/裂伤.svg)、[裂伤拘束.svg](_packs/status_icons/裂伤拘束.svg)，为林羽专属状态补齐显式 `color` / `polarity` / `icon_path`。
+    - `status_rules["裂伤"]["display_fields"]` 投影 `已存储伤害`、`下次爆发增幅(%)`（未增幅为 `null` 时自动隐藏）与 `预计爆发伤害`。
+- **纯词条执行路径**：
+  - 外部骰级免疫由三段最高话语权隐藏词条协同实现：`BEFORE SKILL_LEVEL_ADD` 与 `BEFORE DIE_LEVEL_ADD` 拦截非自身 `刻刃风暴内部改级` 窗口的等级增减，`BEFORE RESOLVE_DIE_LEVEL` 将 `value_ref` 上下界同时锚定为 `printed_level + (1 if 刻刃风暴强化 else 0)`；D2 条件伤害与 D3 条件增幅统一读取 `$event.card.use_state.刻刃风暴强化`。
+  - 槽位锁定通过 `1 DUEL_OFFSET`（预约 `before_dice_use` 校验 `$event.observed.side` 写入 `刻刃除四次数`）与 `2 DUEL_OFFSET`（即时清扫 `SLOT_AT_OFFSET` 现存敌方牌 + 预约 `before_skill_start` 校验 `$event.observed.side` 拦截后续入槽敌方牌，并以单次 `风暴锁序号` 去重发放 `羽流·终`）实现。
+  - 裂伤存伤按 `damage * (裂伤 // 5) * (10 + 5 * 延攻)`（百分位整数）记录并通过 `DIVIDE` 维护 `裂伤显示存伤`，爆发时按 `(裂伤存伤 * (10 + 裂伤爆发增幅) + 999) // 1000` 在向上取整前乘算并重置增幅与存伤。
+- **验证结果**：
+  - [林羽词条专测](tests/test_emyake.py) 覆盖 `4/8/10/20/24` 裂伤五层档距与 `3` 层延攻等效翻倍、未强化/强化 `刻刃风暴` 的直伤（`1` vs `3`）与爆发增幅（`0%` vs `20%`）正反对照、外部改级免疫、双槽锁定与中途补牌无效化、`铭刻闪动`/`刻刃护卫` 新阈值及 `Displayer` 面板/图标投影。
+  - `python -m unittest tests.entry_semantics tests.test_displayer` **297/297 通过**。
 
 ## 主动能力弹窗可取消与未提交不扣次数修复（2026-11-24）
 

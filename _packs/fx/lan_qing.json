@@ -1,0 +1,47 @@
+{
+  "color": "#2a96b8",
+  "dice_style": {
+    "body": "#48a8c8",
+    "edge": "#1d6078"
+  },
+  "status_auras": {
+    "电流": { "color": "#2a96b8", "style": "ring", "radius": 52, "period_ms": 1400 },
+    "全开": { "color": "#d99b26", "style": "pulse", "radius": 58, "period_ms": 1100 }
+  },
+  "defaults": {
+    "slash": "冰蓝疾速刀光挥斩与清脆电流声",
+    "pierce": "冰蓝双道电弧突刺与金属蜂鸣",
+    "on_crit": "冰蓝散射粒子与高频共鸣",
+    "on_destroy_die": "冰蓝碎片与波纹扩散"
+  },
+  "skills": {
+    "起势·蓝电缠身": "冰蓝电弧链式跃动与扩散波纹",
+    "电叉·回环舞": {
+      "on_form_change": {
+        "vfx": [
+          { "primitive": "skill_banner", "text": "电叉·回环舞", "color": "#2a96b8" },
+          { "primitive": "vortex_ring", "to": "attacker.center", "color": "#2a96b8", "radius": 58 }
+        ],
+        "sfx": "wind"
+      },
+      "on_strike": "冰蓝双弧回旋斩击与链式电弧"
+    },
+    "电叉·极锐刺": "冰蓝三连突刺破空与链式电弧",
+    "深秋·风卷残叶": "琥珀与冰蓝交叉十字斩击伴随旋流波纹",
+    "残雪·幽蓝流光": "冰蓝残影疾步与月弧飞刃连斩",
+    "终雪": {
+      "on_skill_use": {
+        "vfx": [
+          { "primitive": "skill_banner", "text": "终雪", "color": "#2a96b8" },
+          { "primitive": "shockwave_ring", "to": "attacker.center", "color": "#2a96b8", "count": 2 }
+        ],
+        "sfx": "bell"
+      },
+      "on_strike": {
+        "fx_prompt": "冰蓝十字重斩与三道月弧剑气伴随顿帧",
+        "hitstop_ms": 85,
+        "camera": { "shake": 10.5, "duration_ms": 280, "zoom_punch": 0.026 }
+      }
+    }
+  }
+}

@@ -402,3 +402,251 @@ test('buildRosterOverlay renders blind-pick masking, power caps, and room rules 
   assert.ok(menuTexts.includes('确认认输结算'));
   assert.equal(conceded, false);
 });
+
+test('TimelineSequencer freezes pre-hit shields, statuses, and alive state until combat_strike contact frame', () => {
+  const scheduled = [];
+  const releasedCalls = [];
+  const seq = new TimelineSequencer({
+    schedule: (fn, ms) => {
+      const item = { fn, ms, cancelled: false };
+      scheduled.push(item);
+      return item;
+    },
+    cancel: (item) => { item.cancelled = true; },
+    retireStaleDice: () => {},
+    retireSideDice: () => {},
+    clearClashGroups: () => {},
+    playDiceRoll: (_ev, { onNumbersRevealed }) => onNumbersRevealed?.(),
+    playDiceClash: (_ev, { onNumbersRevealed, onOutcomeImpact }) => {
+      onNumbersRevealed?.();
+      onOutcomeImpact?.();
+    },
+    playFx: (ev) => (ev.kind === 'combat_strike' ? { impactMs: 120, durationMs: 260 } : null),
+    releaseDeferredVitals: (opts) => releasedCalls.push(opts),
+  });
+
+  const prevState = {
+    started: true,
+    match_number: 1,
+    fx_events: [],
+    frame: {
+      players: [
+        { side: 1, characters: [{ id: 'atk', hp: 20, max_hp: 20, alive: true, shields: {}, statuses: {} }] },
+        { side: 2, characters: [{ id: 'def', hp: 6, max_hp: 20, alive: true, shields: { normal: 4 }, statuses: { 烧伤: 1 }, status_details: {}, bleed_burst: false }] },
+      ],
+    },
+  };
+  const nextState = {
+    started: true,
+    match_number: 1,
+    fx_events: [
+      { seq: 1, kind: 'combat_strike', attacker_id: 'atk', attacker_side: 1, target_id: 'def', target_side: 2, die_type: 'slash' },
+      { seq: 2, kind: 'damage', target_id: 'def', target_side: 2, hp_lost: 6, cause: 'attack' },
+      { seq: 3, kind: 'status_change', character_id: 'def', side: 2, status: '烧伤', delta: 2 },
+      { seq: 4, kind: 'character_death', character_id: 'def', side: 2, name: '守方' },
+    ],
+    frame: {
+      players: [
+        { side: 1, characters: [{ id: 'atk', hp: 20, max_hp: 20, alive: true, shields: {}, statuses: {} }] },
+        { side: 2, characters: [{ id: 'def', hp: 0, max_hp: 20, alive: false, shields: { normal: 0 }, statuses: { 烧伤: 3 }, status_details: {}, bleed_burst: false }] },
+      ],
+    },
+  };
+
+  const plan = seq.prepareBeat({ prevState, nextState, characterKeyFn: (id, s) => `${s}:${id}` });
+  // Before contact frame: pre-hit alive/shields/statuses are frozen in deferredActorStateOverrides!
+  const frozen = seq.deferredActorStateOverrides.get('2:def');
+  assert.ok(frozen, 'Expected pre-hit actor state to be frozen before strike contact');
+  assert.equal(frozen.alive, true);
+  assert.equal(frozen.shields.normal, 4);
+  assert.equal(frozen.statuses['烧伤'], 1);
+
+  seq.playBeat(plan);
+  assert.equal(seq.deferredActorStateOverrides.has('2:def'), true, 'Still frozen during windup before impactMs');
+  const impactTimer = scheduled.find((s) => !s.cancelled && s.ms === 120);
+  assert.ok(impactTimer, 'Expected impact timer at 120ms');
+  impactTimer.fn();
+  assert.equal(seq.deferredActorStateOverrides.size, 0, 'Deferred actor state cleared at contact frame');
+  assert.ok(releasedCalls.some((c) => c?.rebuildActors === true), 'Expected rebuildActors: true on vitals release');
+});
+
+test('FxDirector dispatches extended hooks, hitstop, zoom_punch, auras, and in-dossier preview', () => {
+  const calls = { cross: 0, sprite: 0, hitstop: [], zoom: [], banner: [] };
+  const fxd = new FxDirector({
+    three: {
+      spawnCrossSlash: () => { calls.cross += 1; },
+      spawnSpriteVfx: () => { calls.sprite += 1; },
+      emitShockwave: () => {},
+      spawnImpactBurst: () => {},
+    },
+    physics: {},
+    audio: { playSynthRecipe: () => true },
+    getActorNode: () => null,
+    getActorPos: () => ({ x: 120, y: 200 }),
+    getMotion: () => ({ lunge: 0, recoil: 0, evade: 0, hitFlash: 0, healGlow: 0, passiveFlare: 0 }),
+    deferFx: (fn) => fn(),
+    getClashCenter: () => ({ x: 300, y: 200 }),
+    triggerShake: () => {},
+    triggerHitstop: (ms) => calls.hitstop.push(ms),
+    triggerZoomPunch: (z) => calls.zoom.push(z),
+    showSkillBanner: (spec) => calls.banner.push(spec),
+    spawnFloater: () => {},
+    showBanner: () => {},
+  });
+
+  fxd.sync({
+    nova_lin_qiu: {
+      status_auras: { 隧道: { color: '#238a9e', style: 'ring', radius: 54 } },
+      defaults: {
+        on_heavy_hit: { threshold: 7, hitstop_ms: 80, camera: { zoom_punch: 0.025 } },
+      },
+      skills: {
+        空断: {
+          on_skill_use: { vfx: [{ primitive: 'skill_banner', text: '空断', color: '#238a9e' }] },
+          on_strike: {
+            hitstop_ms: 75,
+            camera: { zoom_punch: 0.02 },
+            vfx: [
+              { primitive: 'cross_slash', count: 1, color: '#238a9e' },
+              { primitive: 'sprite_vfx', url: '/fx_assets/star_knot_ring.svg', color: '#238a9e', count: 1 },
+            ],
+          },
+        },
+      },
+    },
+  }, {});
+
+  assert.equal(fxd.resolveStatusAuras('nova_lin_qiu', { 隧道: 1, 强壮: 2 }).length, 1);
+  assert.equal(fxd.resolveHeavyHitRecipe({ characterId: 'nova_lin_qiu', amount: 6 }), null);
+  assert.ok(fxd.resolveHeavyHitRecipe({ characterId: 'nova_lin_qiu', amount: 8 }));
+  assert.equal(fxd.hasPreviewableFx('nova_lin_qiu', { cardName: '空断' }), true);
+
+  const previewed = fxd.previewCharacterFx('nova_lin_qiu', {
+    side: 1,
+    cardName: '空断',
+    charName: '林秋',
+    originPt: { x: 100, y: 180 },
+    targetPt: { x: 320, y: 180 },
+  });
+  assert.equal(previewed, true);
+  assert.equal(calls.cross, 1);
+  assert.equal(calls.sprite, 1);
+  assert.deepEqual(calls.hitstop, [75]);
+  assert.deepEqual(calls.zoom, [0.02]);
+  assert.equal(calls.banner[0]?.title, '空断');
+});
+
+test('Chronicle view and card print render exact formulas, entity hover pills, and distinct skipped vs destroyed stamps with restrained terms', async () => {
+  const PIXI = await import('../../battle_ui/static/vendor/pixi.min.mjs');
+  const { formatChronicleMarkdown, renderChronicleSection } = await import(new URL('chronicle_view.js', ENGINE));
+  const { buildFullCard } = await import(new URL('card_print.js', ENGINE));
+  const { makeSealButton } = await import(new URL('design_system.js', ENGINE));
+
+  function collectTexts(node, out = []) {
+    if (!node) return out;
+    if (typeof node.text === 'string' && node.text.trim()) out.push(node.text.trim());
+    for (const ch of node.children || []) collectTexts(ch, out);
+    return out;
+  }
+
+  const sampleChronicle = {
+    unlocked_all: true,
+    total_events: 2,
+    turns: [{
+      turn: 1,
+      first_side: 1,
+      first_player: '甲席',
+      stats: { damage_by_side: { '1': 7, '2': 0 }, deaths: [], collapses: ['澜清'] },
+      blocks: [{
+        id: 'T1:regular:1:1',
+        kind: 'duel',
+        phase: 'combat',
+        title: '常规交锋 1',
+        duel_kind: 'regular',
+        duel_number: 1,
+        matchup: {
+          '1': { character_id: 'nova_lin_qiu', character_name: '林秋', card_id: 'lin_qiu_void_cut', card_name: '空断' },
+          '2': { character_id: 'lan_qing', character_name: '澜清', card_id: 'lan_open', card_name: '起势·蓝电缠身' },
+        },
+        summary: { rounds: 1, hp_delta: { '1': 0, '2': -7 }, highlights: ['澜清光点形态群崩塌'] },
+        rounds: [{
+          round: 1,
+          kind: 'clash',
+          label: '第 1 轮',
+          rolls: [{
+            side: 1, lane: 'front', character_id: 'nova_lin_qiu', character_name: '林秋',
+            card_id: 'lin_qiu_void_cut', card_name: '空断', position: 1, is_repeat: false,
+            die_type: 'slash', die_label: '斩击', range_label: '1~8（原1~6）',
+            formula_text: '(基础2 + 掷5) = 最终7', rolled_value: 5, final_score: 7, clash_score: 7, result: 'win',
+          }],
+          items: [{
+            seq: 1,
+            category: 'damage',
+            side: 1,
+            text: '林秋 对 澜清 造成 7 点普通伤害（实扣 7 生命）。',
+            formula: '攻方7 → 入盾前7（普通伤害） → 实扣生命 7（剩余 23/30）',
+            entities: [
+              { kind: 'card', id: 'lin_qiu_void_cut', name: '空断', side: 1, character_id: 'nova_lin_qiu' },
+              { kind: 'status', id: '隧道', name: '隧道', side: null },
+            ],
+          }],
+        }],
+      }],
+    }],
+  };
+
+  const md = formatChronicleMarkdown(sampleChronicle, { winnerSide: 1, turn: 1 });
+  assert.ok(md.includes('# 《光点计划 III》对局战报'));
+  assert.ok(md.includes('算式：攻方7 → 入盾前7'));
+  assert.ok(!md.includes('光核') && !md.includes('崩解') && !md.includes('结构战报'));
+
+  const toolbar = new PIXI.Container();
+  const body = new PIXI.Container();
+  const sec = renderChronicleSection({
+    toolbarHost: toolbar,
+    toolbarX: 0,
+    toolbarY: 0,
+    toolbarW: 860,
+    chronicle: sampleChronicle,
+    catalog: {
+      players: [{ side: 1, characters: [{ id: 'nova_lin_qiu', name: '林秋', skills: [{ id: 'lin_qiu_void_cut', name: '空断', cost: 2, dice: [] }] }] }],
+      statuses: { 隧道: ['隧道规则'] },
+    },
+    makeSealButton,
+    onHoverCard: () => {},
+    onHoverStatus: () => {},
+  });
+  sec.buildBody(body, 820);
+  const bodyTexts = collectTexts(body).join(' | ');
+  assert.ok(bodyTexts.includes('1~8（原1~6）'), `Expected boosted die range in chronicle: ${bodyTexts}`);
+  assert.ok(bodyTexts.includes('卡牌 · 空断'), `Expected interactive card chip: ${bodyTexts}`);
+  assert.ok(bodyTexts.includes('状态 · 隧道'), `Expected interactive status chip: ${bodyTexts}`);
+  assert.ok(bodyTexts.includes('澜清光点形态群崩塌'), `Expected canonical collapse text: ${bodyTexts}`);
+
+  // Verify skipped vs destroyed card stamp distinction + form_when trait rendering
+  const skippedCard = buildFullCard({
+    id: 'c_skip',
+    name: '电叉·回环舞',
+    cost: 2,
+    skipped: true,
+    destroyed: false,
+    form_when: { status: '电叉·回环舞·活化', form: 'active' },
+    forms: [{ form_key: 'active', name: '电叉·回环舞·活化态' }],
+    dice: [{ type: 'slash', printed_level: 2, level: 3, roll_max: 8 }],
+  }, { side: 1 });
+  const skipTexts = collectTexts(skippedCard).join(' | ');
+  assert.ok(skipTexts.includes('已跳过') && !skipTexts.includes('已摧毁'), `Skipped card must not say 已摧毁: ${skipTexts}`);
+  assert.ok(skipTexts.includes('持有电叉·回环舞·活化时使用「电叉·回环舞·活化态」形态'), `Expected form_when badge: ${skipTexts}`);
+  assert.ok(skipTexts.includes('1~8'), `Expected boosted runtime roll_max 1~8: ${skipTexts}`);
+
+  const destroyedCard = buildFullCard({
+    id: 'c_dest',
+    name: '碎裂技能',
+    cost: 2,
+    skipped: true,
+    destroyed: true,
+    dice: [{ type: 'slash', level: 2, roll_max: 6 }],
+  }, { side: 2 });
+  const destTexts = collectTexts(destroyedCard).join(' | ');
+  assert.ok(destTexts.includes('已摧毁'), `Destroyed card must show 已摧毁: ${destTexts}`);
+});
