@@ -288,6 +288,46 @@ class FxDslInterfaceTests(unittest.TestCase):
         self.assertIn("on_form_change", fx_map["nova_lin_qiu"]["skills"]["空断"])
         self.assertEqual(fx_map["cang_feng_he_lian"]["defaults"]["on_heavy_hit"]["threshold"], 7)
 
+    def test_emyake_lin_yu_sprite_palette_and_eleven_status_icons(self):
+        from xml.etree import ElementTree
+
+        state = BattleMatch(seed=37).table_assets()
+        self.assertEqual(state["character_colors"]["emyake_lin_yu"], "#2563eb")
+        sprite, mime = _resolve_static(state["character_sprites"]["emyake_lin_yu"])
+        self.assertEqual((sprite.name, mime), ("emyake_lin_yu.svg", "image/svg+xml"))
+        root = ElementTree.parse(sprite).getroot()
+        self.assertEqual((root.get("viewBox"), root.get("data-foot")), ("0 0 160 160", "80,136"))
+        self.assertEqual(
+            [g.get("id") for g in root.findall("{*}g") if (g.get("id") or "").startswith("bone_")],
+            ["bone_back_hair", "bone_cape_back", "bone_torso", "bone_head", "bone_weapon"],
+        )
+
+        visuals = state["status_visuals"]
+        exclusive = ("羽流·势", "羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终", "铭刻", "折影化铭刻", "折影")
+        generic = ("裂伤", "裂伤拘束", "破甲")
+        for name in (*exclusive, *generic):
+            with self.subTest(status=name):
+                self.assertIn(name, visuals)
+                self.assertIn("color", visuals[name])
+                icon, mime = _resolve_static(visuals[name]["icon_url"])
+                self.assertEqual((icon.name, mime), (f"{name}.svg", "image/svg+xml"))
+                self.assertEqual(ElementTree.parse(icon).getroot().get("viewBox"), "0 0 32 32")
+
+        self.assertEqual(visuals["羽流·势"]["color"], "#ec2892")
+        for stance in ("羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终"):
+            self.assertEqual(visuals[stance]["color"], "#2563eb")
+
+        empty_pool_visuals = discover_status_visuals({})
+        lin_yu_palette = ("#38bdf8", "#2563eb", "#1d4ed8", "#7c3aed", "#ec2892")
+        for name in generic:
+            with self.subTest(generic_status=name):
+                self.assertIn(name, empty_pool_visuals)
+                self.assertIn("color", empty_pool_visuals[name])
+                icon, _ = _resolve_static(empty_pool_visuals[name]["icon_url"])
+                svg_text = icon.read_text(encoding="utf-8").lower()
+                for forbidden in lin_yu_palette:
+                    self.assertNotIn(forbidden, svg_text)
+
 
 if __name__ == "__main__":
     unittest.main()

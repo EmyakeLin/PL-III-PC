@@ -91,6 +91,9 @@ const HANDCRAFTED_PALETTES = {
   shipbreaker_shen_li: {
     primary: 0x2f7578, secondary: 0xc9682e, highlight: 0xeaf3f2, metal: 0x6b645c, trim: 0x3b322a, motif: 'shen_li',
   },
+  emyake_lin_yu: {
+    primary: 0x2563eb, secondary: 0x38bdf8, highlight: 0xedf7ff, metal: 0x7c3aed, trim: 0x152242, motif: 'lin_yu',
+  },
 };
 
 const HANDCRAFTED_MOTIFS = new Set(Object.values(HANDCRAFTED_PALETTES).map((p) => p.motif));

@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" data-foot="80,136">
+  <title>林羽 · Emyake</title>
+  <defs>
+    <!-- 内层长发：纯净天蓝与深蓝为主导，向发梢平滑融入棱紫与品红 -->
+    <linearGradient id="ly_hair_prism" x1="0.82" y1="0.08" x2="0.08" y2="0.96">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="48%" stop-color="#1D5CE6"/>
+      <stop offset="80%" stop-color="#6B32E8"/>
+      <stop offset="100%" stop-color="#E02892"/>
+    </linearGradient>
+    <!-- 高腰长裙：夜墨深蓝 -> 深邃钴蓝 -> 裙底微融棱紫与品红暗韵 -->
+    <linearGradient id="ly_skirt" x1="0.25" y1="0" x2="0.78" y2="1">
+      <stop offset="0%" stop-color="#152242"/>
+      <stop offset="52%" stop-color="#1B44B5"/>
+      <stop offset="84%" stop-color="#4B2CA8"/>
+      <stop offset="100%" stop-color="#8F2482"/>
+    </linearGradient>
+    <!-- 背景同心推演星轨光谱 -->
+    <linearGradient id="ly_halo_ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="50%" stop-color="#2563EB"/>
+      <stop offset="82%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#E62892"/>
+    </linearGradient>
+    <!-- 空间切割主剑轴：深蓝 -> 交点紫品红折射 -> 锋端高纯度天蓝 -->
+    <linearGradient id="ly_blade_main" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#172554"/>
+      <stop offset="24%" stop-color="#5B28D6"/>
+      <stop offset="32%" stop-color="#E0248F"/>
+      <stop offset="44%" stop-color="#1D4ED8"/>
+      <stop offset="78%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <!-- 剑格翼刺光谱 -->
+    <linearGradient id="ly_wing_spur" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="52%" stop-color="#1E40AF"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+    <clipPath id="ly_tc">
+      <path d="M 80 69.5 L 95 83.5 L 92 95 L 101 136 L 59 136 L 68 95 L 65 83.5 Z"/>
+    </clipPath>
+    <clipPath id="ly_hc">
+      <circle cx="80" cy="56" r="13.5"/>
+    </clipPath>
+  </defs>
+
+  <!-- 1. 背后双层同心几何推演星环与立绘十字细针星 -->
+  <g id="bone_back_hair" data-pivot="80,86">
+    <circle cx="80" cy="86" r="43" fill="#EDF7FF" fill-opacity="0.68" stroke="url(#ly_halo_ring)" stroke-width="1.25" stroke-opacity="0.54"/>
+    <circle cx="80" cy="86" r="35.5" fill="none" stroke="#2568E8" stroke-width="0.85" stroke-opacity="0.24"/>
+    <!-- 左上与右上细长针芒十字星 -->
+    <path d="M 43 58.5 L 43.9 64.1 L 49.5 65 L 43.9 65.9 L 43 71.5 L 42.1 65.9 L 36.5 65 L 42.1 64.1 Z" fill="#29A8FA" opacity="0.9"/>
+    <path d="M 109.5 48 L 110.2 52.3 L 114.5 53 L 110.2 53.7 L 109.5 58 L 108.8 53.7 L 104.5 53 L 108.8 52.3 Z" fill="#6D35EB" opacity="0.78"/>
+  </g>
+
+  <!-- 2. 外夜墨蓝 × 内纯净天蓝光谱飘逸及腰长发 -->
+  <g id="bone_cape_back" data-pivot="70,82">
+    <!-- 内层光谱挑染长发（自耳后中段向发梢流淌出天蓝->深蓝->紫->品红） -->
+    <path d="M 76 62 C 67 80 51 97 23 108 C 44 110 60 103 71 90 C 65 103 50 116 33 122 C 57 120 73 107 79 84 Z" fill="url(#ly_hair_prism)"/>
+    <!-- 外层深邃夜墨蓝主长发（严密承接后颈与左肩） -->
+    <path d="M 83 47 C 71 46 63 55 57 70 C 51 84 38 96 20 101 C 40 101 55 92 65 79 C 62 89 54 98 42 104.5 C 60 99 73 85 82 68 Z" fill="#141E36"/>
+    <!-- 纯净天蓝内层流光细丝 -->
+    <path d="M 65 74 Q 53 92 32 104" fill="none" stroke="#7DD3FC" stroke-width="1.4" stroke-linecap="round" opacity="0.9"/>
+  </g>
+
+  <!-- 3. 极简白衬衫细黑领结 × 高腰深蓝光谱长裙 -->
+  <g id="bone_torso" data-pivot="80,136">
+    <!-- 外围微白托底光晕，兼容深浅任意背景 -->
+    <path d="M 80 69.5 L 95 83.5 L 92 95 L 101 136 L 59 136 L 68 95 L 65 83.5 Z" fill="none" stroke="#FFFDF8" stroke-width="3.2" stroke-linejoin="round"/>
+    <!-- 裙体主渐变底 -->
+    <path d="M 80 69.5 L 95 83.5 L 92 95 L 101 136 L 59 136 L 68 95 L 65 83.5 Z" fill="url(#ly_skirt)"/>
+    <g clip-path="url(#ly_tc)">
+      <!-- 纯白上半身衬衫 -->
+      <path d="M 58 68 H 102 V 93.5 Q 80 95.5 58 93.5 Z" fill="#FFFDF9"/>
+      <!-- 裙摆极简斜切纱层折面 -->
+      <polygon points="82,96 102,136 86,136 74,96" fill="#38BDF8" opacity="0.18"/>
+      <line x1="74.5" y1="97" x2="86.5" y2="136" stroke="#E62892" stroke-width="0.95" opacity="0.48"/>
+      <!-- 高腰深墨束腰封 -->
+      <path d="M 58 92.2 Q 80 94.4 102 92.2 V 97.2 Q 80 99.4 58 97.2 Z" fill="#121A2E"/>
+      <!-- 腰间一缕纯净天蓝垂穗 -->
+      <line x1="74" y1="97.2" x2="72.6" y2="114" stroke="#38BDF8" stroke-width="1.75" stroke-linecap="round"/>
+      <polygon points="74,99 75.8,101.4 74,103.8 72.2,101.4" fill="#7DD3FC"/>
+      <!-- 领口极简细黑蝴蝶结 -->
+      <path d="M 81 78.2 L 76.6 76.5 L 77.6 80.2 Z M 81 78.2 L 85.4 76.5 L 84.4 80.2 Z" fill="#151E36"/>
+      <path d="M 81 78.2 L 79.1 87.2 M 81 78.2 L 83.1 87.2" fill="none" stroke="#151E36" stroke-width="1.35" stroke-linecap="round"/>
+    </g>
+    <!-- 清晰利落的深靛墨结构轮廓边，确保白衬衫肩线在浅纸面上分明挺拔 -->
+    <path d="M 80 69.5 L 95 83.5 L 92 95 L 101 136 L 59 136 L 68 95 L 65 83.5 Z" fill="none" stroke="#223052" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 4. 象牙白少女圆首 + 柔顺清冷刘海与内层天蓝鬓缕 -->
+  <g id="bone_head" data-pivot="80,68">
+    <circle cx="80" cy="56" r="13.5" fill="#FFFDF8"/>
+    <g clip-path="url(#ly_hc)">
+      <!-- 内层纯净天蓝挑染鬓缕（自黑发内缘纤细垂落收尖） -->
+      <path d="M 68.4 49.5 C 72.2 53.5 73.1 60.2 70.8 67.6 C 69.5 62.2 69.2 55.5 68.4 49.5 Z" fill="#38BDF8"/>
+      <!-- 外层深墨蓝鬓发与两段柔顺微弧刘海（告别生硬锯齿） -->
+      <path d="M 65.5 67.5 C 68.8 61.5 70.2 55.5 70.6 51.8 Q 77.2 56.2 84.2 50.6 Q 88.4 54.6 94.4 53.6 C 93.8 45.8 88.4 41.5 80.4 41.5 C 71.8 41.5 66 47.2 65.5 58 Z" fill="#141E36"/>
+    </g>
+    <circle cx="80" cy="56" r="13.5" fill="none" stroke="#22283D" stroke-width="1.75"/>
+  </g>
+
+  <!-- 5. 意识空间切割之剑（严格按原图像素比例 0.48x 仿射映射，纯锐角针楔） -->
+  <g id="bone_weapon" data-pivot="102,102">
+    <!-- 清冽冰蓝空间微辉衬边，浅底隐形、深底清晰且保留剑尖蓝色锋芒 -->
+    <g fill="none" stroke="#BAE6FD" stroke-width="1.15" stroke-linejoin="miter" stroke-miterlimit="6" opacity="0.72">
+      <polygon points="94.4,115.0 109.7,97.7 154.0,57.4 112.3,100.3"/>
+      <polygon points="110.8,80.8 112.1,99.0 111.2,117.6 109.9,99.0"/>
+      <polygon points="110.9,89.6 99.7,88.6 110.9,91.8"/>
+      <polygon points="105.6,89.2 95.9,96.8 107.4,90.4"/>
+      <polygon points="111.2,98.9 125.6,102.6 111.1,101.0"/>
+      <polygon points="119.2,101.0 113.2,108.6 121.2,101.6"/>
+    </g>
+    <!-- 左上反折翼刺（横刺 + 平行回掠斜刺） -->
+    <polygon points="110.9,89.6 99.7,88.6 110.9,91.8" fill="url(#ly_wing_spur)"/>
+    <polygon points="105.6,89.2 95.9,96.8 107.4,90.4" fill="#6D32E8"/>
+    <!-- 右下反折翼刺（中心对称：横刺 + 平行回掠斜刺） -->
+    <polygon points="111.2,98.9 125.6,102.6 111.1,101.0" fill="url(#ly_wing_spur)"/>
+    <polygon points="119.2,101.0 113.2,108.6 121.2,101.6" fill="#6D32E8"/>
+    <!-- 90° 竖直纵贯长针刺 -->
+    <polygon points="110.8,80.8 112.1,99.0 111.2,117.6 109.9,99.0" fill="#1E3A8A"/>
+    <!-- 45° 贯通主针刃 -->
+    <polygon points="94.4,115.0 109.7,97.7 154.0,57.4 112.3,100.3" fill="url(#ly_blade_main)"/>
+    <!-- 剑轴高能切割细芯与交点品红锋丝 -->
+    <line x1="103" y1="106.7" x2="147" y2="64.1" stroke="#E0F7FF" stroke-width="0.7" stroke-linecap="round"/>
+    <polygon points="111.0,96.4 112.4,99.0 111.0,101.6 109.6,99.0" fill="#EC2892"/>
+  </g>
+</svg>

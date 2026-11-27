@@ -60,6 +60,16 @@
    - 前端：`node --check` 全部改动 `.js` 通过；`node --import ./tests/frontend/register.mjs --test tests/frontend/test_game_stage.mjs tests/frontend/test_data_driven_display.mjs tests/frontend/test_sequencer_and_choreography.mjs tests/frontend/test_director_stage.mjs` —— `28/28` 通过。
    - 真实浏览器（Chromium WebGL，端口 `8771`）：大厅选人滚轮、贺敛标题与技能 `预览特效` 三维斩击/粒子与横幅、林秋/澜清进入战斗、速度横幅与面板分层、林秋 `空断` `预览特效`（`/fx_assets/star_knot_ring.svg` HTTP 200）、第一回合置牌与回合末战报全文弹窗全部实测通过，控制台 `0` 报错，网络请求 `0` 失败。
 
+## 林羽（`emyake_lin_yu`）骨骼立绘、专属色板与 11 枚状态图标实装（2026-11-27）
+
+- **已确认美术语义与色板分层**：
+  - **角色立绘与主色板**：林羽（`emyake_lin_yu`）角色主色定为 `#2563eb`（纯净天蓝 `#38BDF8` × 深钴蓝 `#1D4ED8` × 棱紫 `#7C3AED` × 品红 `#EC2892`），新增 5 骨骼分层立绘 [emyake_lin_yu.svg](_packs/sprites/emyake_lin_yu.svg)（`viewBox="0 0 160 160" data-foot="80,136"`，含 `bone_back_hair` 同心星轨与四芒细针星、`bone_cape_back` 外夜墨蓝内天蓝光谱长发、`bone_torso` 白衬衫细领结与高腰深蓝长裙天蓝垂穗、`bone_head` 天蓝内鬓、`bone_weapon` 严格仿射还原的空间切割剑），并在 [stage_actors.js](battle_ui/static/engine/stage_actors.js) 的 `HANDCRAFTED_PALETTES` 注册 `emyake_lin_yu` 以保留纯净蓝紫色板不被 `sanitizeWarmBrightHex` 钳制。
+  - **8 枚林羽专属状态图标**（`_packs/status_icons/`）：`羽流·延攻`、`羽流·反制`、`羽流·制衡`、`羽流·终` 共享恒定蓝色剑羽主干（`#2563eb`）并以单一局部几何特征区分；`羽流·势` 采用独立品红×瑰紫主色（`#ec2892`）竖直聚拢双羽；`铭刻`（`#1d6fe8`）、`折影化铭刻`（`#7c3aed`，斜率严格 `1.25` 平行遮罩保留完整臂宽与后置粉星比例）与 `折影`（`#7c3aed`，八边倒角技能牌切入 45° 空间裂隙并错位沉底）同步写入 [emyake_lin_yu.json](_packs/emyake_lin_yu.json) 的 `status_rules`。
+  - **3 枚跨角色通用状态重绘**（剥离角色专属色板）：重绘通用 [裂伤.svg](_packs/status_icons/裂伤.svg)（`#dc2626` 血红锯齿撕裂创口与蓄伤白芯）、[裂伤拘束.svg](_packs/status_icons/裂伤拘束.svg)（`#d97706` 琥珀金×古铜内向封缄锁楔压紧裂伤创口）与 [破甲.svg](_packs/status_icons/破甲.svg)（`#c9233b` 45° 破防斩光劈裂暖灰精钢六棱重盾），同步登记至 [manifest.json](_packs/status_icons/manifest.json) 供任意卡池独立发现。
+- **验证结果**：
+  - [test_fx_dsl.py](tests/test_fx_dsl.py) 新增 `test_emyake_lin_yu_sprite_palette_and_eleven_status_icons`（校验立绘 5 骨骼结构、主色、11 枚状态图标静态服务、羽流五态颜色区分，以及空卡池下通用状态独立发现且零林羽专属色混入）。
+  - `python -m unittest tests.test_fx_dsl tests.test_emyake tests.test_displayer` **63/63 通过**；`node --check battle_ui/static/engine/stage_actors.js`、`actorPalette` 蓝紫色板保留断言及前端专测套件（`test_data_driven_display.mjs`、`test_game_stage.mjs`、`test_sequencer_and_choreography.mjs`）**23/23 通过**。
+
 ## 私人牌桌、房主全权房间规则与原生 WebSocket 实时架构重构（2026-11-27）
 
 - **已确认语义与私人牌桌规则体系**：

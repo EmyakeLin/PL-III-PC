@@ -1,31 +1,35 @@
 {
   "status_rules": {
     "羽流·势": {
+      "icon_svg": "羽流·势.svg",
       "description": "至多5。",
       "cap": 5,
       "polarity": "positive",
-      "color": "#D48B14",
+      "color": "#ec2892",
       "icon_path": "M 13.5 2.5 L 6.5 13 H 11.8 L 10.2 21.5 L 17.8 11 H 12.5 Z"
     },
     "羽流·延攻": {
+      "icon_svg": "羽流·延攻.svg",
       "description": "羽流剑术状态，最大3；\n进攻型骰子最终点数+X；\n存储裂伤伤害时，存储的数额增加X*50%。",
       "cap": 3,
       "polarity": "positive",
-      "color": "#C93E2B",
+      "color": "#2563eb",
       "icon_path": "M 19.8 4.2 L 12.2 5.4 L 14.8 8 L 4.2 18.6 L 5.4 19.8 L 16 9.2 L 18.6 11.8 Z"
     },
     "羽流·反制": {
+      "icon_svg": "羽流·反制.svg",
       "description": "羽流剑术状态，最大3；\n回合开始时，获得X/2（向上取整）次 置卡或换卡机会 与X个人费",
       "cap": 3,
       "polarity": "positive",
-      "color": "#177D6B",
+      "color": "#2563eb",
       "icon_path": "M 12 3 L 19 6.5 V 12.2 C 19 16.6 16 20.1 12 21.4 C 8 20.1 5 16.6 5 12.2 V 6.5 Z M 12 6.8 L 8.5 11.8 H 11.2 V 16.8 L 15.5 11.2 H 12.8 Z"
     },
     "羽流·制衡": {
+      "icon_svg": "羽流·制衡.svg",
       "description": "羽流剑术状态，最大3；\n施加的虚弱、束缚+X/2（向上取整）；施加的限制、造成的减费、弃卡效果的数值+X/2（向下取整）；\n即将拼点失败时，若差值不高于X，则改为拼点打平",
       "cap": 3,
       "polarity": "positive",
-      "color": "#C27110",
+      "color": "#2563eb",
       "icon_path": [
         "M 11 4 H 13 V 18 H 18 V 20 H 6 V 18 H 11 Z",
         "M 4 9 L 8 6 L 12 9 L 8 12 Z",
@@ -33,22 +37,26 @@
       ]
     },
     "羽流·终": {
+      "icon_svg": "羽流·终.svg",
       "description": "羽流剑术状态；\n每回合开始时，使X层铭刻折影化（至多持有8层折影化铭刻）；",
       "polarity": "positive",
-      "color": "#B8293D",
+      "color": "#2563eb",
       "icon_path": [
         "M 12 2 L 15.2 9.2 L 22 12 L 15.2 14.8 L 12 22 L 8.8 14.8 L 2 12 L 8.8 9.2 Z",
         "M 12 7.5 L 13.8 12 L 12 16.5 L 10.2 12 Z"
       ]
     },
     "铭刻": {
+      "icon_svg": "铭刻.svg",
       "description": "铭刻X：用于特定效果。折影化时，会变为折影化铭刻。",
       "polarity": "positive",
-      "color": "#248277",
+      "color": "#1d6fe8",
       "icon_path": "M 12 2.5 L 19.5 12 L 12 21.5 L 4.5 12 Z M 12 6.8 L 7.8 12 L 12 17.2 L 16.2 12 Z"
     },
     "折影化铭刻": {
       "description": "每层折影化铭刻提供1点额度，取得时立即计入可用铭刻。\n回合开始时补足本回合额度。\n消耗铭刻时，先扣剩余折影额度，再扣普通铭刻。\n回合结束时，清空剩余额度，保留折影化铭刻层数。",
+      "color": "#7c3aed",
+      "icon_svg": "折影化铭刻.svg",
       "display_fields": [
         {"label":"本回合剩余额度","value":{"field":"$self.turn_state","key":"折影额度","default":0}},
         {"label":"普通铭刻","value":{"op":"sub","left":{"field":"$self.statuses","key":"铭刻","default":0},"right":{"field":"$self.turn_state","key":"折影额度","default":0}}},
@@ -78,7 +86,7 @@
       "description": "裂伤X：至多25层；存储裂伤伤害（以小数伤害存储）；受到骰子造成的伤害时，裂伤伤害增加X/5（向下取整）*10%的伤害量。当裂伤达到25层时，承受等同于裂伤伤害向上取整数量的穿甲伤害，随后清空裂伤伤害并解除此效果。",
       "cap": 25,
       "polarity": "negative",
-      "color": "#C42B3B",
+      "color": "#dc2626",
       "icon_svg": "裂伤.svg",
       "display_fields": [
         {
@@ -184,21 +192,23 @@
       ]
     },
     "折影": {
+      "icon_svg": "折影.svg",
       "description": "折影：对技能施加的状态效果；被施加此状态的技能被移出战斗，直到下一个技能被施加折影时，此技能重返战斗并回到所属方的牌堆底。",
       "polarity": "negative",
-      "color": "#7D7264"
+      "color": "#7c3aed"
     },
     "裂伤拘束": {
       "description": "裂伤拘束X：在裂伤即将达到25层时，限制为24层，随后消耗一层裂伤拘束；一轮内至多消耗一层裂伤拘束。",
       "polarity": "neutral",
-      "color": "#D48B14",
+      "color": "#d97706",
       "icon_svg": "裂伤拘束.svg"
     },
     "破甲": {
+      "icon_svg": "破甲.svg",
       "cap": 1,
       "description": "无视全部护甲且无法持有护盾",
       "polarity": "negative",
-      "color": "#B02E57",
+      "color": "#c9233b",
       "icon_path": [
         "M 5 5.5 L 11.2 3 L 9.5 11.2 L 12.2 14.2 L 8.8 20.8 C 6.2 18.6 5 15.2 5 11.5 Z",
         "M 13.4 3.2 L 19 5.5 V 11.5 C 19 15.4 17.4 18.9 14.2 21 L 15.4 14.8 L 12.6 11.6 Z"
@@ -545,6 +555,7 @@
       "id": "emyake_lin_yu",
       "name": "林羽",
       "title": "Emyake",
+      "color": "#2563eb",
       "rank": "EMPOWERED_BOSS",
       "max_hp": 12,
       "retain_shields": true,

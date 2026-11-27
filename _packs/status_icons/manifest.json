@@ -51,5 +51,17 @@
   "崩离": {
     "color": "#6B2537",
     "icon_svg": "崩离.svg"
+  },
+  "裂伤": {
+    "color": "#dc2626",
+    "icon_svg": "裂伤.svg"
+  },
+  "裂伤拘束": {
+    "color": "#d97706",
+    "icon_svg": "裂伤拘束.svg"
+  },
+  "破甲": {
+    "color": "#c9233b",
+    "icon_svg": "破甲.svg"
   }
 }
