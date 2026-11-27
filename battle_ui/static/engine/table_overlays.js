@@ -25,6 +25,7 @@ import {
   drawLightStar,
   buildCardBack,
   buildFullCard,
+  buildUniformCard,
   buildDualFormSpread,
   resolveDualForms,
   buildRichVerbatimText,
@@ -358,6 +359,15 @@ function makeScrollCue({ vertical, x, y, length, total, view, scroll = 0, accent
   const len = Math.max(24, length);
   const back = makeChevron(-1);
   const fwd = makeChevron(1);
+  const track = new PIXI.Graphics();
+  const thumb = new PIXI.Graphics();
+  const trackPad = 20;
+  const trackLen = Math.max(0, len - trackPad * 2);
+  let thumbSize = 0;
+  let dragging = false;
+  let dragStartPos = 0;
+  let dragStartScroll = 0;
+
   if (vertical) {
     back.position.set(2, 10);
     fwd.position.set(2, len - 10);
@@ -365,12 +375,57 @@ function makeScrollCue({ vertical, x, y, length, total, view, scroll = 0, accent
     back.position.set(10, 2);
     fwd.position.set(len - 10, 2);
   }
-  root.addChild(back, fwd);
+  root.addChild(track, thumb, back, fwd);
 
   function sync(next) {
     cur = Math.max(0, Math.min(maxScroll, next));
     back.visible = maxScroll > 0 && cur > 1;
     fwd.visible = maxScroll > 0 && cur < maxScroll - 1;
+    const showBar = maxScroll > 0 && trackLen >= 16;
+    track.visible = showBar;
+    thumb.visible = showBar;
+    if (showBar) {
+      thumbSize = Math.max(18, Math.round(trackLen * (view / Math.max(1, total))));
+      const travel = Math.max(1, trackLen - thumbSize);
+      const tPos = trackPad + Math.round((cur / maxScroll) * travel);
+      track.clear();
+      thumb.clear();
+      if (vertical) {
+        track.roundRect(0, trackPad, 4, trackLen, 2).fill({ color: INK.line, alpha: 0.35 });
+        thumb.roundRect(-1, tPos, 6, thumbSize, 3).fill({ color: accentColor, alpha: 0.78 });
+      } else {
+        track.roundRect(trackPad, 0, trackLen, 4, 2).fill({ color: INK.line, alpha: 0.35 });
+        thumb.roundRect(tPos, -1, thumbSize, 6, 3).fill({ color: accentColor, alpha: 0.78 });
+      }
+    }
+  }
+  if (maxScroll > 0 && trackLen >= 16) {
+    thumb.eventMode = 'static';
+    thumb.cursor = 'pointer';
+    thumb.hitArea = vertical
+      ? new PIXI.Rectangle(-7, trackPad, 18, trackLen)
+      : new PIXI.Rectangle(trackPad, -7, trackLen, 18);
+    const ptCoord = (gPt) => {
+      const lp = root.toLocal(gPt);
+      return vertical ? lp.y : lp.x;
+    };
+    thumb.on('pointerdown', (e) => {
+      e.stopPropagation();
+      dragging = true;
+      dragStartPos = ptCoord(e.global);
+      dragStartScroll = cur;
+    });
+    thumb.on('globalpointermove', (e) => {
+      if (!dragging) return;
+      const travel = Math.max(1, trackLen - thumbSize);
+      const deltaPx = ptCoord(e.global) - dragStartPos;
+      const next = dragStartScroll + (deltaPx / travel) * maxScroll;
+      sync(next);
+      onChange?.(cur);
+    });
+    const endDrag = () => { dragging = false; };
+    thumb.on('pointerup', endDrag);
+    thumb.on('pointerupoutside', endDrag);
   }
   sync(cur);
 
@@ -384,6 +439,87 @@ function makeSmoothScrollbar({ x, y, height, totalH, viewH, scrollY = 0, accentC
 
 function makeHorizontalScrollbar({ x, y, width, totalW, viewW, scrollX = 0, accentColor, onChange }) {
   return makeScrollCue({ vertical: false, x, y, length: width, total: totalW, view: viewW, scroll: scrollX, accentColor, onChange });
+}
+
+export function buildStatusEffectPreview({ title, items, width, maxHeight = Infinity, scrollY = 0 }) {
+  const root = new PIXI.Container();
+  root.eventMode = 'passive';
+  const body = new PIXI.Container();
+  body.eventMode = 'none';
+  const padding = 12;
+  const headerHeight = 36;
+  const entryGap = 6;
+  const innerWidth = width - padding * 2;
+  let contentHeight = 0;
+  for (const item of items) {
+    const plate = buildUnifiedEntryPlate({
+      variant: 'status',
+      statusName: item.name,
+      statusValue: item.value,
+      statusBurst: Boolean(item.burst),
+      entries: item.text ? [item.text] : [],
+      width: innerWidth,
+      accentColor: item.color,
+      fontSize: 12,
+      lineHeight: 17.8,
+    });
+    plate._itemTop = contentHeight;
+    plate._itemBottom = contentHeight + plate._height;
+    plate.position.set(0, contentHeight);
+    body.addChild(plate);
+    contentHeight = plate._itemBottom + entryGap;
+  }
+  contentHeight = Math.max(0, contentHeight - entryGap);
+  const viewportHeight = Math.max(0, Math.min(contentHeight, maxHeight - headerHeight - padding));
+  const height = headerHeight + viewportHeight + padding;
+  const maxScroll = contentHeight - viewportHeight;
+  const frame = new PIXI.Graphics();
+  frame.eventMode = 'none';
+  frame.roundRect(4, 6, width, height, 12).fill({ color: INK.shadow, alpha: 0.34 });
+  frame.roundRect(0, 0, width, height, 12).fill({ color: INK.paper, alpha: 0.99 }).stroke({ width: 1.6, color: INK.line });
+  const heading = new PIXI.Text({
+    text: title,
+    style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.primary },
+  });
+  heading.eventMode = 'none';
+  if (heading.width > innerWidth) heading.scale.x = innerWidth / heading.width;
+  heading.position.set(padding, 10);
+  const mask = new PIXI.Graphics();
+  mask.eventMode = 'none';
+  mask.rect(padding, headerHeight, innerWidth, viewportHeight).fill({ color: 0xffffff });
+  body.x = padding;
+  body.mask = mask;
+  root.addChild(frame, heading, mask, body);
+
+  let scrollbar = null;
+  let currentScroll = 0;
+  const setScroll = (nextY) => {
+    currentScroll = Math.max(0, Math.min(maxScroll, nextY));
+    body.y = headerHeight - currentScroll;
+    cullVerticalItems(body, currentScroll, viewportHeight);
+    scrollbar?._updateThumb(currentScroll);
+    return currentScroll;
+  };
+  setScroll(scrollY);
+  if (maxScroll > 0) {
+    const scrollbarX = width - 8;
+    scrollbar = makeSmoothScrollbar({
+      x: scrollbarX,
+      y: headerHeight,
+      height: viewportHeight,
+      totalH: contentHeight,
+      viewH: viewportHeight,
+      scrollY: currentScroll,
+      accentColor: INK.goldDeep,
+      onChange: setScroll,
+    });
+    root.addChild(scrollbar);
+  }
+  root._height = height;
+  root._maxScroll = maxScroll;
+  root.getScroll = () => currentScroll;
+  root.setScroll = setScroll;
+  return root;
 }
 
 // ── 1. DIEGETIC ILLUMINATED FOLIO HERO SIDE PANEL (10v10+ SCALABLE) ──
@@ -402,6 +538,8 @@ export function buildHeroSidePanel({
   canSetTarget = false,
   isDefaultTarget = false,
   scrollY = 0,
+  canPreviewFx = null,
+  onPreviewFx = null,
   onTab,
   onHoverSkill,
   onSetFocusTarget,
@@ -410,6 +548,10 @@ export function buildHeroSidePanel({
 }) {
   const root = new PIXI.Container();
   root.position.set(x, y);
+  root.eventMode = 'static';
+  root.hitArea = new PIXI.Rectangle(0, 0, width, height);
+  root.on('pointerdown', (e) => e.stopPropagation());
+  root.on('pointertap', (e) => e.stopPropagation());
   const actors = [];
   const theme = SIDE_THEME[side] || SIDE_THEME[1];
   const pal = actorPalette(character, side);
@@ -466,21 +608,29 @@ export function buildHeroSidePanel({
 
   // Engraved Faction/Rank Ribbon Seal (top-right)
   const metaParts = [character.faction || '', RANK_LABEL[character.rank] || ''].filter(Boolean).join(' · ');
+  let metaW = 0;
   if (metaParts) {
     const metaTxt = new PIXI.Text({
       text: metaParts,
       style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '800', fill: theme.accent },
     });
-    const mw = Math.ceil(metaTxt.width) + 12;
-    const mx = width - 12 - mw;
+    metaW = Math.min(Math.max(76, infoW - 76), Math.ceil(metaTxt.width) + 12);
+    if (metaTxt.width > metaW - 12) {
+      metaTxt.scale.set((metaW - 12) / metaTxt.width);
+    }
+    const mx = width - 12 - metaW;
     const mG = new PIXI.Graphics();
-    mG.roundRect(mx, curY + 2, mw, 17, 4)
+    mG.roundRect(mx, curY + 2, metaW, 17, 4)
       .fill({ color: theme.softBg })
       .stroke({ width: 0.9, color: theme.accent, alpha: 0.5 });
     root.addChild(mG);
     metaTxt.anchor.set(0.5);
-    metaTxt.position.set(mx + mw / 2, curY + 10.5);
+    metaTxt.position.set(mx + metaW / 2, curY + 10.5);
     root.addChild(metaTxt);
+  }
+  const maxNameW = Math.max(48, infoW - (metaW ? metaW + 8 : 0));
+  if (nameTxt.width > maxNameW) {
+    nameTxt.scale.set(maxNameW / nameTxt.width);
   }
 
   const hpY = curY + 24;
@@ -511,15 +661,24 @@ export function buildHeroSidePanel({
 
   curY += artSize + 8;
 
-  // Compact Active Shields / Status Chips Row (only if present)
+  // Compact Active Shields / Status Chips Row (multi-row wrap — ZERO silent truncation!)
   const sh = character.shields || {};
   const activeShields = ['normal', 'reinforced', 'concept'].filter((k) => (sh[k] || 0) > 0);
-  const statuses = Object.entries(character.statuses || {});
-  if (activeShields.length || statuses.length) {
+  const teamStatusEntries = Object.entries(character._team_statuses || {});
+  const personalStatusEntries = Object.entries(character.statuses || {});
+  const allChipStatuses = [
+    ...teamStatusEntries.map(([sName, sVal]) => ({ sName, sVal, isTeam: true })),
+    ...personalStatusEntries.map(([sName, sVal]) => ({ sName, sVal, isTeam: false })),
+  ];
+  if (activeShields.length || allChipStatuses.length) {
     let bx = 12;
     const badgeG = new PIXI.Graphics();
     root.addChild(badgeG);
     for (const kind of activeShields) {
+      if (bx + 44 > width - 12 && bx > 12) {
+        bx = 12;
+        curY += 22;
+      }
       const st = SHIELD_STYLE[kind];
       badgeG.roundRect(bx, curY, 44, 19, 4).fill({ color: st.bg }).stroke({ width: 1, color: st.color });
       drawShieldGlyph(badgeG, kind, bx + 9, curY + 9.5, 4.8);
@@ -532,17 +691,22 @@ export function buildHeroSidePanel({
       root.addChild(t);
       bx += 48;
     }
-    for (const [sName, sVal] of statuses) {
-      if (bx + 56 > width - 12) break;
+    for (const { sName, sVal, isTeam } of allChipStatuses) {
       const col = getStatusColor(sName, INK.secondary);
-      const burst = sName === '裂血' && character.bleed_burst;
+      const burst = !isTeam && sName === '裂血' && character.bleed_burst;
+      const ov = !isTeam ? character.status_overflow?.[sName] : null;
+      const ovSuffix = ov && ov.amount > 0 ? `(+${ov.amount})` : '';
       const stTxt = new PIXI.Text({
-        text: `${sName}${sVal}`,
-        style: { fontFamily: FONT_UI, fontSize: 10.4, fontWeight: '800', fill: col },
+        text: `${isTeam ? '阵·' : ''}${sName}${sVal}${ovSuffix}`,
+        style: { fontFamily: FONT_UI, fontSize: 10.2, fontWeight: '800', fill: col },
       });
-      const bw = Math.ceil(stTxt.width) + 22;
+      const bw = Math.min(width - 24, Math.ceil(stTxt.width) + 22);
+      if (bx + bw > width - 12 && bx > 12) {
+        bx = 12;
+        curY += 22;
+      }
       badgeG.roundRect(bx, curY, bw, 19, 4)
-        .fill({ color: burst ? 0xfce0e4 : INK.paperSoft })
+        .fill({ color: burst ? 0xfce0e4 : isTeam ? theme.warmTint : INK.paperSoft })
         .stroke({ width: burst ? 1.5 : 0.9, color: col });
       mountStatusIcon(root, badgeG, sName, bx + 9.5, curY + 9.5, 5.6, col, sVal);
       stTxt.anchor.set(0, 0.5);
@@ -623,13 +787,17 @@ export function buildHeroSidePanel({
 
   if (tab === 'skills') {
     for (const sk of skills) {
-      const row = buildUnifiedSkillRow(sk, { width: innerW, side, accentColor: charAccent, active: false });
+      const hasFx = Boolean(onPreviewFx && (!canPreviewFx || canPreviewFx({ charId: character.id, cardId: sk.id, cardName: sk.name })));
+      const row = buildUnifiedSkillRow(sk, { width: hasFx ? innerW - 64 : innerW, side, accentColor: charAccent, active: false });
       row.position.set(padIn, cy);
       row._itemTop = cy;
       row._itemBottom = cy + row._height;
       row._interactiveItem = true;
       row.eventMode = 'static';
+      row.hitArea = new PIXI.Rectangle(0, 0, innerW, row._height);
       row.cursor = 'pointer';
+      row.on('pointerdown', (e) => e.stopPropagation());
+      row.on('pointertap', (e) => e.stopPropagation());
       row.on('pointerover', (e) => {
         if (!pointerInsideLocalRect(root, e.global, vx, vy, vw, vh)) return;
         if (onHoverSkill) {
@@ -641,6 +809,30 @@ export function buildHeroSidePanel({
       row.on('pointerout', () => {
         if (onHoverSkill) onHoverSkill(null);
       });
+      if (hasFx) {
+        const fxBtn = makeSealButton('预览特效', {
+          width: 58,
+          height: 24,
+          accent: charAccent,
+          fontSize: 9.8,
+          radius: 5,
+          onClick: () => {
+            const gp = row.getGlobalPosition();
+            onPreviewFx({
+              charId: character.id,
+              charName: character.name,
+              side,
+              cardId: sk.id,
+              cardName: sk.name,
+              dieType: sk.dice?.[0]?.type || null,
+              originPt: { x: x + 40, y: y + 40 },
+              targetPt: { x: gp.x + innerW * 0.55, y: gp.y + row._height * 0.5 },
+            });
+          },
+        });
+        fxBtn.position.set(innerW - 58, Math.round((row._height - 24) / 2));
+        row.addChild(fxBtn);
+      }
       content.addChild(row);
       cy += row._height + 7;
     }
@@ -683,7 +875,53 @@ export function buildHeroSidePanel({
       cy += plate._height + 8;
     }
 
-    if (statuses.length) {
+    const abilityEntries = Object.entries(character.ability_effects || {});
+    const reservedDice = Array.isArray(character.reserved_dice) ? character.reserved_dice : [];
+    const combinedStatuses = [
+      ...teamStatusEntries.map(([sName, sVal]) => ({ sName, sVal, isTeam: true })),
+      ...personalStatusEntries.map(([sName, sVal]) => ({ sName, sVal, isTeam: false })),
+    ];
+    const overflowOnly = Object.entries(character.status_overflow || {})
+      .filter(([sName, ov]) => ov && ov.amount > 0 && !(sName in (character.statuses || {})));
+
+    for (const [abName, abVal] of abilityEntries) {
+      const desc = character._catalog_ability_effects?.[abName] || '';
+      const plate = buildUnifiedEntryPlate({
+        variant: 'passive',
+        title: abName,
+        tagLabel: abVal && abVal !== true ? `持续能力 · ${abVal}` : '持续能力',
+        entries: desc ? desc.split('\n').filter(Boolean) : ['当前生效中的能力效果。'],
+        width: innerW,
+        accentColor: theme.accent,
+        fontSize: 12.2,
+        lineHeight: 18.8,
+      });
+      plate.position.set(padIn, cy);
+      plate._itemTop = cy;
+      plate._itemBottom = cy + plate._height;
+      content.addChild(plate);
+      cy += plate._height + 7;
+    }
+
+    if (reservedDice.length) {
+      const plate = buildUnifiedEntryPlate({
+        variant: 'passive',
+        title: '预留骰',
+        tagLabel: `${reservedDice.length} 项`,
+        entries: reservedDice.map((r) => `${r.skill} · 第 ${r.position} 骰（剩余 ${r.remaining} 次）`),
+        width: innerW,
+        accentColor: INK.gold,
+        fontSize: 12.2,
+        lineHeight: 18.8,
+      });
+      plate.position.set(padIn, cy);
+      plate._itemTop = cy;
+      plate._itemBottom = cy + plate._height;
+      content.addChild(plate);
+      cy += plate._height + 7;
+    }
+
+    if (combinedStatuses.length || overflowOnly.length) {
       if (cy > padIn) cy += 4;
       const stHead = new PIXI.Text({
         text: '当前状态规则',
@@ -695,12 +933,17 @@ export function buildHeroSidePanel({
       content.addChild(stHead);
       cy += 22;
 
-      for (const [sName, sVal] of statuses) {
-        const burst = sName === '裂血' && character.bleed_burst;
+      for (const { sName, sVal, isTeam } of combinedStatuses) {
+        const burst = !isTeam && sName === '裂血' && character.bleed_burst;
         const ruleList = catalogStatuses?.[sName];
         const baseText = (ruleList && ruleList.length ? ruleList.join('\n') : OFFICIAL_STATUS_RULES[sName]) || '';
-        const detailLines = Array.isArray(character.status_details?.[sName]) ? character.status_details[sName] : [];
-        const entries = [baseText, ...detailLines].filter(Boolean);
+        const detailSrc = isTeam ? character._team_status_details?.[sName] : character.status_details?.[sName];
+        const detailLines = Array.isArray(detailSrc) ? detailSrc.slice() : [];
+        const ov = !isTeam ? character.status_overflow?.[sName] : null;
+        if (ov && ov.amount > 0) {
+          detailLines.push(`累计溢出：${ov.amount}${ov.threshold ? ` / ${ov.threshold}` : ''}`);
+        }
+        const entries = [isTeam ? '〔阵营共享状态〕' : '', baseText, ...detailLines].filter(Boolean);
         const plate = buildUnifiedEntryPlate({
           variant: 'status',
           statusName: sName,
@@ -717,9 +960,29 @@ export function buildHeroSidePanel({
         content.addChild(plate);
         cy += plate._height + 7;
       }
+
+      for (const [sName, ov] of overflowOnly) {
+        const ruleList = catalogStatuses?.[sName];
+        const baseText = (ruleList && ruleList.length ? ruleList.join('\n') : OFFICIAL_STATUS_RULES[sName]) || '';
+        const entries = [baseText, `累计溢出：${ov.amount}${ov.threshold ? ` / ${ov.threshold}` : ''}`].filter(Boolean);
+        const plate = buildUnifiedEntryPlate({
+          variant: 'status',
+          statusName: sName,
+          statusValue: 0,
+          entries,
+          width: innerW,
+          fontSize: 12.2,
+          lineHeight: 18.8,
+        });
+        plate.position.set(padIn, cy);
+        plate._itemTop = cy;
+        plate._itemBottom = cy + plate._height;
+        content.addChild(plate);
+        cy += plate._height + 7;
+      }
     }
 
-    if (!factionPassives.length && !rolePassives.length && !statuses.length) {
+    if (!factionPassives.length && !rolePassives.length && !combinedStatuses.length && !overflowOnly.length && !abilityEntries.length && !reservedDice.length) {
       const empty = new PIXI.Text({
         text: '当前角色无被动技能与生效状态。',
         style: { fontFamily: FONT_UI, fontSize: 12.5, fill: INK.muted },
@@ -828,6 +1091,26 @@ export function buildPassiveDrawer({
       headPlate._itemBottom = cy + 28;
       colContainer.addChild(headPlate);
       cy += 34;
+
+      // Team-wide shared statuses rendered as proper iconized status plates
+      for (const [tsName, tsVal] of Object.entries(player.team_statuses || {})) {
+        const tsDetails = Array.isArray(player.team_status_details?.[tsName]) ? player.team_status_details[tsName] : [];
+        const tsBase = OFFICIAL_STATUS_RULES[tsName] || '';
+        const plate = buildUnifiedEntryPlate({
+          variant: 'status',
+          statusName: tsName,
+          statusValue: tsVal,
+          entries: ['〔阵营共享状态〕', tsBase, ...tsDetails].filter(Boolean),
+          width: innerColW,
+          fontSize: 12.0,
+          lineHeight: 18.4,
+        });
+        plate.position.set(0, cy);
+        plate._itemTop = cy;
+        plate._itemBottom = cy + plate._height;
+        colContainer.addChild(plate);
+        cy += plate._height + 6;
+      }
 
       // Deduplicated Faction Passives across unlimited squad sizes (10v10+ safe)
       const seenFaction = new Set();
@@ -938,6 +1221,11 @@ export function buildPassiveDrawer({
 
   const drawerH = Math.min(maxHeight, Math.max(170, headerH + maxColH + 16));
   const vh = drawerH - headerH - 12;
+
+  root.eventMode = 'static';
+  root.hitArea = new PIXI.Rectangle(0, 0, width, drawerH);
+  root.on('pointerdown', (e) => e.stopPropagation());
+  root.on('pointertap', (e) => e.stopPropagation());
 
   const frame = new PIXI.Graphics();
   drawFolioFrame(frame, 0, 0, width, drawerH, {
@@ -1667,8 +1955,8 @@ export function buildEffectChoice(w, h, {
           item.addChild(surface, caption);
         } else {
           const art = known
-            ? buildFullCard(card, {
-                side: targetSide, width: cardW, fixedHeight: faceH, dense: true, centered: true,
+            ? buildUniformCard(card, {
+                side: targetSide, width: cardW, height: faceH, centered: true,
                 accentColor: colors[card.character_id],
               })
             : buildCardBack(targetSide, {
@@ -2068,7 +2356,7 @@ function buildRoomRulesFolio(x, y, w, h, roomLobby) {
   const hpPct = rs.hp_scale_pct ?? 100;
   ry = renderRuleRow(
     rightX, ry,
-    '开局生命与光核倍率',
+    '开局生命与完整度倍率',
     `当前：${hpPct}%`,
     null,
     [75, 100, 125, 150, 200, 300].map((v) => ({
@@ -2118,6 +2406,8 @@ export function buildRosterOverlay(w, h, {
   onRemoveFromSide,
   onHoverChar,
   onHoverCard = null,
+  canPreviewFx = null,
+  onPreviewFx = null,
   onGalleryScrollChange = null,
   onInspectScrollChange = null,
   onStart,
@@ -2173,7 +2463,9 @@ export function buildRosterOverlay(w, h, {
     const remove = () => onRemoveFromSide ? onRemoveFromSide(side, ch.id) : onToggleChar(ch.id);
     slot.eventMode = 'static';
     slot.cursor = 'pointer';
-    slot.on('pointerover', () => onHoverChar?.(ch));
+    slot.on('pointerover', (event) => {
+      if (!event.buttons) onHoverChar?.(ch);
+    });
     slot.on('pointertap', event => {
       event.stopPropagation();
       if (onInspectChar) onInspectChar(ch);
@@ -2757,6 +3049,28 @@ export function buildRosterOverlay(w, h, {
   let curGalleryScroll = Math.max(0, Math.min(galleryMaxScroll, galleryScrollY));
 
   const target = hoveredChar || filtered[0] || catalog[0];
+  const activeTheme = SIDE_THEME[assignSide];
+  const activeName = roomLobby?.sideNames?.[assignSide] || activeTheme.name;
+  const canEditTeam = !roomLobby || roomLobby.editableSides.includes(assignSide);
+  const strictUnique = rs?.duplicate_policy === 'strict_unique';
+  const waitingForDraftTurn = roomLobby?.isOnline && rs?.pick_mode === 'draft' &&
+    roomLobby.draftTurnSide != null && roomLobby.draftTurnSide !== assignSide;
+  const inspectGalleryChar = onInspectChar ?? onHoverChar;
+
+  function rosterActionFor(char) {
+    if (!onToggleChar || !canEditTeam || roomLobby?.lockedIds?.includes(char.id)) return null;
+    const removing = !openTeams && teamCounts[assignSide - 1].has(char.id);
+    if (waitingForDraftTurn && !removing) {
+      return { label: `轮选等待 P${roomLobby.draftTurnSide}`, disabled: true };
+    }
+    if (removing) return { label: `移出${activeName}`, removing };
+    const inOther = teamCounts[2 - assignSide].has(char.id);
+    if (strictUnique && inOther && !char.mirror_allowed) {
+      if (roomLobby.editableSides.length < 2) return { label: '对方已选', disabled: true };
+      return { label: `调入${activeName}` };
+    }
+    return { label: `+ 编入${activeName}` };
+  }
 
   filtered.forEach((char, idx) => {
     const col = idx % cols;
@@ -2868,22 +3182,24 @@ export function buildRosterOverlay(w, h, {
 
     card._itemTop = cyPos;
     card._itemBottom = cyPos + cellH;
-    card._interactiveItem = true;
-    card.eventMode = 'static';
-    card.cursor = 'pointer';
-    card.on('pointerover', (e) => {
-      if (!pointerInsideLocalRect(root, e.global, gx, gy, gw, gh)) return;
-      onHoverChar && onHoverChar(char);
-    });
-    card.on('pointertap', (e) => {
-      if (!pointerInsideLocalRect(root, e.global, gx, gy, gw, gh)) return;
-      e.stopPropagation();
-      if (onInspectChar) onInspectChar(char);
-      else onToggleChar(char.id);
-    });
-    if (onInspectChar) {
-      card.accessible = true;
-      card.accessibleTitle = '查看' + char.name;
+    const action = rosterActionFor(char);
+    const canApplyRosterAction = Boolean(action && !action.disabled);
+    card._interactiveItem = canApplyRosterAction || Boolean(inspectGalleryChar);
+    if (card._interactiveItem) {
+      card.eventMode = 'static';
+      card.cursor = 'pointer';
+      card.accessibleTitle = canApplyRosterAction ? `${action.label} · ${char.name}` : `查看${char.name}`;
+      card.on('pointerover', (e) => {
+        if (e.buttons || !pointerInsideLocalRect(root, e.global, gx, gy, gw, gh)) return;
+        onHoverChar?.(char);
+      });
+      card.on('pointertap', (e) => {
+        const inGallery = e.global ? pointerInsideLocalRect(root, e.global, gx, gy, gw, gh) : card.accessible;
+        if (!inGallery) return;
+        e.stopPropagation();
+        if (canApplyRosterAction) onToggleChar(char.id);
+        else inspectGalleryChar(char);
+      });
     }
     gBody.addChild(card);
   });
@@ -2893,6 +3209,11 @@ export function buildRosterOverlay(w, h, {
     curGalleryScroll = Math.max(0, Math.min(galleryMaxScroll, nextY));
     gBody.y = gy - curGalleryScroll;
     cullVerticalItems(gBody, curGalleryScroll, gh, cellH + 30);
+    const galleryBottom = curGalleryScroll + gh;
+    for (const card of gBody.children) {
+      const inViewport = card._itemTop < galleryBottom && card._itemBottom > curGalleryScroll;
+      card.accessible = card._interactiveItem && inViewport;
+    }
     syncLiveActors();
     if (gSb) gSb._updateThumb(curGalleryScroll);
     if (emit && onGalleryScrollChange) onGalleryScrollChange(curGalleryScroll);
@@ -2959,27 +3280,46 @@ export function buildRosterOverlay(w, h, {
     heroBannerActorEntry = { actor: heroActor, ch: target };
 
     const infoX = inspX + 124;
+    const detailAction = rosterActionFor(target);
+    const rightBound = detailAction ? (inspX + inspW - 144) : (inspX + inspW - 14);
+    const maxTitleAvail = Math.max(80, rightBound - infoX);
+
     const nameTxt = new PIXI.Text({
       text: target.name,
       style: { fontFamily: FONT_UI, fontSize: 21, fontWeight: '900', fill: INK.strong },
     });
-    nameTxt.position.set(infoX, inspY + 15);
+    if (nameTxt.width > maxTitleAvail) {
+      nameTxt.scale.set(maxTitleAvail / nameTxt.width);
+    }
+    nameTxt.position.set(infoX, inspY + 13);
     root.addChild(nameTxt);
 
+    let subY = inspY + 45;
     if (target.title) {
       const tt = new PIXI.Text({
         text: target.title,
-        style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: pal.primary },
+        style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '700', fill: pal.primary },
       });
-      tt.position.set(infoX + nameTxt.width + 10, inspY + 22);
+      const inlineX = infoX + nameTxt.width * nameTxt.scale.x + 10;
+      if (inlineX + tt.width <= rightBound) {
+        tt.position.set(inlineX, inspY + 20);
+      } else {
+        const subLineMaxW = Math.max(80, rightBound - infoX);
+        if (tt.width > subLineMaxW) tt.scale.set(subLineMaxW / tt.width);
+        tt.position.set(infoX, inspY + 38);
+        subY = inspY + 55;
+      }
       root.addChild(tt);
     }
 
     const subTxt = new PIXI.Text({
       text: `${target.faction || '独立'} · ${RANK_LABEL[target.rank] || ''}`,
-      style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: '700', fill: INK.secondary },
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '700', fill: INK.secondary },
     });
-    subTxt.position.set(infoX, inspY + 45);
+    if (subTxt.width > maxTitleAvail) {
+      subTxt.scale.set(maxTitleAvail / subTxt.width);
+    }
+    subTxt.position.set(infoX, subY);
     root.addChild(subTxt);
 
     // Visual Stat Badges Row
@@ -3005,31 +3345,42 @@ export function buildRosterOverlay(w, h, {
       bpx += pw + 8;
     }
 
+    if (onPreviewFx && (!canPreviewFx || canPreviewFx({ charId: target.id }))) {
+      const prevCharBtn = makeSealButton('预览特效', {
+        width: 72,
+        height: 24,
+        accent: parseHexColor(target.color, pal.primary),
+        fontSize: 10.8,
+        radius: 7,
+        onClick: () => {
+          const firstSk = (target.skills || [])[0] || null;
+          onPreviewFx({
+            charId: target.id,
+            charName: target.name,
+            side: previewSide,
+            cardId: firstSk?.id || null,
+            cardName: firstSk?.name || null,
+            dieType: firstSk?.dice?.[0]?.type || null,
+            originPt: { x: acx, y: acy },
+            targetPt: { x: inspX + Math.min(inspW - 80, 320), y: acy },
+          });
+        },
+      });
+      prevCharBtn.position.set(bpx, badgeY);
+      root.addChild(prevCharBtn);
+    }
+
     // Contextual Assign/Remove Wax-Seal Button
-    const activeTheme = SIDE_THEME[assignSide];
-    const activeName = roomLobby?.sideNames?.[assignSide] || activeTheme.name;
-    const inActive = (assignSide === 1 ? in1 : in2) >= 0;
-    const inOther = (assignSide === 1 ? in2 : in1) >= 0;
-    const strictUnique = rs ? rs.duplicate_policy === 'strict_unique' : false;
-    const draftBlocked = Boolean(roomLobby?.isOnline && rs?.pick_mode === 'draft' && roomLobby?.draftTurnSide && roomLobby.draftTurnSide !== assignSide && !inActive);
-    const actLabel = draftBlocked
-      ? `轮选等待 P${roomLobby.draftTurnSide}`
-      : openTeams
-        ? `+ 编入${activeName}`
-        : inActive
-          ? `移出${activeName}`
-          : (inOther && strictUnique && !target.mirror_allowed)
-            ? (roomLobby?.editableSides?.length === 2 ? `调入${activeName}` : '对方已选')
-            : `+ 编入${activeName}`;
-    const blockedByOther = inOther && strictUnique && !target.mirror_allowed && (roomLobby?.editableSides?.length || 0) < 2;
-    if ((!roomLobby || roomLobby.editableSides.includes(assignSide)) && !roomLobby?.lockedIds?.includes(target.id)) {
-      const actDisabled = draftBlocked || blockedByOther;
-      const actBtn = makeSealButton(actLabel, {
+    if (detailAction) {
+      const { label, disabled = false, removing = false } = detailAction;
+      const accent = disabled ? INK.muted : removing ? 0xcf4932 : activeTheme.accent;
+      const solid = !disabled && !removing;
+      const actBtn = makeSealButton(label, {
         width: 122,
         height: 32,
-        accent: actDisabled ? INK.muted : openTeams ? activeTheme.accent : inActive ? 0xcf4932 : activeTheme.accent,
-        solid: !actDisabled && (openTeams || !inActive),
-        disabled: actDisabled,
+        accent,
+        solid,
+        disabled,
         fontSize: 11.8,
         radius: 16,
         onClick: () => onToggleChar(target.id),
@@ -3150,13 +3501,40 @@ export function buildRosterOverlay(w, h, {
           };
 
           const firstSpr = renderSlotCard();
+          const skillHasFx = Boolean(onPreviewFx && (!canPreviewFx || canPreviewFx({ charId: target.id, cardId: sk.id, cardName: sk.name })));
+          let extraFxH = 0;
+          if (skillHasFx) {
+            const skFxBtn = makeSealButton('预览特效', {
+              width: 68,
+              height: 22,
+              accent: parseHexColor(target.color, pal.primary),
+              fontSize: 10.2,
+              radius: 6,
+              onClick: () => {
+                const gp = slotHost.getGlobalPosition();
+                onPreviewFx({
+                  charId: target.id,
+                  charName: target.name,
+                  side: previewSide,
+                  cardId: sk.id,
+                  cardName: sk.name,
+                  dieType: sk.dice?.[0]?.type || null,
+                  originPt: { x: acx, y: acy },
+                  targetPt: { x: gp.x + skW * 0.5, y: Math.max(acy + 36, gp.y + 70) },
+                });
+              },
+            });
+            skFxBtn.position.set(Math.round((skW - 68) / 2), firstSpr._boxHeight + 4);
+            slotHost.addChild(skFxBtn);
+            extraFxH = 26;
+          }
           slotHost._itemTop = cy;
-          slotHost._itemBottom = cy + firstSpr._boxHeight;
+          slotHost._itemBottom = cy + firstSpr._boxHeight + extraFxH;
           if (onHoverCard) {
             slotHost._interactiveItem = true;
             slotHost.eventMode = 'static';
             slotHost.cursor = 'pointer';
-            slotHost.hitArea = new PIXI.Rectangle(0, 0, skW, firstSpr._boxHeight);
+            slotHost.hitArea = new PIXI.Rectangle(0, 0, skW, firstSpr._boxHeight + extraFxH);
             slotHost.on('pointerover', (e) => {
               if (!pointerInsideLocalRect(root, e.global, svx, svy, svw, svh)) return;
               const gp = slotHost.getGlobalPosition();
@@ -3165,7 +3543,7 @@ export function buildRosterOverlay(w, h, {
             slotHost.on('pointerout', () => onHoverCard(null));
           }
           sBody.addChild(slotHost);
-          rowH = Math.max(rowH, firstSpr._boxHeight);
+          rowH = Math.max(rowH, firstSpr._boxHeight + extraFxH);
         }
         cy += rowH + skGapY;
       }

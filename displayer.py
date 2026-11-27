@@ -166,13 +166,17 @@ def _printed_skill(data, *, include_forms=False):
     raw_forms = data.get("forms") or {}
     return {
         "id": data["id"], "name": data["name"], "cost": data["cost"],
+        "deck": data.get("deck", "draw"),
         "pre_reveal": data.get("pre_reveal", False),
         "pre_reveal_requires_status": dict(data.get("pre_reveal_requires_status", {})),
         "before_duel_attack": data.get("before_duel_attack", False),
         "pre_reveal_target": data.get("pre_reveal_target"),
         "pre_reveal_bind": data.get("pre_reveal_bind", "slot"),
         "resource_cost": dict(data["resource_cost"]) if data.get("resource_cost") else None,
+        "form_when": dict(data["form_when"]) if data.get("form_when") else None,
         **({"unfold": dict(data["unfold"])} if data.get("unfold") else {}),
+        **({"replace_targets": list(data["replace_targets"]) if isinstance(data["replace_targets"], list) else data["replace_targets"]}
+           if "replace_targets" in data else {}),
         "requires_status": dict(data.get("requires_status", {})),
         "forms": [
             {**_printed_skill({**_strip_forms(data), **form}), "form_key": key, "form_label": _form_label(data, key)}
@@ -217,16 +221,59 @@ def _passives(specs):
     return result
 
 
+def _effective_card_die_view(card, printed, spec, position, inst_for_pos):
+    """Overlay pure read-only runtime die & card modifiers onto a printed die view."""
+    out = dict(printed)
+    out["ignore_range"] = (0 if card.use_state.get("blank_skill") else
+                           max(card.effective_ignore_range, range_trait(spec, "ignore_range", card)))
+    if out["type"] == "skip":
+        return out
+    live = inst_for_pos[-1] if inst_for_pos else None
+    if live is None:
+        preview = Dice(spec, game=(card.player.game if card.player is not None else None))
+        preview.card = card
+    else:
+        preview = live
+    eff_type = "blank" if card.use_state.get("blank_skill") else preview.type
+    eff_level = preview.level.value
+    eff_roll_max = preview.roll_max
+    eff_base = preview.effective_modifier(preview, "base_value")
+    eff_mult = preview.multiplier
+    eff_final = preview.effective_modifier(preview, "final_bonus")
+    if not preview.fixed_scores:
+        eff_final += preview.effective_modifier(card, "final_bonus")
+        if card.character is not None and eff_type != "blank":
+            eff_final += card.character.status_modifier("final_score")
+    out["printed_roll_max"] = out["roll_max"]
+    out["printed_base_value"] = out["base_value"]
+    out["printed_final_bonus"] = out["final_bonus"]
+    out["type"] = eff_type
+    out["level"] = eff_level
+    out["roll_max"] = eff_roll_max
+    out["base_value"] = eff_base
+    out["multiplier"] = eff_mult
+    out["final_bonus"] = eff_final
+    return out
+
+
 def _visible_card(card):
     details = _printed_skill({**_strip_forms(card.data), "name": card.name, "dice": card.dice})
-    for printed, spec in zip(details["dice"], card.dice):
-        printed["ignore_range"] = (0 if card.use_state.get("blank_skill") else
-                                   max(card.effective_ignore_range, range_trait(spec, "ignore_range", card)))
-    inst = [die for die in (card.instantiated_dice or ()) if die is not None]
+    raw_inst = list(card.instantiated_dice or ())
+    inst = [die for die in raw_inst if die is not None]
+    by_pos = {}
+    for die in inst:
+        if die.position is not None:
+            by_pos.setdefault(die.position, []).append(die)
+    details["dice"] = [
+        _effective_card_die_view(card, printed, spec, idx + 1, by_pos.get(idx + 1, ()))
+        for idx, (printed, spec) in enumerate(zip(details["dice"], card.dice))
+    ]
     destroyed = sorted({die.position for die in inst if die.destroyed})
-    live_dice = [_live_die(die) for die in inst]
+    live_dice = [_live_die(die, step_index=idx + 1) for idx, die in enumerate(raw_inst) if die is not None]
     used = bool(card.use_effects_resolved and not card.has_next_die())
     has_forms = bool(card.printed_data.get("forms"))
+    if has_forms and card.printed_data.get("form_when") and not details.get("form_when"):
+        details["form_when"] = dict(card.printed_data["form_when"])
     active_form = card._form if has_forms else None
     active_form_label = _form_label(card.printed_data, active_form) if has_forms else None
     dual_forms = _build_dual_forms(card.printed_data, active_key=active_form) if has_forms else []
@@ -234,6 +281,10 @@ def _visible_card(card):
         if form_view.get("is_active_form"):
             form_view["cost"] = card.cost
             form_view["name"] = card.name
+            form_view["range_level"] = card.range_level
+            form_view["ignore_range"] = card.ignore_range
+            form_view["range_traits"] = list(details["range_traits"])
+            form_view["entries"] = list(details["entries"])
             form_view["dice"] = [dict(d) for d in details["dice"]]
             form_view["live_dice"] = [dict(d) if d else None for d in live_dice]
             form_view["destroyed_die_positions"] = list(destroyed)
@@ -268,17 +319,30 @@ def hand_key(card):
     return card.id
 
 
-def _live_die(die):
+def _live_die(die, *, step_index=None):
     if die is None:
         return None
-    resolved = die._resolved_level is not None and die.type != "skip"
+    is_skip = die.type == "skip"
     return {
-        "position": die.position, "type": die.type, "printed_level": None if die.type == "skip" else die.printed_level.value,
-        "level": die.level.value if resolved else None, "roll_max": die.roll_max if resolved else None,
-        "base_value": die.base_value, "rolled_value": die.value or None,
-        "final_score": die.final_score, "clash_score": die.clash_score,
-        "result": die.clash_result, "win_branch_skipped": die.win_branch_skipped,
-        "critical": die.critical, "destroyed": die.destroyed, "hit_index": die.hit_index,
+        "position": die.position,
+        "step_index": step_index,
+        "is_repeat": bool(die.is_repeat),
+        "type": die.type,
+        "printed_level": None if is_skip else die.printed_level.value,
+        "level": None if is_skip else die.level.value,
+        "roll_max": None if is_skip else die.roll_max,
+        "base_value": die.effective_modifier(die, "base_value"),
+        "multiplier": die.multiplier,
+        "final_bonus": die.effective_modifier(die, "final_bonus"),
+        "rolled_value": die.value or None,
+        "final_score": die.final_score,
+        "clash_score": die.clash_score,
+        "result": die.clash_result,
+        "win_branch_skipped": die.win_branch_skipped,
+        "critical": die.critical,
+        "destroyed": die.destroyed,
+        "hit_index": die.hit_index,
+        "landed_hits": die.landed_hits,
     }
 
 
@@ -662,12 +726,33 @@ class Displayer:
             "ability_effects": {name: rule.get("description", "") for name, rule in self._game.ability_rules.items()},
         }
 
+    def _team_status_details(self, player):
+        details = {}
+        anchor = next((c for c in player.characters if c.is_alive), player.characters[0] if player.characters else None)
+        if anchor is None:
+            return details
+        for name in player.team_statuses:
+            fields = self._game.status_rules.get(name, {}).get("display_fields")
+            if not fields:
+                continue
+            lines = []
+            for spec in fields:
+                val = read_value(compile_value(spec["value"]), anchor, {})
+                formatted = self._format_status_field(spec, val)
+                if formatted is not None:
+                    label = spec.get("label")
+                    lines.append(f"{label}：{formatted}" if label else formatted)
+            if lines:
+                details[name] = lines
+        return details
+
     def _player(self, player):
         own = player is self._viewer
         zones = player.cardspace
         return {
             "side": player.side, "name": player.name, "speed": player.speed,
             "team_statuses": dict(player.team_statuses),
+            "team_status_details": self._team_status_details(player),
             "cost": {"available": player.available_cost, "refill": player.max_cost, "spent": player.used_cost},
             "placement_ended": player in self._game.ended_player,
             "characters": [self._character(c, own) for c in player.characters],
@@ -736,6 +821,7 @@ class Displayer:
             "id": c.id, "printed_id": c.data["id"], "name": c.name, "title": c.data.get("title"), "faction": c.faction,
             "rank": c.rank.name, "alive": c.is_alive, "hp": c.hp, "max_hp": c.max_hp, "speed": c.speed,
             "lightcore_hp": c.lightcore_hp, "max_lightcore_hp": c.max_lightcore_hp,
+            "initial_max_lightcore_hp": c.initial_lightcore_max(c.original_max_hp),
             "shields": {"normal": c.shield, "reinforced": c.reinforced_shield, "concept": c.concept_shield},
             "statuses": {k: n for k, n in c.statuses.items() if k not in c.team_statuses},
             "status_details": self._status_details(c),
@@ -814,7 +900,7 @@ class Displayer:
                 "character_id": r_card.character.id if r_card is not None else None,
                 "target_id": r_target.id if r_target is not None and r_card is not None else None,
                 "die_number": r_card.current_dice_index + 1 if r_die is not None else None,
-                "die": _live_die(r_die),
+                "die": _live_die(r_die, step_index=r_card.current_dice_index + 1 if r_die is not None and r_card is not None else None),
             } if (r_card is not None or r_die is not None) else None
             sides.append({
                 "side": player.side, "node": pipe.current_node.id if pipe.current_node else None,
@@ -826,7 +912,7 @@ class Displayer:
                 "character_id": card.character.id if card is not None else None,
                 "target_id": target.id if target is not None and card is not None else None,
                 "die_number": card.current_dice_index + 1 if die is not None else None,
-                "die": _live_die(die),
+                "die": _live_die(die, step_index=card.current_dice_index + 1 if die is not None and card is not None else None),
                 "rear": rear_view,
             })
         number = index + 1 if 0 <= index < len(space.space) else None

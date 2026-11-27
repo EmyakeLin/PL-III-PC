@@ -6,6 +6,14 @@
 |---|---|---|
 | 战场角色 HUD | `storedDice`, `name`, `stored`, `i`, `storedLineH`, `hudCoreH`, `lineY` | 按角色公开投影列出留存骰。每行对应被动名、其骰面记录及行序号。行高为紧凑布局 14 px、常规 17 px；行在状态图标下，角色点击区域包含所有留存行。 |
 | 战场角色 HUD | `when`, `source`, `face`, `text`, `detail` | 显示来源回合、原技能名与常规宽度下的骰型。尚未留存时显示空位；文字绘入角色的 Pixi HUD。 |
+| 角色状态栏输入 | `statuses`, `abilities`, `reservedDice`, `activeShields`, `extraEffectCount` | 角色可见的状态、能力效果、预留骰及值大于零的护盾类型。额外效果数计入每项能力和整组预留骰。 |
+| 角色状态栏空间 | `localHudY`, `row3Y`, `localSlotBottom`, `badgeBottom`, `storedHeight`, `availableHeight` | 角色 HUD 和首行徽标的起点、角色槽位下缘、徽标排版的下缘、留存骰所需高度，以及扣除生命、完整度、留存骰和间距后剩余的排版高度，单位为场景 px。 |
+| `computeFighterBadgeLayout` 横纵排布 | `width`, `badgeSize`, `shieldWidth`, `passiveWidth`, `shieldCount`, `statusCount`, `gap`, `step`, `rowLimit` | 栏宽、状态徽标边长、盾徽标与被动徽标的宽度、护盾与状态种类数、徽标间距、行列步长及可用行数。尺寸和步长单位为场景 px，保留首行并按完整行增加容量。 |
+| `computeFighterBadgeLayout` 首行 | `shieldStep`, `shieldSpan`, `needsStatusSlot`, `reservedWidth`, `passiveX`, `showPassive`, `firstRowRight`, `shieldCapacity`, `shownShields`, `firstStatusX` | 护盾步长、全部盾徽标所占宽度、是否需要状态入口、首行预留宽度、被动徽标的位置和可见性、首行可用右缘、可放盾徽标的数量上限、实际显示的盾徽标数及首个状态徽标的位置。宽度和位置单位为场景 px。 |
+| `computeFighterBadgeLayout` 状态位置 | `firstRowCapacity`, `fullRowCapacity`, `capacity`, `extraBadges`, `needsOverflow`, `shownStatuses`, `hiddenCount`, `positions`, `usedSlots`, `lastBadge`, `height` | 首行、后续单行与全部行的状态容量、计入汇总的能力与未显示护盾、是否需要汇总、已展示与汇总的效果数量、图标和汇总徽标的坐标、实际占用的格数、末格和徽标区实际高度。坐标和高度单位为场景 px。 |
+| 状态预览时序 | `statusHover`, `key`, `source`, `getItems`, `clip`, `highlight`, `pointerUnchanged`, `overOpenPreview` | 当前预览的悬停和最近指针位置、按席位与角色识别的来源键、当前可交互状态栏、读取可见状态的回调、来源的裁剪范围、地面高亮回调，以及指针原地不动或已进入预览的判定。 |
+| 状态预览位置 | `statusPreviewLayer`, `statusPreview`, `signature`, `anchor`, `anchorX`, `anchorY`, `anchorTop`, `anchorBottom`, `anchorHeight`, `rect`, `adjacentX`, `maxHeight` | 挂载预览的视口图层、当前面板及其内容签名、按状态栏裁剪范围取得的锚点及边界、面板矩形、靠近状态栏一侧的候选横坐标和视口允许的最大高度。几何单位为视口 px，内容变化时沿用当前滚动位置。 |
+| `buildStatusEffectPreview` | `title`, `items`, `padding`, `headerHeight`, `entryGap`, `innerWidth`, `contentHeight`, `viewportHeight`, `height`, `maxScroll`, `currentScroll`, `scrollbarX` | 面板标题、效果条目、内边距、标题区高度、条目间距、正文宽度、正文总高度、正文裁剪高度、面板高度、最大与当前纵向滚动距离及滚动条横坐标。几何单位为视口 px。 |
 | 角色详情与被动总览 | `passiveContents(character, passive)`, `stored` | 按被动名称读取该角色的公开留存。短标签显示来源回合，正文首行显示完整原印骰面，随后列出被动原文。 |
 | ui_primitives 全局 | OUT | 源文件所在输出目录 |
 | ui_primitives 全局 | C | 背景 bg、纸面 paper、卡面 white、文字 ink、辅助 muted、边界 line、己方 green、浅绿 pale、敌方 red、浅红 rose、辅助 blue/gold 的颜色映射 |
@@ -207,7 +215,12 @@
 | 房间请求 | `pending`, `previewRequest` | 挂起时防止重复开战或结束对局。读取编队资料的请求另存取消句柄，返回后忽略迟到的响应。 |
 | 编队 | `lineup`, `drafts`, `draft.teams`, `draft.side`, `hero` | 该玩法的角色资料、按玩法保存的本次菜单草稿、双方按出战顺序排列的名单、当前编辑的一方、正在阅读的角色。 |
 | 图鉴 | `faction`, `gallery`, `inspect`, `quantity`, `quantityInput` | 阵营筛选、角色栏与详情栏的纵向滚动距离（场景像素）、每次编入人数以及仍在输入的数量文本。 |
-| 编队交互 | `onInspectChar`, `onToggleChar`, `onRemoveFromSide`, `lockedIds`, `title` | 点头像查看、按编入按钮修改当前队伍、点移出标记减少一名、固定对手的角色编号，以及当前玩法的名称。 |
+| 编队交互 | `onInspectChar`, `onHoverChar`, `onToggleChar`, `onRemoveFromSide`, `lockedIds`, `title` | 查看阵容中的角色或暂不可选的角色、悬停查看、点角色卡或详情按钮修改当前队伍、点移出标记减少一名、固定对手的角色编号，以及当前玩法的名称。 |
+| `lobby.js` 角色详情 | `setInspectedCharacter(ch)` | 将详情切到角色 `ch`。角色变化时把详情滚动位置归零，并返回是否发生切换。 |
+| `buildRosterOverlay` 编队动作 | `activeTheme`, `activeName`, `canEditTeam`, `strictUnique`, `waitingForDraftTurn`, `inspectGalleryChar` | 当前队伍的主题和显示名、当前队伍是否可编辑、是否实行全场唯一、是否在等待另一席轮选，以及角色卡暂不可选时的查看回调。 |
+| `rosterActionFor(char)` | `char`, `removing`, `inOther`, `label`, `disabled` | 候选角色、这次操作是否从当前队伍移出该角色、另一队是否包含该角色、操作提示和是否禁用。无编辑权限或角色锁定时不提供编队操作。 |
+| 角色卡与详情按钮 | `action`, `canApplyRosterAction`, `detailAction`, `accent`, `solid` | 角色卡对应的编队操作、该操作是否可用、详情当前角色对应的同一套操作，以及详情按钮的强调色和实底状态。 |
+| 图鉴点击与滚动 | `inGallery`, `galleryBottom`, `inViewport` | 点击是否落在图鉴可访问的区域、当前滚动窗口在图鉴内容中的下边界（场景像素），以及角色卡是否与该窗口相交。 |
 | 继续对局 | `rooms`, `id`, `play_url`, `label`, `matchup` | 当前标签页保存的私人邀请。用房间编号去重，玩法名和对阵双方帮助辨认同一玩法下的不同战桌。 |
 | 战桌 | `footerHeight`, `footer`, `roomName` | 大厅所开战桌底部留给导航的高度（38 屏幕像素）、导航容器和本局玩法名。其余高度供战场、物理和交互布局使用。 |
 | 私有手牌 | `use_restricted`, `HAND_USE_WARNING`, `useWarning`, `bodyTop` | 引擎逐张给出当前能否使用。受限牌在费用与牌名下方左对齐显示警示文字，警示字色也用于顶边。正文起点按警示文字的实际像素高度下移，仍按原规则查看和扣置。 |

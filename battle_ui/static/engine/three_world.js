@@ -669,12 +669,13 @@ export class ThreeWorld {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: false,
+      alpha: true,
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(this.width, this.height, false);
     this.renderer.setClearColor(0xf6f3eb, 1);
+    this._overlayPreviewMode = false;
 
     // Background GLSL Shader scene
     this.bgScene = new THREE.Scene();
@@ -929,9 +930,17 @@ export class ThreeWorld {
     revealDelay = 0.28,
     alreadyRolled = false,
     willClash = false,
+    paletteOverride = null,
     onReveal = null,
   }) {
-    const pal = DIE_PALETTES[dieType] || DIE_PALETTES.speed;
+    const basePal = DIE_PALETTES[dieType] || DIE_PALETTES.speed;
+    const pal = paletteOverride?.body
+      ? {
+          body: applySafeColor(new THREE.Color(), paletteOverride.body, basePal.body).getHex(),
+          edge: paletteOverride.edge ? applySafeColor(new THREE.Color(), paletteOverride.edge, basePal.edge).getHex() : basePal.edge,
+          hex: typeof paletteOverride.body === 'string' ? paletteOverride.body : basePal.hex,
+        }
+      : basePal;
     const group = new THREE.Group();
     const isDccD16 = sides > 12 && sides <= 16;
     let geo;
@@ -1206,11 +1215,11 @@ export class ThreeWorld {
   /**
    * 3D Tapered Sweeping Razor Slash Crescent with gilded edge glint & cross-cut flash!
    */
-  spawnSlashArc({ fromX, fromY, toX, toY, colorHex = 0xcf4330, deferImpact = false }) {
+  spawnSlashArc({ fromX, fromY, toX, toY, colorHex = 0xcf4330, deferImpact = false, angleOffset = 0, reverseSweep = false }) {
     const target = this.screenToWorld(toX, toY, 54);
     const origin = this.screenToWorld(fromX, fromY, 54);
-    const dir = Math.atan2(target.y - origin.y, target.x - origin.x);
-    const forwardSign = target.x >= origin.x ? 1 : -1;
+    const dir = Math.atan2(target.y - origin.y, target.x - origin.x) + angleOffset;
+    const forwardSign = (target.x >= origin.x ? 1 : -1) * (reverseSweep ? -1 : 1);
 
     const group = new THREE.Group();
     group.position.copy(target);
@@ -1286,6 +1295,144 @@ export class ThreeWorld {
       sweep: 2.08 * forwardSign,
       age: 0,
       life: 0.44,
+    });
+  }
+
+  /**
+   * Intersecting twin cross-slash arcs (`cross_slash` primitive).
+   */
+  spawnCrossSlash({ fromX, fromY, toX, toY, colorHex = 0xcf4330 }) {
+    this.spawnSlashArc({ fromX, fromY, toX, toY, colorHex, deferImpact: false, angleOffset: -0.46, reverseSweep: false });
+    this.spawnSlashArc({ fromX, fromY, toX, toY, colorHex, deferImpact: true, angleOffset: 0.46, reverseSweep: true });
+  }
+
+  /**
+   * Travelling crescent wave projectile (`crescent_arc` primitive).
+   */
+  spawnCrescentWave({ fromX, fromY, toX, toY, colorHex = 0x24967c }) {
+    const p0 = this.screenToWorld(fromX, fromY, 56);
+    const p1 = this.screenToWorld(toX, toY, 56);
+    const dir = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+    const group = new THREE.Group();
+
+    const outerGeo = makeTaperedCrescentGeo(24, 54, Math.PI * 0.86, 28, 0.5);
+    const outerMat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.92,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const coreGeo = makeTaperedCrescentGeo(34, 48, Math.PI * 0.68, 24, 0.5);
+    const coreMat = new THREE.MeshBasicMaterial({
+      color: 0xfffaf0,
+      transparent: true,
+      opacity: 0.96,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const outerMesh = new THREE.Mesh(outerGeo, outerMat);
+    const coreMesh = new THREE.Mesh(coreGeo, coreMat);
+    coreMesh.position.z = 3;
+    group.add(outerMesh, coreMesh);
+    group.rotation.z = dir;
+    group.position.copy(p0);
+    this.scene.add(group);
+
+    this.vfxEffects.push({
+      kind: 'crescent',
+      group,
+      p0,
+      p1,
+      toX,
+      toY,
+      colorHex,
+      geometries: [outerGeo, coreGeo],
+      materials: [outerMat, coreMat],
+      age: 0,
+      life: 0.38,
+    });
+  }
+
+  /**
+   * Jagged multi-segment electric/energy arc (`chain_arc` primitive).
+   */
+  spawnChainArc({ fromX, fromY, toX, toY, colorHex = 0xd99b26 }) {
+    const p0 = this.screenToWorld(fromX, fromY, 60);
+    const p1 = this.screenToWorld(toX, toY, 60);
+    const delta = p1.clone().sub(p0);
+    const perp = new THREE.Vector3(-delta.y, delta.x, 0).normalize();
+    const steps = 9;
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const base = p0.clone().lerp(p1, u);
+      if (i > 0 && i < steps) {
+        const jag = ((i % 2 === 0 ? 1 : -1) * (10 + Math.random() * 16)) * Math.sin(u * Math.PI);
+        base.addScaledVector(perp, jag);
+      }
+      pts.push(base);
+    }
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    const outerMat = new THREE.LineBasicMaterial({ color: colorHex, transparent: true, opacity: 0.95 });
+    const coreMat = new THREE.LineBasicMaterial({ color: 0xfffaf0, transparent: true, opacity: 0.98 });
+    const group = new THREE.Group();
+    const line1 = new THREE.Line(geo, outerMat);
+    const line2 = new THREE.Line(geo, coreMat);
+    line2.position.z = 2;
+    group.add(line1, line2);
+    this.scene.add(group);
+
+    this.spawnImpactBurst(toX, toY, colorHex, 16, false);
+    this.vfxEffects.push({
+      kind: 'chain_arc',
+      group,
+      geometries: [geo],
+      materials: [outerMat, coreMat],
+      age: 0,
+      life: 0.30,
+    });
+  }
+
+  /**
+   * Swirling twin-ring vortex (`vortex_ring` primitive).
+   */
+  spawnVortexRing({ x, y, radius = 64, colorHex = 0x1c946b }) {
+    const center = this.screenToWorld(x, y, 42);
+    const group = new THREE.Group();
+    group.position.copy(center);
+
+    const r1Geo = makeTaperedCrescentGeo(radius * 0.58, radius * 0.96, Math.PI * 1.35, 32, 0.65);
+    const r1Mat = new THREE.MeshBasicMaterial({
+      color: colorHex,
+      transparent: true,
+      opacity: 0.88,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const r2Geo = makeTaperedCrescentGeo(radius * 0.42, radius * 0.72, Math.PI * 1.15, 28, 0.65);
+    const r2Mat = new THREE.MeshBasicMaterial({
+      color: 0xfff8e6,
+      transparent: true,
+      opacity: 0.82,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const m1 = new THREE.Mesh(r1Geo, r1Mat);
+    const m2 = new THREE.Mesh(r2Geo, r2Mat);
+    m2.rotation.z = Math.PI;
+    m2.position.z = 2;
+    group.add(m1, m2);
+    this.scene.add(group);
+    this.triggerRipple(x, y, colorHex);
+
+    this.vfxEffects.push({
+      kind: 'vortex',
+      group,
+      geometries: [r1Geo, r2Geo],
+      materials: [r1Mat, r2Mat],
+      age: 0,
+      life: 0.48,
     });
   }
 
@@ -2492,6 +2639,29 @@ export class ThreeWorld {
             sh.mesh.rotation.z += sh.rz * dtSec;
           }
         }
+      } else if (v.kind === 'crescent') {
+        const ease = 1 - Math.pow(1 - t, 2.4);
+        v.group.position.lerpVectors(v.p0, v.p1, ease);
+        v.group.scale.setScalar(0.76 + ease * 0.48);
+        const fade = t < 0.72 ? 1 : Math.max(0, 1 - (t - 0.72) / 0.28);
+        v.materials[0].opacity = fade * 0.92;
+        v.materials[1].opacity = fade * 0.96;
+        if (t >= 1) {
+          this.emitShockwave(v.toX, v.toY, v.colorHex, 0.48);
+          this.spawnImpactBurst(v.toX, v.toY, v.colorHex, 18, false);
+        }
+      } else if (v.kind === 'chain_arc') {
+        const flicker = 0.65 + 0.35 * Math.sin(t * 28);
+        const fade = Math.pow(1 - t, 1.3) * flicker;
+        v.materials[0].opacity = fade * 0.95;
+        v.materials[1].opacity = fade;
+      } else if (v.kind === 'vortex') {
+        v.group.rotation.z += dtSec * 8.4;
+        const sc = t < 0.35 ? 0.55 + (t / 0.35) * 0.65 : 1.2 - ((t - 0.35) / 0.65) * 0.35;
+        v.group.scale.setScalar(sc);
+        const fade = Math.pow(1 - t, 1.15);
+        v.materials[0].opacity = fade * 0.88;
+        v.materials[1].opacity = fade * 0.82;
       } else if (v.kind === 'sprite_vfx') {
         const ease = 1 - Math.pow(1 - t, 2.5);
         v.group.position.lerpVectors(v.p0, v.p1, ease);
@@ -2585,10 +2755,24 @@ export class ThreeWorld {
       }
     }
 
-    this.renderer.autoClear = true;
-    this.renderer.render(this.bgScene, this.bgCamera);
-    this.renderer.autoClear = false;
-    this.renderer.clearDepth();
+    if (this._overlayPreviewMode) {
+      this.renderer.setClearColor(0xf6f3eb, 0);
+      this.renderer.autoClear = true;
+      this.renderer.clear(true, true, false);
+    } else {
+      this.renderer.autoClear = true;
+      this.renderer.render(this.bgScene, this.bgCamera);
+      this.renderer.autoClear = false;
+      this.renderer.clearDepth();
+    }
     this.renderer.render(this.scene, this.camera);
+  }
+
+  setOverlayPreviewMode(active) {
+    this._overlayPreviewMode = Boolean(active);
+    if (this.canvas) {
+      this.canvas.style.zIndex = active ? '4' : '';
+    }
+    this.renderer.setClearColor(0xf6f3eb, active ? 0 : 1);
   }
 }

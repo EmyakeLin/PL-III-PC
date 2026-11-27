@@ -669,6 +669,13 @@ function drawSealIcon(g, iconKey, cx, cy, r, color, { active = false, muted = fa
     }
   } else if (iconKey === 'passives') {
     drawLightStar(g, cx, cy, r * 0.86, color, 0.95);
+  } else if (iconKey === 'chronicle') {
+    g.roundRect(cx - r * 0.68, cy - r * 0.68, r * 1.36, r * 1.36, 2.2)
+      .stroke({ width: 1.35, color, alpha: 0.92 });
+    g.moveTo(cx - r * 0.38, cy - r * 0.28).lineTo(cx + r * 0.38, cy - r * 0.28)
+      .moveTo(cx - r * 0.38, cy + 0.04).lineTo(cx + r * 0.38, cy + 0.04)
+      .moveTo(cx - r * 0.38, cy + r * 0.34).lineTo(cx + r * 0.14, cy + r * 0.34)
+      .stroke({ width: 1.25, color, alpha: 0.9, cap: 'round' });
   } else if (iconKey === 'codex') {
     g.poly([
       cx - r * 0.8, cy - r * 0.52,
@@ -745,6 +752,7 @@ export function createDiegeticTopBar({
   onToggleAuto = null,
   onToggleMute = null,
   onTogglePassives = null,
+  onOpenChronicle = null,
   onOpenCodex = null,
   onOpenRoster = null,
 } = {}) {
@@ -789,11 +797,12 @@ export function createDiegeticTopBar({
   root.addChild(trayGroup);
 
   const sealSpecs = [
-    { key: 'auto', label: '暂停', width: 64, activeAccent: PALETTE.jade, accent: INK.secondary, onClick: onToggleAuto },
-    { key: 'audio', label: '音效', width: 62, activeAccent: INK.secondary, accent: INK.secondary, onClick: onToggleMute },
-    { key: 'passives', label: '被动', width: 62, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onTogglePassives },
-    { key: 'codex', label: '典籍', width: 62, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onOpenCodex },
-    { key: 'roster', label: '菜单', width: 62, activeAccent: PALETTE.jade, accent: PALETTE.jade, onClick: onOpenRoster },
+    { key: 'auto', label: '暂停', width: 62, activeAccent: PALETTE.jade, accent: INK.secondary, onClick: onToggleAuto },
+    { key: 'audio', label: '音效', width: 58, activeAccent: INK.secondary, accent: INK.secondary, onClick: onToggleMute },
+    { key: 'passives', label: '被动', width: 58, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onTogglePassives },
+    { key: 'chronicle', label: '战报', width: 58, activeAccent: PALETTE.jade, accent: PALETTE.jade, onClick: onOpenChronicle },
+    { key: 'codex', label: '典籍', width: 58, activeAccent: INK.gold, accent: INK.goldDeep, onClick: onOpenCodex },
+    { key: 'roster', label: '菜单', width: 58, activeAccent: PALETTE.jade, accent: PALETTE.jade, onClick: onOpenRoster },
   ];
 
   const sealH = 26;
@@ -919,6 +928,7 @@ export function createDiegeticTopBar({
     autoPace: false,
     muted: false,
     passivesOpen: false,
+    chronicleOpen: false,
     beatDurationMs: 0,
     beatRemainingMs: 0,
     pauseRemainingMs: null,
@@ -1042,6 +1052,7 @@ export function createDiegeticTopBar({
     rosterEnabled = true,
     muted = lastSync.muted,
     passivesOpen = lastSync.passivesOpen,
+    chronicleOpen = lastSync.chronicleOpen,
     beatDurationMs = 0,
     beatRemainingMs = 0,
     pauseRemainingMs = null,
@@ -1052,6 +1063,7 @@ export function createDiegeticTopBar({
     lastSync.autoPace = Boolean(autoPace);
     lastSync.muted = Boolean(muted);
     lastSync.passivesOpen = Boolean(passivesOpen);
+    lastSync.chronicleOpen = Boolean(chronicleOpen);
     lastSync.beatDurationMs = Math.max(0, Number(beatDurationMs) || 0);
     lastSync.beatRemainingMs = Math.max(0, Number(beatRemainingMs) || 0);
     lastSync.pauseRemainingMs = pauseRemainingMs != null ? Math.max(0, Number(pauseRemainingMs) || 0) : null;
@@ -1077,6 +1089,11 @@ export function createDiegeticTopBar({
     if (passivesNode) {
       passivesNode.state.active = lastSync.passivesOpen;
       passivesNode.redrawBtn();
+    }
+    const chronicleNode = sealNodes.get('chronicle');
+    if (chronicleNode) {
+      chronicleNode.state.active = lastSync.chronicleOpen;
+      chronicleNode.redrawBtn();
     }
 
     layoutBar();

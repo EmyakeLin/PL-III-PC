@@ -143,6 +143,7 @@ def _roster_preview(spec, color=None, sprite_url=None):
         "rank": spec["rank"],
         "power": RANK_POWER.get(spec["rank"], 1),
         "max_hp": spec["max_hp"],
+        "max_lightcore_hp": Character.initial_lightcore_max(spec["max_hp"]),
         "base_duels": Character.base_duels(spec),
         "mirror_allowed": bool(spec.get("mirror_allowed")),
         "faction": spec.get("faction", ""),
@@ -219,7 +220,7 @@ class BattleMatch:
                         character.id = f"@{player.side}.{position}:{key}"
                         if teammates[key] > 1:
                             character.name += f"（{position}号）"
-                        for assets in (self._character_colors, self._character_sprites, self._character_fx):
+                        for assets in (self._character_colors, self._character_sprites, self._character_fx, self._character_card_backs):
                             if key in assets:
                                 assets[character.id] = assets[key]
         self.viewer_side = viewer_side if viewer_side in (1, 2) else None
@@ -287,6 +288,18 @@ class BattleMatch:
             "roster_catalog": self._roster_catalog,
         }
 
+    def _inject_dissolved_clashes(self, frame):
+        for (kind, number, seat, card), settled in self._temporary_clashes.items():
+            if not card.destroyed:
+                continue
+            slots = {"regular": frame["duels"], "pre_reveal": frame["pre_reveal"]["duels"],
+                     "instant": frame["special_duels"]}[kind]
+            if not 1 <= number <= len(slots):
+                continue
+            row = next(item for item in slots[number - 1]["sides"] if item["side"] == seat)
+            if not any(item.get("instance_id") == card.instance_id for item in row["cards"]):
+                row.setdefault("resolved_cards", []).append({**settled, "dissolved": True, "used": True})
+
     def snapshot(self):
         deciding = self.mode in ("placement", "pre_attack", "intercept", "draw_select")
         early = self.game.pre_reveal
@@ -340,16 +353,7 @@ class BattleMatch:
             if self.mode != "draw_select" and view_side in (1, 2):
                 inline_special_options = self._views[view_side].special_actions()
         frame = self._views[view_side].snapshot()
-        for (kind, number, seat, card), settled in self._temporary_clashes.items():
-            if not card.destroyed:
-                continue
-            slots = {"regular": frame["duels"], "pre_reveal": frame["pre_reveal"]["duels"],
-                     "instant": frame["special_duels"]}[kind]
-            if not 1 <= number <= len(slots):
-                continue
-            row = next(item for item in slots[number - 1]["sides"] if item["side"] == seat)
-            if not any(item.get("instance_id") == card.instance_id for item in row["cards"]):
-                row.setdefault("resolved_cards", []).append({**settled, "dissolved": True, "used": True})
+        self._inject_dissolved_clashes(frame)
         card_owners = {
             "duels": {
                 f"{num}:{p.side}": [
@@ -617,12 +621,38 @@ class BattleMatch:
         # Face-down placements and replacements must remain hidden in the public log.
         if move.kind == "place":
             message = "特殊置卡"
+            if succeeded is not False and move.card.state.name == "PLACED_FACE_UP":
+                self.presentation.emit(
+                    "special_place",
+                    side=player.side,
+                    character_id=move.card.character.id,
+                    card_id=move.card.id,
+                    card_name=move.card.name,
+                    duel_number=(move.duel_index + 1 if move.duel_index is not None else None),
+                    lane="front",
+                )
         elif move.kind == "place_rear":
             message = f"在常规交锋 {move.duel_index + 1} 置入后置交锋"
+            if succeeded is not False and move.card.state.name == "PLACED_FACE_UP":
+                self.presentation.emit(
+                    "special_place",
+                    side=player.side,
+                    character_id=move.card.character.id,
+                    card_id=move.card.id,
+                    card_name=move.card.name,
+                    duel_number=(move.duel_index + 1 if move.duel_index is not None else None),
+                    lane="rear",
+                )
         elif move.kind == "replace":
             message = "替换技能"
             if succeeded is not False:
-                public_cards = {"old_card_id": move.target_card.id, "new_card_id": move.card.id} if public_replacement else {}
+                public_cards = {
+                    "character_id": move.card.character.id,
+                    "card_id": move.card.id,
+                    "card_name": move.card.name,
+                    "old_card_id": move.target_card.id,
+                    "new_card_id": move.card.id,
+                } if public_replacement else {}
                 self.presentation.emit("card_replace", side=player.side, **public_cards)
         elif move.kind == "pass_intercept":
             message = f"放行即时交锋 {move.response_number}"

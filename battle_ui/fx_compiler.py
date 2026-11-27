@@ -19,6 +19,8 @@ from loader import PACKS
 
 FX_DIR = PACKS / "fx"
 FX_SCRIPTS_DIR = PACKS / "fx_scripts"
+FX_ASSETS_DIR = PACKS / "fx_assets"
+SFX_DIR = PACKS / "sfx"
 
 VALID_PRIMITIVES = frozenset({
     "slash_arc",
@@ -31,9 +33,45 @@ VALID_PRIMITIVES = frozenset({
     "shield_dome",
     "block_barrier",
     "shards",
-    "sprite_vfx",
     "banner",
+    "cross_slash",
+    "crescent_arc",
+    "chain_arc",
+    "vortex_ring",
+    "afterimage",
+    "skill_banner",
+    "sprite_vfx",
 })
+
+SKILL_EVENT_HOOKS = (
+    "on_cast",
+    "on_skill_use",
+    "on_form_change",
+    "on_special_place",
+    "on_strike",
+    "on_hit",
+    "on_clash_win",
+    "on_clash_lose",
+    "on_crit",
+    "on_heavy_hit",
+    "on_destroy_die",
+    "on_destroy_card",
+    "on_defeat",
+)
+
+CHARACTER_EVENT_HOOKS = (
+    "on_skill_use",
+    "on_form_change",
+    "on_special_place",
+    "on_clash_win",
+    "on_crit",
+    "on_heavy_hit",
+    "on_destroy_die",
+    "on_destroy_card",
+    "on_defeat",
+)
+
+VALID_AURA_STYLES = frozenset({"ring", "pulse", "sparks"})
 
 VALID_ANCHORS = frozenset({
     "attacker.bone_weapon",
@@ -60,11 +98,14 @@ DEFAULT_GOLD_HEX = "#d99426"
 _COLOR_LEXICON = (
     (("翠绿", "翡翠", "青翠", "苍翠", "碧绿", "emerald", "jade"), "#1c946b"),
     (("青绿", "青铜", "铜绿", "verdigris", "teal"), "#2b8578"),
+    (("冰蓝", "霜蓝", "寒霜", "青蓝", "ice", "frost"), "#2a96b8"),
+    (("星芒", "星青", "幽青", "starlight", "astral"), "#238a9e"),
     (("烈焰", "火焰", "灼燃", "炽焰", "炎", "flame", "fire", "ember"), "#d95724"),
+    (("绯樱", "玫瑰", "绛红", "rose", "carmine"), "#cc3d5c"),
     (("猩红", "绯红", "赤红", "血红", "赤", "红", "crimson", "scarlet", "red"), "#c93832"),
     (("琥珀", "橙金", "暖橙", "橙", "amber", "orange"), "#e08e24"),
-    (("暗金", "鎏金", "金缮", "金色", "金", "gold", "gilded"), "#d99b26"),
-    (("瓷白", "象牙", "纯白", "银白", "白", "ivory", "white", "prism"), "#e6d8b8"),
+    (("暗金", "鎏金", "金缮", "金色", "黄铜", "古铜", "金", "gold", "gilded", "brass"), "#d99b26"),
+    (("月白", "银辉", "霜白", "瓷白", "象牙", "纯白", "银白", "白", "ivory", "white", "silver", "prism"), "#e6d8b8"),
     (("青灰", "钢铁", "铁灰", "steel", "iron"), "#7d7264"),
     (("浅蓝", "天蓝", "苍蓝", "水蓝", "blue", "cyan"), "#2478cc"),
 )
@@ -152,6 +193,11 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
     camera = {}
 
     # 3. Extract trajectory & impact visual atoms
+    has_cross = any(k in text or k in low for k in ("十字", "交叉", "双斩", "cross"))
+    has_crescent = any(k in text or k in low for k in ("月弧", "剑气", "飞刃", "弧光", "crescent", "wave"))
+    has_chain = any(k in text or k in low for k in ("电弧", "电流", "电击", "闪电", "链式", "chain", "electric"))
+    has_vortex = any(k in text or k in low for k in ("气旋", "牵引", "漩涡", "旋流", "vortex", "cyclone"))
+    has_afterimage = any(k in text or k in low for k in ("残影", "闪身", "疾步", "afterimage", "dash"))
     has_slash = any(k in text or k in low for k in ("斩", "刀光", "风刃", "剑弧", "弧", "挥砍", "回旋", "slash", "arc", "blade"))
     has_pierce = any(k in text or k in low for k in ("刺", "突刺", "穿刺", "长枪", "细剑", "破空", "激波", "pierce", "thrust", "lance"))
     has_blunt = any(k in text or k in low for k in ("锤", "砸", "打击", "地面", "震地", "冲击柱", "blunt", "hammer", "slam", "smash"))
@@ -159,9 +205,28 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
     has_bell = any(k in text or k in low for k in ("钟", "共鸣", "波纹", "扩散", "圆环", "光环", "涡流", "bell", "ring", "ripple", "wave", "vortex"))
     has_sparks = any(k in text or k in low for k in ("粒子", "火星", "火花", "余烬", "飞溅", "散射", "火焰", "烈焰", "spark", "ember", "burst"))
     has_shards = any(k in text or k in low for k in ("碎裂", "碎片", "碎石", "崩裂", "shatter", "shard", "debris"))
-    has_shield = any(k in text or k in low for k in ("护盾", "屏障", "结界", "盾", "招架", "shield", "barrier", "dome"))
+    has_shield = any(k in text or k in low for k in ("护盾", "屏障", "盾", "招架", "shield", "barrier", "dome"))
+    has_hitstop = any(k in text or k in low for k in ("顿帧", "停顿", "重创", "hitstop"))
 
-    if has_slash:
+    if has_afterimage:
+        vfx.append({
+            "primitive": "afterimage",
+            "from": "attacker.center",
+            "to": "defender.center",
+            "color": primary,
+            "count": min(3, max(1, repeat_count)),
+            "stagger_ms": 55,
+        })
+    if has_cross:
+        vfx.append({
+            "primitive": "cross_slash",
+            "from": "attacker.bone_weapon",
+            "to": "defender.center",
+            "color": primary,
+            "count": min(3, repeat_count),
+            "stagger_ms": 95,
+        })
+    elif has_slash:
         vfx.append({
             "primitive": "slash_arc",
             "from": "attacker.bone_weapon",
@@ -169,6 +234,32 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
             "color": primary,
             "count": min(4, repeat_count),
             "stagger_ms": 85 if swift else 115,
+        })
+    if has_crescent:
+        vfx.append({
+            "primitive": "crescent_arc",
+            "from": "attacker.bone_weapon",
+            "to": "defender.center",
+            "color": secondary if has_slash or has_cross else primary,
+            "count": min(3, repeat_count),
+            "stagger_ms": 80,
+        })
+    if has_chain:
+        vfx.append({
+            "primitive": "chain_arc",
+            "from": "attacker.bone_weapon",
+            "to": "defender.center",
+            "color": primary,
+            "count": min(4, repeat_count),
+            "stagger_ms": 70,
+        })
+    if has_vortex:
+        vfx.append({
+            "primitive": "vortex_ring",
+            "to": "defender.center",
+            "color": primary,
+            "count": min(3, repeat_count),
+            "stagger_ms": 110,
         })
     if has_pierce:
         vfx.append({
@@ -232,7 +323,8 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
     if heavy or has_blunt:
         camera["shake"] = 10.0 if heavy else 7.5
         camera["duration_ms"] = 280
-    elif has_slash or has_pierce or has_beam:
+        camera["zoom_punch"] = 0.022 if heavy else 0.014
+    elif has_slash or has_cross or has_crescent or has_pierce or has_beam or has_chain:
         camera["shake"] = 5.0
         camera["duration_ms"] = 180
 
@@ -253,6 +345,15 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
             "freq_end": 420,
             "duration_ms": 280,
             "gain": 0.15,
+        }
+    elif any(k in text or k in low for k in ("电流", "电弧", "电击", "闪电", "electric", "zap")):
+        sfx = {
+            "waveform": "sawtooth",
+            "freq_start": 960,
+            "freq_end": 280,
+            "noise_freq": 2400,
+            "duration_ms": 210,
+            "gain": 0.12,
         }
     elif any(k in text or k in low for k in ("蜂鸣", "高频", "清脆", "金属", "琴鸣", "metal", "ring")):
         sfx = {
@@ -287,6 +388,8 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
         "motion": motion,
         "sfx": sfx,
     }
+    if has_hitstop or heavy:
+        recipe["hitstop_ms"] = 70 if heavy else 45
     if camera:
         recipe["camera"] = camera
     return validate_fx_recipe(recipe, base_color=primary)
@@ -354,6 +457,16 @@ def validate_fx_recipe(raw, *, base_color=None):
     elif isinstance(merged.get("fx_prompt"), str) and merged["fx_prompt"].strip():
         out["prompt"] = merged["fx_prompt"].strip()[:240]
 
+    if "hitstop_ms" in merged:
+        hs = _clamp_int(merged.get("hitstop_ms"), 0, 140, 0)
+        if hs > 0:
+            out["hitstop_ms"] = hs
+
+    if "threshold" in merged:
+        th = _clamp_int(merged.get("threshold"), 1, 99, 0)
+        if th > 0:
+            out["threshold"] = th
+
     # 1. VFX primitives list (bounded to max 8 atoms per event)
     vfx_in = merged.get("vfx")
     if isinstance(vfx_in, list):
@@ -395,8 +508,11 @@ def validate_fx_recipe(raw, *, base_color=None):
                 atom["radius"] = _clamp_int(item["radius"], 20, 160, 58)
             if "heavy" in item:
                 atom["heavy"] = bool(item["heavy"])
-            if prim == "banner" and isinstance(item.get("text"), str) and item["text"].strip():
-                atom["text"] = item["text"].strip()[:28]
+            if prim in ("banner", "skill_banner"):
+                if isinstance(item.get("text"), str) and item["text"].strip():
+                    atom["text"] = item["text"].strip()[:28]
+                if isinstance(item.get("subtext"), str) and item["subtext"].strip():
+                    atom["subtext"] = item["subtext"].strip()[:28]
                 if item.get("kind") in ("status", "clash", "heavy", "passive", "shield"):
                     atom["kind"] = item["kind"]
             clean_vfx.append(atom)
@@ -421,17 +537,30 @@ def validate_fx_recipe(raw, *, base_color=None):
             clean_cam["shake"] = round(_clamp_num(cam_in["shake"], 0.0, 18.0, 0.0), 2)
         if "duration_ms" in cam_in:
             clean_cam["duration_ms"] = _clamp_int(cam_in["duration_ms"], 60, 700, 220)
+        if "zoom_punch" in cam_in:
+            zp = round(_clamp_num(cam_in["zoom_punch"], 0.0, 0.045, 0.0), 4)
+            if zp > 0:
+                clean_cam["zoom_punch"] = zp
         if "tint" in cam_in:
             clean_cam["tint"] = sanitize_bright_hex(cam_in["tint"], fallback_hex)
         if clean_cam:
             out["camera"] = clean_cam
 
-    # 4. Audio preset or procedural WebAudio synth recipe
+    # 4. Audio preset, custom `/sfx/` audio clip, or procedural WebAudio synth recipe
     sfx_in = merged.get("sfx")
-    if isinstance(sfx_in, str) and sfx_in in VALID_SFX_PRESETS:
-        out["sfx"] = {"preset": sfx_in}
+    if isinstance(sfx_in, str):
+        if sfx_in in VALID_SFX_PRESETS:
+            out["sfx"] = {"preset": sfx_in}
+        else:
+            clip_url = _validate_pack_asset_url(sfx_in, "/sfx/", (".ogg", ".wav", ".mp3"))
+            if clip_url:
+                out["sfx"] = {"url": clip_url, "gain": 0.28}
     elif isinstance(sfx_in, dict):
         clean_sfx = {}
+        clip_url = _validate_pack_asset_url(sfx_in.get("url") or sfx_in.get("file"), "/sfx/", (".ogg", ".wav", ".mp3"))
+        if clip_url:
+            clean_sfx["url"] = clip_url
+            clean_sfx["gain"] = round(_clamp_num(sfx_in.get("gain"), 0.02, 0.60, 0.28), 3)
         if sfx_in.get("preset") in VALID_SFX_PRESETS:
             clean_sfx["preset"] = sfx_in["preset"]
         if sfx_in.get("waveform") in VALID_WAVEFORMS:
@@ -459,14 +588,50 @@ def validate_fx_recipe(raw, *, base_color=None):
     return out
 
 
+def _normalize_status_auras(raw_auras, *, base_color=DEFAULT_GOLD_HEX):
+    if not isinstance(raw_auras, dict):
+        return {}
+    out = {}
+    for st_name, spec in raw_auras.items():
+        if not isinstance(st_name, str) or not st_name.strip():
+            continue
+        if isinstance(spec, str):
+            out[st_name.strip()] = {
+                "color": sanitize_bright_hex(spec, base_color),
+                "style": "ring",
+                "radius": 52,
+                "period_ms": 1600,
+            }
+        elif isinstance(spec, dict):
+            style = spec.get("style") if spec.get("style") in VALID_AURA_STYLES else "ring"
+            entry = {
+                "color": sanitize_bright_hex(spec.get("color"), base_color),
+                "style": style,
+                "radius": _clamp_int(spec.get("radius"), 24, 120, 52),
+                "period_ms": _clamp_int(spec.get("period_ms"), 600, 4000, 1600),
+            }
+            out[st_name.strip()] = entry
+    return out
+
+
+def _normalize_dice_style(raw_style, *, base_color=DEFAULT_GOLD_HEX):
+    if not isinstance(raw_style, dict):
+        return {}
+    out = {}
+    for key in ("body", "edge", "spark"):
+        if key in raw_style and raw_style[key] is not None:
+            out[key] = sanitize_bright_hex(raw_style[key], base_color)
+    return out
+
+
 def normalize_character_fx_manifest(raw, *, base_color=None):
-    """Normalize a full per-character FX manifest (`defaults`, `skills`, `passives`)."""
+    """Normalize a full per-character FX manifest (`defaults`, `skills`, `passives`, `status_auras`, `dice_style`)."""
     if not isinstance(raw, dict):
         return {}
     color = sanitize_bright_hex(raw.get("color") or base_color, DEFAULT_GOLD_HEX)
     manifest = {}
 
-    # Character-level defaults (`slash`, `pierce`, `blunt`, `strike`, `passive`, `status:<name>`)
+    # Character-level defaults (`slash`, `pierce`, `blunt`, `strike`, `passive`, `status:<name>`, and lifecycle hooks)
     defaults_out = {}
     defaults_in = raw.get("defaults")
     if isinstance(defaults_in, dict):
@@ -475,6 +640,11 @@ def normalize_character_fx_manifest(raw, *, base_color=None):
                 rec = validate_fx_recipe(spec, base_color=color)
                 if rec:
                     defaults_out[hook.strip()] = rec
+    for hook in CHARACTER_EVENT_HOOKS:
+        if hook in raw and hook not in defaults_out:
+            rec = validate_fx_recipe(raw[hook], base_color=color)
+            if rec:
+                defaults_out[hook] = rec
     if defaults_out:
         manifest["defaults"] = defaults_out
 
@@ -492,11 +662,11 @@ def normalize_character_fx_manifest(raw, *, base_color=None):
                     entry["on_strike"] = rec
             elif isinstance(sspec, dict):
                 # Support direct recipe shorthand on a skill or explicit event hooks
-                if any(k in sspec for k in ("vfx", "sfx", "motion", "camera", "script", "fx_script", "fx_prompt", "prompt")):
+                if any(k in sspec for k in ("vfx", "sfx", "motion", "camera", "script", "fx_script", "fx_prompt", "prompt", "hitstop_ms")):
                     rec = validate_fx_recipe(sspec, base_color=color)
                     if rec:
                         entry["on_strike"] = rec
-                for hook in ("on_form_change", "on_cast", "on_strike", "on_hit", "on_clash_win", "on_clash_lose"):
+                for hook in SKILL_EVENT_HOOKS:
                     if hook in sspec:
                         rec = validate_fx_recipe(sspec[hook], base_color=color)
                         if rec:
@@ -510,6 +680,15 @@ def normalize_character_fx_manifest(raw, *, base_color=None):
                             dice_out[str(dkey)] = rec
                     if dice_out:
                         entry["dice"] = dice_out
+                forms_in = sspec.get("forms")
+                if isinstance(forms_in, dict):
+                    forms_out = {}
+                    for fkey, fspec in forms_in.items():
+                        rec = validate_fx_recipe(fspec, base_color=color)
+                        if rec:
+                            forms_out[str(fkey)] = rec
+                    if forms_out:
+                        entry["forms"] = forms_out
             if entry:
                 skills_out[skey.strip()] = entry
     if skills_out:
@@ -527,6 +706,14 @@ def normalize_character_fx_manifest(raw, *, base_color=None):
                 passives_out[pkey.strip()] = rec
     if passives_out:
         manifest["passives"] = passives_out
+
+    auras_out = _normalize_status_auras(raw.get("status_auras") or raw.get("auras"), base_color=color)
+    if auras_out:
+        manifest["status_auras"] = auras_out
+
+    dice_style_out = _normalize_dice_style(raw.get("dice_style") or raw.get("dice_theme"), base_color=color)
+    if dice_style_out:
+        manifest["dice_style"] = dice_style_out
 
     return manifest
 
@@ -568,10 +755,25 @@ def _extract_inline_character_fx(spec, *, base_color=None):
 
 
 def _merge_manifests(base, override):
+    skills_merged = dict(base.get("skills") or {})
+    for skey, sval in (override.get("skills") or {}).items():
+        if skey in skills_merged and isinstance(skills_merged[skey], dict) and isinstance(sval, dict):
+            skills_merged[skey] = {
+                **skills_merged[skey],
+                **sval,
+                **({"dice": {**(skills_merged[skey].get("dice") or {}), **(sval.get("dice") or {})}}
+                   if (skills_merged[skey].get("dice") or sval.get("dice")) else {}),
+                **({"forms": {**(skills_merged[skey].get("forms") or {}), **(sval.get("forms") or {})}}
+                   if (skills_merged[skey].get("forms") or sval.get("forms")) else {}),
+            }
+        else:
+            skills_merged[skey] = sval
     out = {
         "defaults": {**(base.get("defaults") or {}), **(override.get("defaults") or {})},
-        "skills": {**(base.get("skills") or {}), **(override.get("skills") or {})},
+        "skills": skills_merged,
         "passives": {**(base.get("passives") or {}), **(override.get("passives") or {})},
+        "status_auras": {**(base.get("status_auras") or {}), **(override.get("status_auras") or {})},
+        "dice_style": {**(base.get("dice_style") or {}), **(override.get("dice_style") or {})},
     }
     return {k: v for k, v in out.items() if v}
 

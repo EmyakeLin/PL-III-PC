@@ -118,7 +118,7 @@ export const DAMAGE_GRADE_STYLE = {
   normal:    { label: '',      color: 0xc93e2b, bg: 0xfdf0ed, border: 0xe5a296 },
   pierce:    { label: '穿甲',   color: 0xbf6c0e, bg: 0xfef5e3, border: 0xe0b265 },
   concept:   { label: '超穿甲', color: 0xb02e57, bg: 0xfceef3, border: 0xd98aa3 },
-  lightcore: { label: '光点',   color: 0x1b7fa8, bg: 0xeaf6fb, border: 0x82c4df },
+  lightcore: { label: '光点',   color: 0x1a8f9c, bg: 0xe8f6f8, border: 0x7ac2cc },
   real:      { label: '真实',   color: 0x8f2447, bg: 0xfaebf0, border: 0xd48aa2 },
 };
 
@@ -310,7 +310,7 @@ export const TRAIT_STYLE = {
 //  - 拼点失败系列: 红色
 export const TRIGGER_STYLE = {
   default:    { color: 0x5c8a14, wash: 0xf1f7e2, rule: 0x9ac24a },
-  use:        { color: 0x1c6cc4, wash: 0xe8f2fc, rule: 0x6ea6e0 },
+  use:        { color: 0x2478cc, wash: 0xeaf4fd, rule: 0x4ca0eb },
   hit:        { color: 0x5c8a14, wash: 0xf1f7e2, rule: 0x9ac24a },
   clash_win:  { color: 0xd96b0b, wash: 0xfef2e4, rule: 0xe89b48 },
   clash_lose: { color: 0xc92a2a, wash: 0xfdecec, rule: 0xe37b7b },
@@ -389,7 +389,7 @@ export const OFFICIAL_STATUS_RULES = {
   虚弱: '每层使持有者的非空白骰最终点数 −1。进攻骰、招架和闪避均适用。生效回合结束时清除。',
   迅捷: '每层使持有角色的速度 +1。先修正各角色速度，再计算阵营速度。生效回合结束时清除。',
   束缚: '每层使持有角色的速度 −1。先修正各角色速度，再计算阵营速度。生效回合结束时清除。',
-  烧伤: '【回合结束】持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。',
+  烧伤: '持有至少 4 层烧伤时自动结算一次。引燃可立即结算任意正层数的烧伤。按触发时的层数，每满 4 层算一组。承受等于组数的普通伤害（原始伤害至多 3 点），随后减少「组数 + 2」层，最低到 0。减伤或护盾全额抵挡时照常扣层。',
   裂血: '上限 9 层。持有至少 3 层时，每场实际开始结算的交锋开始时承受 1 点穿甲伤害。达到 6 层后进入爆发，直到归零或被解除；爆发期间每被一个伤害部分命中且仍存活，额外承受 1 点穿甲伤害并减少 2 层。',
   呼吸: '上限 6 层。持有者的进攻骰命中时掷 1 枚六面骰，结果不高于层数则触发「暴击时」词条。',
   失衡: '上限 20 层。被「失衡爆发」词条命中时掷 1 枚二十面骰；结果不高于现有层数则获得 1 层致命失衡并减少 5 层失衡，否则增加 2 层失衡。',
@@ -462,13 +462,16 @@ export function formatDieRange(die) {
   return range;
 }
 
+const COMPARISON_SIGNS = { lt: '<', le: '≤', eq: '=', ne: '≠', ge: '≥', gt: '>' };
+
 export function exactSkillTraits(card, blanked = false) {
-  return exactSkillTraitSpecs(card, blanked).map(({ label }) => label);
+  return exactSkillTraitSpecs(card, blanked === true).map(({ label }) => label);
 }
 
 export function exactSkillTraitSpecs(card, blanked = false) {
+  const isBlanked = blanked === true;
   const specs = card.no_hit_carrier ? [{ label: '无受击载体', style: TRAIT_STYLE.anytime }] : [];
-  if (blanked) return specs;
+  if (isBlanked) return specs;
   const rangeTraits = card.range_traits || [
     card.range_level && RANGE_LABELS[card.range_level],
     card.ignore_range && `无视 ${card.ignore_range} 级远程`,
@@ -482,6 +485,21 @@ export function exactSkillTraitSpecs(card, blanked = false) {
   for (const [name, count] of Object.entries(card.requires_status || {})) {
     specs.push({ label: `须持有 ${count} ${name}`, style: TRAIT_STYLE.anytime });
   }
+  if (card.form_when && card.form_when.status && card.form_when.form) {
+    const fw = card.form_when;
+    const formTitle = (card.forms || []).find((f) => f.form_key === fw.form)?.name
+      || (card.dual_forms || []).find((f) => f.form_key === fw.form)?.name
+      || fw.form;
+    const condLabel = fw.op && COMPARISON_SIGNS[fw.op]
+      ? `${fw.status}${COMPARISON_SIGNS[fw.op]}${fw.value}时使用「${formTitle}」形态`
+      : `持有${fw.status}时使用「${formTitle}」形态`;
+    specs.push({ label: condLabel, style: TRAIT_STYLE.anytime });
+  }
+  if (card.unfold && card.unfold.status) {
+    const uf = card.unfold;
+    const sign = COMPARISON_SIGNS[uf.op] || '≥';
+    specs.push({ label: `展开（${uf.status}${sign}${uf.value ?? 1}）`, style: TRAIT_STYLE.anytime });
+  }
   if (card.before_duel_attack) specs.push({ label: '交锋开始前可进攻', style: TRAIT_STYLE.pre_reveal });
   const earlyConditions = Object.entries(card.pre_reveal_requires_status || {});
   if (earlyConditions.length) {
@@ -490,14 +508,31 @@ export function exactSkillTraitSpecs(card, blanked = false) {
   } else if (card.pre_reveal) {
     specs.push({ label: '开牌前打出', style: TRAIT_STYLE.pre_reveal });
   }
+  if (card.pre_reveal_target === 'occupied_enemy_slot') {
+    specs.push({ label: '开牌前仅可指定有敌方置牌的交锋', style: TRAIT_STYLE.pre_reveal });
+  }
+  if (card.pre_reveal_bind === 'declared_card') {
+    specs.push({ label: '锁定下一张敌方技能', style: TRAIT_STYLE.pre_reveal });
+  }
   if (card.anytime_play && card.anytime_play.length) {
     const modeNames = { attack: '主动进攻', place: '置于空交锋', custom: '依卡面执行' };
     specs.push({
       label: `任意时刻打出（${card.anytime_play.map((m) => modeNames[m] || m).join('、')}）`,
       style: TRAIT_STYLE.anytime,
     });
+    if (card.anytime_play.includes('attack') && card.interceptable !== false) {
+      specs.push({
+        label: card.instant_interceptable ? '场内进攻可迎击' : '场内进攻不可拦截',
+        style: card.instant_interceptable ? TRAIT_STYLE.anytime : TRAIT_STYLE.uninterceptable,
+      });
+    }
   }
-  if (card.anytime_replace) specs.push({ label: '任意时刻替换', style: TRAIT_STYLE.anytime });
+  if (card.anytime_replace) {
+    specs.push({
+      label: card.replace_targets ? '任意时刻替换指定技能' : '任意时刻替换',
+      style: TRAIT_STYLE.anytime,
+    });
+  }
   if (card.interceptable === false) specs.push({ label: '不可拦截', style: TRAIT_STYLE.uninterceptable });
   if (card.starts_out_of_combat) specs.push({ label: '战斗外', style: TRAIT_STYLE.out_of_combat });
   return specs;
@@ -1502,26 +1537,61 @@ export function buildUnifiedSkillRow(skill, {
     }
   }
 
-  let dx = width - 8;
   const dice = skill.dice || [];
-  for (let i = dice.length - 1; i >= 0; i--) {
-    const d = dice[i];
-    const ds = DIE_STYLE[d.type] || DIE_STYLE.blank;
-    const rt = new PIXI.Text({
-      text: formatDieRange(d),
-      style: { fontFamily: FONT_NUM, fontSize: 11.2, fontWeight: '800', fill: ds.color },
-    });
-    const capW = Math.ceil(rt.width) + 22;
-    const capX = dx - capW;
-    if (capX < leftStopX + 8) {
-      rt.destroy();
-      break;
+  const availRightW = Math.max(0, (width - 8) - (leftStopX + 8));
+  if (dice.length > 0 && availRightW > 28) {
+    const built = [];
+    let usedW = 0;
+    let hiddenCount = 0;
+    for (let i = 0; i < dice.length; i++) {
+      const d = dice[i];
+      const ds = DIE_STYLE[d.type] || DIE_STYLE.blank;
+      const rt = new PIXI.Text({
+        text: formatDieRange(d),
+        style: { fontFamily: FONT_NUM, fontSize: 11.2, fontWeight: '800', fill: ds.color },
+      });
+      const capW = Math.ceil(rt.width) + 22;
+      const moreReserve = (i < dice.length - 1) ? 34 : 0;
+      const gapBefore = built.length > 0 ? 6 : 0;
+      if (usedW + gapBefore + capW + moreReserve > availRightW && built.length > 0) {
+        rt.destroy();
+        hiddenCount = dice.length - i;
+        break;
+      }
+      if (usedW + gapBefore + capW > availRightW && built.length === 0) {
+        rt.destroy();
+        hiddenCount = dice.length;
+        break;
+      }
+      built.push({ d, rt, capW });
+      usedW += gapBefore + capW;
     }
-    drawUnifiedDieFrame(g, d.type, capX + 9, rowH / 2, 5.2);
-    rt.anchor.set(0, 0.5);
-    rt.position.set(capX + 18, rowH / 2);
-    root.addChild(rt);
-    dx = capX - 6;
+    let overflowTxt = null;
+    let overflowW = 0;
+    if (hiddenCount > 0) {
+      overflowTxt = new PIXI.Text({
+        text: `+${hiddenCount}骰`,
+        style: { fontFamily: FONT_UI, fontSize: 9.8, fontWeight: '800', fill: INK.goldDeep },
+      });
+      overflowW = Math.ceil(overflowTxt.width) + 10;
+      usedW += (built.length > 0 ? 5 : 0) + overflowW;
+    }
+    let cx = Math.max(leftStopX + 8, width - 8 - usedW);
+    for (const item of built) {
+      drawUnifiedDieFrame(g, item.d.type, cx + 9, rowH / 2, 5.2);
+      item.rt.anchor.set(0, 0.5);
+      item.rt.position.set(cx + 18, rowH / 2);
+      root.addChild(item.rt);
+      cx += item.capW + 6;
+    }
+    if (overflowTxt) {
+      g.roundRect(cx, rowH / 2 - 8, overflowW, 16, 4)
+        .fill({ color: INK.goldBg })
+        .stroke({ width: 0.85, color: INK.gold, alpha: 0.85 });
+      overflowTxt.anchor.set(0.5);
+      overflowTxt.position.set(cx + overflowW / 2, rowH / 2);
+      root.addChild(overflowTxt);
+    }
   }
 
   root._height = rowH;

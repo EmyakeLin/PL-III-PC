@@ -41,7 +41,6 @@ import {
   resolveDualForms,
   buildVerbatimCardPanel,
   buildRichVerbatimText,
-  buildUnifiedEntryPlate,
 } from './card_print.js';
 import { createCharacterActor, actorPalette, setCharacterSpriteUrls } from './stage_actors.js';
 import { FxDirector } from './fx_director.js';
@@ -61,6 +60,7 @@ import {
 } from './cost_hud.js';
 import {
   computeFormationLayout,
+  computeFighterBadgeLayout,
   resolveInfiniteActorSpec,
   createDelayedHpBar,
 } from './formation.js';
@@ -71,6 +71,7 @@ import {
 } from './combat_choreography.js';
 import {
   makeSealButton,
+  buildStatusEffectPreview,
   buildHeroSidePanel,
   buildPassiveDrawer,
   buildHandoffOverlay,
@@ -108,8 +109,7 @@ const PHASE_TINTS = {
 const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
 
 function wingHeaderText(seatName, player, isFirst, speed) {
-  const statuses = Object.entries(player.team_statuses || {}).map(([name, n]) => `${name} ${n}`);
-  return [seatName + (isFirst ? ' ★先手' : ''), `速${speed}`, `手牌${player.hand_count}`, ...statuses].join(' · ');
+  return [seatName + (isFirst ? ' ★先手' : ''), `速${speed}`, `手牌${player.hand_count}`].join(' · ');
 }
 
 function pausedPlayLabel(play) {
@@ -124,6 +124,10 @@ function clearContainer(c) {
   for (const child of removed) {
     if (child && !child.destroyed) child.destroy({ children: true });
   }
+}
+
+function containsHudPoint(rect, point) {
+  return point.x >= rect.x && point.x <= rect.x + rect.w && point.y >= rect.y && point.y <= rect.y + rect.h;
 }
 
 export class GameDirector {
@@ -154,6 +158,14 @@ export class GameDirector {
         y: (this.layout?.arenaTop || 60) + 132,
       }),
       triggerShake: (power, dur) => this._triggerShake(power, dur),
+      triggerHitstop: (ms) => {
+        this.hitstopTimer = Math.max(this.hitstopTimer || 0, Math.min(0.14, (Number(ms) || 0) / 1000));
+      },
+      triggerZoomPunch: (amt) => {
+        this.zoomPunch = Math.max(this.zoomPunch || 0, Math.min(0.045, Number(amt) || 0));
+      },
+      spawnAfterimage: (cid, side, toPt, col) => this._spawnAfterimage(cid, side, toPt, col),
+      showSkillBanner: (spec) => this._showSkillBanner(spec),
       spawnFloater: (x, y, text, color, size, kind) => this._spawnFloater(x, y, text, color, size, kind),
       showBanner: (text, color, dur) => this._showBanner(text, color, dur),
     });
@@ -201,7 +213,7 @@ export class GameDirector {
       playFx: (ev, opts) => this.fxRenderer.playFx(ev, opts),
       onSpeedRevealed: () => this._revealWingSpeeds(),
       onCombatMedallionsChanged: () => this._renderClashMedallions(),
-      releaseDeferredVitals: () => this._releaseDeferredVitals(),
+      releaseDeferredVitals: (opts) => this._releaseDeferredVitals(opts),
       onRollLockChanged: () => { if (this.state) this._rebuildActionControls(); },
       onBeatSettled: () => this._onBeatSettled(),
     });
@@ -222,10 +234,14 @@ export class GameDirector {
     this.passivePulses = new Map();       // `${charId}:${passiveName}` -> remaining sec (0..1.6)
     this.costAnchors = new Map();         // side -> { x, y }
     this.floaters = [];
+    this.afterimages = [];
+    this.skillBanner = null;
     this.banner = null;
     this.toast = null;
     this.shakeTime = 0;
     this.shakePower = 0;
+    this.hitstopTimer = 0;
+    this.zoomPunch = 0;
     this.time = 0;
     this.autoPace = true;
     this.autoTimer = 0;
@@ -240,6 +256,8 @@ export class GameDirector {
     // Inspection & interactive state
     this.hoveredCard = null;
     this.hoveredInfo = null;
+    this.statusHover = null;
+    this.statusPreview = null;
     this.hoveredHandKey = null;
     this.handFanOrder = [];
     this._hiddenHoverSprite = null;
@@ -264,6 +282,8 @@ export class GameDirector {
     this.choiceSafeTop = 64;
     this._activeOverlayNode = null;
     this._lastHandHoverSfxMs = 0;
+    this._fxPreviewRaiseUntil = 0;
+    this._pulsingAuraDrawers = [];
     this.rosterModal = null;
     this.rosterActors = [];
     this.lobbyUi = {
@@ -344,6 +364,7 @@ export class GameDirector {
     this.fxTextLayer = new PIXI.Container();
     this.overlayLayer = new PIXI.Container();
     this.inspectLayer = new PIXI.Container();
+    this.statusPreviewLayer = new PIXI.Container();
     this.toastLayer = new PIXI.Container();
 
     this.worldRoot.addChild(
@@ -356,14 +377,14 @@ export class GameDirector {
       this.duelPeekLayer,
       this.persistentHudLayer,
       this.tetherLayer,
-      this.sidePanelsLayer,
       this.handLayer,
       this.aimArrowLayer,
       this.controlsLayer,
       this.cornerHudLayer,
+      this.sidePanelsLayer,
       this.fxTextLayer
     );
-    app.stage.addChild(this.overlayLayer, this.inspectLayer, this.toastLayer);
+    app.stage.addChild(this.overlayLayer, this.inspectLayer, this.statusPreviewLayer, this.toastLayer);
 
     this.tabletop = new CombatTabletop(this.tabletopLayer, {
       resolveCharColor: (cid, s) => this._resolveCharColor(cid, s),
@@ -517,10 +538,24 @@ export class GameDirector {
         this._syncTopBar();
       },
       onTogglePassives: () => this._togglePassiveDrawer(),
+      onOpenChronicle: () => {
+        this.activeHeroPanel = null;
+        this.passiveDrawer = null;
+        if (this.codexModal && this.codexModal.tab === 'history') {
+          this.codexModal = null;
+        } else {
+          this.codexModal = { tab: 'history', scrollY: 0, maxScroll: 0, node: null };
+        }
+        this._syncTopBar();
+        this._rebuildSidePanels();
+        this._rebuildOverlay();
+      },
       onOpenCodex: () => {
         this.activeHeroPanel = null;
         this.passiveDrawer = null;
-        this.codexModal = { tab: 'rules', scrollY: 0, maxScroll: 0, node: null };
+        this.codexModal = (this.codexModal && this.codexModal.tab === 'rules')
+          ? null
+          : { tab: 'rules', scrollY: 0, maxScroll: 0, node: null };
         this._syncTopBar();
         this._rebuildSidePanels();
         this._rebuildOverlay();
@@ -590,6 +625,7 @@ export class GameDirector {
     app.stage.eventMode = 'static';
     app.stage.hitArea = app.screen;
     app.stage.on('pointermove', (e) => this._onPointerMove(e));
+    app.canvas.addEventListener('pointerleave', () => this._clearStatusHover());
     app.stage.on('pointerup', (e) => this._onPointerUp(e));
     app.stage.on('pointerupoutside', (e) => this._onPointerUp(e));
     app.stage.on('pointertap', () => {
@@ -1072,7 +1108,7 @@ export class GameDirector {
     };
   }
 
-  _releaseDeferredVitals() {
+  _releaseDeferredVitals(opts = {}) {
     for (const hw of this.hpWidgets.values()) {
       if (hw.bar && !hw.bar.destroyed && hw.actualHp != null) {
         hw.bar.setHp(hw.actualHp, hw.maxHp, { immediate: false });
@@ -1085,6 +1121,12 @@ export class GameDirector {
           lw.bar.setRevealed(true, { immediate: false });
         }
         lw.bar.setLightcore(lw.actualLc, lw.actualMax, { immediate: false });
+      }
+    }
+    if (opts?.rebuildActors && this.state?.frame) {
+      this._rebuildConfrontationWings();
+      if (this.activeHeroPanel || this.passiveDrawer) {
+        this._rebuildSidePanels();
       }
     }
   }
@@ -1125,7 +1167,7 @@ export class GameDirector {
     }
     this._lastBeatHadFx = true;
     this.autoTimer = this._nextAutoDelay(nextState.mode, true);
-    // STRICT PRIVACY CLEAR on every state update
+    // Clear potentially private card hovers. The public status preview rebinds during the wing rebuild.
     this.hoveredCard = null;
     this.hoveredInfo = null;
     this.dragState = null;
@@ -1234,6 +1276,7 @@ export class GameDirector {
   }
 
   _resetMatchVisuals() {
+    this._clearStatusHover();
     this.sequencer.resetMatch();
     this.hpDisplay.clear();
     this.hpWidgets.clear();
@@ -1394,6 +1437,7 @@ export class GameDirector {
       rosterEnabled: Boolean(this.state),
       muted: this.audio.muted,
       passivesOpen: Boolean(this.passiveDrawer),
+      chronicleOpen: Boolean(this.codexModal && this.codexModal.tab === 'history'),
       beatDurationMs: room?.beat_duration_ms || 0,
       beatRemainingMs: room?.beat_remaining_ms || 0,
       pauseRemainingMs: room?.pause_remaining_ms ?? null,
@@ -1435,6 +1479,7 @@ export class GameDirector {
       }
     }
 
+    if (this.statusHover) this.statusHover.source = null;
     clearContainer(this.wingsLayer);
     clearContainer(this.actorsLayer);
     this.charRects.clear();
@@ -1445,6 +1490,7 @@ export class GameDirector {
     this._fighterSpeedRefs = [];
     this.passivePlates.clear();
     this._fighterFloorDrawers.clear();
+    this._pulsingAuraDrawers = [];
     this.wingViewports = {};
     this._wingScrollCtl = {};
 
@@ -1459,6 +1505,7 @@ export class GameDirector {
       const wx = side === 1 ? leftWingX : rightWingX;
       this._buildPlayerWing(player, wx, wingW, h);
     }
+    this._syncStatusPreview();
   }
 
   _computeCostDisplayPool(player) {
@@ -1554,6 +1601,80 @@ export class GameDirector {
     headTxt.position.set(isLeft ? wx + 2 : wx + wingW - 2, headY);
     this.wingsLayer.addChild(headTxt);
     this._wingHeadRefs.set(side, { headTxt, player, theme, seatName });
+
+    // 1b. Interactive Team-Shared Status Badges (`player.team_statuses`) with Icon + Hover Rule Card
+    const teamStatuses = Object.entries(player.team_statuses || {});
+    if (teamStatuses.length > 0) {
+      const tsHost = new PIXI.Container();
+      const tsY = headY + 17;
+      const tx = isLeft ? wx + 2 : (wx + wingW - 2);
+      const buildHoverItems = () => teamStatuses.map(([n, v]) => {
+        const rl = this.state?.catalog?.statuses?.[n];
+        const baseText = (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '';
+        const detailLines = Array.isArray(player.team_status_details?.[n]) ? player.team_status_details[n] : [];
+        return {
+          name: `${n}（阵营）`,
+          value: v,
+          burst: false,
+          color: getStatusColor(n, theme.accent),
+          text: [baseText, ...detailLines].filter(Boolean).join('\n'),
+        };
+      });
+      const maxBadgeW = Math.max(84, wingW - 6);
+      let usedW = 0;
+      let shown = 0;
+      for (const [tsName, tsVal] of teamStatuses) {
+        const col = getStatusColor(tsName, theme.accent);
+        const lbl = new PIXI.Text({
+          text: `${tsName} ${tsVal}`,
+          style: { fontFamily: FONT_UI, fontSize: 9.8, fontWeight: '800', fill: col },
+        });
+        const bw = Math.ceil(lbl.width) + 21;
+        if (shown > 0 && usedW + bw + 32 > maxBadgeW) {
+          lbl.destroy();
+          break;
+        }
+        const chip = new PIXI.Container();
+        const cg = new PIXI.Graphics();
+        cg.roundRect(0, 0, bw, 17, 4)
+          .fill({ color: INK.paper, alpha: 0.94 })
+          .stroke({ width: 1.0, color: col });
+        chip.addChild(cg);
+        mountStatusIcon(chip, cg, tsName, 9, 8.5, 5.2, col, tsVal);
+        lbl.anchor.set(0, 0.5);
+        lbl.position.set(16.5, 8.5);
+        chip.addChild(lbl);
+        const cxPos = isLeft ? (tx + usedW) : (tx - usedW - bw);
+        chip.position.set(cxPos, tsY);
+        tsHost.addChild(chip);
+        usedW += bw + 4;
+        shown += 1;
+      }
+      if (shown < teamStatuses.length) {
+        const moreTxt = new PIXI.Text({
+          text: `+${teamStatuses.length - shown}`,
+          style: { fontFamily: FONT_NUM, fontSize: 9.5, fontWeight: '900', fill: theme.accent },
+        });
+        const mw = Math.ceil(moreTxt.width) + 10;
+        const mChip = new PIXI.Container();
+        const mg = new PIXI.Graphics();
+        mg.roundRect(0, 0, mw, 17, 4).fill({ color: theme.softBg }).stroke({ width: 1, color: theme.accent });
+        moreTxt.anchor.set(0.5);
+        moreTxt.position.set(mw / 2, 8.5);
+        mChip.addChild(mg, moreTxt);
+        mChip.position.set(isLeft ? (tx + usedW) : (tx - usedW - mw), tsY);
+        tsHost.addChild(mChip);
+        usedW += mw + 4;
+      }
+      const statusWidth = usedW - 4;
+      const statusX = isLeft ? tx : tx - statusWidth;
+      tsHost.eventMode = 'static';
+      tsHost.interactiveChildren = false;
+      tsHost.hitArea = new PIXI.Rectangle(statusX, tsY, statusWidth, 17);
+      tsHost.cursor = 'pointer';
+      this.wingsLayer.addChild(tsHost);
+      this._bindStatusHover({ key: `team:${side}`, node: tsHost, side, title: `${seatName} · 阵营共享状态`, getItems: buildHoverItems });
+    }
 
     // 2. Sync Persistent Spring-Physical Cost HUD & 2.5D Diegetic Deck Piles (ZERO destroy/rebuild!)
     const costPool = this._computeCostDisplayPool(player);
@@ -1694,12 +1815,13 @@ export class GameDirector {
             ref.hitZone.eventMode = vis ? 'static' : 'none';
             if (ref.statusOverlayHost) {
               ref.statusOverlayHost.visible = vis;
-              ref.statusOverlayHost.interactiveChildren = vis;
+              ref.statusOverlayHost.eventMode = vis ? 'static' : 'none';
             }
           }
           if (thumbG && formation.maxScroll > 0) {
             thumbG.y = trackTop + (clamped / formation.maxScroll) * thumbTravel;
           }
+          this._syncStatusPreview();
         },
       };
     }
@@ -1724,6 +1846,7 @@ export class GameDirector {
   }
 
   _openHeroSheet(charId, side) {
+    this._clearStatusHover();
     this.passiveDrawer = null;
     this.codexModal = null;
     this.pileModal = null;
@@ -1829,12 +1952,21 @@ export class GameDirector {
       const actorNode = this.actorNodes.get(this._characterKey(ch.id, side));
       const preferredTop = actorNode ? Math.round(actorNode.cy - panelH * 0.38) : 64;
       const panelTop = Math.max(52, Math.min(Math.max(52, fanClearBottom - panelH - 4), preferredTop));
-      const canSetTarget = Boolean(activeSide && activeSide !== side && ch.alive &&
+      const focusSide = this.state.frame?.viewer_side ?? this.state.side ?? activeSide;
+      const canSetTarget = Boolean(focusSide && focusSide !== side && ch.alive &&
         (!this.transport.isRoom || (this.state.started && pl.characters.filter(c => c.alive).length > 1)));
-      const isDefault = canSetTarget && this.state.default_targets?.[String(activeSide)] === ch.id;
+      const curDefaultId = this.state.default_targets?.[String(focusSide)] ?? this.state.default_targets?.[focusSide];
+      const isDefault = Boolean(focusSide && focusSide !== side && curDefaultId === ch.id);
+
+      const enrichedChar = {
+        ...ch,
+        _team_statuses: pl.team_statuses || {},
+        _team_status_details: pl.team_status_details || {},
+        _catalog_ability_effects: this.state.catalog?.ability_effects || {},
+      };
 
       const panel = buildHeroSidePanel({
-        character: ch,
+        character: enrichedChar,
         side,
         charColor: this._resolveCharColor(ch.id, side),
         catalogChar: this._catalogChar(ch.id),
@@ -1863,7 +1995,9 @@ export class GameDirector {
             : null;
           this._renderInspection();
         },
-        onSetFocusTarget: () => this._sendAction('set_default_target', { side: activeSide, character_id: ch.id }),
+        canPreviewFx: (q) => this.fxDirector.hasPreviewableFx(q.charId, q),
+        onPreviewFx: (spec) => this._previewCustomFx(spec),
+        onSetFocusTarget: () => this._sendAction('set_default_target', { side: focusSide, character_id: ch.id }),
         onScrollChange: (val) => { m.scrollY = val; },
         onClose: () => this._closeStageSheets(),
       });
@@ -1893,10 +2027,24 @@ export class GameDirector {
     const theme = SIDE_THEME[side];
     const actorKey = this._characterKey(ch.id, side);
     const activeSide = this.state.active_side;
-    const defaultTarget = activeSide && activeSide !== side && this.state.default_targets?.[String(activeSide)] === ch.id;
+    const focusViewerSide = this.state.frame?.viewer_side ?? this.state.side ?? activeSide;
+    const curDefaultTargetId = focusViewerSide
+      ? (this.state.default_targets?.[String(focusViewerSide)] ?? this.state.default_targets?.[focusViewerSide])
+      : null;
+    const defaultTarget = Boolean(focusViewerSide && focusViewerSide !== side && curDefaultTargetId === ch.id);
+    const defState = this.sequencer.deferredActorStateOverrides?.get(actorKey) || null;
+    const effAlive = defState ? defState.alive : ch.alive;
+    const effShields = defState ? defState.shields : (ch.shields || {});
+    const effStatuses = defState ? defState.statuses : (ch.statuses || {});
+    const effStatusDetails = defState ? defState.status_details : (ch.status_details || {});
+    const effBleedBurst = defState ? defState.bleed_burst : ch.bleed_burst;
     const catChar = this._catalogChar(ch.id);
     const passiveCount = (catChar?.faction_passives?.length || 0) + (catChar?.passives?.length || 0);
-    const hasRow3 = Object.values(ch.shields || {}).some((v) => v > 0) || Object.keys(ch.statuses || {}).length > 0 || passiveCount > 0;
+    const statuses = Object.entries(effStatuses);
+    const abilities = Object.entries(ch.ability_effects || {});
+    const reservedDice = Array.isArray(ch.reserved_dice) ? ch.reserved_dice : [];
+    const activeShields = Object.keys(SHIELD_STYLE).filter(kind => effShields[kind] > 0);
+    const extraEffectCount = abilities.length + (reservedDice.length ? 1 : 0);
 
     const cx = slot.x;
     const actorR = slot.actorR;
@@ -1904,14 +2052,32 @@ export class GameDirector {
     const compactHud = hudW < 142;
     const hasLightcore = Number(ch.max_lightcore_hp || 0) > 0;
     const lcChannelH = compactHud ? 9 : 11;
-    // FIXED plinth & Row 3 geometry so revealing the Lightcore bar on first lightcore damage causes ZERO layout jump!
+    // Reserve the lightcore channel before assigning the height available to badges.
     const hudBoxH = compactHud ? 32 : 38;
     const storedDice = Object.entries(ch.stored_dice || {});
     const storedLineH = compactHud ? 14 : 17;
-    const hudCoreH = (hasRow3 ? ((compactHud ? 50 : 65) + lcChannelH) : (hudBoxH + lcChannelH + 2))
-      + storedDice.length * storedLineH;
+    const storedHeight = storedDice.length ? storedDice.length * storedLineH + 2 : 0;
     const localActorY = scrollable ? slot.rawY : slot.y;
     const screenActorY = scrollable ? (slot.rawY - scrollY) : slot.y;
+    const localHudY = Math.round(localActorY + actorR * 0.78);
+    const row3Y = hudBoxH + lcChannelH + 2;
+    const stBoxSize = compactHud ? 18 : 22;
+    const shieldWidth = compactHud ? 30 : 36;
+    const pBadgeW = passiveCount ? (compactHud ? 28 : 34) : 0;
+    const localSlotBottom = slot.slotTop + slot.slotH + (scrollable ? scrollY : 0);
+    const badgeBottom = scrollable ? localSlotBottom : Math.min(localSlotBottom, zoneBottom);
+    const availableHeight = badgeBottom - localHudY - row3Y - storedHeight - 4;
+    const badgeLayout = computeFighterBadgeLayout({
+      width: hudW,
+      availableHeight,
+      badgeSize: stBoxSize,
+      shieldWidth,
+      shieldCount: activeShields.length,
+      passiveWidth: pBadgeW,
+      statusCount: statuses.length,
+      extraEffectCount,
+    });
+    const hudCoreH = row3Y + badgeLayout.height + storedHeight;
     const localUnitTop = Math.round(localActorY - actorR * 0.92);
 
     // Highlight valid enemy attack target when player selected a pre-attack or field-action attack card
@@ -1928,12 +2094,33 @@ export class GameDirector {
       )
     );
 
+    const customAuras = this.fxDirector?.resolveStatusAuras?.(ch.id, effStatuses) || [];
     const floorMark = new PIXI.Graphics();
     floorMark.eventMode = 'none';
-    const drawFloor = (hovered) => {
+    let lastFloorHovered = false;
+    const drawFloor = (hovered = lastFloorHovered) => {
       if (floorMark.destroyed) return;
+      lastFloorHovered = hovered;
       const isInspected = this.activeHeroPanel?.charId === ch.id && this.activeHeroPanel.side === side;
       floorMark.clear();
+      if (effAlive && customAuras.length) {
+        customAuras.forEach((aura, idx) => {
+          const aCol = parseHexColor(aura.color, INK.gold);
+          const rx = actorR * (1.12 + idx * 0.14);
+          const ry = actorR * (0.33 + idx * 0.05);
+          let fillAlpha = 0.08;
+          let strokeAlpha = 0.72;
+          if (aura.style === 'pulse') {
+            const period = Math.max(400, Number(aura.period_ms) || 1400);
+            const wave = 0.5 + 0.5 * Math.sin((this.time * 1000 / period) * Math.PI * 2);
+            fillAlpha = 0.07 + wave * 0.13;
+            strokeAlpha = 0.50 + wave * 0.40;
+          }
+          floorMark.ellipse(cx, localActorY + actorR * 0.66, rx, ry)
+            .fill({ color: aCol, alpha: fillAlpha })
+            .stroke({ width: 1.5, color: aCol, alpha: strokeAlpha });
+        });
+      }
       if (hovered || isAttackTargetSelected || isInspected) {
         floorMark.ellipse(cx, localActorY + actorR * 0.66, actorR * 1.24, actorR * 0.37)
           .fill({ color: isAttackTargetSelected ? 0xfce6df : isInspected ? INK.goldBg : theme.warmTint, alpha: 0.66 })
@@ -1948,6 +2135,9 @@ export class GameDirector {
     };
     drawFloor(false);
     this._fighterFloorDrawers.set(actorKey, drawFloor);
+    if (effAlive && customAuras.some((a) => a.style === 'pulse')) {
+      this._pulsingAuraDrawers.push({ floorMark, drawFloor });
+    }
     floorHost.addChild(floorMark);
 
     // Living Animated Character Actor standing free on the open battlefield!
@@ -1963,7 +2153,6 @@ export class GameDirector {
 
     // Generous hit target rectangle covering the full standing figure (crown/weapon/body) + underfoot HUD
     const hudX = Math.round(cx - hudW / 2);
-    const localHudY = Math.round(localActorY + actorR * 0.78);
     const screenHudY = scrollable ? (localHudY - scrollY) : localHudY;
     const hitLeft = Math.min(hudX - 8, Math.round(cx - actorR * 1.35));
     const hitRight = Math.max(hudX + hudW + 8, Math.round(cx + actorR * 1.35));
@@ -2039,19 +2228,19 @@ export class GameDirector {
     hud.interactiveChildren = false;
     const bg = new PIXI.Graphics();
     bg.roundRect(0, 0, hudW, hudBoxH, 6)
-      .fill({ color: ch.alive ? INK.paper : 0xede8de, alpha: 0.92 })
-      .stroke({ width: defaultTarget ? 1.6 : 0.9, color: defaultTarget ? INK.gold : ch.alive ? INK.line : INK.muted });
-    bg.roundRect(0, 2, 3, hudBoxH - 4, 1.5).fill({ color: ch.alive ? charColor : INK.muted });
+      .fill({ color: effAlive ? INK.paper : 0xede8de, alpha: 0.92 })
+      .stroke({ width: defaultTarget ? 1.6 : 0.9, color: defaultTarget ? INK.gold : effAlive ? INK.line : INK.muted });
+    bg.roundRect(0, 2, 3, hudBoxH - 4, 1.5).fill({ color: effAlive ? charColor : INK.muted });
     hud.addChild(bg);
 
     // Row 1: Name + Duel Quota pips + Speed + Personal Cost crystal
     const nameTxt = new PIXI.Text({
-      text: `${ch.name}${ch.alive ? '' : ' [亡]'}`,
+      text: `${ch.name}${effAlive ? '' : ' [亡]'}`,
       style: {
         fontFamily: FONT_UI,
         fontSize: compactHud ? 10.2 : teamCount === 3 ? 11.5 : 12.5,
         fontWeight: '800',
-        fill: ch.alive ? INK.strong : INK.muted,
+        fill: effAlive ? INK.strong : INK.muted,
       },
     });
     const nameWidth = hudW - (compactHud ? 40 : 48);
@@ -2142,8 +2331,10 @@ export class GameDirector {
       const lcDef = this.sequencer.deferredLightcoreOverrides.get(actorKey);
       const targetLc = lcDef ? lcDef.hp : Number(ch.lightcore_hp ?? 0);
       const targetMaxLc = lcDef ? lcDef.max : Number(ch.max_lightcore_hp ?? 0);
-      const choiceSpec = (this.state.choices || []).find((c) => c.id === (ch.printed_id || ch.id));
-      const initialMax = Number(choiceSpec?.max_lightcore_hp ?? ch.max_lightcore_hp ?? 0);
+      const printedId = ch.printed_id || ch.id;
+      const choiceSpec = (this.state.choices || []).find((c) => c.id === printedId)
+        || (this.state.roster_catalog || []).find((c) => c.id === printedId);
+      const initialMax = Number(ch.initial_max_lightcore_hp ?? choiceSpec?.max_lightcore_hp ?? ch.max_lightcore_hp ?? 0);
       const damagedNow = (targetLc < targetMaxLc) || (initialMax > 0 && targetMaxLc < initialMax);
       if (damagedNow) this.lightcoreRevealed.add(actorKey);
       const isRevealed = this.lightcoreRevealed.has(actorKey);
@@ -2174,8 +2365,8 @@ export class GameDirector {
       lcBar.position.set(infoX, lcY);
       const lcState = lcBar.getState();
       const lcTxt = new PIXI.Text({
-        text: `光${Math.round(lcState.displayVal)}/${ch.max_lightcore_hp}`,
-        style: { fontFamily: FONT_NUM, fontSize: compactHud ? 7.8 : 8.8, fontWeight: '800', fill: 0x1e7aa3 },
+        text: `光${Math.round(lcState.displayVal)}/${targetMaxLc}`,
+        style: { fontFamily: FONT_NUM, fontSize: compactHud ? 7.8 : 8.8, fontWeight: '800', fill: 0x1a8f9c },
       });
       lcTxt.anchor.set(1, 0.5);
       lcTxt.position.set(hudW - (compactHud ? 4.5 : 6), lcY + lcH / 2);
@@ -2197,8 +2388,7 @@ export class GameDirector {
       this.lightcoreRevealAlpha.set(actorKey, lcState.revealAlpha);
     }
 
-    // Row 3: Floating Active Shields (ONLY if > 0) + Limbus Status Icons at a FIXED offset (ZERO vertical jump!)
-    const row3Y = hudBoxH + lcChannelH + 2;
+    // Shields and passives keep the first row. Statuses can also use the rows below it.
     const iconH = compactHud ? 17 : 21;
     for (const [i, [name, stored]] of storedDice.entries()) {
       const when = stored.turn === this.state.frame.turn ? '本回合'
@@ -2209,21 +2399,18 @@ export class GameDirector {
       const detail = new PIXI.Text({ text, style: {
         fontFamily: FONT_UI, fontSize: compactHud ? 9 : 11, fontWeight: '700', fill: INK.primary,
       } });
-      const lineY = row3Y + iconH + 2 + i * storedLineH;
+      const lineY = row3Y + badgeLayout.height + 2 + i * storedLineH;
       detail.position.set(0, lineY);
       hud.addChild(detail);
     }
-    let sx = 0;
-    const shields = ch.shields || {};
     const shG = new PIXI.Graphics();
     hud.addChild(shG);
-    for (const kind of ['normal', 'reinforced', 'concept']) {
-      const val = shields[kind] || 0;
-      if (val <= 0) continue;
-      const shW = compactHud ? 30 : 36;
-      if (sx + shW > hudW + 4) break;
+    const shownShields = activeShields.slice(0, badgeLayout.shownShields);
+    for (const [index, kind] of shownShields.entries()) {
+      const val = effShields[kind];
+      const sx = index * (shieldWidth + badgeLayout.gap);
       const st = SHIELD_STYLE[kind];
-      shG.roundRect(sx, row3Y, shW, iconH, 5).fill({ color: st.bg }).stroke({ width: 1.2, color: st.color });
+      shG.roundRect(sx, row3Y, shieldWidth, iconH, 5).fill({ color: st.bg }).stroke({ width: 1.2, color: st.color });
       drawShieldGlyph(shG, kind, sx + (compactHud ? 8 : 10), row3Y + iconH / 2, compactHud ? 4.8 : 5.8);
       const stNum = new PIXI.Text({
         text: String(val),
@@ -2232,23 +2419,74 @@ export class GameDirector {
       stNum.anchor.set(0, 0.5);
       stNum.position.set(sx + (compactHud ? 15 : 19), row3Y + iconH / 2);
       hud.addChild(stNum);
-      sx += shW + 3;
     }
 
-    const statuses = Object.entries(ch.statuses || {});
-    const stBoxSize = compactHud ? 18 : 22;
     let statusOverlayHost = null;
-    if (statuses.length > 0) {
+    if (badgeLayout.positions.length) {
       statusOverlayHost = new PIXI.Container();
       statusOverlayHost.position.set(hudX, localHudY);
+      statusOverlayHost.visible = !scrollable || slot.visible;
+      statusOverlayHost.eventMode = statusOverlayHost.visible ? 'static' : 'none';
+      statusOverlayHost.interactiveChildren = false;
+      statusOverlayHost.hitArea = new PIXI.Rectangle(0, row3Y, hudW, badgeLayout.height);
+      statusOverlayHost.cursor = 'pointer';
+      statusOverlayHost.on('pointerdown', (e) => {
+        if (!this.dragState) e.stopPropagation();
+      });
+      statusOverlayHost.on('pointertap', triggerFighterTap);
       actorHost.addChild(statusOverlayHost);
     }
-    for (const [name, val] of statuses) {
-      if (sx + stBoxSize + 1 > hudW + 6) break;
+
+    const buildFighterStatusHover = () => {
+      const items = statuses.map(([n, v]) => {
+        const rl = this.state?.catalog?.statuses?.[n];
+        const baseText = (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '';
+        const detailLines = Array.isArray(effStatusDetails?.[n]) ? effStatusDetails[n].slice() : [];
+        const ov = ch.status_overflow?.[n];
+        if (ov && ov.amount > 0) {
+          detailLines.push(`累计溢出：${ov.amount}${ov.threshold ? ` / ${ov.threshold}` : ''}`);
+        }
+        return {
+          name: n,
+          value: v,
+          burst: n === '裂血' && effBleedBurst,
+          color: getStatusColor(n, INK.secondary),
+          text: [baseText, ...detailLines].filter(Boolean).join('\n'),
+        };
+      });
+      for (const kind of activeShields.slice(badgeLayout.shownShields)) {
+        const shield = SHIELD_STYLE[kind];
+        items.push({ name: shield.label, value: effShields[kind], color: shield.color });
+      }
+      for (const [abName, abVal] of abilities) {
+        const desc = this.state?.catalog?.ability_effects?.[abName] || '持续生效中的能力效果。';
+        items.push({
+          name: `${abName}（能力）`,
+          value: abVal && abVal !== true ? abVal : 1,
+          burst: false,
+          color: theme.accent,
+          text: desc,
+        });
+      }
+      if (reservedDice.length) {
+        items.push({
+          name: '预留骰',
+          value: reservedDice.length,
+          burst: false,
+          color: INK.goldDeep,
+          text: reservedDice.map((r) => `${r.skill} · 第 ${r.position} 骰（剩余 ${r.remaining}）`).join('\n'),
+        });
+      }
+      return items;
+    };
+
+    for (const [index, [name, val]] of statuses.slice(0, badgeLayout.shownStatuses).entries()) {
+      const { x, y } = badgeLayout.positions[index];
+      const badgeY = row3Y + y;
       const col = getStatusColor(name, INK.secondary);
-      const burst = name === '裂血' && ch.bleed_burst;
+      const burst = name === '裂血' && effBleedBurst;
       const iconBox = new PIXI.Container();
-      iconBox.position.set(sx, row3Y);
+      iconBox.position.set(x, badgeY);
       const ig = new PIXI.Graphics();
       ig.roundRect(0, 0, stBoxSize, stBoxSize, 4.5)
         .fill({ color: burst ? 0xfce0e4 : INK.paper })
@@ -2262,7 +2500,7 @@ export class GameDirector {
       iconBox.addChild(glyphLayer);
 
       const badgeG = new PIXI.Graphics();
-      badgeG.roundRect(stBoxSize * 0.45, stBoxSize * 0.52, stBoxSize * 0.6, stBoxSize * 0.5, 3).fill({ color: col });
+      badgeG.roundRect(stBoxSize * 0.45, stBoxSize * 0.52, stBoxSize * 0.55, stBoxSize * 0.48, 3).fill({ color: col });
       iconBox.addChild(badgeG);
 
       const valTxt = new PIXI.Text({
@@ -2273,64 +2511,79 @@ export class GameDirector {
       valTxt.position.set(stBoxSize * 0.75, stBoxSize * 0.77);
       iconBox.addChild(valTxt);
 
-      iconBox.eventMode = (!scrollable || slot.visible) ? 'static' : 'none';
-      iconBox.hitArea = new PIXI.Rectangle(0, 0, stBoxSize, stBoxSize);
-      iconBox.cursor = 'pointer';
-      iconBox.on('pointerover', () => {
-        if (this.dragState) return;
-        drawFloor(true);
-        this.hoveredInfo = {
-          kind: 'statuses',
-          title: `${ch.name} · 状态效果`,
-          items: statuses.map(([n, v]) => {
-            const rl = this.state?.catalog?.statuses?.[n];
-            const baseText = (rl && rl.length ? rl.join('\n') : OFFICIAL_STATUS_RULES[n]) || '';
-            const detailLines = Array.isArray(ch.status_details?.[n]) ? ch.status_details[n] : [];
-            const text = [baseText, ...detailLines].filter(Boolean).join('\n');
-            return {
-              name: n,
-              value: v,
-              burst: n === '裂血' && ch.bleed_burst,
-              color: getStatusColor(n, INK.secondary),
-              text,
-            };
-          }),
-          side,
-          y: Math.max(52, screenHudY - 24),
-        };
-        this._renderInspection();
-      });
-      iconBox.on('pointerout', () => {
-        drawFloor(false);
-        this.hoveredInfo = null;
-        this._renderInspection();
-      });
-      iconBox.on('pointerdown', (e) => {
-        if (!this.dragState) e.stopPropagation();
-      });
-      iconBox.on('pointertap', triggerFighterTap);
       statusOverlayHost.addChild(iconBox);
-      sx += stBoxSize + 3;
     }
 
-    // Subtle passive-count affordance badge on right side of Row 3
-    if (passiveCount > 0) {
-      const pBadgeW = compactHud ? 30 : 38;
+    if (badgeLayout.hiddenCount > 0) {
+      const { x, y } = badgeLayout.positions.at(-1);
+      const badgeY = row3Y + y;
+      const moreBox = new PIXI.Container();
+      moreBox.position.set(x, badgeY);
+      const mg = new PIXI.Graphics();
+      mg.roundRect(0, 0, stBoxSize, stBoxSize, 4.5)
+        .fill({ color: theme.softBg, alpha: 0.95 })
+        .stroke({ width: 1.1, color: theme.accent });
+      const mt = new PIXI.Text({
+        text: `+${badgeLayout.hiddenCount}`,
+        style: { fontFamily: FONT_NUM, fontSize: compactHud ? 8.2 : 9.4, fontWeight: '900', fill: theme.accent },
+      });
+      mt.anchor.set(0.5);
+      const labelWidth = stBoxSize - 2;
+      if (mt.width > labelWidth) mt.scale.x = labelWidth / mt.width;
+      mt.position.set(stBoxSize / 2, stBoxSize / 2);
+      moreBox.addChild(mg, mt);
+      statusOverlayHost.addChild(moreBox);
+    }
+    if (statusOverlayHost) {
+      const clip = scrollable ? { top: zoneTop - 8, bottom: zoneBottom + 8 } : null;
+      this._bindStatusHover({
+        key: `fighter:${side}:${ch.id}`,
+        node: statusOverlayHost,
+        side,
+        title: `${ch.name} · 状态与能力`,
+        getItems: buildFighterStatusHover,
+        clip,
+        highlight: drawFloor,
+      });
+    }
+
+    // Subtle passive-count affordance badge on right side of Row 3 + live `passivePlates` pulse registration!
+    if (badgeLayout.showPassive) {
       const pBadgeH = compactHud ? 16 : 19;
-      const pbx = Math.max(sx + 2, hudW - pBadgeW);
-      if (pbx + pBadgeW <= hudW + 4) {
-        const pb = new PIXI.Graphics();
-        pb.roundRect(pbx, row3Y + 1, pBadgeW, pBadgeH, 4.5)
-          .fill({ color: INK.goldBg, alpha: 0.92 })
-          .stroke({ width: 0.9, color: INK.gold, alpha: 0.85 });
-        hud.addChild(pb);
-        const pt = new PIXI.Text({
-          text: `◆${passiveCount}`,
-          style: { fontFamily: FONT_UI, fontSize: compactHud ? 8.8 : 10.2, fontWeight: '800', fill: INK.goldDeep },
-        });
-        pt.anchor.set(0.5);
-        pt.position.set(pbx + pBadgeW / 2, row3Y + 1 + pBadgeH / 2);
-        hud.addChild(pt);
+      const pbx = badgeLayout.passiveX;
+      const pbHost = new PIXI.Container();
+      pbHost.position.set(pbx, row3Y + 1);
+      const pbGlow = new PIXI.Graphics();
+      const pb = new PIXI.Graphics();
+      pb.roundRect(0, 0, pBadgeW, pBadgeH, 4.5)
+        .fill({ color: INK.goldBg, alpha: 0.92 })
+        .stroke({ width: 0.9, color: INK.gold, alpha: 0.85 });
+      const pt = new PIXI.Text({
+        text: `◆${passiveCount}`,
+        style: { fontFamily: FONT_UI, fontSize: compactHud ? 8.8 : 10.2, fontWeight: '800', fill: INK.goldDeep },
+      });
+      pt.anchor.set(0.5);
+      pt.position.set(pBadgeW / 2, pBadgeH / 2);
+      pbHost.addChild(pbGlow, pb, pt);
+      hud.addChild(pbHost);
+
+      const plateInfo = {
+        x: hudX + pbx,
+        y: screenHudY + row3Y + 1,
+        w: pBadgeW,
+        h: pBadgeH,
+        cx: hudX + pbx + pBadgeW / 2,
+        cy: screenHudY + row3Y + 1 + pBadgeH / 2,
+        glowG: pbGlow,
+      };
+      if (this.passivePlates) {
+        for (const fp of catChar?.faction_passives || []) {
+          if (fp.name) this.passivePlates.set(`${ch.id}:${fp.name}`, plateInfo);
+        }
+        for (const rp of catChar?.passives || []) {
+          if (rp.name) this.passivePlates.set(`${ch.id}:${rp.name}`, plateInfo);
+        }
+        this.passivePlates.set(`${ch.id}:default`, plateInfo);
       }
     }
 
@@ -2444,7 +2697,7 @@ export class GameDirector {
       const k = `${kind}:${number}:${side}:${lane}:${position}`;
       if (highlights.boardCardTargets.has(k)) {
         optionIdx = highlights.boardCardTargets.get(k);
-        accent = this.activeFieldAbilityKey ? 0x7b42b8 : 0x1b6ea8;
+        accent = this.activeFieldAbilityKey ? 0xb83862 : 0x2478cc;
       }
     } else if (kind === 'regular' && highlights.regularDuelTargets.has(number)) {
       optionIdx = highlights.regularDuelTargets.get(number);
@@ -2526,7 +2779,7 @@ export class GameDirector {
             const oppActiveCard = oppCards.find((c) => !c.used && !c.dissolved && !c.skipped) || oppCards[oppCards.length - 1];
             const totalDice = oppActiveCard?.dice?.length || 0;
             const curDie = oppCombat?.die_number || oppCombat?.die?.position || 0;
-            const nextDie = this.state?.special_timing === '骰子使用后' || this.sequencer.isRollAnimating
+            const nextDie = (this.state?.special_timing === '用骰后' || this.state?.special_timing === '骰子使用后' || this.sequencer.isRollAnimating)
               ? curDie + 1
               : Math.max(1, curDie);
             if (totalDice > 0 && nextDie <= totalDice) {
@@ -3022,6 +3275,17 @@ export class GameDirector {
           });
         }
       }
+      const fieldRearSlots = new Set();
+      if (this._isFieldActionMode() || this._hasInlineFieldOptions()) {
+        const rearCand = this.dragState?.actKey || this.selectedHandCardId;
+        if (rearCand) {
+          const { analysis } = this._getFieldActionContext();
+          for (const e of analysis.byCardId.get(rearCand) || []) {
+            if (e.kind === 'place_rear' && e.opt.duel_number != null) fieldRearSlots.add(e.opt.duel_number);
+          }
+        }
+      }
+      const { cutInRegularDuels, queuedGhosts } = this._computeTabletopInTurnMeta(frame?.duels || [], combat);
       this.tabletop.setState({
         duels: this.tabletop.duels,
         activeIndex: this.tabletop.activeIndex,
@@ -3033,6 +3297,9 @@ export class GameDirector {
         activeSide: this.state.active_side || 1,
         viewerSide: frame.viewer_side ?? null,
         cardsRevealed: Boolean(frame.cards_revealed),
+        rearSlotTargets: fieldRearSlots,
+        cutInRegularDuels,
+        queuedGhosts,
       });
     }
   }
@@ -3608,7 +3875,7 @@ export class GameDirector {
       const placeCharacterSigil = ({ cid, title, isArmed = false, onClick }) => {
         const rank = perCharRank.get(cid) || 0;
         perCharRank.set(cid, rank + 1);
-        const accent = isArmed ? 0x7b42b8 : this._resolveCharColor(cid, ownerSide);
+        const accent = isArmed ? 0xb83862 : this._resolveCharColor(cid, ownerSide);
         const rect = this.charRects.get(this._characterKey(cid, ownerSide));
         const textStr = isArmed ? `✦ 选目标 · ${title}` : `✦ ${title}`;
         const sigilW = Math.max(108, Math.min(168, textStr.length * 12 + 24));
@@ -3889,7 +4156,7 @@ export class GameDirector {
         this._sendAction('update_team', { team: own, target_side: s });
       },
       onInspectChar: allowStack ? inspectCharacter : null,
-      onHoverChar: allowStack ? null : inspectCharacter,
+      onHoverChar: inspectCharacter,
       onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
         const cid = card?.character_id || ui.hoveredChar?.id || null;
         this.hoveredCard = card
@@ -3900,6 +4167,8 @@ export class GameDirector {
           : null;
         this._renderInspection();
       },
+      canPreviewFx: (q) => this.fxDirector.hasPreviewableFx(q.charId, q),
+      onPreviewFx: (spec) => this._previewCustomFx(spec),
       onGalleryScrollChange: (val) => { ui.galleryScrollY = val; },
       onInspectScrollChange: (val) => { ui.inspectScrollY = val; },
       onStart: async (teams) => {
@@ -3916,6 +4185,7 @@ export class GameDirector {
   }
 
   _rebuildOverlay() {
+    if (this.statusHover && !this._canShowStatusPreview()) this._clearStatusHover();
     clearContainer(this.overlayLayer);
     this.rosterActors = [];
     this.lobbyUi.node = null;
@@ -4100,7 +4370,7 @@ export class GameDirector {
           this._rebuildOverlay();
         },
         onInspectChar: roomLobby?.openTeams ? inspectCharacter : null,
-        onHoverChar: roomLobby?.openTeams ? null : inspectCharacter,
+        onHoverChar: inspectCharacter,
         onHoverCard: (card, side, ownerName, cardX, cardY, cardH, spr) => {
           const cid = card?.character_id || m.hoveredChar?.id || null;
           this.hoveredCard = card
@@ -4111,6 +4381,8 @@ export class GameDirector {
             : null;
           this._renderInspection();
         },
+        canPreviewFx: (q) => this.fxDirector.hasPreviewableFx(q.charId, q),
+        onPreviewFx: (spec) => this._previewCustomFx(spec),
         onGalleryScrollChange: (val) => { m.galleryScrollY = val; },
         onInspectScrollChange: (val) => { m.inspectScrollY = val; },
         onStart: async (teams) => {
@@ -4477,6 +4749,89 @@ export class GameDirector {
     this._rebuildOverlay();
   }
 
+  _canShowStatusPreview() {
+    return this.state && !this.state.effect_choice && !this.dragState && !this.codexModal && !this.pileModal &&
+      !this.matchMenu && !this.rosterModal && !this.passiveDrawer &&
+      !['lobby', 'handoff', 'special_handoff', 'draw_select', 'finished'].includes(this.state.mode);
+  }
+
+  _bindStatusHover({ key, node, side, title, getItems, clip, highlight }) {
+    const source = { node, side, title, getItems, clip, highlight };
+    if (this.statusHover?.key === key) {
+      this.statusHover.source = source;
+      highlight?.(true);
+    }
+    node.on('pointerover', ({ global }) => {
+      if (!this._canShowStatusPreview() || !global || node.destroyed) return;
+      const hover = this.statusHover;
+      const pointerUnchanged = hover && hover.x === global.x && hover.y === global.y;
+      const overOpenPreview = this.statusPreview && containsHudPoint(this.statusPreview.rect, global);
+      if (hover?.key === key || pointerUnchanged || overOpenPreview) return;
+
+      this._clearStatusHover();
+      this.statusHover = { key, source, x: global.x, y: global.y };
+      highlight?.(true);
+      this._syncStatusPreview();
+    });
+  }
+
+  _clearStatusHover() {
+    this.statusHover?.source?.highlight?.(false);
+    this.statusHover = null;
+    this.statusPreview?.node.destroy({ children: true });
+    this.statusPreview = null;
+  }
+
+  _syncStatusPreview() {
+    if (!this.statusHover) return;
+    const { source } = this.statusHover;
+    if (!source || !this._canShowStatusPreview() || !source.node.visible || source.node.destroyed) {
+      this._clearStatusHover();
+      return;
+    }
+    const { node, side, title, getItems, clip } = source;
+    const { w, h, pad, arenaTop } = this.layout;
+    const area = node.hitArea;
+    const anchorX = node.x + area.x;
+    const anchorY = node.y + (node.parent?.y ?? 0) + area.y;
+    const anchorTop = Math.max(anchorY, 0, clip?.top ?? 0);
+    const anchorBottom = Math.min(anchorY + area.height, h, clip?.bottom ?? h);
+    if (anchorBottom <= anchorTop) {
+      this._clearStatusHover();
+      return;
+    }
+    const anchorHeight = anchorBottom - anchorTop;
+    const anchor = { x: anchorX, y: anchorTop, w: area.width, h: anchorHeight };
+    const width = Math.min(404, w - pad * 2);
+    const top = Math.min(arenaTop, Math.floor(h / 4));
+    const bottom = h - pad;
+    const maxHeight = bottom - top;
+    const items = getItems();
+    const signature = JSON.stringify([title, items, width, maxHeight]);
+    if (signature !== this.statusPreview?.signature) {
+      const previous = this.statusPreview?.node;
+      const scrollY = previous?.getScroll() ?? 0;
+      const preview = buildStatusEffectPreview({ title, items, width, maxHeight, scrollY });
+      this.statusPreviewLayer.addChild(preview);
+      previous?.destroy({ children: true });
+      this.statusPreview = { node: preview, signature };
+    }
+
+    const preview = this.statusPreview.node;
+    const adjacentX = side === 1 ? anchor.x + anchor.w : anchor.x - width;
+    const x = Math.max(pad, Math.min(w - width - pad, adjacentX));
+    const y = Math.max(top, Math.min(bottom - preview._height, anchor.y));
+    preview.position.set(x, y);
+    this.statusPreview.anchor = anchor;
+    this.statusPreview.rect = { x, y, w: width, h: preview._height };
+  }
+
+  _isOverStatusPreview(point) {
+    const preview = this.statusPreview;
+    return preview && (containsHudPoint(preview.rect, point) || containsHudPoint(preview.anchor, point) ||
+      containsHudPoint(preview.anchor, this.worldRoot.toLocal(point)));
+  }
+
   /**
    * True In-Place Physical Card Magnification (ZERO separate jumping detail popup & ZERO height collapse!):
    * The hovered card ITSELF hides its resting miniature (keeping hit area intact) and smoothly magnifies
@@ -4665,48 +5020,14 @@ export class GameDirector {
         this.inspectLayer.addChild(pillG, txt);
         return;
       }
-      const W = 404;
-      const body = new PIXI.Container();
-      let cy = 38;
-
-      for (const item of info.items || []) {
-        const isStatus = info.kind === 'statuses';
-        const plate = buildUnifiedEntryPlate({
-          variant: isStatus ? 'status' : 'passive',
-          title: isStatus ? '' : item.name,
-          tagLabel: isStatus ? '' : (item.tagLabel || ''),
-          statusName: isStatus ? item.name : '',
-          statusValue: isStatus ? item.value : null,
-          statusBurst: Boolean(item.burst),
-          entries: item.text ? [item.text] : [],
-          width: W - 24,
-          accentColor: item.color || (isStatus ? undefined : INK.gold),
-          fontSize: 12,
-          lineHeight: 17.8,
-        });
-        plate.position.set(12, cy);
-        body.addChild(plate);
-        cy += plate._height + 6;
-      }
-
-      const H = cy + 8;
-      // Directly adjacent to the battlefield fighter without covering them
+      const W = Math.min(404, w - 32);
+      const preview = buildStatusEffectPreview({ title: info.title, items: info.items || [], width: W });
       const tx = info.side === 2
         ? Math.max(16, this.layout.arenaX + this.layout.arenaW - W - 6)
         : Math.min(w - W - 16, this.layout.arenaX + 6);
-      const ty = Math.min(h - H - 16, Math.max(52, info.y || 80));
-
-      const frame = new PIXI.Graphics();
-      frame.eventMode = 'none';
-      frame.roundRect(tx + 4, ty + 6, W, H, 12).fill({ color: INK.shadow, alpha: 0.34 });
-      frame.roundRect(tx, ty, W, H, 12).fill({ color: INK.paper, alpha: 0.99 }).stroke({ width: 1.6, color: INK.line });
-      const head = new PIXI.Text({
-        text: info.title,
-        style: { fontFamily: FONT_UI, fontSize: 13, fontWeight: '800', fill: INK.primary },
-      });
-      head.position.set(tx + 14, ty + 10);
-      body.position.set(tx, ty);
-      this.inspectLayer.addChild(frame, head, body);
+      const ty = Math.min(h - preview._height - 16, Math.max(52, info.y || 80));
+      preview.position.set(tx, ty);
+      this.inspectLayer.addChild(preview);
     }
   }
 
@@ -4718,7 +5039,7 @@ export class GameDirector {
         accentColor: this.banner.color,
         kind: 'clash',
         x: this.w / 2,
-        y: 26,
+        y: 62,
       });
       this.toastLayer.addChild(b);
     }
@@ -4742,11 +5063,16 @@ export class GameDirector {
   }
 
   _onPointerMove(e) {
-    this.lastPointerX = e.global.x;
-    this.lastPointerY = e.global.y;
+    const { x, y } = e.global;
+    this.lastPointerX = x;
+    this.lastPointerY = y;
+    const hover = this.statusHover;
+    if (hover && (x !== hover.x || y !== hover.y)) {
+      hover.x = x;
+      hover.y = y;
+      if (!this._isOverStatusPreview(e.global)) this._clearStatusHover();
+    }
     if (!this.dragState) return;
-    const x = e.global.x;
-    const y = e.global.y;
     if (Math.hypot(x - this.dragState.startX, y - this.dragState.startY) > 10) {
       this.dragState.moved = true;
     }
@@ -5037,13 +5363,28 @@ export class GameDirector {
   }
 
   _onWheel(e) {
+    const rect = this.app?.canvas?.getBoundingClientRect?.();
+    const hasClient = rect && Number.isFinite(e.clientX) && (e.clientX !== 0 || e.clientY !== 0);
+    const ptrX = hasClient ? (e.clientX - rect.left) : this.lastPointerX;
+    const ptrY = hasClient ? (e.clientY - rect.top) : this.lastPointerY;
+    this.lastPointerX = ptrX;
+    this.lastPointerY = ptrY;
+
+    const statusPanel = this.statusPreview?.node;
+    const point = { x: ptrX, y: ptrY };
+    if (statusPanel?._maxScroll > 0 && this._isOverStatusPreview(point)) {
+      const nextScroll = statusPanel.getScroll() + e.deltaY * 0.65;
+      statusPanel.setScroll(nextScroll);
+      return;
+    }
+
     // 1. O(1) Wheel Scroll for Live Room Lobby or Roster Modal (ZERO rebuild on wheel!)
     const activeRosterUi = (this.transport.isRoom && this.state?.mode === 'lobby' && this.lobbyUi.node)
       ? this.lobbyUi
       : this.rosterModal;
     if (activeRosterUi) {
       const m = activeRosterUi;
-      const inGallery = this.lastPointerX < (m.gallerySplitX || this.w * 0.5);
+      const inGallery = ptrX < (m.gallerySplitX || this.w * 0.5);
       if (inGallery && m.galleryMaxScroll > 0) {
         const nextY = Math.max(0, Math.min(m.galleryMaxScroll, (m.galleryScrollY || 0) + e.deltaY * 0.65));
         if (m.node && typeof m.node.setGalleryScroll === 'function') {
@@ -5272,6 +5613,17 @@ export class GameDirector {
       this._rebuildCornerHud();
       return;
     }
+    if (e.key === 'l' || e.key === 'L') {
+      this.activeHeroPanel = null;
+      this.passiveDrawer = null;
+      this.codexModal = (this.codexModal && this.codexModal.tab === 'history')
+        ? null
+        : { tab: 'history', scrollY: 0, maxScroll: 0, node: null };
+      this._rebuildCornerHud();
+      this._rebuildSidePanels();
+      this._rebuildOverlay();
+      return;
+    }
     if (e.key === 'r' || e.key === 'R') {
       this.activeHeroPanel = null;
       this.passiveDrawer = null;
@@ -5369,16 +5721,124 @@ export class GameDirector {
     }
   }
 
-  update(dtSec) {
-    this.time += dtSec;
+  _restorePreviewLayers() {
+    this._fxPreviewRaiseUntil = 0;
+    this.three?.setOverlayPreviewMode?.(false);
+    if (this.fxTextLayer.parent !== this.worldRoot) {
+      this.worldRoot.addChild(this.fxTextLayer);
+    }
+  }
 
-    // 1. Camera shake decay
+  _previewCustomFx(spec = {}) {
+    const { charId, charName = '', side = 1, cardId = null, cardName = null, dieType = null, passiveName = null, originPt = null, targetPt = null } = spec;
+    if (!charId) return;
+    const hasOverlay = Boolean(this.overlayLayer.children.length || this.activeHeroPanel || this.passiveDrawer);
+    if (hasOverlay) {
+      this.three?.setOverlayPreviewMode?.(true);
+      const previewIndex = this.app.stage.children.indexOf(this.statusPreviewLayer);
+      if (previewIndex >= 0) {
+        this.app.stage.addChildAt(this.fxTextLayer, previewIndex);
+      } else {
+        this.app.stage.addChild(this.fxTextLayer);
+      }
+      this._fxPreviewRaiseUntil = performance.now() + 1250;
+    }
+    const defaultColor = this._resolveCharColor(charId, side);
+    this.fxDirector.previewCharacterFx(charId, {
+      side,
+      originPt,
+      targetPt,
+      cardId,
+      cardName,
+      dieType,
+      passiveName,
+      charName,
+      defaultColor,
+    });
+  }
+
+  _spawnAfterimage(charId, side, toPt, colorInt = 0xd99b26) {
+    const fromPt = charId ? this._actorPos(charId, side) : toPt;
+    if (!fromPt || !toPt) return;
+    const steps = 3;
+    for (let i = 1; i <= steps; i++) {
+      const frac = i / (steps + 1);
+      const gx = fromPt.x + (toPt.x - fromPt.x) * frac;
+      const gy = fromPt.y + (toPt.y - fromPt.y) * frac;
+      const g = new PIXI.Graphics();
+      g.circle(0, 0, 22 - i * 2)
+        .fill({ color: colorInt, alpha: 0.24 })
+        .stroke({ width: 1.5, color: colorInt, alpha: 0.55 });
+      g.position.set(gx, gy);
+      this.fxTextLayer.addChild(g);
+      this.afterimages.push({ node: g, age: 0, life: 0.28 + i * 0.05 });
+    }
+  }
+
+  _showSkillBanner({ charId = null, side = 1, title = '', subtext = '', colorInt = 0xd99b26 } = {}) {
+    if (!title) return;
+    if (this.skillBanner?.node && !this.skillBanner.node.destroyed) {
+      this.fxTextLayer.removeChild(this.skillBanner.node);
+      this.skillBanner.node.destroy({ children: true });
+    }
+    const accent = colorInt || this._resolveCharColor(charId, side);
+    const root = new PIXI.Container();
+    const bannerW = Math.min(460, Math.max(260, title.length * 22 + 120));
+    const bannerH = 44;
+    const g = new PIXI.Graphics();
+    g.poly([
+      -bannerW / 2 + 14, -bannerH / 2,
+      bannerW / 2, -bannerH / 2,
+      bannerW / 2 - 14, bannerH / 2,
+      -bannerW / 2, bannerH / 2,
+    ])
+      .fill({ color: INK.paper, alpha: 0.97 })
+      .stroke({ width: 1.8, color: accent });
+    g.poly([
+      -bannerW / 2 + 14, -bannerH / 2,
+      -bannerW / 2 + 24, -bannerH / 2,
+      -bannerW / 2 + 10, bannerH / 2,
+      -bannerW / 2, bannerH / 2,
+    ]).fill({ color: accent, alpha: 0.92 });
+    root.addChild(g);
+
+    const ownerStr = subtext || this._charNameMap()[charId] || '';
+    const titleTxt = new PIXI.Text({
+      text: ownerStr ? `${ownerStr} · ${title}` : title,
+      style: { fontFamily: FONT_UI, fontSize: 16.5, fontWeight: '900', fill: INK.strong },
+    });
+    titleTxt.anchor.set(0.5);
+    titleTxt.position.set(4, 0.5);
+    root.addChild(titleTxt);
+
+    root.position.set(this.w * 0.5, Math.max(96, (this.layout?.arenaTop || 64) + 34));
+    this.fxTextLayer.addChild(root);
+    this.skillBanner = { node: root, age: 0, duration: 0.72 };
+  }
+
+  update(dtSec) {
+    let effDt = dtSec;
+    if (this.hitstopTimer > 0) {
+      this.hitstopTimer = Math.max(0, this.hitstopTimer - dtSec);
+      effDt = dtSec * 0.14;
+    }
+    this.time += effDt;
+
+    // 1. Camera shake & subtle zoom-punch decay
+    if (this.zoomPunch > 0.0005) {
+      this.zoomPunch *= Math.pow(0.004, dtSec);
+      if (this.zoomPunch < 0.0005) this.zoomPunch = 0;
+    }
+    const zScale = 1 + (this.zoomPunch || 0);
+    this.worldRoot.scale.set(zScale);
+    const zOffX = (1 - zScale) * this.w * 0.5;
+    const zOffY = (1 - zScale) * this.h * 0.5;
     if (this.shakeTime > 0) {
       this.shakeTime = Math.max(0, this.shakeTime - dtSec);
       const decay = this.shakeTime > 0 ? this.shakePower * (this.shakeTime / 0.32) : 0;
-      this.worldRoot.position.set((Math.random() - 0.5) * decay, (Math.random() - 0.5) * decay);
+      this.worldRoot.position.set(zOffX + (Math.random() - 0.5) * decay, zOffY + (Math.random() - 0.5) * decay);
     } else {
-      this.worldRoot.position.set(0, 0);
+      this.worldRoot.position.set(zOffX, zOffY);
     }
 
     // 1b. Tick Persistent Spring-Physical Cost HUDs, 2.5D Deck Piles, Top Bar & Living Tabletop at 60fps!
@@ -5390,8 +5850,28 @@ export class GameDirector {
     if (this.localQueuedAction && !this.sequencer.isRollAnimating && !this.transport.busy) {
       this._flushLocalQueuedAction();
     }
+    if (this._fxPreviewRaiseUntil > 0 && performance.now() >= this._fxPreviewRaiseUntil) {
+      this._restorePreviewLayers();
+    }
+    for (const item of this._pulsingAuraDrawers) {
+      if (item.floorMark && !item.floorMark.destroyed) {
+        item.drawFloor();
+      }
+    }
     if (this.tabletop) {
-      this.tabletop.setPointer(this.lastPointerX, this.lastPointerY);
+      const hpRect = this.activeHeroPanel?.rect;
+      const inHeroPanel = Boolean(
+        hpRect
+        && this.lastPointerX >= hpRect.x - 4 && this.lastPointerX <= hpRect.x + hpRect.w + 4
+        && this.lastPointerY >= hpRect.y - 4 && this.lastPointerY <= hpRect.y + hpRect.h + 4
+      );
+      const blockingSheet = Boolean(
+        this.codexModal || this.pileModal || this.rosterModal || this.matchMenu
+        || (this.transport.isRoom && this.state?.mode === 'lobby')
+        || this.passiveDrawer
+        || inHeroPanel
+      );
+      this.tabletop.setPointer(blockingSheet ? -9999 : this.lastPointerX, blockingSheet ? -9999 : this.lastPointerY);
       this.tabletop.tick(dtSec);
       // Keep live tabletop slot/lane rects continuously synced (tracks combat->overview flatten & wheel scroll!)
       this.regularSlotRects.clear();
@@ -5679,6 +6159,37 @@ export class GameDirector {
         this.fxTextLayer.removeChild(f.obj);
         f.obj.destroy({ children: true });
         this.floaters.splice(i, 1);
+      }
+    }
+
+    for (let i = this.afterimages.length - 1; i >= 0; i--) {
+      const af = this.afterimages[i];
+      af.age += dtSec;
+      const p = Math.min(1, af.age / af.life);
+      af.node.alpha = Math.max(0, (1 - p) * 0.85);
+      af.node.scale.set(1 + p * 0.25);
+      if (af.age >= af.life) {
+        this.fxTextLayer.removeChild(af.node);
+        af.node.destroy({ children: true });
+        this.afterimages.splice(i, 1);
+      }
+    }
+
+    if (this.skillBanner) {
+      this.skillBanner.age += dtSec;
+      const p = Math.min(1, this.skillBanner.age / this.skillBanner.duration);
+      const slideIn = p < 0.18 ? 1 - Math.pow(1 - p / 0.18, 3) : 1;
+      const fadeOut = p > 0.72 ? Math.max(0, 1 - (p - 0.72) / 0.28) : 1;
+      if (this.skillBanner.node && !this.skillBanner.node.destroyed) {
+        this.skillBanner.node.alpha = slideIn * fadeOut;
+        this.skillBanner.node.x = this.w * 0.5 + (1 - slideIn) * -36 + (1 - fadeOut) * 28;
+      }
+      if (p >= 1) {
+        if (this.skillBanner.node && !this.skillBanner.node.destroyed) {
+          this.fxTextLayer.removeChild(this.skillBanner.node);
+          this.skillBanner.node.destroy({ children: true });
+        }
+        this.skillBanner = null;
       }
     }
 

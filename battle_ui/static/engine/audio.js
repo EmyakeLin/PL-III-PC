@@ -18,6 +18,7 @@ export class TabletopAudio {
     this._bus = null;
     this._whiteBuf = null;
     this._paperBuf = null;
+    this._clipCache = new Map();
   }
 
   _ensure() {
@@ -983,11 +984,44 @@ export class TabletopAudio {
     }
   }
 
+  async _playAudioUrl(url, gainVal = 0.28, pan = 0) {
+    if (!url || typeof url !== 'string' || !url.startsWith('/sfx/')) return false;
+    const ctx = this._ensure();
+    if (!ctx || typeof fetch !== 'function' || typeof ctx.decodeAudioData !== 'function') return false;
+    try {
+      let bufPromise = this._clipCache.get(url);
+      if (!bufPromise) {
+        bufPromise = fetch(url)
+          .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error('sfx_missing'))))
+          .then((arr) => ctx.decodeAudioData(arr));
+        this._clipCache.set(url, bufPromise);
+      }
+      const audioBuf = await bufPromise;
+      if (this.muted || !audioBuf) return false;
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      const gain = ctx.createGain();
+      gain.gain.value = Math.max(0.02, Math.min(0.60, Number(gainVal) || 0.28));
+      src.connect(gain).connect(this._out(ctx, pan));
+      src.start(ctx.currentTime);
+      return true;
+    } catch (_) {
+      this._clipCache.delete(url);
+      return false;
+    }
+  }
+
   /**
-   * Play a declarative FX DSL audio recipe (either named preset or procedural WebAudio synth params).
+   * Play a declarative FX DSL audio recipe (named preset, `/sfx/` clip, or procedural WebAudio synth params).
    */
   playSynthRecipe(recipe, pan = 0) {
     if (!recipe || typeof recipe !== 'object') return false;
+    let played = false;
+    if (recipe.url) {
+      this._playAudioUrl(recipe.url, recipe.gain, pan);
+      played = true;
+      if (!recipe.preset && !recipe.waveform) return true;
+    }
     const preset = recipe.preset;
     if (preset && !recipe.waveform) {
       if (preset === 'slash' || preset === 'clash_heavy') this.clashImpact(true, pan);

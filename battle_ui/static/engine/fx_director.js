@@ -31,9 +31,13 @@ export class FxDirector {
     getActorPos,
     getMotion,
     getMatchNumber = () => undefined,
-    deferFx = setTimeout,
+    deferFx = (fn, ms) => setTimeout(fn, ms),
     getClashCenter,
     triggerShake,
+    triggerHitstop = null,
+    triggerZoomPunch = null,
+    spawnAfterimage = null,
+    showSkillBanner = null,
     spawnFloater,
     showBanner,
   }) {
@@ -44,9 +48,13 @@ export class FxDirector {
     this.getActorPos = getActorPos;
     this.getMotion = getMotion;
     this.getMatchNumber = getMatchNumber;
-    this.deferFx = deferFx;
+    this.deferFx = (fn, ms) => deferFx(fn, ms);
     this.getClashCenter = getClashCenter;
     this.triggerShake = triggerShake;
+    this.triggerHitstop = triggerHitstop;
+    this.triggerZoomPunch = triggerZoomPunch;
+    this.spawnAfterimage = spawnAfterimage;
+    this.showSkillBanner = showSkillBanner;
     this.spawnFloater = spawnFloater;
     this.showBanner = showBanner;
 
@@ -64,12 +72,18 @@ export class FxDirector {
    * into exact stage pixel coordinates using PR #1's skeletal bone world positions.
    */
   resolveAnchor(anchorName, ctx) {
+    if (ctx?.overrideOrigin && (!anchorName || anchorName.startsWith('attacker.') || anchorName.startsWith('actor.'))) {
+      return ctx.overrideOrigin;
+    }
+    if (ctx?.overrideTarget && (!anchorName || anchorName.startsWith('defender.'))) {
+      return ctx.overrideTarget;
+    }
     const fallbackAttacker = ctx.attackerId ? this.getActorPos(ctx.attackerId, ctx.attackerSide) : this.getClashCenter();
     const fallbackDefender = ctx.defenderId ? this.getActorPos(ctx.defenderId, ctx.defenderSide) : this.getClashCenter();
     if (!anchorName) return fallbackDefender;
 
     if (anchorName === 'clash.center') {
-      return this.getClashCenter();
+      return ctx?.overrideTarget || this.getClashCenter();
     }
 
     const [role, part = 'center'] = String(anchorName).split('.');
@@ -152,14 +166,133 @@ export class FxDirector {
     return m.defaults?.on_skill_use || null;
   }
 
+  resolveSpecialPlaceRecipe(ev) {
+    const m = ev?.character_id ? this.manifests[ev.character_id] : null;
+    if (!m) return null;
+    const sk = this._skillEntry(ev.character_id, ev.card_id, ev.card_name);
+    return sk?.on_special_place || m.defaults?.on_special_place || null;
+  }
+
   resolveClashWinRecipe(sideEntry) {
     if (!sideEntry?.character_id) return null;
     const m = this.manifests[sideEntry.character_id];
     if (!m) return null;
-    const skills = m.skills || {};
-    const skillEntry = (sideEntry.card_id && skills[sideEntry.card_id]) || null;
-    if (skillEntry?.on_clash_win) return skillEntry.on_clash_win;
-    return null;
+    const sk = this._skillEntry(sideEntry.character_id, sideEntry.card_id, sideEntry.card_name);
+    return sk?.on_clash_win || m.defaults?.on_clash_win || null;
+  }
+
+  resolveCritRecipe({ characterId, cardId, cardName } = {}) {
+    const m = characterId ? this.manifests[characterId] : null;
+    if (!m) return null;
+    const sk = this._skillEntry(characterId, cardId, cardName);
+    return sk?.on_crit || m.defaults?.on_crit || null;
+  }
+
+  resolveHeavyHitRecipe({ characterId, cardId, cardName, amount = 0 } = {}) {
+    const m = characterId ? this.manifests[characterId] : null;
+    if (!m) return null;
+    const sk = this._skillEntry(characterId, cardId, cardName);
+    const rec = sk?.on_heavy_hit || m.defaults?.on_heavy_hit || null;
+    if (!rec) return null;
+    const minAmt = Number(rec.threshold) > 0 ? Number(rec.threshold) : 8;
+    return amount >= minAmt ? rec : null;
+  }
+
+  resolveDestroyRecipe(hookName, { characterId, cardId, cardName } = {}) {
+    const m = characterId ? this.manifests[characterId] : null;
+    if (!m) return null;
+    const sk = this._skillEntry(characterId, cardId, cardName);
+    return sk?.[hookName] || m.defaults?.[hookName] || null;
+  }
+
+  resolveDefeatRecipe({ characterId, cardId, cardName } = {}) {
+    return this.resolveDestroyRecipe('on_defeat', { characterId, cardId, cardName });
+  }
+
+  resolveDiceStyle(charId) {
+    const m = charId ? this.manifests[charId] : null;
+    return m?.dice_style || null;
+  }
+
+  resolveStatusAuras(charId, statusesObj) {
+    const m = charId ? this.manifests[charId] : null;
+    if (!m?.status_auras || !statusesObj) return [];
+    const active = [];
+    for (const [stName, stacks] of Object.entries(statusesObj)) {
+      if (stacks > 0 && m.status_auras[stName]) {
+        active.push({ status: stName, stacks, ...m.status_auras[stName] });
+      }
+    }
+    return active;
+  }
+
+  hasPreviewableFx(charId, { cardId = null, cardName = null, passiveName = null } = {}) {
+    const m = charId ? this.manifests[charId] : null;
+    if (!m) return false;
+    if (passiveName) {
+      return Boolean(m.passives?.[passiveName] || m.defaults?.passive);
+    }
+    if (cardId || cardName) {
+      const sk = this._skillEntry(charId, cardId, cardName);
+      if (sk) return true;
+      return Boolean(m.defaults?.strike || m.defaults?.slash || m.defaults?.pierce || m.defaults?.blunt);
+    }
+    return Object.keys(m).length > 0;
+  }
+
+  previewCharacterFx(charId, {
+    side = 1,
+    originPt = null,
+    targetPt = null,
+    cardId = null,
+    cardName = null,
+    dieType = null,
+    passiveName = null,
+    charName = '',
+    defaultColor = 0xd99426,
+  } = {}) {
+    const m = charId ? this.manifests[charId] : null;
+    if (!m) return false;
+    let recipe = null;
+    let preCast = null;
+    if (passiveName) {
+      recipe = m.passives?.[passiveName] || m.defaults?.passive || null;
+    } else {
+      const sk = this._skillEntry(charId, cardId, cardName);
+      if (sk) {
+        preCast = sk.on_skill_use || sk.on_cast || sk.on_form_change || null;
+        recipe = sk.on_strike
+          || sk.on_hit
+          || (sk.dice && (sk.dice['1'] || Object.values(sk.dice)[0]))
+          || sk.on_clash_win
+          || preCast;
+        if (recipe === preCast) preCast = null;
+      }
+      if (!recipe) {
+        recipe = (dieType && m.defaults?.[dieType])
+          || m.defaults?.strike
+          || m.defaults?.slash
+          || m.defaults?.pierce
+          || m.defaults?.blunt
+          || m.defaults?.on_skill_use
+          || null;
+      }
+    }
+    if (!recipe && !preCast) return false;
+    const ctx = {
+      attackerId: charId,
+      defenderId: charId,
+      attackerSide: side,
+      defenderSide: side === 1 ? 2 : 1,
+      overrideOrigin: originPt,
+      overrideTarget: targetPt || originPt,
+      charName,
+      cardName: cardName || passiveName || '',
+      defaultColor,
+    };
+    if (preCast) this.playRecipe(preCast, ctx);
+    if (recipe) this.playRecipe(recipe, ctx);
+    return true;
   }
 
   /**
@@ -177,21 +310,24 @@ export class FxDirector {
       const stagger = Math.max(0, Number(atom.stagger_ms) || 90);
       let contactOffset = 75;
       let atomDur = Number(atom.duration_ms) || 320;
-      if (atom.primitive === 'pierce_lance') {
+      if (atom.primitive === 'pierce_lance' || atom.primitive === 'crescent_arc') {
         contactOffset = 135;
         atomDur = 360;
       } else if (atom.primitive === 'beam') {
         const dur = Math.max(120, Math.min(1400, Number(atom.duration_ms) || 440));
         contactOffset = Math.round(dur * 0.78);
         atomDur = dur;
-      } else if (atom.primitive === 'slash_arc') {
+      } else if (atom.primitive === 'slash_arc' || atom.primitive === 'cross_slash') {
         contactOffset = 85;
         atomDur = 400;
-      } else if (atom.primitive === 'ground_shockwave') {
+      } else if (atom.primitive === 'chain_arc') {
+        contactOffset = 55;
+        atomDur = 300;
+      } else if (atom.primitive === 'ground_shockwave' || atom.primitive === 'vortex_ring') {
         contactOffset = 70;
         atomDur = 380;
       }
-      if (atom.to !== 'attacker.center' && atom.primitive !== 'shield_dome') {
+      if (atom.to !== 'attacker.center' && atom.primitive !== 'shield_dome' && atom.primitive !== 'skill_banner') {
         firstContact = Math.min(firstContact, delay + contactOffset);
       }
       maxEnd = Math.max(maxEnd, delay + (count - 1) * stagger + atomDur);
@@ -211,12 +347,16 @@ export class FxDirector {
       || recipe.script
       || recipe.camera
       || recipe.motion
+      || recipe.hitstop_ms
     );
     if (!hasCustom) return false;
 
     const timing = this.estimateRecipeTiming(recipe);
     const motion = recipe.motion || {};
-    const separateDefender = Boolean(ctx.defenderId && ctx.defenderId !== ctx.attackerId && timing.impactMs > 20);
+    const separateDefender = Boolean(
+      (ctx.defenderId && ctx.defenderId !== ctx.attackerId && timing.impactMs > 20)
+      || (ctx.overrideOrigin && ctx.overrideTarget && ctx.overrideOrigin !== ctx.overrideTarget && timing.impactMs > 20)
+    );
 
     // 1a. Attacker windup motions fire immediately at t = 0
     if (ctx.attackerId) {
@@ -227,12 +367,18 @@ export class FxDirector {
       if (motion.passiveFlare) am.passiveFlare = Math.max(am.passiveFlare, motion.passiveFlare);
     }
 
-    // 1b. Defender impact recoil/hitFlash & camera shake fire on arrival (`impactMs`)!
+    // 1b. Defender impact recoil/hitFlash, hitstop & camera shake/zoom fire on arrival (`impactMs`)!
     const applyImpactFeedback = () => {
-      if (ctx.defenderId) {
+      if (ctx.defenderId && ctx.defenderId !== ctx.attackerId) {
         const dm = this.getMotion(ctx.defenderId, ctx.defenderSide);
         if (motion.recoil) dm.recoil = Math.max(dm.recoil, motion.recoil);
         if (motion.hitFlash) dm.hitFlash = Math.max(dm.hitFlash, motion.hitFlash);
+      }
+      if (recipe.hitstop_ms > 0) {
+        this.triggerHitstop?.(Math.min(140, Number(recipe.hitstop_ms) || 0));
+      }
+      if (recipe.camera?.zoom_punch > 0) {
+        this.triggerZoomPunch?.(Math.min(0.045, Number(recipe.camera.zoom_punch) || 0));
       }
       if (recipe.camera?.shake > 0) {
         const durSec = Math.max(0.06, Math.min(0.7, (recipe.camera.duration_ms || 220) / 1000));
@@ -296,6 +442,58 @@ export class FxDirector {
           colorHex: colorInt,
         });
         break;
+      case 'cross_slash':
+        this.three?.spawnCrossSlash?.({
+          fromX: fromPt.x,
+          fromY: fromPt.y + fanOffsetY * 0.4,
+          toX: toPt.x,
+          toY: toPt.y + fanOffsetY,
+          colorHex: colorInt,
+        });
+        break;
+      case 'crescent_arc':
+        this.three?.spawnCrescentWave?.({
+          fromX: fromPt.x,
+          fromY: fromPt.y + fanOffsetY * 0.4,
+          toX: toPt.x,
+          toY: toPt.y + fanOffsetY,
+          colorHex: colorInt,
+        });
+        break;
+      case 'chain_arc':
+        this.three?.spawnChainArc?.({
+          fromX: fromPt.x,
+          fromY: fromPt.y + fanOffsetY * 0.3,
+          toX: toPt.x,
+          toY: toPt.y + fanOffsetY * 0.6,
+          colorHex: colorInt,
+        });
+        break;
+      case 'vortex_ring':
+        this.three?.spawnVortexRing?.({
+          x: toPt.x,
+          y: toPt.y,
+          radius: Math.max(28, Math.min(150, atom.radius || 64)),
+          colorHex: colorInt,
+        });
+        break;
+      case 'afterimage':
+        this.spawnAfterimage?.(ctx.attackerId, ctx.attackerSide, toPt, colorInt);
+        break;
+      case 'skill_banner': {
+        const title = atom.text || ctx.cardName || ctx.event?.card_name || '';
+        const subtext = atom.subtext || ctx.charName || ctx.event?.character_name || '';
+        if (title) {
+          this.showSkillBanner?.({
+            charId: ctx.attackerId,
+            side: ctx.attackerSide,
+            title,
+            subtext,
+            colorInt,
+          });
+        }
+        break;
+      }
       case 'sprite_vfx':
         if (atom.url) {
           this.three?.spawnSpriteVfx?.({

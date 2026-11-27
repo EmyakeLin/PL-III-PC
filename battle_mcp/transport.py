@@ -468,7 +468,7 @@ class ArenaHandler(BaseHTTPRequestHandler):
                 if hosted and (path.startswith("/canvas/") or path.startswith("/table/")):
                     prefix = "/canvas" if path.startswith("/canvas/") else "/table"
                     asset = resolve_static(path.removeprefix(prefix))
-                elif path.startswith(("/sprites/", "/fx_scripts/", "/fx_assets/", "/status_icons/")):
+                elif path.startswith(("/sprites/", "/fx_scripts/", "/fx_assets/", "/sfx/", "/status_icons/")):
                     asset = resolve_static(path)
                 if asset is None:
                     self._send(404, {"error": "页面不存在。"})

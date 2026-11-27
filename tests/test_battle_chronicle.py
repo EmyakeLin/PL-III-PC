@@ -5,7 +5,10 @@ restrained canonical terminology, and Phase 1A-1B Displayer / ArenaEngine presen
 import random
 import unittest
 
+from battle_mcp.engine import ArenaEngine
 from battle_ui.chronicle import BattleChronicle, format_damage_formula, format_die_formula
+from battle_ui.match import BattleMatch
+from displayer import Displayer
 from game import Game
 from loader import load_characters_from_packs
 from models.dice import DiceLevel
@@ -173,3 +176,63 @@ class BattleChronicleAndPresentationTests(unittest.TestCase):
         self.assertIn(f"{c2.name} 的光点形态群崩塌。", md)
         for forbidden in ("光核", "崩解", "结构战报", "迷雾", "☠", "⚔", "★"):
             self.assertNotIn(forbidden, md)
+
+    def test_displayer_projects_runtime_die_level_and_dual_form_traits_and_team_statuses(self):
+        game = self._make_simple_game(seed=29)
+        p1 = game.players[0]
+        p1.draw_card(3)
+        card = p1.cardspace.hand.content[0]
+        printed_lvl = int(card.dice[0]["level"])
+        card.level_bonus = 1
+        card.final_bonus = 2
+        p1.team_statuses["隧道开启"] = 1
+
+        disp = Displayer(game, viewer_side=1)
+        frame = disp.snapshot()
+        hand_views = [c for c in frame["players"][0]["hand"] if c["id"] == card.id]
+        self.assertGreaterEqual(len(hand_views), 1)
+        die_view = hand_views[0]["dice"][0]
+        self.assertEqual(die_view["printed_level"], printed_lvl)
+        self.assertEqual(die_view["level"], printed_lvl + 1)
+        self.assertGreater(die_view["roll_max"], 0)
+        self.assertEqual(die_view["final_bonus"], 2)
+        self.assertIn("team_status_details", frame["players"][0])
+
+        # Verify Lin Qiu's `空断` carries `resource_cost` & `range_traits`, and Lan Qing's `电叉·回环舞` carries `form_when`
+        void_cut = next(s for s in disp.catalog()["players"][0]["characters"][0]["skills"] if s["id"] == "lin_qiu_void_cut")
+        self.assertEqual(void_cut["resource_cost"], {"status": "隧道", "amount": 2})
+        lan_dance = next(s for s in disp.catalog()["players"][1]["characters"][0]["skills"] if s["id"] == "lan_dance_2")
+        self.assertEqual(lan_dance["form_when"], {"status": "电叉·回环舞·活化", "form": "active", "snapshot": "use"})
+
+    def test_arena_engine_preserves_dissolved_temporary_clash_cards(self):
+        eng = ArenaEngine([["plan_b_annolin"], ["plan_b_heck"]], seed=41)
+        while not eng.state(1)["duels"]:
+            req = eng.required_sides()
+            if req:
+                s = req[0]
+                ds = eng.state(s).get("draw_select")
+                if ds:
+                    eng.draw_bottom(s, [c.get("action_key") or c["id"] for c in ds["cards"][:ds["discard_count"]]])
+                else:
+                    eng.apply(s, eng.options(s)[0])
+            else:
+                eng.advance()
+        temp_card = (eng.game.players[0].cardspace.hand.content or eng.game.players[0].cardspace.draw_pile.content)[0]
+        temp_card.destroyed = True
+        eng._temporary_clashes[("regular", 1, 1, temp_card)] = {
+            "id": temp_card.id,
+            "instance_id": temp_card.instance_id,
+            "name": temp_card.name,
+            "character_id": "plan_b_annolin",
+            "cost": 0,
+            "dice": [],
+            "entries": [],
+        }
+        st = eng.state(1)
+        duel_1 = st["duels"][0]
+        side_1 = next(s for s in duel_1["sides"] if s["side"] == 1)
+        self.assertTrue(any(c.get("instance_id") == temp_card.instance_id and c.get("dissolved") is True for c in side_1.get("resolved_cards", [])))
+
+
+if __name__ == "__main__":
+    unittest.main()

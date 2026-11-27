@@ -87,6 +87,7 @@ class ArenaEngine(BattleMatch):
         if side is not None:
             self._choose_seat(side, self.game.players)
         frame = self._views[side].snapshot()
+        self._inject_dissolved_clashes(frame)
         frame.update(mode=self._mode(), timing=self._timing,
                      response_times=[dict(t) for t in self._response_times])
         effect_choice = self._views[side].effect_choice()

@@ -10,6 +10,7 @@ STATIC_DIR = Path(__file__).with_name("static").resolve()
 SPRITES_DIR = (PACKS / "sprites").resolve()
 FX_SCRIPTS_DIR = (PACKS / "fx_scripts").resolve()
 FX_ASSETS_DIR = (PACKS / "fx_assets").resolve()
+SFX_DIR = (PACKS / "sfx").resolve()
 STATUS_ICONS_DIR = (PACKS / "status_icons").resolve()
 CONTENT_TYPES = {
     ".html": "text/html",
@@ -19,6 +20,9 @@ CONTENT_TYPES = {
     ".json": "application/json",
     ".svg": "image/svg+xml",
     ".png": "image/png",
+    ".ogg": "audio/ogg",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
 }
 
 
@@ -47,6 +51,8 @@ def resolve_static(path):
     if path.startswith("/fx_assets/"):
         return _resolve_pack_asset(FX_ASSETS_DIR, path[len("/fx_assets/"):], (".svg", ".png"))
 
+    if path.startswith("/sfx/"):
+        return _resolve_pack_asset(SFX_DIR, path[len("/sfx/"):], (".ogg", ".wav", ".mp3"))
 
     if path.startswith("/status_icons/"):
         return _resolve_pack_asset(STATUS_ICONS_DIR, path[len("/status_icons/"):], (".svg",))

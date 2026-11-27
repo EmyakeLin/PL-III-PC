@@ -17,8 +17,8 @@ import {
 
 const CIRCLED = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫'];
 const GRADE_LABEL = { normal: '普通', pierce: '穿甲', concept: '超穿甲', real: '真实' };
-const LIGHTCORE_COLOR = 0x2698c8;
-const LIGHTCORE_COLLAPSE_COLOR = 0x8b46d4;
+const LIGHTCORE_COLOR = 0x1a8f9c;
+const LIGHTCORE_COLLAPSE_COLOR = 0xb83862;
 const DESTROY_COLOR = 0xb83a2a;
 
 export function createPresentationFx(env) {
@@ -47,6 +47,8 @@ export function createPresentationFx(env) {
     pulsePassive,
     flashLightcore,
   } = env;
+
+  let lastStrikeCtx = null;
 
   function playSpeedRoll(ev, { silent = false, onReveal = null } = {}) {
     if (!silent) audio.diceRoll();
@@ -149,6 +151,7 @@ export function createPresentationFx(env) {
         roundKey,
         sides,
         dieType: sd.type || 'blank',
+        paletteOverride: fxDirector?.resolveDiceStyle?.(sd.character_id) || null,
         rolledValue: displayVal,
         rawRolledValue: sd.rolled_value ?? null,
         subLabel: _dieSubLabel(sd, sides, laneTag),
@@ -271,6 +274,7 @@ export function createPresentationFx(env) {
           roundKey,
           sides,
           dieType: sd.type || 'blank',
+          paletteOverride: fxDirector?.resolveDiceStyle?.(sd.character_id) || null,
           rolledValue: displayVal,
           rawRolledValue: sd.rolled_value ?? null,
           subLabel,
@@ -324,6 +328,7 @@ export function createPresentationFx(env) {
         rolledValue: sd.skipped ? '跳过' : (sd.clash_score ?? sd.rolled_value ?? '—'),
         rawRolledValue: sd.skipped ? null : (sd.rolled_value ?? null),
         subLabel: sd.skipped ? '跳过' : _dieSubLabel(sd, sides, laneTag),
+        paletteOverride: fxDirector?.resolveDiceStyle?.(sd.character_id) || null,
         startX: cx + (isP1 ? -240 : 240),
         startY: cy + 32,
         targetX: cx + (isP1 ? -86 : 86),
@@ -398,6 +403,12 @@ export function createPresentationFx(env) {
     },
 
     combat_strike(ev) {
+      lastStrikeCtx = {
+        characterId: ev.attacker_id,
+        side: ev.attacker_side,
+        cardId: ev.card_id || null,
+        cardName: ev.card_name || null,
+      };
       const ds = DIE_STYLE[ev.die_type] || DIE_STYLE.slash;
       const customRecipe = fxDirector.resolveStrikeRecipe(ev);
       if (customRecipe) {
@@ -507,6 +518,24 @@ export function createPresentationFx(env) {
         triggerShake(Math.min(11, 5 + ev.hp_lost * 2), 0.28);
         three.spawnImpactBurst(tx, ty, causeColor, 20, isHeavy);
         if (isHeavy) three.emitShockwave(tx, ty, causeColor);
+        if (ev.cause === 'attack' && lastStrikeCtx?.characterId) {
+          const heavyRecipe = fxDirector?.resolveHeavyHitRecipe?.({
+            characterId: lastStrikeCtx.characterId,
+            cardId: lastStrikeCtx.cardId,
+            cardName: lastStrikeCtx.cardName,
+            amount: Math.max(ev.hp_lost || 0, ev.incoming || 0),
+          });
+          if (heavyRecipe) {
+            fxDirector.playRecipe(heavyRecipe, {
+              event: ev,
+              attackerId: lastStrikeCtx.characterId,
+              defenderId: ev.target_id,
+              attackerSide: lastStrikeCtx.side,
+              defenderSide: ev.target_side,
+              defaultColor: resolveCharColor(lastStrikeCtx.characterId, lastStrikeCtx.side),
+            });
+          }
+        }
         const multTag = ev.multiplier > 1 ? ` ×${ev.multiplier}` : '';
         const gradeStr = causeTag && ev.grade === 'normal' ? '' : (GRADE_LABEL[ev.grade] || '');
         spawnFloater(tx, ty - 18, `${causeTag}-${ev.hp_lost} ${gradeStr}${multTag}`.trim(), causeColor, 21, isHeavy ? 'heavy' : 'clash');
@@ -542,7 +571,20 @@ export function createPresentationFx(env) {
       three.emitShockwave(pos.x, pos.y, LIGHTCORE_COLLAPSE_COLOR, 0.72);
       three.spawnImpactBurst(pos.x, pos.y, LIGHTCORE_COLLAPSE_COLOR, 38, true);
       physics.spawnShieldShards(pos.x, pos.y, LIGHTCORE_COLLAPSE_COLOR, 18, true);
-      spawnFloater(pos.x, pos.y - 52, '✦ 光点形态群崩塌', LIGHTCORE_COLLAPSE_COLOR, 19.5, 'heavy');
+      if (lastStrikeCtx?.characterId) {
+        const defeatRec = fxDirector?.resolveDefeatRecipe?.(lastStrikeCtx);
+        if (defeatRec) {
+          fxDirector.playRecipe(defeatRec, {
+            event: ev,
+            attackerId: lastStrikeCtx.characterId,
+            defenderId: ev.target_id,
+            attackerSide: lastStrikeCtx.side,
+            defenderSide: ev.target_side,
+            defaultColor: resolveCharColor(lastStrikeCtx.characterId, lastStrikeCtx.side),
+          });
+        }
+      }
+      spawnFloater(pos.x, pos.y - 52, '光点形态群崩塌', LIGHTCORE_COLLAPSE_COLOR, 19.5, 'heavy');
       showBanner(`${ev.target_name || ''} · 光点形态群崩塌`.replace(/^ · /, ''), LIGHTCORE_COLLAPSE_COLOR, 1.8);
     },
 
@@ -584,6 +626,18 @@ export function createPresentationFx(env) {
       triggerShake(7.5, 0.26);
       three.spawnCardShatter({ x: tx, y: ty, width: cardW, height: cardH, colorHex: DESTROY_COLOR });
       physics.spawnShieldShards(tx, ty, DESTROY_COLOR, 16, true);
+      if (lastStrikeCtx?.characterId) {
+        const rec = fxDirector?.resolveDestroyRecipe?.('on_destroy_card', lastStrikeCtx);
+        if (rec) {
+          fxDirector.playRecipe(rec, {
+            event: ev,
+            attackerId: lastStrikeCtx.characterId,
+            attackerSide: lastStrikeCtx.side,
+            overrideTarget: { x: tx, y: ty },
+            defaultColor: resolveCharColor(lastStrikeCtx.characterId, lastStrikeCtx.side),
+          });
+        }
+      }
       const label = ev.card_name ? `「${ev.card_name}」已摧毁` : '技能已摧毁';
       spawnFloater(tx, ty - 34, label, DESTROY_COLOR, 17.5, 'heavy');
     },
@@ -601,12 +655,24 @@ export function createPresentationFx(env) {
       triggerShake(5.5, 0.20);
       three.spawnDieShatter({ x: tx, y: ty, colorHex: DESTROY_COLOR, dieColorHex: dieColor, radius: 28 });
       physics.spawnShieldShards(tx, ty, DESTROY_COLOR, 11, true);
+      if (lastStrikeCtx?.characterId) {
+        const rec = fxDirector?.resolveDestroyRecipe?.('on_destroy_die', lastStrikeCtx);
+        if (rec) {
+          fxDirector.playRecipe(rec, {
+            event: ev,
+            attackerId: lastStrikeCtx.characterId,
+            attackerSide: lastStrikeCtx.side,
+            overrideTarget: { x: tx, y: ty },
+            defaultColor: resolveCharColor(lastStrikeCtx.characterId, lastStrikeCtx.side),
+          });
+        }
+      }
       const posLabel = ev.position ? `第 ${ev.position} 骰已摧毁` : '骰子已摧毁';
       spawnFloater(tx, ty - 34, posLabel, DESTROY_COLOR, 16, 'heavy');
     },
 
     draw(ev) {
-      audio.cardSlide();
+      audio.cardFlick(ev.side === 1 ? -0.18 : ev.side === 2 ? 0.18 : 0);
       const piles = getDeckPile(ev.side);
       piles?.pulsePile('draw', 1.15);
       const p = piles?.getPileAnchor('draw') || getPileCenter(`${ev.side}:draw`);
@@ -744,8 +810,22 @@ export function createPresentationFx(env) {
       audio.clashImpact(true);
       const pos = actorPos(ev.character_id, ev.side);
       three.emitShockwave(pos.x, pos.y, 0x1a8775);
-      spawnFloater(pos.x, pos.y - 46, '✦ 暴击', 0x1a8775, 19, 'heavy');
+      spawnFloater(pos.x, pos.y - 46, '暴击', 0x1a8775, 19, 'heavy');
       three.spawnImpactBurst(pos.x, pos.y, 0x24967c, 26, true);
+      const critRec = fxDirector?.resolveCritRecipe?.({
+        characterId: ev.character_id,
+        cardId: lastStrikeCtx?.cardId,
+        cardName: lastStrikeCtx?.cardName,
+      });
+      if (critRec) {
+        fxDirector.playRecipe(critRec, {
+          event: ev,
+          attackerId: ev.character_id,
+          defenderId: ev.target_id || ev.character_id,
+          attackerSide: ev.side,
+          defaultColor: resolveCharColor(ev.character_id, ev.side),
+        });
+      }
     },
 
     stagger_check(ev) {
@@ -776,6 +856,16 @@ export function createPresentationFx(env) {
         title: '', accentHex,
         flipFromBack: true, duration: 0.40, peakZ: 118,
       });
+      const specRec = fxDirector?.resolveSpecialPlaceRecipe?.(ev);
+      if (specRec) {
+        fxDirector.playRecipe(specRec, {
+          event: ev,
+          attackerId: ev.character_id,
+          attackerSide: ev.side,
+          overrideTarget: { x: bx, y: by },
+          defaultColor: resolveCharColor(ev.character_id, ev.side),
+        });
+      }
     },
 
     character_death(ev) {
@@ -785,6 +875,19 @@ export function createPresentationFx(env) {
       three.emitShockwave(pos.x, pos.y, 0xcf4330);
       physics.spawnShieldShards(pos.x, pos.y, 0xcf4330, 18, true);
       three.spawnImpactBurst(pos.x, pos.y, 0xcf4330, 38, true);
+      if (lastStrikeCtx?.characterId) {
+        const defeatRec = fxDirector?.resolveDefeatRecipe?.(lastStrikeCtx);
+        if (defeatRec) {
+          fxDirector.playRecipe(defeatRec, {
+            event: ev,
+            attackerId: lastStrikeCtx.characterId,
+            defenderId: ev.character_id,
+            attackerSide: lastStrikeCtx.side,
+            defenderSide: ev.side,
+            defaultColor: resolveCharColor(lastStrikeCtx.characterId, lastStrikeCtx.side),
+          });
+        }
+      }
       spawnFloater(pos.x, pos.y - 26, `${ev.name} 阵亡`, 0xcf4330, 18, 'heavy');
       showBanner(`${ev.name} 阵亡`, 0xcf4330, 1.8);
     },

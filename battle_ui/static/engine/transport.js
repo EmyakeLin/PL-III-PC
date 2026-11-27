@@ -70,7 +70,7 @@ export function roomTableState(room, assets = {}) {
     .flatMap(player => player.characters || [])
     .filter(c => c.printed_id && c.printed_id !== c.id);
   if (copies.length) {
-    for (const field of ['character_colors', 'character_sprites', 'character_fx']) {
+    for (const field of ['character_colors', 'character_sprites', 'character_fx', 'character_card_backs']) {
       const originals = assets[field] || {};
       const aliases = copies.filter(c => originals[c.printed_id] != null).map(c => [c.id, originals[c.printed_id]]);
       tableAssets[field] = { ...originals, ...Object.fromEntries(aliases) };

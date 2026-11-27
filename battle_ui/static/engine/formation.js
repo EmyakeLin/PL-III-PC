@@ -70,6 +70,47 @@ function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+export function computeFighterBadgeLayout({
+  width, availableHeight, badgeSize, shieldWidth, shieldCount, passiveWidth, statusCount, extraEffectCount,
+}) {
+  const gap = 3;
+  const step = badgeSize + gap;
+  // The plinth already has a primary badge row. Only add rows that fit in the slot budget.
+  const rowLimit = Math.max(1, Math.floor((availableHeight + gap) / step));
+  const shieldStep = shieldWidth + gap;
+  const shieldSpan = shieldCount * shieldStep;
+  const needsStatusSlot = statusCount + extraEffectCount > 0 || shieldSpan - gap > width;
+  const reservedWidth = needsStatusSlot && rowLimit === 1 ? step : 0;
+  const passiveX = width - passiveWidth;
+  const showPassive = passiveWidth > 0 && shieldSpan + reservedWidth <= passiveX;
+  const firstRowRight = showPassive ? passiveX - gap : width;
+  const shieldCapacity = Math.floor((firstRowRight + gap - reservedWidth) / shieldStep);
+  const shownShields = Math.min(shieldCount, Math.max(0, shieldCapacity));
+  const firstStatusX = shownShields * shieldStep;
+  const firstRowCapacity = Math.max(0, Math.floor((firstRowRight - firstStatusX + gap) / step));
+  const fullRowCapacity = Math.floor((width + gap) / step);
+  const capacity = firstRowCapacity + (rowLimit - 1) * fullRowCapacity;
+  const extraBadges = extraEffectCount + shieldCount - shownShields;
+  const needsOverflow = statusCount > capacity || extraBadges > 0;
+  const shownStatuses = Math.min(statusCount, capacity - (needsOverflow ? 1 : 0));
+  const hiddenCount = statusCount - shownStatuses + extraBadges;
+  const positions = [];
+  const usedSlots = shownStatuses + (needsOverflow ? 1 : 0);
+  for (let index = 0; index < usedSlots; index++) {
+    if (index < firstRowCapacity) {
+      positions.push({ x: firstStatusX + index * step, y: 0 });
+    } else {
+      const fullRowIndex = index - firstRowCapacity;
+      const column = fullRowIndex % fullRowCapacity;
+      const row = 1 + Math.floor(fullRowIndex / fullRowCapacity);
+      positions.push({ x: column * step, y: row * step });
+    }
+  }
+  const lastBadge = positions.at(-1);
+  const height = lastBadge ? lastBadge.y + badgeSize : shownShields || showPassive ? badgeSize : 0;
+  return { gap, height, shownShields, shownStatuses, hiddenCount, positions, showPassive, passiveX };
+}
+
 function fnv1a32(str) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {

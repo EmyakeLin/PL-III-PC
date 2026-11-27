@@ -247,6 +247,19 @@ export function buildCardBack(side = 1, { width = 82, height = 104, accentColor 
  *  - Vertically stacked 1:1 crisp die rows (left accent stripe + framed icon + exact range + compact damage + ◆)
  *  - Hovering lifts seamlessly into the full 1:1 vertical buildFullCard!
  */
+function mergeDieWithLive(die, live) {
+  if (!live) return die;
+  return {
+    ...die,
+    type: live.type ?? die.type,
+    level: live.level ?? die.level,
+    roll_max: live.roll_max ?? die.roll_max,
+    base_value: live.base_value ?? die.base_value,
+    multiplier: live.multiplier ?? die.multiplier,
+    final_bonus: live.final_bonus ?? die.final_bonus,
+  };
+}
+
 export function buildBoardCardTag(card, {
   side = 1,
   accentColor = null,
@@ -322,17 +335,19 @@ export function buildBoardCardTag(card, {
   const traits = exactSkillTraits(card, isBlanked);
   const hasFooter = traits.length > 0 || (!isBlanked && card.entries?.length > 0);
   const footerH = hasFooter ? 16 : 12;
-  const maxRows = Math.min(dice.length, 5);
   const availH = Math.max(20, H - footerH - cursorY - 2);
-  const rowH = maxRows > 0 ? Math.max(16, Math.min(24, Math.floor(availH / maxRows))) : 20;
+  const maxRows = dice.length <= 6 ? dice.length : Math.max(5, Math.floor(availH / 14));
+  const shownRows = Math.min(dice.length, maxRows);
+  const rowH = shownRows > 0 ? Math.max(13, Math.min(24, Math.floor(availH / shownRows))) : 20;
 
   const rowG = new PIXI.Graphics();
   sheet.addChild(rowG);
 
-  for (let i = 0; i < maxRows; i++) {
-    const die = dice[i];
+  for (let i = 0; i < shownRows; i++) {
+    const rawDie = dice[i];
     const ry = cursorY + i * rowH;
     const live = card.live_dice?.findLast(d => d?.position === i + 1);
+    const die = mergeDieWithLive(rawDie, live);
     const dType = live?.type ?? die.type;
     const blankDie = dType === 'blank';
     const ds = DIE_STYLE[dType] || DIE_STYLE.blank;
@@ -345,7 +360,7 @@ export function buildBoardCardTag(card, {
         .stroke({ width: 1.1, color: INK.gold, alpha: 0.9 });
     }
     rowG.roundRect(padX, ry + 2, 2.4, rowH - 4, 1).fill({ color: ds.color, alpha: 0.9 });
-    if (i < maxRows - 1) {
+    if (i < shownRows - 1) {
       rowG.moveTo(padX + 4, ry + rowH).lineTo(W - padX, ry + rowH).stroke({ width: 0.75, color: INK.hairline });
     }
     drawUnifiedDieFrame(rowG, dType, padX + 11, ry + rowH / 2, Math.min(4.6, rowH * 0.24),
@@ -454,10 +469,11 @@ export function buildFullCard(card, {
   const layoutBody = (targetInnerW) => {
     const box = new PIXI.Container();
     let y = 0;
-    const addDie = (die, idx) => {
+    const addDie = (rawDie, idx) => {
       const position = idx + 1;
       const active = activeDieNumber === position;
       const live = card.live_dice?.findLast(d => d?.position === position);
+      const die = mergeDieWithLive(rawDie, live);
       const destroyed = !active && (card.destroyed_die_positions || []).includes(position);
       const row = buildUnifiedDieRow(die, {width: targetInnerW, active, destroyed,
         spent: destroyed || (activeDieNumber !== null && position < activeDieNumber),
@@ -654,11 +670,12 @@ export function buildFullCard(card, {
 
   sheet.addChild(content);
 
-  const isDestroyedCard = Boolean(card.destroyed || card.state === 'negated');
+  const isDestroyedCard = Boolean(card.destroyed);
+  const isSkippedCard = !isDestroyedCard && Boolean(card.skipped || card.state === 'negated');
   if (isDestroyedCard) {
     const shatter = new PIXI.Graphics();
     shatter.roundRect(0, 0, W, H, 8)
-      .fill({ color: 0x2c2420, alpha: 0.34 })
+      .fill({ color: 0xf6dcd6, alpha: 0.44 })
       .stroke({ width: 2, color: 0xb83a2a, alpha: 0.9 });
     shatter.moveTo(10, 10).lineTo(W - 10, H - 10)
       .moveTo(W - 10, 10).lineTo(10, H - 10)
@@ -666,12 +683,30 @@ export function buildFullCard(card, {
     const stampW = Math.min(W - 20, 86);
     const stampH = 22;
     shatter.roundRect((W - stampW) / 2, (H - stampH) / 2, stampW, stampH, 5)
-      .fill({ color: 0x3b1814, alpha: 0.92 })
-      .stroke({ width: 1.4, color: 0xe86b58, alpha: 0.95 });
+      .fill({ color: 0xb83a2a, alpha: 0.95 })
+      .stroke({ width: 1.4, color: 0xf4a496, alpha: 0.95 });
     sheet.addChild(shatter);
     const stampTxt = new PIXI.Text({
       text: '已摧毁',
-      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: 0xffece8, letterSpacing: 1.5 },
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: 0xfff8f5, letterSpacing: 1.5 },
+    });
+    stampTxt.anchor.set(0.5);
+    stampTxt.position.set(W / 2, H / 2);
+    sheet.addChild(stampTxt);
+  } else if (isSkippedCard) {
+    const skipSeal = new PIXI.Graphics();
+    skipSeal.roundRect(0, 0, W, H, 8)
+      .fill({ color: 0xf4eee2, alpha: 0.48 })
+      .stroke({ width: 1.6, color: 0x8b7e70, alpha: 0.85 });
+    const stampW = Math.min(W - 20, 86);
+    const stampH = 22;
+    skipSeal.roundRect((W - stampW) / 2, (H - stampH) / 2, stampW, stampH, 5)
+      .fill({ color: 0x8b7e70, alpha: 0.94 })
+      .stroke({ width: 1.2, color: 0xd8cec0, alpha: 0.9 });
+    sheet.addChild(skipSeal);
+    const stampTxt = new PIXI.Text({
+      text: '已跳过',
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: INK.paper, letterSpacing: 1.5 },
     });
     stampTxt.anchor.set(0.5);
     stampTxt.position.set(W / 2, H / 2);
@@ -734,6 +769,7 @@ export function buildUniformCard(card, {
   selected = false,
   activeCard = false,
   activeDieNumber = null,
+  activeStepIndex = null,
   concealActiveScore = false,
   concealActiveOutcome = false,
   rangeDeficit = 0,
@@ -748,8 +784,10 @@ export function buildUniformCard(card, {
   const innerW = W - padX * 2;
   const effectiveDeficit = rangeDeficit || card.range_deficit || 0;
   const isBlanked = effectiveDeficit >= 3;
-  const isDestroyedCard = Boolean(card.destroyed || card.state === 'negated');
-  const isSettled = Boolean(statusBadge === 'settled' || statusBadge === 'skipped' || statusBadge === 'dissolved' || (card.used && !activeCard));
+  const isDestroyedCard = Boolean(card.destroyed);
+  const effectiveBadge = statusBadge
+    || (card.dissolved ? 'dissolved' : (!isDestroyedCard && (card.skipped || card.state === 'negated')) ? 'skipped' : null);
+  const isSettled = Boolean(effectiveBadge === 'settled' || effectiveBadge === 'skipped' || effectiveBadge === 'dissolved' || (card.used && !activeCard));
   const headerH = 36;
   const bodyTop = headerH + 5;
   const bodyBottomPad = 8;
@@ -758,10 +796,13 @@ export function buildUniformCard(card, {
   const root = new PIXI.Container();
   const sheet = new PIXI.Container();
 
-  // Build lookup of live/settled dice by 1-based position
-  const liveByPos = new Map();
+  // Group live/settled dice by 1-based printed position (preserving repeat-die rolls!)
+  const liveListByPos = new Map();
   for (const ld of card.live_dice || []) {
-    if (ld && ld.position != null) liveByPos.set(ld.position, ld);
+    if (ld && ld.position != null) {
+      if (!liveListByPos.has(ld.position)) liveListByPos.set(ld.position, []);
+      liveListByPos.get(ld.position).push(ld);
+    }
   }
 
   // 1. Physical card-stock body (strictly W × H)
@@ -844,13 +885,20 @@ export function buildUniformCard(card, {
     cursorY += skillPlate._height + 5;
   }
 
-  dice.forEach((die, idx) => {
+  dice.forEach((rawDie, idx) => {
     const position = idx + 1;
     const isActiveDie = activeDieNumber === position;
-    const liveDie = liveByPos.get(position) || null;
+    const posList = liveListByPos.get(position) || [];
+    const liveDie = (isActiveDie && activeStepIndex != null
+      ? posList.find((ld) => ld.step_index === activeStepIndex)
+      : null)
+      || posList.findLast((ld) => ld.rolled_value != null || ld.result != null || ld.destroyed)
+      || posList[posList.length - 1]
+      || null;
+    const die = mergeDieWithLive(rawDie, liveDie);
     const isDestroyedDie = Boolean(liveDie?.destroyed) || (!isActiveDie && (card.destroyed_die_positions || []).includes(position));
     const hasSettledResult = Boolean(
-      liveDie && !isActiveDie && (liveDie.result != null || liveDie.destroyed || liveDie.landed_hits > 0),
+      liveDie && !isActiveDie && (liveDie.result != null || liveDie.destroyed || (liveDie.landed_hits || 0) > 0 || (liveDie.hit_index || 0) > 0),
     );
     const isSpent = isDestroyedDie || hasSettledResult || (isSettled && !isActiveDie) || (activeDieNumber !== null && position < activeDieNumber);
 
@@ -897,9 +945,9 @@ export function buildUniformCard(card, {
     rightCursor -= tw + 5;
   };
 
-  if (statusBadge === 'dissolved') addHeaderPill('已消散', 0x7b6d61);
-  else if (statusBadge === 'skipped') addHeaderPill('已跳过', 0x8b7e70);
-  else if (statusBadge === 'settled' || (isSettled && !isDestroyedCard)) addHeaderPill('已结算', 0x7a7065);
+  if (effectiveBadge === 'dissolved') addHeaderPill('已消散', 0x7b6d61);
+  else if (effectiveBadge === 'skipped') addHeaderPill('已跳过', 0x8b7e70);
+  else if (effectiveBadge === 'settled' || (isSettled && !isDestroyedCard)) addHeaderPill('已结算', 0x7a7065);
   else if (effectiveDeficit > 0) addHeaderPill(`压制-${effectiveDeficit}`, 0xc93e2b);
   else if (playMode) {
     addHeaderPill(
@@ -1007,11 +1055,11 @@ export function buildUniformCard(card, {
     applyScroll(0);
   }
 
-  // Destroyed overlay stamp (keeps card on table with clear shatter seal)
+  // Destroyed overlay stamp (keeps card on table with clear warm-paper shatter seal)
   if (isDestroyedCard) {
     const shatter = new PIXI.Graphics();
     shatter.roundRect(0, 0, W, H, 8)
-      .fill({ color: 0x2c2420, alpha: 0.28 })
+      .fill({ color: 0xf6dcd6, alpha: 0.42 })
       .stroke({ width: 2, color: 0xb83a2a, alpha: 0.9 });
     shatter.moveTo(10, 10).lineTo(W - 10, H - 10)
       .moveTo(W - 10, 10).lineTo(10, H - 10)
@@ -1019,12 +1067,12 @@ export function buildUniformCard(card, {
     const stampW = Math.min(W - 20, 86);
     const stampH = 22;
     shatter.roundRect((W - stampW) / 2, (H - stampH) / 2, stampW, stampH, 5)
-      .fill({ color: 0x3b1814, alpha: 0.92 })
-      .stroke({ width: 1.4, color: 0xe86b58, alpha: 0.95 });
+      .fill({ color: 0xb83a2a, alpha: 0.95 })
+      .stroke({ width: 1.4, color: 0xf4a496, alpha: 0.95 });
     sheet.addChild(shatter);
     const stampTxt = new PIXI.Text({
       text: '已摧毁',
-      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: 0xffece8, letterSpacing: 1.5 },
+      style: { fontFamily: FONT_UI, fontSize: 11.5, fontWeight: '900', fill: 0xfff8f5, letterSpacing: 1.5 },
     });
     stampTxt.anchor.set(0.5);
     stampTxt.position.set(W / 2, H / 2);

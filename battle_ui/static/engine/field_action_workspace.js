@@ -13,11 +13,11 @@ const ACTION_COLOR = {
   place: 0x1a825e,
   place_rear: 0x9c6e18,
   attack: 0xc8452e,
-  replace: 0x1b6ea8,
+  replace: 0x2478cc,
   custom: 0xb67b14,
   intercept: 0xc26e1d,
   pass_intercept: 0x6b6458,
-  ability: 0x7b42b8,
+  ability: 0xb83862,
   decline: 0x6b6458,
 };
 

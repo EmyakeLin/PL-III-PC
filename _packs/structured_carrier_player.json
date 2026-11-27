@@ -1,0 +1,1544 @@
+{
+  "turn_end_statuses": ["载体·伤害提升"],
+  "status_rules": {
+    "载体·伤害提升": {"icon_svg":"伤害提升.svg"},
+    "载体·威压": {"icon_svg":"威压.svg","cap":12,"description":"最多12层，跨回合保留。"},
+    "载体·堆芯熔毁": {"icon_svg":"堆芯熔毁.svg","cap":9,"track_overflow":true,"description":"回合末结算自伤并衰减。上限9，溢出记为无效载体·堆芯熔毁。"}
+  },
+  "status_entries": {
+    "载体·堆芯熔毁": [
+      {
+        "trigger": "on_character_turn_end",
+        "description": "【回合结束】当前熔毁除3造成伤害并无视冻结，再移除当前层数三分之一（向上取整）。",
+        "damage_cause": "载体·堆芯熔毁",
+        "operation": {
+          "op": "program",
+          "code": [
+            "$self", "载体·堆芯熔毁", "STATUS_COUNT", "stacks", "STORE", "$self.turn_state", "熔毁免伤", false, "LOOKUP", "NOT",
+            ["$self","$local.stacks",3,"FLOOR_DIV","normal","none",{"call":"DAMAGE","with":{"damage_cause":"载体·堆芯熔毁"}}],
+            "WHEN", "$self", "载体·堆芯熔毁", "$local.stacks", 3, "CEIL_DIV", "SPEND_STATUS"
+          ]
+        }
+      }
+    ],
+    "载体·伤害提升": [
+      {
+        "trigger": "BEFORE DAMAGE",
+        "description": "自身骰子每个直伤部分增加当前层数的伤害。",
+        "subject": "source",
+        "when": [
+          {"left":"$event.damage_part","op":"eq","right":true},
+          {"left":"$event.damage_die.card.character","op":"eq","right":"$self"}
+        ],
+        "operation": {
+          "op": "program",
+          "code": [
+            "$event.target", "$event.modifiers", "damage_add", "$self", "载体·伤害提升", "STATUS_COUNT", "normal",
+            "ADD_DAMAGE_MODIFIER"
+          ]
+        }
+      }
+    ]
+  },
+  "characters": [
+    {
+      "id": "structured_carrier_player",
+      "name": "结构化载体（玩家）",
+      "rank": "EXTREME",
+      "max_hp": 18,
+      "base_max_duels": 5,
+      "passive_skills": [
+        {
+          "name": "乘胜",
+          "entries": [
+            {
+              "trigger": "BEFORE RESOLVE_DIE_LEVEL",
+              "description": "敌方载体·威压总数高于6时，骰子等级+1。",
+              "subject": "source",
+              "when": [{"left":"$event.die.card","op":"ne","right":null}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  0, "total", "STORE", "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                  ["$local.total","$event.item","载体·威压","STATUS_COUNT","ADD","total","STORE"], "EACH", "$local.total", 6, "GT",
+                  [1,"ADD"], "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_status_changed",
+              "description": "敌方载体·威压合计12时常驻2强壮，其后每6额外常驻1，最多额外2。",
+              "subject": "any",
+              "when": [{"left":"$event.status","op":"eq","right":"载体·威压"}],
+              "operation": {"op":"program","code":["player_carrier_momentum",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "AFTER RESTORE_STATUS_STACKS",
+              "description": "载体·威压被回退时，按回退后的总数重算常驻强壮。",
+              "subject": "any",
+              "when": [{"left":"$event.status","op":"eq","right":"载体·威压"}],
+              "operation": {"op":"program","code":["player_carrier_momentum",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "AFTER CHECK_DEATH",
+              "description": "敌人阵亡时重算存活敌人的载体·威压。",
+              "subject": "any",
+              "when": [{"left":"$event.result","op":"eq","right":true}],
+              "operation": {"op":"program","code":["player_carrier_momentum",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "player_carrier_momentum",
+              "trigger_type": "event",
+              "description": "统计存活敌方载体·威压，按12、18、24三档更新常驻强壮。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  0, "total", "STORE", "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                  ["$local.total","$event.item","载体·威压","STATUS_COUNT","ADD","total","STORE"], "EACH",
+                  "$self", "强壮", "乘胜", "$local.total", 12, "GE",
+                  ["$local.total",12,"SUB",6,"FLOOR_DIV",2,"MIN",2,"ADD"], [0], "IF_ELSE", "SET_SUSTAINED_STACKS"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "纳米化结构",
+          "entries": [
+            {
+              "trigger": "BEFORE APPLY_DAMAGE",
+              "description": "冻结基础血条。受到高于1的伤害命中时获得2载体·堆芯熔毁，熔毁自伤例外。",
+              "subject": "target",
+              "authority": "最高话语权",
+              "when": [
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0},
+                {"left":"$event.damage_cause","op":"ne","right":"载体·堆芯熔毁"}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.damage_part", "$event.damage_die", null, "EQ", "NOT", "AND", "$event.amount", 1, "GT", "AND",
+                  ["$self","载体·堆芯熔毁",2,"STATUS"], "WHEN",
+                  {"op":"cancel"}
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE HEAL",
+              "description": "冻结期间基础血条不变。",
+              "subject": "target",
+              "authority": "最高话语权",
+              "when": [
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0}
+              ],
+              "operation": {"op":"cancel"}
+            },
+            {
+              "trigger": "BEFORE LOSE_HP",
+              "description": "冻结期间基础血条不变。",
+              "subject": "target",
+              "authority": "最高话语权",
+              "when": [
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0}
+              ],
+              "operation": {"op":"cancel"}
+            }
+          ]
+        },
+        {
+          "name": "微化信子计算堆芯",
+          "entries": [
+            {
+              "trigger": "on_character_turn_end",
+              "description": "【回合结束】以衰减前的载体·堆芯熔毁结算：至少5，下回合获得1载体·伤害提升；至少8，获得1载体容器。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "载体·堆芯熔毁", "STATUS_COUNT", "stacks", "STORE", "$local.stacks", 5, "GE",
+                  [
+                    {
+                      "schedule": {
+                        "event": "on_turn_prepared",
+                        "source": "$self",
+                        "target": "$self",
+                        "after_turns": 1,
+                        "through_turns": 1,
+                        "uses": 1,
+                        "require_source_alive": false,
+                        "require_target_alive": true,
+                        "then": ["$event.target","载体·伤害提升",1,"STATUS"]
+                      }
+                    }
+                  ],
+                  "WHEN", "$local.stacks", 8, "GE", ["$self","载体容器",1,"STATUS"], "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "容器发射",
+          "display_value": {"if":{"field":"$self.rule_state","key":"容器发射"},"then":"发射中","else":null},
+          "entries": [
+            {
+              "trigger": "on_status_changed",
+              "description": "容器达到2时发动。",
+              "subject": "target",
+              "when": [
+                {"left":"$event.status","op":"eq","right":"载体容器"},
+                {"left":{"field":"$self.statuses","key":"载体容器","default":0},"op":"ge","right":2},
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}
+              ],
+              "operation": {"op":"program","code":["player_carrier_launch",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "on_turn_prepared",
+              "description": "若上次发射结束后仍有至少2容器，新回合再次发射。",
+              "when": [
+                {"left":{"field":"$self.statuses","key":"载体容器","default":0},"op":"ge","right":2},
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}
+              ],
+              "operation": {"op":"program","code":["player_carrier_launch",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "player_carrier_launch",
+              "description": "解除冻结并获得4载体·堆芯熔毁，本回合伤害部分改为最终伤害量×目标生命上限的10%，造成超穿甲伤害。",
+              "trigger_type": "event",
+              "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}],
+              "operation": {
+                "op": "program",
+                "code": ["$self","容器发射",true,"SET_CHARACTER_STATE","$self","载体·堆芯熔毁",4,"STATUS","player_carrier_cool",{"literal":{}},"PUBLISH"]
+              }
+            },
+            {
+              "trigger": "BEFORE DAMAGE",
+              "description": "本次伤害部分按超穿甲等级进入减伤结算。",
+              "subject": "source",
+              "when": [
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true},
+                {"left":"$event.damage_part","op":"eq","right":true},
+                {"left":"$event.damage_die.card.character","op":"eq","right":"$self"}
+              ],
+              "operation": {"op":"program","code":["SWAP","POP","concept","SWAP"]}
+            },
+            {
+              "trigger": "BEFORE APPLY_DAMAGE",
+              "description": "最终伤害每1点转换为目标生命上限的10%，保留小数。",
+              "subject": "source",
+              "when": [
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true},
+                {"left":"$event.damage_part","op":"eq","right":true},
+                {"left":"$event.damage_die.card.character","op":"eq","right":"$self"}
+              ],
+              "operation": {"op":"program","code":["SWAP","$event.target.max_hp","MUL",10,"DIVIDE","SWAP"]}
+            },
+            {
+              "trigger": "before_turn_end",
+              "description": "【回合结束】消耗2容器并结束发射，重新判断休止。",
+              "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":true}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "载体容器", -2, "STATUS", "$self", "容器发射", false, "SET_CHARACTER_STATE", "player_carrier_check_rest", {"literal":{}},
+                  "PUBLISH"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "纳米休止",
+          "display_value": {"if":{"field":"$self.rule_state","key":"休止恢复回合"},"then":"休止中","else":null},
+          "entries": [
+            {
+              "trigger": "AFTER STATUS",
+              "description": "载体·堆芯熔毁溢出时检查休止。",
+              "subject": "target",
+              "when": [{"left":"$event.status","op":"eq","right":"载体·堆芯熔毁"},{"left":"$event.status_overflow","op":"gt","right":0}],
+              "operation": {"op":"program","code":["player_carrier_check_rest",{"literal":{}},"PUBLISH"]}
+            },
+            {
+              "trigger": "player_carrier_check_rest",
+              "description": "未发射且累计至少8个无效熔毁时，清除无效熔毁，解除冻结至下回合结束。",
+              "trigger_type": "event",
+              "when": [{"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.status_overflow", "载体·堆芯熔毁", 0, "LOOKUP", 8, "GE",
+                  [
+                    "$self", "载体·堆芯熔毁", 0, "SET_STATUS_OVERFLOW", "$self", "休止恢复回合",
+                    "$game.turn_number", 2, "ADD", "SET_CHARACTER_STATE"
+                  ],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "on_turn_limits_reset",
+              "description": "休止在第二个后续回合开始时失效。",
+              "when": [{"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"gt","right":0}],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$game.turn_number", "$self.rule_state", "休止恢复回合", 0, "LOOKUP", "GE", ["$self","休止恢复回合",0,"SET_CHARACTER_STATE"],
+                  "WHEN"
+                ]
+              }
+            },
+            {
+              "trigger": "BEFORE REAL_DAMAGE",
+              "description": "冻结时挡下本段真实伤害，进入休止并另受3点真实伤害。休止或发射期间只结算原伤。",
+              "subject": "target",
+              "authority": "最高话语权",
+              "when": [
+                {"left":{"field":"$self.rule_state","key":"容器发射","default":false},"op":"eq","right":false},
+                {"left":{"field":"$self.rule_state","key":"休止恢复回合","default":0},"op":"eq","right":0},
+                {"left":"$event.amount","op":"gt","right":0}
+              ],
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "休止恢复回合", "$game.turn_number", 2, "ADD", "SET_CHARACTER_STATE",
+                  "$self", 3, "REAL_DAMAGE", {"op":"cancel"}
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "冷却",
+          "entries": [
+            {
+              "trigger": "player_carrier_cool",
+              "description": "容器发射后减少6层无效载体·堆芯熔毁。",
+              "trigger_type": "event",
+              "operation": {
+                "op": "program",
+                "code": ["$self","载体·堆芯熔毁","$self.status_overflow","载体·堆芯熔毁",0,"LOOKUP",6,"SUB",0,"MAX","SET_STATUS_OVERFLOW"]
+              }
+            }
+          ]
+        },
+        {
+          "name": "反制",
+          "entries": [
+            {
+              "trigger": "before_unopposed_ranged_skill",
+              "description": "被单方面远程攻击时，以抽牌堆顶牌迎击，远程等级+1，每回合最多两次。",
+              "subject": "target",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self.turn_state", "反制次数", 0, "LOOKUP", 2, "LT",
+                  [
+                    "$player", "draw", "ZONE_CARDS", ["$event.item.destroyed","NOT"], "FILTER", "FIRST", "defense", "STORE",
+                    "$local.defense", "$event.duel", {"call":"JOIN_DUEL","result":"result","default":false},
+                    [
+                      "$local.defense", "range_bonus", 1, "SET_SKILL_STATE", "$self", "反制次数", "$self.turn_state", "反制次数", 0,
+                      "LOOKUP", 1, "ADD", "SET_TURN_STATE"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "作战补给",
+          "description": "每回合基础可用费用为9（8通用费、1个人费）。包括首回合在内，己方每回合合计抽4张，技能额外抽牌另计。",
+          "entries": [
+            {
+              "trigger": "BEFORE RESET_COST",
+              "description": "费用回补时，将己方通用基础额度补至与载体个人费合计9点，其他费用修正照常累加。",
+              "when": [{"left":"$event.refill","op":"eq","right":true}],
+              "operation": {
+                "op": "program",
+                "code": ["SWAP",9,"$game.gamerule.CHAR_INDEPENDENT_COST","SUB","$game.gamerule.MAX_BASIC_COST","SUB","ADD","SWAP"]
+              }
+            },
+            {
+              "trigger": "on_turn_prepared",
+              "description": "在通常抽牌前抽取差额，连同本回合的基础留牌数合计4张。多人队伍照常选牌置底。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", 4, "$game.gamerule.DRAW_COUNT", "SUB", "$game.turn_number", 1, "EQ", [1,"SUB"], "WHEN", "DRAW"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "skills": [
+        {
+          "id": "player_carrier_barrier",
+          "name": "扭曲障壁",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】摧毁与本技能交锋的实体牌，获得2载体·堆芯熔毁。若被摧毁牌超过两骰，对手另选一张手牌弃置。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.opponent_card", "victim", "STORE", "$local.victim",
+                  {"call":"DESTROY","result":"result","default":false}, "destroyed", "STORE", "$self", "载体·堆芯熔毁", 2, "STATUS",
+                  "$local.destroyed",
+                  [
+                    "$local.victim.dice", "SIZE", 2, "GT",
+                    [
+                      "$player", "OPPONENT", "hand", "ZONE_CARDS",
+                      {
+                        "literal": {
+                          "chooser": "target",
+                          "optional": false,
+                          "then": {"op":"program","code":["$event.chosen_card.player","$event.chosen_card","DISCARD"]}
+                        }
+                      },
+                      "CHOOSE_CARD"
+                    ],
+                    "WHEN"
+                  ],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": []
+        },
+        {
+          "id": "player_carrier_replica",
+          "name": "复制复刻",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "after_skill_use",
+              "description": "【使用后】将对位的实体牌收入己方抽牌堆底，此牌无视使用条件。",
+              "operation": {"op":"program","code":["$self","$event.opponent_card","draw",true,"TAKE_BOARD_CARD"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压，下回合施加1限制。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","限制",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】反震2。",
+                  "operation": {"op":"program","code":["$event.target",2,"normal","none","DAMAGE"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_parry",
+          "name": "弹反防御",
+          "cost": 2,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】对手载体·威压高于4时，本技能最终点数+4。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "SELECT_SKILL_TARGET", "载体·威压", "STATUS_COUNT", 4, "GT", ["$event.card",4,"SKILL_FINAL_ADD"],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 5,
+              "passive_activation": true,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压。",
+                  "operation": {"op":"program","code":["$event.target","载体·威压",1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】1，同次用牌仅触发一次。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.card.use_state", "已造成弹反伤害", false, "LOOKUP", "NOT",
+                      ["$event.target",1,"normal","$event.die.type","DAMAGE","$event.card","已造成弹反伤害",true,"SET_SKILL_STATE"],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  }
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】重复使用本骰。",
+                  "operation": {"op":"program","code":["$event.die","REPEAT_DIE"]}
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】额外获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_brand",
+          "name": "载体·威压烙印",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】目标载体·威压低于6时本技能最终点数+3。施加2载体·威压，获得1载体·堆芯熔毁。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "SELECT_SKILL_TARGET", "target", "STORE", "$local.target", "载体·威压", "STATUS_COUNT", 6, "LT",
+                  ["$event.card",3,"SKILL_FINAL_ADD"], "WHEN", "$local.target", "载体·威压", 2, "STATUS", "$self", "载体·堆芯熔毁", 1,
+                  "STATUS"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压。",
+                  "operation": {"op":"program","code":["$event.target","载体·威压",1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压。",
+                  "operation": {"op":"program","code":["$event.target","载体·威压",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压，下回合施加1限制。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","限制",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 1,
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压，下回合施加1限制。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","限制",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_oppression",
+          "name": "死亡压迫",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得1载体·堆芯熔毁，对全体敌方施加1载体·威压。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$self", "载体·堆芯熔毁", 1, "STATUS", "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"],
+                  "FILTER", ["$event.target","载体·威压",1,"STATUS"], "FOR_EACH_TARGET"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】全体敌方各受1载体·威压，当前目标受2限制。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                      ["$event.target","载体·威压",1,"STATUS"], "FOR_EACH_TARGET", "$event.target", "限制", 2, "STATUS"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 4,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】群体施加1载体·威压。",
+                  "when": [{"left":"$event.hit_origin","op":"ne","right":"压迫斩击"}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                      ["$event.target","载体·威压",1,"STATUS"], "FOR_EACH_TARGET"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "after_dice_hit",
+                  "description": "群伤，向其余存活敌人各结算一次命中。",
+                  "when": [{"left":"$event.hit_origin","op":"ne","right":"压迫斩击"}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                      ["$event.item","$event.target","IS","NOT"], "FILTER",
+                      ["$event.die","full","压迫斩击","$event.item","QUEUE_TARGET_HIT"], "EACH"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】下回合群体施加1虚弱。",
+                  "when": [{"left":"$event.hit_origin","op":"ne","right":"压迫突刺"}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                      [
+                        {
+                          "schedule": {
+                            "event": "on_turn_prepared",
+                            "source": "$self",
+                            "target": "$event.target",
+                            "after_turns": 1,
+                            "through_turns": 1,
+                            "uses": 1,
+                            "require_source_alive": false,
+                            "require_target_alive": true,
+                            "then": ["$event.target","虚弱",1,"STATUS"]
+                          }
+                        }
+                      ],
+                      "FOR_EACH_TARGET"
+                    ]
+                  }
+                },
+                {
+                  "trigger": "after_dice_hit",
+                  "description": "群伤，向其余存活敌人各结算一次命中。",
+                  "when": [{"left":"$event.hit_origin","op":"ne","right":"压迫突刺"}],
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                      ["$event.item","$event.target","IS","NOT"], "FILTER",
+                      ["$event.die","full","压迫突刺","$event.item","QUEUE_TARGET_HIT"], "EACH"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_shackles",
+          "name": "纳米桎梏",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "block",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加1载体·威压，下回合施加1虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 5,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加1载体·威压，下回合施加1虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】施加1载体·威压，下回合施加1虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】下回合施加1限制。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","限制",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_repair",
+          "name": "修补堆芯",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "base_value": 2,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】下回合开始时，己方获得2通用费并额外抽1张牌。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_start",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target.player",2,"TURN_COST_ADD","$event.target.player",1,"DRAW"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】回复2生命值，减少4载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["HEAL 2 $self","$self","载体·堆芯熔毁",-4,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "blunt",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】回复1生命值，获得2载体·堆芯熔毁，本回合末免受载体·堆芯熔毁伤害。",
+                  "operation": {"op":"program","code":["HEAL 1 $self","$self","载体·堆芯熔毁",2,"STATUS","$self","熔毁免伤",true,"SET_TURN_STATE"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_puncture",
+          "name": "锐肢穿刺",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】下回合施加1虚弱，施加1载体·威压。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱",1,"STATUS"]
+                        }
+                      },
+                      "$event.target", "载体·威压", 1, "STATUS"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】对方载体·威压高于3则反震1。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target","载体·威压","STATUS_COUNT",3,"GT",["$event.target",1,"normal","none","DAMAGE"],"WHEN"]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_heart",
+          "name": "一击穿心",
+          "cost": 2,
+          "range_level": 1,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】对手载体·威压高于4时，本技能骰级+1。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "SELECT_SKILL_TARGET", "载体·威压", "STATUS_COUNT", 4, "GT", ["$event.card",1,"SKILL_LEVEL_ADD"],
+                  "WHEN"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 5,
+              "base_value": 2,
+              "entries": [
+                "3物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加2载体·威压，获得2载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$event.target","载体·威压",2,"STATUS","$self","载体·堆芯熔毁",2,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                "0物理",
+                {
+                  "trigger": "before_dice_use",
+                  "description": "上骰拼赢，本骰最终点数+2。",
+                  "operation": {"op":"program","code":[
+                    "$event.card.instantiated_dice","$event.card.current_dice_index",1,"SUB",null,"LOOKUP",
+                    {"field":"clash_result"},"win","EQ",[
+                      "$event.die","上骰拼赢",true,"SET_DIE_STATE","$event.die",2,"DIE_FINAL_ADD"
+                    ],"WHEN"
+                  ]}
+                },
+                {
+                  "trigger": "BEFORE DAMAGE",
+                  "description": "上骰拼赢，本骰伤害部分+2。",
+                  "subject": "source",
+                  "when": [
+                    {"left":"$event.damage_part","op":"eq","right":true},
+                    {"left":{"field":"$event.die.use_state","key":"上骰拼赢","default":false},"op":"eq","right":true}
+                  ],
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.damage_die","$owner","IS",["$event.target","$event.modifiers","damage_add",2,"normal","ADD_DAMAGE_MODIFIER"],"WHEN"]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_cleave",
+          "name": "利肢挥砍",
+          "cost": 2,
+          "entries": [],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 4,
+              "base_value": 1,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压，下回合施加1虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", 1, "STATUS",
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱",1,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 1,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 2,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】对方载体·威压高于3则反震1。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target","载体·威压","STATUS_COUNT",3,"GT",["$event.target",1,"normal","none","DAMAGE"],"WHEN"]
+                  }
+                }
+              ]
+            },
+            {"type":"slash","level":4,"entries":["0物理"]}
+          ]
+        },
+        {
+          "id": "player_carrier_nightmare",
+          "name": "梦魇",
+          "cost": 3,
+          "decisive_skill": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】下回合开始时，己方获得2通用费并额外抽1张牌。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  {
+                    "schedule": {
+                      "event": "on_turn_start",
+                      "source": "$self",
+                      "target": "$self",
+                      "after_turns": 1,
+                      "through_turns": 1,
+                      "uses": 1,
+                      "require_source_alive": false,
+                      "require_target_alive": true,
+                      "then": ["$event.target.player",2,"TURN_COST_ADD","$event.target.player",1,"DRAW"]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】将抽牌堆顶牌置于己方空交锋。若为扭曲障壁或复制复刻，将其收入手牌，改置同一牌堆中最靠上的一张决战牌。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$player", "draw", "ZONE_CARDS", ["$event.item.destroyed","NOT"], "FILTER", "FIRST", "drawn", "STORE",
+                  {"literal":["player_carrier_barrier","player_carrier_replica"]}, "$local.drawn.id", "CONTAINS",
+                  [
+                    "$local.drawn", "hand", "MOVE_CARD", "$player", "draw", "ZONE_CARDS",
+                    ["$event.item.destroyed","NOT","$event.item.printed_data.decisive_skill","AND"],
+                    "FILTER", "FIRST"
+                  ],
+                  ["$local.drawn"], "IF_ELSE", "PLACE_EMPTY_REGULAR"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 4,
+              "entries": [
+                "2物理",
+                {"trigger":"on_dice_hit","description":"【命中时】回复2生命值。","operation":{"op":"program","code":["HEAL 2 $self"]}},
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】反震1，回复2生命值。",
+                  "operation": {"op":"program","code":["$event.target",1,"normal","none","DAMAGE","HEAL 2 $self"]}
+                }
+              ]
+            },
+            {
+              "type": "block",
+              "level": 4,
+              "entries": [
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】下回合施加3虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$event.target",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","虚弱",3,"STATUS"]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 3,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】获得1载体容器。",
+                  "operation": {"op":"program","code":["$self","载体容器",1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_monster",
+          "name": "怪物",
+          "cost": 3,
+          "decisive_skill": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】施加4载体·威压，本次可用骰数为目标载体·威压除以2向下取整。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "$event.card", "SELECT_SKILL_TARGET", "target", "STORE", "$local.target", "载体·威压", 4, "STATUS", "$event.card",
+                  "骰数", "$local.target", "载体·威压", "STATUS_COUNT", 2, "FLOOR_DIV", "SET_SKILL_STATE"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "slash",
+              "level": 3,
+              "requires_skill_state": {"key":"骰数","op":"ge","value":1},
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "requires_skill_state": {"key":"骰数","op":"ge","value":2},
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "requires_skill_state": {"key":"骰数","op":"ge","value":3},
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】获得1载体·堆芯熔毁。",
+                  "operation": {"op":"program","code":["$self","载体·堆芯熔毁",1,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "pierce",
+              "level": 2,
+              "requires_skill_state": {"key":"骰数","op":"ge","value":4},
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1虚弱。",
+                  "operation": {"op":"program","code":["$event.target","虚弱",1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "requires_skill_state": {"key":"骰数","op":"ge","value":5},
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1虚弱。",
+                  "operation": {"op":"program","code":["$event.target","虚弱",1,"STATUS"]}
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_executioner",
+          "name": "刽子手",
+          "cost": 3,
+          "decisive_skill": true,
+          "range_level": 3,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得2载体·堆芯熔毁。",
+              "operation": {"op":"program","code":["$self","载体·堆芯熔毁",2,"STATUS"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 5,
+              "base_value": 3,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加2载体·威压。",
+                  "operation": {"op":"program","code":["$event.target","载体·威压",2,"STATUS"]}
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 5,
+              "base_value": -2,
+              "entries": [
+                "2物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】目标载体·威压不低于6时追加2虚弱。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$event.target","载体·威压","STATUS_COUNT",6,"GE",["$event.target","虚弱",2,"STATUS"],"WHEN"]
+                  }
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】目标载体·威压不低于6时，追加独立的1伤害部分。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "载体·威压", "STATUS_COUNT", 6, "GE", ["$event.target",1,"normal","$event.die.type","DAMAGE"],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_crystal",
+          "name": "信子科学的结晶",
+          "cost": 3,
+          "decisive_skill": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】获得2载体·堆芯熔毁，施加2载体·威压。",
+              "operation": {"op":"program","code":["$self","载体·堆芯熔毁",2,"STATUS","$event.card","SELECT_SKILL_TARGET","载体·威压",2,"STATUS"]}
+            },
+            {
+              "trigger": "BEFORE DESTROY",
+              "description": "此牌免疫摧毁词条。",
+              "scope": "global",
+              "subject": "any",
+              "authority": "最高话语权",
+              "operation": {"op":"program","code":["$event.target","$owner","IS",[{"op":"cancel"}],"WHEN"]}
+            }
+          ],
+          "dice": [
+            {
+              "type": "pierce",
+              "level": 6,
+              "roll_max": 100,
+              "base_value": 30,
+              "passive_activation": true,
+              "entries": [
+                "1物理",
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】施加1载体·威压。",
+                  "operation": {"op":"program","code":["$event.target","载体·威压",1,"STATUS"]}
+                },
+                {
+                  "trigger": "on_clash_win",
+                  "description": "【拼点胜利】重复使用本骰。",
+                  "operation": {"op":"program","code":["$event.die","REPEAT_DIE"]}
+                },
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】容器发射期间额外追加1伤。",
+                  "operation": {
+                    "op": "program",
+                    "code": ["$self.rule_state","容器发射",false,"LOOKUP",["$event.target",1,"normal","$event.die.type","DAMAGE"],"WHEN"],
+                    "damage_part": true
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "player_carrier_cataclysm",
+          "name": "浩劫",
+          "cost": 3,
+          "decisive_skill": true,
+          "entries": [
+            {
+              "trigger": "on_skill_use",
+              "description": "【使用时】强制触发容器发射，获得2载体·堆芯熔毁并施加2载体·威压。",
+              "operation": {
+                "op": "program",
+                "code": [
+                  "player_carrier_launch", {"literal":{}}, "PUBLISH", "$self", "载体·堆芯熔毁", 2, "STATUS", "$event.card",
+                  "SELECT_SKILL_TARGET", "载体·威压", 2, "STATUS"
+                ]
+              }
+            }
+          ],
+          "dice": [
+            {
+              "type": "blunt",
+              "level": 6,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】造成目标载体·威压数值的伤害。若击杀，群体施加6载体·威压。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      "$event.target", "$event.target", "载体·威压", "STATUS_COUNT", "normal", "$event.die.type", "DAMAGE",
+                      "$event.target.is_alive", "NOT",
+                      [
+                        "$player", "OPPONENT", {"field":"characters"}, ["$event.item.is_alive"], "FILTER",
+                        ["$event.target","载体·威压",6,"STATUS"], "FOR_EACH_TARGET"
+                      ],
+                      "WHEN"
+                    ],
+                    "damage_part": true
+                  }
+                }
+              ]
+            },
+            {
+              "type": "slash",
+              "level": 3,
+              "entries": [
+                {
+                  "trigger": "on_dice_hit",
+                  "description": "【命中时】下回合获得3普通护盾。",
+                  "operation": {
+                    "op": "program",
+                    "code": [
+                      {
+                        "schedule": {
+                          "event": "on_turn_prepared",
+                          "source": "$self",
+                          "target": "$self",
+                          "after_turns": 1,
+                          "through_turns": 1,
+                          "uses": 1,
+                          "require_source_alive": false,
+                          "require_target_alive": true,
+                          "then": ["$event.target","normal",3,"SHIELD"]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "trigger": "on_clash_lose",
+                  "description": "【拼点失败】驻留。",
+                  "operation": {"op":"program","code":["$event.die","full",null,"QUEUE_HIT"]}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

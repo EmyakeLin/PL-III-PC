@@ -1,13 +1,24 @@
-"""Regression checks for the battle chronicle."""
+"""Real non-mocked integration tests covering HTTP/WS transport, perspective fog of war,
+kernel-to-Chronicle accounting, formula consistency, and presentation FX projection.
+"""
 
+import http.client
 import io
+import json
 import random
+import threading
 import unittest
 from contextlib import redirect_stdout
+from urllib.parse import parse_qs, urlsplit
 
+from battle_mcp.hosting import Lobby
+from battle_mcp.transport import ArenaServer
 from battle_ui.chronicle import BattleChronicle, format_die_formula
+from battle_ui.match import BattleMatch
+from displayer import Displayer
 from game import Game
 from loader import load_characters_from_packs
+from models.character import Character
 from models.dice import Dice, DiceLevel
 from models.opcode import OpCode
 from models.special_actions import SpecialAction
@@ -15,7 +26,142 @@ from pipeline.pipeline import Pipeline, SidePipeline
 from player.player import Player
 
 
+def _http_get(port, path, *, token=None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        headers = {"Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        conn.request("GET", path, headers=headers)
+        res = conn.getresponse()
+        return res.status, res.getheader("Content-Type", ""), res.read()
+    finally:
+        conn.close()
+
+
+def _http_post(port, path, body, *, token=None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        conn.request("POST", path, json.dumps(body), headers)
+        res = conn.getresponse()
+        raw = res.read()
+        return res.status, json.loads(raw) if raw else None
+    finally:
+        conn.close()
+
+
 class EndToEndBackendAuditTests(unittest.TestCase):
+    def test_http_assets_lineup_fx_and_battle_record_viewer_perspective(self):
+        self.enterContext(redirect_stdout(io.StringIO()))
+        server = ArenaServer(None, port=0, seed=13)
+        worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        worker.start()
+        try:
+            st, ctype, raw = _http_get(server.server_port, "/fx_assets/star_knot_ring.svg")
+            self.assertEqual(st, 200)
+            self.assertIn(b"<svg", raw)
+
+            st_bad, _, _ = _http_get(server.server_port, "/fx_assets/../secret.svg")
+            self.assertEqual(st_bad, 404)
+
+            st_lu, _, raw_lu = _http_get(server.server_port, "/api/lineup?mode=regular&variant=solo")
+            self.assertEqual(st_lu, 200)
+            lu = json.loads(raw_lu)
+            self.assertIn("character_fx", lu)
+            self.assertIn("nova_lin_qiu", lu["character_fx"])
+            self.assertIn("cang_feng_he_lian", lu["character_fx"])
+            self.assertIn("character_colors", lu)
+
+            st_cr, room = _http_post(server.server_port, "/api/rooms", {
+                "mode": "regular",
+                "variant": "online",
+                "roster": [["nova_lin_qiu"], ["plan_b_annolin"]],
+            })
+            self.assertEqual(st_cr, 201)
+            rid = room["id"]
+            tok1 = parse_qs(urlsplit(room["play_url"]).fragment)["token"][0]
+            tok2 = parse_qs(urlsplit(room["guest_url"]).fragment)["token"][0]
+
+            # Both seats ready in online room to enter draw/placement
+            _, st1 = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/state", {}, token=tok1)
+            _, st2 = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/state", {}, token=tok2)
+            _http_post(server.server_port, f"/rooms/{rid}/api/canvas/ready",
+                       {"revision": st1["revision"], "request_id": "r1"}, token=tok1)
+            _, st2 = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/state", {}, token=tok2)
+            _http_post(server.server_port, f"/rooms/{rid}/api/canvas/ready",
+                       {"revision": st2["revision"], "request_id": "r2"}, token=tok2)
+
+            # Finish any draw_select & advance until a placement window opens for seat 1 or 2
+            req_n = 0
+            placed_info = None
+            for _ in range(60):
+                acted = False
+                for s_tok, seat in ((tok1, 1), (tok2, 2)):
+                    st_s, cur = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/state", {}, token=s_tok)
+                    self.assertEqual(st_s, 200, cur)
+                    ds = cur.get("frame", {}).get("draw_select")
+                    if ds:
+                        cands = [c["action_key"] for c in ds["candidates"][:ds["discard_count"]]]
+                        req_n += 1
+                        st_d, d_resp = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/draw_bottom",
+                                                  {"revision": cur["revision"], "request_id": f"d{req_n}", "card_ids": cands},
+                                                  token=s_tok)
+                        self.assertEqual(st_d, 200, d_resp)
+                        acted = True
+                        continue
+                    place_opt = next((o for o in cur.get("options", ()) if o["kind"] == "place"), None)
+                    if place_opt and cur.get("frame", {}).get("mode") == "placement":
+                        req_n += 1
+                        card_obj = next(
+                            c for c in cur["frame"]["players"][seat - 1]["hand"]
+                            if (c.get("action_key") or c["id"]) == place_opt["card_id"]
+                        )
+                        st_p, p_resp = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/cmd", {
+                            "cmd": "act",
+                            "option_id": place_opt["id"],
+                            "revision": cur["revision"],
+                            "request_id": f"p{req_n}",
+                        }, token=s_tok)
+                        self.assertEqual(st_p, 200, p_resp)
+                        placed_info = (seat, card_obj["name"])
+                        break
+                if placed_info:
+                    break
+                if not acted:
+                    _, cur_any = _http_post(server.server_port, f"/rooms/{rid}/api/canvas/state", {}, token=tok1)
+                    if cur_any.get("can_advance_beat") or cur_any.get("can_advance"):
+                        req_n += 1
+                        _http_post(server.server_port, f"/rooms/{rid}/api/canvas/next",
+                                   {"revision": cur_any["revision"], "request_id": f"n{req_n}"}, token=tok1)
+
+            self.assertIsNotNone(placed_info, "Failed to reach a placement window")
+            owner_seat, card_name = placed_info
+            owner_tok = tok1 if owner_seat == 1 else tok2
+            other_tok = tok2 if owner_seat == 1 else tok1
+
+            st_own, _, raw_own = _http_get(server.server_port, f"/rooms/{rid}/api/battle_record", token=owner_tok)
+            self.assertEqual(st_own, 200)
+            rec_own = json.loads(raw_own)
+            self.assertIn(f"扣置「{card_name}」", rec_own["markdown"])
+            self.assertFalse(rec_own["chronicle"]["unlocked_all"])
+
+            st_opp, _, raw_opp = _http_get(server.server_port, f"/rooms/{rid}/api/battle_record", token=other_tok)
+            self.assertEqual(st_opp, 200)
+            rec_opp = json.loads(raw_opp)
+            self.assertNotIn(f"扣置「{card_name}」", rec_opp["markdown"])
+            self.assertIn("扣置了 1 张技能", rec_opp["markdown"])
+
+            st_pub, _, raw_pub = _http_get(server.server_port, f"/rooms/{rid}/api/battle_record")
+            self.assertEqual(st_pub, 200)
+            rec_pub = json.loads(raw_pub)
+            self.assertNotIn(f"扣置「{card_name}」", rec_pub["markdown"])
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_turn_end_recycle_format_no_dict_and_no_stray_dollar_in_markdown(self):
         self.enterContext(redirect_stdout(io.StringIO()))
         pool = {c["id"]: c for c in load_characters_from_packs()}
@@ -214,3 +360,38 @@ class EndToEndBackendAuditTests(unittest.TestCase):
         self.assertIn("公式[b + v * m]", expr)
         self.assertIn("效果修正+2", expr)
         self.assertIn("= 最终16", expr)
+
+    def test_hp_scale_lightcore_initial_max_and_special_fx_payload(self):
+        self.enterContext(redirect_stdout(io.StringIO()))
+        match = BattleMatch(
+            ["nova_lin_qiu", "lan_qing"],
+            seed=21,
+            ruleset={
+                "power_cap": None, "max_chars": None, "duplicate_policy": "team_unique",
+                "pick_mode": "open", "draft_first_side": 1, "draw_count": 2,
+                "max_basic_cost": 5, "char_independent_cost": 1, "place_capacity": 2,
+                "hp_scale_pct": 50, "pause_limit_s": None, "hotseat_curtain": True,
+            },
+        )
+        snap = match.snapshot()
+        for pl in snap["frame"]["players"]:
+            for ch in pl["characters"]:
+                self.assertEqual(ch["initial_max_lightcore_hp"], ch["max_lightcore_hp"])
+                self.assertEqual(ch["lightcore_hp"], ch["initial_max_lightcore_hp"])
+
+        # Verify TableBridge includes active_form on cost_pay when card has forms
+        p1 = match.game.players[0]
+        p2 = match.game.players[1]
+        lan_char = p2.characters[0]
+        form_card = next(c for c in lan_char.skills if c.printed_data.get("forms"))
+        first_form_key = next(iter(form_card.printed_data["forms"]))
+        form_card.set_form(first_form_key)
+        p2.common_cost = 10
+        with match.game.context.binding(source=lan_char, side=2, card=form_card):
+            match.game.context.pay_skill_cost(form_card)
+        ev = next(e for e in reversed(match.presentation.events) if e["kind"] == "cost_pay")
+        self.assertEqual(ev["active_form"], first_form_key)
+
+
+if __name__ == "__main__":
+    unittest.main()

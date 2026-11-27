@@ -184,14 +184,14 @@ class EmyakeTests(unittest.TestCase):
                 self.assertEqual(self.actor.turn_state["闪回识破次数"], count)
 
     def test_storage_rounding_damage_credit_and_restraint(self):
-        self.status(self.actor,'羽流·延攻',2)
-        self.status(self.enemy,'裂伤',8)
+        self.status(self.actor,'羽流·延攻',1)
+        self.status(self.enemy,'裂伤',10)
         die=self.cards['流华幻影'].get_current_die(self.game)
         self.ctx.stack.extend([self.enemy,5,'normal','slash'])
         self.ctx.execute_op(OpCode.DAMAGE,damage_die=die)
-        self.assertEqual(self.enemy.rule_state['裂伤存伤'],140)
+        self.assertEqual(self.enemy.rule_state['裂伤存伤'],150)
         self.ctx.eval_block([self.enemy,1,'pierce','none',OpCode.DAMAGE])
-        self.assertEqual(self.enemy.rule_state['裂伤存伤'],140)
+        self.assertEqual(self.enemy.rule_state['裂伤存伤'],150)
         self.status(self.enemy,'裂伤',20)
         self.status(self.enemy,'裂伤拘束',2)
         for _ in range(2):
@@ -203,6 +203,17 @@ class EmyakeTests(unittest.TestCase):
         self.ctx.eval_block([self.enemy,'裂伤',1,OpCode.STATUS])
         self.assertNotIn('裂伤',self.enemy.statuses)
         self.assertEqual((self.enemy.rule_state['裂伤存伤'],self.enemy.hp),(0,92))
+
+        # Verify 5-stack tiers (20 and 24 both give 40%) and 3-stack 羽流·延攻 (250% * 40% = 100% of damage).
+        for wounds, expected_store in ((4, 0), (8, 125), (10, 250), (20, 500), (24, 500)):
+            with self.subTest(wounds=wounds):
+                self.setUp()
+                self.status(self.actor, "羽流·延攻", 3)
+                self.status(self.enemy, "裂伤", wounds)
+                d = self.cards["流华幻影"].get_current_die(self.game)
+                self.ctx.stack.extend([self.enemy, 5, "normal", "slash"])
+                self.ctx.execute_op(OpCode.DAMAGE, damage_die=d)
+                self.assertEqual(self.enemy.rule_state.get("裂伤存伤", 0), expected_store)
 
     def test_card_target_and_character_target(self):
         card=self.cards['折影吞噬']
@@ -561,15 +572,148 @@ class EmyakeTests(unittest.TestCase):
         self.assertEqual((die.get_value(),die.level.value),(4+3-2-1,3))
         self.assertEqual(sum(k=='clash_scored' for k,e in self.events),1)
 
-    def test_storm_atomic_price(self):
-        for marks,choice,used in [(2,None,0),(3,None,0),(3,'pay',1),(13,None,1)]:
-            self.setUp()
-            self.status(self.actor,'铭刻',marks)
-            self.fight('刻刃风暴',choose=lambda _:choice)
-            self.assertEqual(sum(k=='skill_used' for k,e in self.events),used)
-            self.assertEqual(self.actor.statuses.get('铭刻',0),marks-3*used)
-            self.assertEqual(self.left.available_cost,5-3*used)
-            self.assertEqual(self.enemy.statuses.get('裂伤拘束',0),2*used)
+    def test_storm_optional_mark_enhancement_and_payment_block(self):
+        cases = [
+            (2, "pay", 2, [2, 2, 4], 0, 99, 0),
+            (3, None, 3, [2, 2, 4], 0, 99, 0),
+            (3, "pay", 0, [3, 3, 5], 2, 97, 2),
+            (13, None, 10, [3, 3, 5], 2, 97, 2),
+        ]
+        for marks, choice, left, levels, final_add, expected_hp, expected_amp in cases:
+            with self.subTest(marks=marks, choice=choice):
+                self.setUp()
+                self.status(self.actor, "铭刻", marks)
+                with patch.object(self.game.rng, "randint", return_value=2):
+                    card = self.fight("刻刃风暴", choose=lambda _: choice)
+                self.assertEqual(sum(k == "skill_used" for k, _ in self.events), 1)
+                self.assertEqual(self.actor.statuses.get("铭刻", 0), left)
+                self.assertEqual([d.level.value for d in card.instantiated_dice], levels)
+                expected_scores = [2 * 3 + final_add, 2 * 3 + final_add, 2 * 2 + final_add]
+                self.assertEqual([d.final_score for d in card.instantiated_dice], expected_scores)
+                self.assertEqual(self.enemy.hp, expected_hp)
+                self.assertEqual(self.enemy.rule_state.get("裂伤爆发增幅", 0), expected_amp)
+
+        # Unaffordable surcharge cancels the require_full payment without spending marks; a price discount pays in full.
+        self.setUp()
+        self.status(self.actor, "铭刻", 5)
+        self.ctx.register_entries(self.actor, [{
+            "trigger": "BEFORE SPEND_STATUS", "subject": "target",
+            "when": [{"left": "$event.status", "op": "eq", "right": "铭刻"}],
+            "operation": {"op": "program", "code": [6, "MAX"]},
+        }])
+        card = self.fight("刻刃风暴", choose=lambda _: "pay")
+        self.assertEqual(self.actor.statuses.get("铭刻", 0), 5)
+        self.assertEqual([d.level.value for d in card.instantiated_dice], [2, 2, 4])
+        self.assertEqual(self.enemy.hp, 99)
+        self.assertEqual(self.enemy.rule_state.get("裂伤爆发增幅", 0), 0)
+
+        self.setUp()
+        self.status(self.actor, "铭刻", 5)
+        self.ctx.register_entries(self.actor, [{
+            "trigger": "BEFORE SPEND_STATUS", "subject": "target",
+            "when": [{"left": "$event.status", "op": "eq", "right": "铭刻"}],
+            "operation": {"op": "program", "code": [2, "MIN"]},
+        }])
+        card = self.fight("刻刃风暴", choose=lambda _: "pay")
+        self.assertEqual(self.actor.statuses.get("铭刻", 0), 3)
+        self.assertEqual([d.level.value for d in card.instantiated_dice], [3, 3, 5])
+        self.assertEqual(self.enemy.hp, 97)
+        self.assertEqual(self.enemy.rule_state.get("裂伤爆发增幅", 0), 2)
+
+    def test_storm_ignores_external_level_effects_while_keeping_score_rules(self):
+        for paid, expected_levels, expected_bonus in (
+            (False, [2, 2, 4], 0),
+            (True, [3, 3, 5], 2),
+        ):
+            with self.subTest(paid=paid):
+                self.setUp()
+                self.status(self.actor, "铭刻", 4)
+                self.status(self.actor, "骰子等级降低", 3)
+                self.status(self.actor, "骰子等级提升", 5)
+                self.status(self.actor, "骰级免疫", 1)
+                storm = self.cards["刻刃风暴"]
+                first_die = storm.get_current_die(self.game)
+                self.ctx.eval_block([storm, -2, OpCode.SKILL_LEVEL_ADD])
+                self.ctx.eval_block([storm, 3, OpCode.SKILL_LEVEL_ADD])
+                self.ctx.eval_block([first_die, -1, OpCode.DIE_LEVEL_ADD])
+                self.ctx.eval_block([first_die, 2, OpCode.DIE_LEVEL_ADD])
+                self.assertEqual(storm.level_bonus, 0)
+                self.assertEqual(first_die._level_bonus, 0)
+                with patch.object(self.game.rng, "randint", return_value=1):
+                    self.fight("刻刃风暴", choose=lambda _: ("pay" if paid else None))
+                self.assertEqual([d.level.value for d in storm.instantiated_dice], expected_levels)
+                self.assertEqual([d.roll_max for d in storm.instantiated_dice],
+                                 [8, 8, 16] if paid else [6, 6, 12])
+                self.assertEqual([d.final_score for d in storm.instantiated_dice],
+                                 [3 + expected_bonus, 3 + expected_bonus, 2 + expected_bonus])
+
+    def test_storm_aoe_wound_burst_amplification_and_slot_locks(self):
+        ally_enemy = Character(dict(id="foe2", name="副陪练", rank="NORMAL", max_hp=100, skills=[]), self.right)
+        self.right.characters.append(ally_enemy)
+        self.status(self.actor, "铭刻", 6)
+        # Slot 1: enemy dummy card to take clashes; Slot 2: enemy score 15 -> 15 // 4 = 3; Slot 3: enemy card negated -> +1 羽流·终; Slot 4: untouched (15).
+        c1 = self.opposition([1, 1, 1], ignore_range=3)
+        c2 = Card(self.right, dict(id="s2", name="二槽技", cost=0,
+                                   dice=[dict(type="slash", level=1, calc_formula="15", entries=[])]), self.enemy)
+        c3 = Card(self.right, dict(id="s3", name="三槽技", cost=0,
+                                   dice=[dict(type="slash", level=1, calc_formula="20", entries=["5物理"])]), self.enemy)
+        c4 = Card(self.right, dict(id="s4", name="四槽技", cost=0,
+                                   dice=[dict(type="slash", level=1, calc_formula="15", entries=[])]), self.enemy)
+        self.game.place_in_duel(1, self.cards["刻刃风暴"], 0)
+        for idx, foe_card in enumerate((c1, c2, c3, c4)):
+            self.game.place_in_duel(2, foe_card, idx)
+        self.start_duel(lambda _: "pay")
+        self.assertEqual((self.enemy.hp, ally_enemy.hp), (97, 97))
+        self.assertEqual((self.enemy.rule_state.get("裂伤爆发增幅"), ally_enemy.rule_state.get("裂伤爆发增幅")), (2, 2))
+        self.assertEqual(c2.instantiated_dice[0].final_score, 3)
+        self.assertEqual(c3.state, c3.state.NEGATED)
+        self.assertIsNone(c3.instantiated_dice)
+        self.assertEqual(self.actor.statuses.get("羽流·终"), 1)
+        self.assertEqual(c4.instantiated_dice[0].final_score, 15)
+
+        # Verify pre-ceil multiplication precision and one-shot reset on burst:
+        # 3.00 * (1 + 20%) = 3.60 -> 4, then resets to 0%; 5.00 * (1 + 20%) = 6.000 -> 6 (exact integer boundary).
+        self.enemy.rule_state["裂伤存伤"] = 300
+        self.status(self.enemy, "裂伤", 25)
+        self.assertEqual(self.enemy.hp, 93)
+        self.assertEqual(self.enemy.rule_state.get("裂伤爆发增幅"), 0)
+        self.enemy.rule_state["裂伤存伤"] = 300
+        self.status(self.enemy, "裂伤", 25)
+        self.assertEqual(self.enemy.hp, 90)
+
+        ally_enemy.rule_state["裂伤存伤"] = 500
+        self.status(ally_enemy, "裂伤", 25)
+        self.assertEqual(ally_enemy.hp, 91)
+
+    def test_storm_second_die_grants_end_only_when_a_skill_is_actually_negated(self):
+        # Empty slot +2 gives 0 羽流·终; if enemy later places into slot +2 before it starts, it gets negated and awards 1 羽流·终.
+        self.status(self.actor, "铭刻", 3)
+        self.game.place_in_duel(1, self.cards["刻刃风暴"], 0)
+        self.game.place_in_duel(2, self.opposition([1, 1, 1], ignore_range=3), 0)
+        self.start_duel(lambda _: "pay")
+        self.assertNotIn("羽流·终", self.actor.statuses)
+
+        # Dynamic placement into locked slot +2 during combat before slot +2 resolves:
+        self.setUp()
+        self.status(self.actor, "铭刻", 3)
+        late_card = Card(self.right, dict(id="late", name="后补技", cost=0,
+                                          dice=[dict(type="slash", level=1, calc_formula="10", entries=["2物理"])]), self.enemy)
+        self.right.cardspace.hand.add_card(late_card)
+        filler = Card(self.left, dict(id="f2", name="二槽占位", cost=0,
+                                      dice=[dict(type="evade", level=1, entries=[])]), self.actor)
+        # At end of duel 1, enemy places late_card into slot index 2 (duel 3).
+        self.ctx.register_entries(self.enemy, [{
+            "trigger": "on_duel_end",
+            "turn_limit": {"key": "补三槽", "count": 1},
+            "operation": lambda ctx: ctx.game.place_in_duel(2, late_card, 2),
+        }])
+        self.game.place_in_duel(1, self.cards["刻刃风暴"], 0)
+        self.game.place_in_duel(2, self.opposition([1, 1, 1], ignore_range=3), 0)
+        self.game.place_in_duel(1, filler, 1)
+        self.start_duel(lambda _: "pay")
+        self.assertEqual(late_card.state, late_card.state.NEGATED)
+        self.assertEqual(self.actor.statuses.get("羽流·终"), 1)
+        self.assertEqual(self.actor.hp, 12)
 
     def test_narrow_loss_to_draw(self):
         self.status(self.actor,'羽流·制衡',2)
@@ -656,21 +800,78 @@ class EmyakeTests(unittest.TestCase):
         self.assertEqual(self.enemy.hp, 99)
         self.assertEqual(self.enemy.statuses["裂伤"], 2)
 
-    def test_storm_recipient_selects_discards_and_slow_applies_before_speed(self):
+    def test_balance_stance_amplifies_debuffs_and_low_cost_wound_synergies(self):
+        # Preserve balance stance amplification check via 羽流剑反 (束缚 +2, 限制 +1).
         self.status(self.actor, "羽流·制衡", 3)
-        self.status(self.actor, "铭刻", 13)
-        hand = [self.opposition([i]) for i in range(3)]
-        for card in hand:
-            self.right.cardspace.hand.add_card(card)
-        self.fight("刻刃风暴")
-        self.assertEqual(self.right.cardspace.hand.content, hand[:1])
-        self.assertEqual(self.right.next_turn_common_cost, -2)
+        self.fight("羽流剑反")
         self.game.finish_turn()
         self.game.prepare_turn()
-        self.assertEqual(self.enemy.statuses["虚弱"], 3)
-        self.assertTrue(any(k == "status_changed" and e["name"] == "限制" and e["total"] == 3
+        self.assertEqual(self.enemy.statuses.get("束缚"), 3)
+        self.assertTrue(any(k == "status_changed" and e["name"] == "限制" and e["total"] == 2
                             for k, e in self.events))
-        self.assertNotIn("限制", self.enemy.statuses)  # 陪练方空过，预约先兑现，再清除。
+
+        # 铭刻闪动: +1 final score per 8 wound (up to +3) and extra draw at wound >= 16.
+        for wounds, expected_score_add, expected_draws in (
+            (7, 0, 1),
+            (8, 1, 1),
+            (15, 1, 1),
+            (16, 2, 2),
+            (24, 3, 2),
+        ):
+            with self.subTest(wounds=wounds):
+                self.setUp()
+                self.status(self.enemy, "裂伤", wounds)
+                initial_hand = len(self.left.cardspace.hand.content)
+                with patch.object(self.game.rng, "randint", return_value=2):
+                    card = self.fight("铭刻闪动")
+                self.assertEqual([d.final_score for d in card.instantiated_dice],
+                                 [2 + 1 + expected_score_add, 2 + 1 + expected_score_add])
+                self.assertEqual(len(self.left.cardspace.hand.content) - initial_hand, expected_draws)
+
+        # 刻刃护卫: shield when target wound >= 8 after +1 wound, and +1 pierce damage per 12 wound (max +2) on die 3.
+        self.setUp()
+        self.status(self.enemy, "裂伤", 6)
+        self.fight("刻刃护卫", choose=lambda _: "pay")
+        # Die 1: 6 -> 7 (<8, 0 shield); Die 2: 7 -> 8 (>=8, +1 shield); Die 3: 8 wound (+0) + 1 mark (+1) = 1 pierce.
+        self.assertEqual(self.actor.shield, 1)
+        self.assertEqual(self.enemy.hp, 99)
+
+        self.setUp()
+        self.status(self.enemy, "裂伤", 10)
+        self.fight("刻刃护卫", choose=lambda _: None)
+        # Die 1: 10 -> 11 (+1 shield); Die 2: 11 -> 12 (+1 shield); Die 3: 12 wound (+1) + 0 mark = 1 pierce.
+        self.assertEqual(self.actor.shield, 2)
+        self.assertEqual(self.enemy.hp, 99)
+
+        self.setUp()
+        self.status(self.enemy, "裂伤", 22)
+        self.status(self.enemy, "裂伤拘束", 2)
+        self.fight("刻刃护卫", choose=lambda _: "pay")
+        # Die 1: 22 -> 23 (+1 shield); Die 2: 23 -> 24 (+1 shield); Die 3: 24 wound (+2) + 1 mark = 3 pierce.
+        self.assertEqual(self.actor.shield, 2)
+        self.assertEqual(self.enemy.hp, 97)
+
+    def test_wound_status_details_and_status_icons_are_projected(self):
+        from battle_ui.status_icons import discover_status_visuals
+
+        self.status(self.actor, "羽流·延攻", 1)
+        self.status(self.enemy, "裂伤", 10)
+        die = self.cards["流华幻影"].get_current_die(self.game)
+        self.ctx.stack.extend([self.enemy, 5, "normal", "slash"])
+        self.ctx.execute_op(OpCode.DAMAGE, damage_die=die)
+        snap1 = Displayer(self.game).snapshot()["players"][1]["characters"][0]
+        self.assertEqual(snap1["status_details"]["裂伤"], ["已存储伤害：1.5", "预计爆发伤害：2"])
+
+        self.fight("刻刃风暴", choose=lambda _: "pay")
+        snap2 = Displayer(self.game).snapshot()["players"][1]["characters"][0]
+        self.assertEqual(snap2["status_details"]["裂伤"],
+                         ["已存储伤害：2.4", "下次爆发增幅(%)：20", "预计爆发伤害：3"])
+
+        visuals = discover_status_visuals({self.spec["id"]: self.spec})
+        self.assertIn("icon_url", visuals["裂伤"])
+        self.assertIn("icon_url", visuals["裂伤拘束"])
+        for status_name in ("裂伤", "裂伤拘束", "铭刻", "折影化铭刻", "羽流·势", "羽流·延攻", "羽流·反制", "羽流·制衡", "羽流·终"):
+            self.assertIn("color", visuals[status_name])
 
 
     def test_phantom_bonus_follows_the_receipt_when_a_payment_is_reduced(self):
