@@ -1290,6 +1290,54 @@ export class ThreeWorld {
   }
 
   /**
+   * Custom `/fx_assets/<name>.svg|.png` billboard/projectile sprite (`sprite_vfx` primitive).
+   */
+  spawnSpriteVfx({ fromX, fromY, toX, toY, url, colorHex = 0xd99b26, scale = 1.0, spin = 0, duration = 0.48 }) {
+    if (!url || !url.startsWith('/fx_assets/')) return;
+    if (!this._fxTexCache) this._fxTexCache = new Map();
+    let tex = this._fxTexCache.get(url);
+    if (!tex && typeof THREE.TextureLoader === 'function') {
+      try {
+        tex = new THREE.TextureLoader().load(url);
+        this._fxTexCache.set(url, tex);
+      } catch (_) {
+        return;
+      }
+    }
+    const p0 = this.screenToWorld(fromX, fromY, 58);
+    const p1 = this.screenToWorld(toX, toY, 58);
+    const baseSize = 96 * Math.max(0.2, Math.min(3.0, scale));
+    const geo = new THREE.PlaneGeometry(baseSize, baseSize);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex || null,
+      color: tex ? 0xffffff : colorHex,
+      transparent: true,
+      opacity: 0.96,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(geo, mat));
+    group.position.copy(p0);
+    if (Math.hypot(p1.x - p0.x, p1.y - p0.y) > 4) {
+      group.rotation.z = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+    }
+    this.scene.add(group);
+
+    this.vfxEffects.push({
+      kind: 'sprite_vfx',
+      group,
+      p0,
+      p1,
+      spin: Number(spin) || 0,
+      geometries: [geo],
+      materials: [mat],
+      age: 0,
+      life: Math.max(0.14, duration),
+    });
+  }
+
+  /**
    * 3D Aerodynamic Piercing Lance with tapered diamond spearhead, needle wake & sonic rings!
    */
   spawnPierceLance({ fromX, fromY, toX, toY, colorHex = 0xcc7b14 }) {
@@ -2444,6 +2492,13 @@ export class ThreeWorld {
             sh.mesh.rotation.z += sh.rz * dtSec;
           }
         }
+      } else if (v.kind === 'sprite_vfx') {
+        const ease = 1 - Math.pow(1 - t, 2.5);
+        v.group.position.lerpVectors(v.p0, v.p1, ease);
+        if (v.spin) v.group.rotation.z += v.spin * dtSec;
+        const pop = t < 0.18 ? 0.65 + (t / 0.18) * 0.45 : 1.1 - ((t - 0.18) / 0.82) * 0.12;
+        v.group.scale.setScalar(pop);
+        v.materials[0].opacity = t < 0.7 ? 0.96 : Math.max(0, 1 - (t - 0.7) / 0.3) * 0.96;
       } else if (v.kind === 'card_shatter') {
         const splitT = 0.24;
         if (t < splitT) {

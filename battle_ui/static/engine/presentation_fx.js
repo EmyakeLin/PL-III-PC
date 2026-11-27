@@ -658,6 +658,19 @@ export function createPresentationFx(env) {
           const total = (ev.shared_paid || 0) + (ev.personal_paid || 0);
           spawnFloater(anchor.x, anchor.y + 18, `-${total} 费`, 0xc95a2b, 13.5, 'status');
         }
+        const useRec = fxDirector?.resolveSkillUseRecipe?.(ev);
+        if (useRec) {
+          fxDirector.playRecipe(useRec, {
+            event: ev,
+            attackerId: ev.character_id,
+            defenderId: ev.character_id,
+            attackerSide: ev.side,
+            defenderSide: ev.side,
+            cardName: ev.card_name || '',
+            charName: ev.character_name || '',
+            defaultColor: resolveCharColor(ev.character_id, ev.side),
+          });
+        }
       } else {
         audio.shieldErode();
         showBanner(`${ev.card_name} · ${ev.failure_reason || '支付受阻，跳过使用'}`, 0xcf4932, 1.8);

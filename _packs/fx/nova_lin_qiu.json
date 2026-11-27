@@ -1,0 +1,31 @@
+{
+  "color": "#238a9e",
+  "skills": {
+    "空断": {
+      "on_form_change": {
+        "vfx": [
+          {
+            "primitive": "sprite_vfx",
+            "asset": "star_knot_ring.svg",
+            "to": "attacker.center",
+            "scale": 1.15,
+            "spin": 3.2,
+            "duration_ms": 520
+          }
+        ]
+      },
+      "on_strike": {
+        "vfx": [
+          {
+            "primitive": "sprite_vfx",
+            "asset": "star_knot_ring.svg",
+            "to": "defender.center",
+            "scale": 1.0,
+            "spin": -4.0,
+            "duration_ms": 420
+          }
+        ]
+      }
+    }
+  }
+}

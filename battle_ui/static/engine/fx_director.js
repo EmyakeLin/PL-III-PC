@@ -132,6 +132,26 @@ export class FxDirector {
     return m.defaults[`status:${ev.status}`] || null;
   }
 
+  _skillEntry(charId, cardId, cardName) {
+    const m = charId ? this.manifests[charId] : null;
+    if (!m || !m.skills) return null;
+    return (cardId && m.skills[cardId]) || (cardName && m.skills[cardName]) || null;
+  }
+
+  resolveSkillUseRecipe(ev) {
+    const m = ev?.character_id ? this.manifests[ev.character_id] : null;
+    if (!m) return null;
+    const sk = this._skillEntry(ev.character_id, ev.card_id, ev.card_name);
+    if (sk) {
+      if (ev.active_form && sk.forms && sk.forms[ev.active_form]) return sk.forms[ev.active_form];
+      if (ev.active_form && sk.on_form_change) return sk.on_form_change;
+      if (sk.on_skill_use) return sk.on_skill_use;
+      if (sk.on_cast) return sk.on_cast;
+    }
+    if (ev.active_form && m.defaults?.on_form_change) return m.defaults.on_form_change;
+    return m.defaults?.on_skill_use || null;
+  }
+
   resolveClashWinRecipe(sideEntry) {
     if (!sideEntry?.character_id) return null;
     const m = this.manifests[sideEntry.character_id];
@@ -275,6 +295,21 @@ export class FxDirector {
           toY: toPt.y + fanOffsetY,
           colorHex: colorInt,
         });
+        break;
+      case 'sprite_vfx':
+        if (atom.url) {
+          this.three?.spawnSpriteVfx?.({
+            fromX: atom.from ? fromPt.x : toPt.x,
+            fromY: atom.from ? fromPt.y : toPt.y,
+            toX: toPt.x,
+            toY: toPt.y,
+            url: atom.url,
+            colorHex: colorInt,
+            scale: atom.scale || 1.0,
+            spin: atom.spin || 0,
+            duration: Math.max(0.14, Math.min(1.4, (atom.duration_ms || 480) / 1000)),
+          });
+        }
         break;
       case 'pierce_lance':
         this.three?.spawnPierceLance({

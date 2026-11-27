@@ -4,6 +4,7 @@ import secrets
 from functools import partial
 from threading import Lock
 
+from battle_ui.fx_compiler import discover_character_fx
 from battle_ui.match import roster_art
 from loader import load_characters_from_packs
 from .challenges import CHALLENGES
@@ -161,11 +162,13 @@ class Lobby:
         self.variant(mode, variant)
         challenge = CHALLENGES[variant] if mode == "challenge" else None
         pool = {c["id"]: c for c in load_characters_from_packs(extra_packs=challenge.packs if challenge else ())}
-        _, sprites, catalog = roster_art(pool)
+        colors, sprites, catalog = roster_art(pool)
         is_online = mode == "regular" and variant == "online"
         return {
             "catalog": catalog,
+            "character_colors": colors,
             "character_sprites": sprites,
+            "character_fx": discover_character_fx(pool, colors),
             "fixed_opponents": list(challenge.opponents) if challenge else [],
             "opponent_presets": [] if (challenge or is_online) else build_opponent_presets(pool),
             "default_ruleset": default_ruleset(online=is_online),

@@ -31,6 +31,7 @@ VALID_PRIMITIVES = frozenset({
     "shield_dome",
     "block_barrier",
     "shards",
+    "sprite_vfx",
     "banner",
 })
 
@@ -291,6 +292,28 @@ def compile_prompt_to_recipe(prompt, *, base_color=None):
     return validate_fx_recipe(recipe, base_color=primary)
 
 
+_SAFE_ASSET_STEM_RE = re.compile(r"^[A-Za-z0-9_\u4e00-\u9fff-]+$")
+
+
+def _validate_pack_asset_url(raw, prefix, allowed_exts):
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text or "\\" in text:
+        return None
+    if text.startswith(prefix):
+        text = text[len(prefix):]
+    if "/" in text or ".." in text:
+        return None
+    dot = text.rfind(".")
+    if dot <= 0:
+        return None
+    stem, ext = text[:dot], text[dot:].lower()
+    if ext not in allowed_exts or not _SAFE_ASSET_STEM_RE.fullmatch(stem):
+        return None
+    return f"{prefix}{stem}{ext}"
+
+
 def _validate_script_ref(raw):
     if not isinstance(raw, str):
         return None
@@ -341,6 +364,14 @@ def validate_fx_recipe(raw, *, base_color=None):
             prim = item.get("primitive")
             if prim not in VALID_PRIMITIVES:
                 continue
+            if prim == "sprite_vfx":
+                asset_url = _validate_pack_asset_url(
+                    item.get("asset") or item.get("url"),
+                    "/fx_assets/",
+                    (".svg", ".png"),
+                )
+                if not asset_url:
+                    continue
             atom = {
                 "primitive": prim,
                 "color": sanitize_bright_hex(item.get("color"), fallback_hex),
@@ -348,6 +379,12 @@ def validate_fx_recipe(raw, *, base_color=None):
                 "delay_ms": _clamp_int(item.get("delay_ms"), 0, 800, 0),
                 "stagger_ms": _clamp_int(item.get("stagger_ms"), 0, 400, 90),
             }
+            if prim == "sprite_vfx":
+                atom["url"] = asset_url
+                if "scale" in item:
+                    atom["scale"] = round(_clamp_num(item["scale"], 0.2, 3.0, 1.0), 2)
+                if "spin" in item:
+                    atom["spin"] = round(_clamp_num(item["spin"], -12.0, 12.0, 0.0), 2)
             if item.get("from") in VALID_ANCHORS:
                 atom["from"] = item["from"]
             if item.get("to") in VALID_ANCHORS:
@@ -459,7 +496,7 @@ def normalize_character_fx_manifest(raw, *, base_color=None):
                     rec = validate_fx_recipe(sspec, base_color=color)
                     if rec:
                         entry["on_strike"] = rec
-                for hook in ("on_cast", "on_strike", "on_hit", "on_clash_win", "on_clash_lose"):
+                for hook in ("on_form_change", "on_cast", "on_strike", "on_hit", "on_clash_win", "on_clash_lose"):
                     if hook in sspec:
                         rec = validate_fx_recipe(sspec[hook], base_color=color)
                         if rec:

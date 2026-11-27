@@ -17,6 +17,36 @@ from loader import load_characters_from_packs
 
 
 class FxDslInterfaceTests(unittest.TestCase):
+    def test_void_cut_ring_is_served_for_both_effects(self):
+        import http.client
+        import threading
+        from xml.etree import ElementTree
+        from battle_mcp.transport import ArenaServer
+
+        pool = {spec["id"]: spec for spec in load_characters_from_packs()}
+        recipe = discover_character_fx(pool)["nova_lin_qiu"]["skills"]["空断"]
+        with ArenaServer(None, port=0) as server:
+            worker = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01})
+            worker.start()
+            try:
+                for hook, anchor in (("on_form_change", "attacker.center"), ("on_strike", "defender.center")):
+                    with self.subTest(hook=hook):
+                        ring, = [atom for atom in recipe[hook]["vfx"] if atom["primitive"] == "sprite_vfx"]
+                        self.assertEqual(ring["to"], anchor)
+                        self.assertEqual(ring["url"], "/fx_assets/star_knot_ring.svg")
+                        conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                        try:
+                            conn.request("GET", ring["url"])
+                            response = conn.getresponse()
+                            self.assertEqual(response.status, 200)
+                            self.assertEqual(response.getheader("Content-Type").split(";")[0], "image/svg+xml")
+                            self.assertEqual(ElementTree.fromstring(response.read()).tag, "{http://www.w3.org/2000/svg}svg")
+                        finally:
+                            conn.close()
+            finally:
+                server.shutdown()
+                worker.join()
+
     def test_natural_language_prompt_compiles_multi_hit_vfx_and_synth_audio(self):
         rec = compile_prompt_to_recipe("翠绿三连风刃回旋重斩，伴随金色散射粒子与清脆风鸣")
         self.assertIn("vfx", rec)
