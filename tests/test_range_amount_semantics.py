@@ -34,6 +34,31 @@ class RangeAmountTests(unittest.TestCase):
     def use(self, card):
         self.game.context.dispatch_pipeline("on_skill_use", source=self.actor, card=card, side=self.player.side)
 
+    def test_reduction_precedes_pressure_and_only_competes_with_a_level_guard(self):
+        def card(**fields):
+            return Card(self.player, dict(id="sample", name="测试", cost=0, dice=[], **fields), self.actor)
+        for protection, attack_rank, expected in ((False, "low", 0), (True, "normal", 3), (True, "high", 0)):
+            with self.subTest(protection=protection, attack_rank=attack_rank):
+                ranged = card(range_level=3, protect_range_level=protection)
+                lowering = card(opponent_range_reduction=3, trait_authority={"opponent_range_reduction": attack_rank})
+                for _ in range(2):
+                    self.assertEqual(ranged.paired_ranges(lowering), (expected, 0))
+                self.assertEqual(ranged.effective_range, 3)
+        for protection, expected in (("low", 3), ("normal", 0), ("high", 0)):
+            near = card(ignore_range=3, trait_authority={"ignore_range": protection})
+            near.set_range_opponent(card(range_level=3))
+            self.assertEqual(near.range_deficit, expected)
+
+    def test_invalid_authority_is_rejected_on_printed_effects(self):
+        from entry.entry import Entry
+        for invalid in (-2, 3, True, [], "unknown"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                Entry.from_spec(self.actor, dict(trigger="fixture", authority=invalid, operation={"op": "cancel"}))
+            with self.assertRaises(ValueError):
+                Dice(dict(type="slash", level=1, clash_order="lower", trait_authority={"clash_order": invalid}))
+        with self.assertRaises(ValueError):
+            Dice(dict(type="slash", level=1, trait_authority={"damage": 2}))
+
     def test_energy_analysis_second_die_reads_current_stacks_at_each_comparison(self):
         card = self.printed_skill("plan_b_heck.json", "heck_energy_analysis")
         card.advance_die()

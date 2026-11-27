@@ -90,6 +90,83 @@ class EmyakeTests(unittest.TestCase):
                             Entry.from_spec(die,raw)
                     self.assertIn(data["printed_text"],card.describe())
 
+    def test_riposte_keeps_only_its_clash_reversal_under_extreme_range(self):
+        card = self.fight("羽流剑反", [100, 100, 100], range_level=3)
+        for die in card.instantiated_dice:
+            self.assertEqual((die.type, die.clash_result, die.win_branch_skipped, die.landed_hits),
+                             ("blank", "win", True, 0))
+        self.assertNotIn("裂伤", self.enemy.statuses)
+
+    def test_die_blanking_preserves_each_listener_by_rank_and_initiative(self):
+        for first, expected in ((self.left, ["high", "highest"]), (self.right, ["high", "highest"])):
+            self.game.first_player = first
+            seen = []
+            entries = [dict(trigger="on_dice_use", authority=power, operation=lambda ctx, p=power: seen.append(p))
+                       for power in ("low", "normal", "high", "highest")]
+            card = self.opposition([10])
+            card.dice[0]["entries"] = entries
+            die = card.get_current_die(self.game, register=False)
+            with self.ctx.binding(source=self.actor, authority=0):
+                self.ctx.eval_block([die, OpCode.BLANK_DIE])
+            die.register_entries()
+            self.ctx.dispatch_pipeline("on_dice_use", source=self.enemy, card=card, die=die, side=self.right.side)
+            self.assertEqual(seen, expected)
+            seen.clear()
+            with self.ctx.binding(source=self.actor, authority=2):
+                self.ctx.eval_block([die, OpCode.BLANK_DIE])
+            self.ctx.dispatch_pipeline("on_dice_use", source=self.enemy, card=card, die=die, side=self.right.side)
+            self.assertEqual(seen, ["highest"] if first is self.right else [])
+
+    def test_entry_interruption_only_spends_a_use_if_it_can_disable_the_target(self):
+        seen = []
+        self.ctx.register_entries(self.actor, [dict(trigger="authority_fixture", trigger_type="event",
+            authority="high", subject="any", operation=lambda ctx: seen.append("high")),
+            dict(trigger="authority_fixture", trigger_type="event", subject="any",
+                 operation=lambda ctx: seen.append("normal"))])
+        self.ctx.register_entries(self.enemy, [dict(trigger="BEFORE ENTRY", subject="any",
+            when=[dict(left="$event.entry_trigger", op="eq", right="authority_fixture")],
+            turn_limit={"key": "本次无效", "count": 1}, operation={"op": "cancel"})])
+        for _ in range(2):
+            self.ctx.publish("authority_fixture", dict(source=self.actor))
+        self.assertEqual(seen, ["high", "high", "normal"])
+
+    def test_highest_heal_death_against_highest_protection_uses_initiative(self):
+        self.ctx.register_entries(self.enemy, [dict(trigger="BEFORE CHECK_DEATH", subject="target",
+            authority="highest", operation={"op": "cancel"})])
+        self.enemy.max_lightcore_hp = self.enemy.hp = 12
+        for first, alive in ((self.right, True), (self.left, False)):
+            self.game.first_player = first
+            with self.ctx.binding(source=self.actor):
+                self.assertEqual(self.ctx.eval_block([self.enemy, 1, OpCode.HEAL]), 1)
+            self.assertEqual(self.enemy.is_alive, alive)
+
+    def test_partial_negation_keeps_stronger_effects_until_redraw(self):
+        card = self.cards["羽流剑反"]
+        with self.ctx.binding(authority=1, source=self.enemy):
+            self.assertTrue(self.ctx.eval_block([card, OpCode.NEGATE_SKILL]))
+        self.assertTrue(card.blanked)
+        die = card.get_current_die(self.game)
+        self.assertEqual((die.type, die.reverses_clash), ("blank", True))
+        self.assertFalse(self.ctx.eval_block([card, OpCode.NEGATE_SKILL]))
+        self.game.first_player = self.right
+        with self.ctx.binding(authority=2, source=self.enemy):
+            self.assertTrue(self.ctx.eval_block([card, OpCode.NEGATE_SKILL]))
+        self.assertEqual(card.state.name, "NEGATED")
+        card.reset_for_draw()
+        die = card.get_current_die(self.game)
+        self.assertEqual((die.type, die.reverses_clash), ("slash", True))
+
+    def test_blanking_cannot_bypass_pierce_destroy_protection(self):
+        card = self.cards["片羽穿空"]
+        attacker = self.opposition([10], range_level=3)
+        card.set_range_opponent(attacker)
+        self.assertTrue(card.blanked)
+        self.assertFalse(self.ctx.eval_block([card, OpCode.DESTROY]))
+        self.assertFalse(card.destroyed)
+        with self.ctx.binding(authority=1, source=self.enemy):
+            self.assertTrue(self.ctx.eval_block([card, OpCode.DESTROY]))
+        self.assertTrue(card.destroyed)
+
     def test_phantom_per_confirmed_hit_and_actual_spend(self):
         cases = [([100,100,-1],0,'pay',0), ([-1,100,-1],1,'pay',1),
                  ([-1,-1,-1],2,'pay',2), ([-1,-1,-1],2,'one',1),

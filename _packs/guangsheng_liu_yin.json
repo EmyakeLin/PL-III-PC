@@ -1341,6 +1341,7 @@
           "out_of_combat": true,
           "entries": [
             {
+              "protection": true,
               "trigger": "BEFORE DESTROY",
               "description": "本技能不会被任何效果摧毁、无效（最高话语权）",
               "when": [],
@@ -1349,20 +1350,12 @@
               "subject": "any"
             },
             {
+              "protection": true,
               "trigger": "BEFORE NEGATE_SKILL",
               "hidden": true,
               "description": "本技能不会被无效化（最高话语权）。",
               "when": [],
               "operation": {"op":"program","code":["$event.target","$owner","IS",[{"op":"cancel"}],"WHEN"]},
-              "authority": "最高话语权",
-              "subject": "any"
-            },
-            {
-              "trigger": "BEFORE RESOLVE_RANGE_DEFICIT",
-              "hidden": true,
-              "description": "本技能不会被远程无效化（最高话语权）。",
-              "when": [],
-              "operation": {"op":"program","code":["$event.card","$owner","IS",["$event.value_ref",2,"VALUE_CEILING"],"WHEN"]},
               "authority": "最高话语权",
               "subject": "any"
             },

@@ -4,6 +4,7 @@ from collections import deque
 from enum import Enum, auto
 from functools import lru_cache
 
+from entry.authority import DIE_TRAITS, NORMAL, action_by, printed_entries, printed_power, trait_rank, validate_trait_authority
 from entry.effects import damage_part, independent_damage_part
 from models.card import describe_entry, describe_range_traits, range_trait, validate_range_trait
 from models.opcode import OpCode
@@ -75,6 +76,9 @@ class Dice:
         if isinstance(kind, DiceType):
             kind = kind.name.lower()
         self._type = dice_type_map[kind].name.lower()
+        validate_trait_authority(data, DIE_TRAITS)
+        self.clash_order_authority = trait_rank(data, "clash_order")
+        self.blank_actions = ()
         self.paired_range_deficit = 0
         self.blanked_by_range = False
         self._printed_level = DiceLevel(1 if self.type == "skip" else data["level"])
@@ -116,6 +120,8 @@ class Dice:
 
     @property
     def type(self):
+        if self.explicitly_disables(NORMAL):
+            return "blank"
         if self.blanked_by_range and self.effective_ignore_range < 3:
             return "blank"
         return self._type
@@ -126,7 +132,14 @@ class Dice:
 
     @property
     def entries(self):
-        return [] if self.type == "blank" else self._entries
+        if not self.blanked and not self.blank_actions and not (self.card and self.card.blank_actions):
+            return self._entries
+        active = []
+        for spec in printed_entries(self._entries):
+            authority, protection = printed_power(spec)
+            if not self.effect_disabled(authority, protected=protection):
+                active.append(spec)
+        return active
 
     @property
     def range_deficit(self):
@@ -134,15 +147,28 @@ class Dice:
 
     @property
     def blanked(self):
-        return self.type == "blank" or bool(self.card and self.card.use_state.get("blank_skill"))
+        return self.type == "blank"
+
+    def explicitly_disables(self, authority, *, protected=False):
+        player = self.card.player if self.card else None
+        if self._type == "blank":
+            return True
+        if any(action.disables(authority, player, protected=protected) for action in self.blank_actions):
+            return True
+        return bool(self.card and self.card.explicitly_disables(authority, protected=protected))
+
+    def effect_disabled(self, authority, *, protected=False):
+        if self.explicitly_disables(authority, protected=protected):
+            return True
+        player = self.card.player if self.card else None
+        return (self.blanked_by_range and self.effective_ignore_range < 3
+                and action_by(self.card.range_opponent if self.card else None).disables(
+                    authority, player, protected=protected))
 
     def apply_paired_range(self, *, blank_at):
         """Apply this pairing to this use only. Future uses keep their printed dice."""
         self.paired_range_deficit = self.card.range_deficit
-        if self.card.use_state.get("blank_skill"):
-            self.make_blank()
-        else:
-            self.blanked_by_range = blank_at is not None and self.range_deficit >= blank_at
+        self.blanked_by_range = blank_at is not None and self.range_deficit >= blank_at
 
     @property
     def is_printed_on_card(self):
@@ -188,15 +214,21 @@ class Dice:
 
     @property
     def effective_range(self):
-        if self.card and self.card.use_state.get("blank_skill"):
+        if self.card and self.card.explicitly_disables(NORMAL):
             return 0
         return max(self.card.effective_range if self.card else 0, range_trait(self.data, "range_level", self.card))
 
     @property
     def effective_ignore_range(self):
-        if self.card and self.card.use_state.get("blank_skill"):
-            return 0
-        return max(self.card.effective_ignore_range if self.card else 0, range_trait(self.data, "ignore_range", self.card))
+        return self.ignore_against(self.card.range_opponent if self.card else None)
+
+    def ignore_against(self, opponent):
+        if self.card is None:
+            return range_trait(self.data, "ignore_range", None)
+        skill_ignore = self.card.range_ignored(self.card.data, opponent)
+        if self.explicitly_disables(trait_rank(self.data, "ignore_range"), protected=True):
+            return skill_ignore
+        return max(skill_ignore, self.card.range_ignored(self.data, opponent))
 
     @property
     def paired_range(self):
@@ -218,10 +250,16 @@ class Dice:
             isinstance(entry, dict) and isinstance(entry.get("operation"), dict)
             and entry["operation"].get("damage_part")) for entry in self.entries)
 
-    def make_blank(self):
+    def make_blank(self, action=None):
         """Only this use changes. The printed die remains available on redraw."""
-        self.type = "blank"
-        self._entries = []
+        if self._type == "blank":
+            return
+        action = action or action_by(None)
+        if any(old == action or old.authority > action.authority for old in self.blank_actions):
+            return
+        self.blank_actions += (action,)
+        if not self.explicitly_disables(NORMAL):
+            return
         self.repeat_requested = False
         self.queued_hits.clear()
         self.attack_redirected = False
@@ -330,7 +368,7 @@ class Dice:
 
     @property
     def reverses_clash(self):
-        return self.type != "blank" and self.data.get("clash_order") == "lower"
+        return self.data.get("clash_order") == "lower" and not self.effect_disabled(self.clash_order_authority)
 
     def score_traits(self):
         traits = ["拼点逆转"] if self.reverses_clash else []

@@ -1,5 +1,7 @@
 from enum import Enum, auto
 
+from entry.authority import (CARD_TRAITS, DIE_TRAITS, NORMAL, action_by, printed_entries, printed_power,
+                             printed_traits, trait_rank, validate_trait_authority)
 from entry.predicates import Calculation, Conditional, Rank, Reference, compile_value, read_value
 from models.conditions import matches_value, skill_state_allows
 from models.opcode import OpCode
@@ -45,6 +47,9 @@ def validate_range_trait(data, key):
 
 
 def validate_skill_traits(data):
+    validate_trait_authority(data, CARD_TRAITS)
+    if type(data.get("protect_range_level", False)) is not bool:
+        raise ValueError("保护远程等级须为布尔值")
     if type(data.get("match_opposing_range", False)) is not bool:
         raise ValueError("匹配对方远程等级须为布尔值")
     reduction = data.get("opponent_range_reduction", 0)
@@ -164,6 +169,8 @@ class Card:
         self.final_bonus = 0
         self.level_bonus = 0
         self.use_state = {}
+        self.seal_actions = ()
+        self.negation_actions = ()
         self.use_effects_resolved = False
         self.destroyed = False
         self._printed_listeners = game.context.register_entries(self, self.entries) if game else []
@@ -353,13 +360,20 @@ class Card:
 
     @property
     def effective_range(self):
-        if self.use_state.get("blank_skill"):
+        if self.explicitly_disables(NORMAL):
             return 0
         return min(3, range_trait(self.data, "range_level", self) + self.use_state.get("range_bonus", 0))
 
     @property
     def effective_ignore_range(self):
-        return 0 if self.use_state.get("blank_skill") else range_trait(self.data, "ignore_range", self)
+        return self.range_ignored(self.data, self.range_opponent)
+
+    def range_ignored(self, face, opponent):
+        strength = trait_rank(face, "ignore_range")
+        if (self.explicitly_disables(strength, protected=True)
+                or opponent is not None and action_by(opponent).overcomes(strength, self.player)):
+            return 0
+        return range_trait(face, "ignore_range", self)
 
     def set_range_opponent(self, opponent, *, own_range=None, opposing_range=None, ignore_range=None):
         """Retain this pairing for excess dice, until the next skill joins."""
@@ -376,7 +390,7 @@ class Card:
         if deficit:
             from models.opcode import OpCode
             ctx = self.player.game.context
-            with ctx.binding(opponent_card=opponent, target=opponent.character):
+            with ctx.binding(opponent_card=opponent, target=opponent.character, authority=NORMAL, _authority_owner=opponent):
                 ctx.eval_block([self, deficit, OpCode.RESOLVE_RANGE_DEFICIT])
             if self.range_deficit >= 3 and not was_blank:
                 ctx.dispatch_pipeline("on_skill_disabled", source=self.character, card=self,
@@ -384,11 +398,68 @@ class Card:
 
     @property
     def blanked(self):
-        return self.range_deficit >= 3 or bool(self.use_state.get("blank_skill"))
+        return self.range_deficit >= 3 or self.explicitly_disables(NORMAL)
+
+    @property
+    def blank_actions(self):
+        return self.seal_actions + self.negation_actions
+
+    def apply_blank(self, action, *, seal):
+        previous = self.seal_actions if seal else self.negation_actions
+        if any(old == action or old.authority > action.authority for old in previous):
+            return False
+        actions = (*previous, action)
+        if seal:
+            self.seal_actions = actions
+        else:
+            self.negation_actions = actions
+        return True
+
+    def has_surviving_effect(self):
+        """Check the remaining face without registering dice, paying costs or firing listeners."""
+        ctx = self.player.game.context
+        if any(entry.owner is self and not self.explicitly_disables(entry.authority, protected=entry.protection)
+               for entry in ctx.entries):
+            return True
+        if any(not self.explicitly_disables(power, protected=guard)
+               for power, guard in printed_traits(self.data, CARD_TRAITS)):
+            return True
+        for position in range(self.current_dice_index, len(self._dice_order)):
+            index, _ = self._dice_order[position]
+            live = self.instantiated_dice[position] if self.instantiated_dice else None
+            face = self.dice[index]
+            if face["type"] in ("skip", "blank") or (live and live.destroyed):
+                continue
+            disabled = live.explicitly_disables if live else self.explicitly_disables
+            if not disabled(NORMAL):
+                return True
+            if any(not disabled(power, protected=guard) for power, guard in printed_traits(face, DIE_TRAITS)):
+                return True
+            for spec in printed_entries(face.get("entries", ())):
+                power, guard = printed_power(spec)
+                if not disabled(power, protected=guard):
+                    return True
+        return False
+
+    def explicitly_disables(self, authority, *, protected=False):
+        return any(action.disables(authority, self.player, protected=protected) for action in self.blank_actions)
+
+    def effect_disabled(self, authority, *, protected=False):
+        if self.explicitly_disables(authority, protected=protected):
+            return True
+        return (self.range_deficit >= 3 and action_by(self.range_opponent).disables(
+            authority, self.player, protected=protected))
 
     def paired_ranges(self, opponent, own_range=None, opposing_range=None):
         def levels(card, opposing, supplied):
-            reduction = 0 if opposing.use_state.get("blank_skill") else opposing.data.get("opponent_range_reduction", 0)
+            reduction = opposing.data.get("opponent_range_reduction", 0)
+            if reduction:
+                strength = trait_rank(opposing.data, "opponent_range_reduction")
+                guard = trait_rank(card.data, "protect_range_level")
+                if (opposing.explicitly_disables(strength) or
+                        (card.data.get("protect_range_level") and not card.explicitly_disables(guard, protected=True)
+                         and not action_by(opposing, strength).overcomes(guard, card.player))):
+                    reduction = 0
             skill = max(0, card.effective_range - reduction)
             die = max(0, supplied - reduction) if supplied is not None else 0
             return skill, die if die > skill else 0
@@ -450,6 +521,8 @@ class Card:
         self.range_opponent = None
         self.range_deficit = 0
         self.use_state.clear()
+        self.seal_actions = ()
+        self.negation_actions = ()
         self.use_effects_resolved = False
         self.state = CardState.DEFAULT
         self.destroyed = False

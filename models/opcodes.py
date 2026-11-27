@@ -2,6 +2,7 @@ from decimal import Decimal
 import operator
 import random
 
+from entry.authority import trait_rank
 from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.effects import GRADE_RANK
 from entry.play_conditions import record_card_play
@@ -71,7 +72,14 @@ def handle_resolve_value(ctx):
 
 def handle_range_deficit(ctx):
     value, card = ctx.pop(), ctx.pop()
-    card.range_deficit = min(3, max(0, int(ctx.event["value_ref"].apply(value))))
+    deficit = min(3, max(0, int(ctx.event["value_ref"].apply(value))))
+    if deficit == 3:
+        # Two levels still apply if a protection intercepts the blanking at level three.
+        card.range_deficit = 2
+        ctx.push(card)
+        ctx.execute_op(OpCode.NEGATE_SKILL, invalidation="range")
+    else:
+        card.range_deficit = deficit
     return card.range_deficit
 
 
@@ -223,7 +231,14 @@ def handle_insert_skill(ctx):
 def handle_set_component_state(ctx):
     value, key, component = ctx.pop(), ctx.pop(), ctx.pop()
     if component is not None and _usable_component(component):
-        component.use_state[key] = value
+        if isinstance(component, Card) and key == "blank_skill":
+            # Older packs authored a seal through the generic skill-state opcode.
+            if value:
+                ctx.push(component)
+                return ctx.execute_op(OpCode.NEGATE_SKILL, invalidation="blank")
+            component.seal_actions = ()
+        else:
+            component.use_state[key] = value
         return value
 
 
@@ -704,7 +719,7 @@ def _apply_shield_settlement(ctx, holder, shield_kind, requested, *, blocked=Non
     spent = min(balance, req)
     if blocked is not None:
         cap = min(settlement["remaining"], max(Decimal(0), Decimal(str(blocked))))
-        if req > 0:
+        if spent < req:
             cap = min(cap, (spent * max(Decimal(0), Decimal(str(blocked)))) // req)
         if cap <= 0:
             return 0
@@ -834,14 +849,21 @@ def handle_move_card(ctx):
     return False
 
 
+def target_is_protected(ctx, die, target):
+    duel = ctx.event.get("duel")
+    if not getattr(duel, "preserve_target", False) or duel.attack_card is not die.card or target is duel.resolved_target:
+        return False
+    protection = trait_rank(die.card.data, "preserve_pre_reveal_target")
+    return (not die.card.effect_disabled(protection, protected=True)
+            and not ctx.action_authority().overcomes(protection, die.card.player))
+
+
 def handle_route_die_attack(ctx):
     target, die = ctx.pop(), ctx.pop()
     if not die.is_attack or not _usable_component(die):
         return False
-    duel = ctx.event.get("duel")
-    if getattr(duel, "preserve_target", False) and duel.attack_card is die.card:
-        if target is not duel.resolved_target:
-            return False
+    if target_is_protected(ctx, die, target):
+        return False
     die.attack_redirected = True
     die.attack_target = target
     return True
@@ -857,10 +879,8 @@ def handle_redirect_attack(ctx):
         or getattr(new_target, "player", None) is getattr(attacker, "player", None)
     ):
         return False
-    duel = ctx.event.get("duel")
-    if getattr(duel, "preserve_target", False) and duel.attack_card is die.card:
-        if new_target is not duel.resolved_target and not ctx.event.get("authority", 0):
-            return False
+    if target_is_protected(ctx, die, new_target):
+        return False
     old_target = die.attack_target if die.attack_redirected else ctx.event.get("target")
     die.attack_redirected = True
     die.attack_target = new_target
@@ -1386,7 +1406,16 @@ def handle_negate_skill(ctx):
     card = ctx.pop()
     if not isinstance(card, Card) or card.destroyed or card.state == CardState.NEGATED:
         return False
-    card.state = CardState.NEGATED
+    mode = ctx.event["invalidation"]
+    if mode == "range":
+        card.range_deficit = 3
+        return True
+    if not card.apply_blank(ctx.action_authority(), seal=mode == "blank"):
+        return False
+    if mode == "blank":
+        return True
+    if not card.has_surviving_effect():
+        card.state = CardState.NEGATED
     publish_disabled_skill(ctx, card, "negate")
     if card.player is not None and hasattr(ctx.game, "board_slots"):
         for slot in ctx.game.board_slots():
@@ -1562,7 +1591,7 @@ DISPATCH_TABLE = {
     OpCode.CHANGE_LIGHTCORE_MAX: handle_change_lightcore_max, OpCode.INSTANT_DEATH: handle_instant_death,
     OpCode.SET_HP: handle_set_hp, OpCode.END_DUEL: handle_end_duel,
     OpCode.RESTORE_STATUS_STACKS: handle_restore_status_stacks,
-    OpCode.BLANK_DIE: lambda ctx: ctx.pop().make_blank(), OpCode.SELECT_ENEMY_CHARACTER: handle_select_enemy_character,
+    OpCode.BLANK_DIE: lambda ctx: ctx.pop().make_blank(ctx.action_authority()), OpCode.SELECT_ENEMY_CHARACTER: handle_select_enemy_character,
     OpCode.REAL_DAMAGE: handle_real_damage, OpCode.HEAL: handle_heal, OpCode.SHIELD: handle_shield,
     OpCode.RESOLVE_HIT: handle_hit, OpCode.CLASH: lambda ctx: ctx.pop().clash_check(),
     OpCode.RESOLVE_STATUS_AMOUNT: handle_resolve_status_amount, OpCode.STATUS: handle_status, OpCode.STAGGER: handle_stagger,

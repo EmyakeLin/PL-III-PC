@@ -433,6 +433,7 @@
           {"left": "$event.status", "op": "eq", "right": "拔芯"},
           {"left": "$pending.amount", "op": "lt", "right": 0}
         ],
+        "protection": true,
         "description": "【剑壳镇压】场上有角色带有此状态时，贺敛无法解除拔芯。",
         "operation": {
           "op": "program",
@@ -1499,6 +1500,7 @@
           "skip_drawcore_hp": true,
           "entries": [
             {
+              "protection": true,
               "trigger": "BEFORE DESTROY",
               "subject": "any",
               "description": "本技能无法被摧毁词条摧毁。",
@@ -1848,6 +1850,7 @@
           "ignore_range": 2,
           "entries": [
             {
+              "protection": true,
               "trigger": "BEFORE DESTROY",
               "subject": "any",
               "description": "本技能无法被摧毁词条摧毁。",
@@ -2337,6 +2340,7 @@
               "operation": {"op": "program", "code": [1, "SUB", 0, "MAX"]}
             },
             {
+              "protection": true,
               "trigger": "BEFORE RESOLVE_RANGE_DEFICIT",
               "subject": "source",
               "when": [{"left": {"field": "$event.card.use_state", "key": "被动迎击", "default": false}, "op": "eq", "right": true}],

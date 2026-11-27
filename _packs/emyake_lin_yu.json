@@ -256,6 +256,7 @@
     ],
     "破甲": [
       {
+        "protection": true,
         "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
         "operation": {
@@ -270,6 +271,7 @@
         "subject": "target"
       },
       {
+        "protection": true,
         "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE SHIELD",
         "operation": {
@@ -284,6 +286,7 @@
         "subject": "target"
       },
       {
+        "protection": true,
         "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
         "operation": {
@@ -300,6 +303,7 @@
         "subject": "target"
       },
       {
+        "protection": true,
         "description": "无视全部护甲且无法持有护盾",
         "trigger": "BEFORE ADD_DAMAGE_MODIFIER",
         "operation": {
@@ -1010,6 +1014,7 @@
           "entries": [
             {
               "description": "闪避 1~20：下一骰无视3级远程且无法被摧毁词条摧毁；无受击载体",
+              "protection": true,
               "trigger": "BEFORE DESTROY",
               "operation": {
                 "op": "program",
@@ -1414,7 +1419,7 @@
                           "then": [
                             "$game.duelspace.current_duel_index", "$event.scheduled.capture.index", "EQ", "$game.active_duelspace",
                             "$game.duelspace", "IS", "AND",
-                            ["$event.card", "blank_skill", true, "SET_SKILL_STATE"],
+                            ["$event.card", {"call": "NEGATE_SKILL", "with": {"invalidation": "blank"}}],
                             "WHEN"
                           ],
                           "when": [
@@ -1694,6 +1699,7 @@
           "entries": [
             {
               "description": "本技能无法被摧毁词条摧毁",
+              "protection": true,
               "trigger": "BEFORE DESTROY",
               "operation": {
                 "op": "program",
@@ -2030,6 +2036,7 @@
               "printed_text": "斩击 1~6:2",
               "entries": ["2物理"],
               "clash_order": "lower",
+              "trait_authority": {"clash_order": "最高话语权"},
               "printed_effects": ["2"]
             },
             {
@@ -2064,6 +2071,7 @@
                 }
               ],
               "clash_order": "lower",
+              "trait_authority": {"clash_order": "最高话语权"},
               "printed_effects": ["施加4裂伤；下回合施加1束缚"]
             },
             {
@@ -2098,6 +2106,7 @@
                 }
               ],
               "clash_order": "lower",
+              "trait_authority": {"clash_order": "最高话语权"},
               "printed_effects": ["获得1铭刻；下回和施加1限制"]
             }
           ],
@@ -2491,6 +2500,7 @@
           "description": "本技能与远程技能交锋或被摧毁时，立刻回到手中且返还3场内费，在本交锋改由-闪回识破-迎击，另本次-闪回识破-整个技能都获得无受击载体，斩击骰子获得无视3级远程、伤害+2与【命中时】摧毁目标技能（最高话语权）词条。\n本技能持续期间，裂伤上限维持在24。\n【使用后】若裂伤为24层，则触发裂伤爆发，并将伤害改为超穿甲伤害。",
           "entries": [
             {
+              "protection": true,
               "description": "本技能持续期间，裂伤上限维持在24。",
               "trigger": "BEFORE RESOLVE_STATUS_AMOUNT",
               "operation": {

@@ -1532,6 +1532,7 @@
               "operation": {"op":"program","code":["$self","堆芯熔毁",2,"STATUS","$event.card","SELECT_SKILL_TARGET","威压",2,"STATUS"]}
             },
             {
+              "protection": true,
               "trigger": "BEFORE DESTROY",
               "description": "此牌免疫摧毁词条。",
               "scope": "global",

@@ -3,7 +3,7 @@
 from entry.effects import GRADE_NAMES, damage_part, independent_damage_part
 from entry.predicates import compile_value, read_value
 from game import Game
-from models.card import COMPARISON_SIGNS, CardState, allows_interception, describe_entry, describe_range_traits, range_trait
+from models.card import COMPARISON_SIGNS, CardState, allows_interception, describe_entry, describe_range_traits
 from models.dice import Dice
 from models.opcode import OpCode
 from pipeline import pipeline_steps
@@ -220,8 +220,7 @@ def _passives(specs):
 def _visible_card(card):
     details = _printed_skill({**_strip_forms(card.data), "name": card.name, "dice": card.dice})
     for printed, spec in zip(details["dice"], card.dice):
-        printed["ignore_range"] = (0 if card.use_state.get("blank_skill") else
-                                   max(card.effective_ignore_range, range_trait(spec, "ignore_range", card)))
+        printed["ignore_range"] = max(card.effective_ignore_range, card.range_ignored(spec, card.range_opponent))
     inst = [die for die in (card.instantiated_dice or ()) if die is not None]
     destroyed = sorted({die.position for die in inst if die.destroyed})
     live_dice = [_live_die(die) for die in inst]

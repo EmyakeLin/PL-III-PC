@@ -446,11 +446,11 @@ class CarrierTests(unittest.TestCase):
     def test_destroy_against_crystal_protection_at_each_authority_and_initiative(self):
         crystal = self.cards["crystal"].data
         immunity = next(entry for entry in crystal["entries"] if entry["trigger"] == "BEFORE DESTROY")
-        for attack in range(3):
+        for attack in range(-1, 3):
             trigger = f"destroy_at_{attack}"
             self.ctx.register_entries(self.one, [dict(trigger=trigger, trigger_type="event", authority=attack,
                 operation={"op": "program", "code": ["$event.target", "DESTROY"]})])
-            for protection in range(3):
+            for protection in range(-1, 3):
                 for first in (self.human, self.machine):
                     with self.subTest(attack=attack, protection=protection, first=first.side):
                         self.game.first_player = first

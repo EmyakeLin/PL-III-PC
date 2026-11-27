@@ -266,6 +266,7 @@
                 "op": "program",
                 "code": ["$game.turn_ending", "NOT", [{"op": "cancel"}], "WHEN"]
               },
+              "protection": true,
               "description": "自身在回合结束前不会触发崩析爆发。"
             },
             {
@@ -898,6 +899,7 @@
                 "op": "program",
                 "code": ["$owner.use_state", "high_wind", false, "LOOKUP", [{"op": "cancel"}], "WHEN"]
               },
+              "protection": true,
               "description": "高崩析分支中，本交锋自身崩析层数保持不变。"
             },
             {
@@ -910,6 +912,7 @@
                 "op": "program",
                 "code": ["$owner.use_state", "high_wind", false, "LOOKUP", [{"op": "cancel"}], "WHEN"]
               },
+              "protection": true,
               "description": "本交锋锁定期间，消耗也不能改变自身崩析层数。"
             },
             {
@@ -1024,6 +1027,7 @@
                       "$event.value_ref", "$event.die.printed_level.value", "VALUE_CEILING"
                     ]
                   },
+                  "protection": true,
                   "description": "骰子等级锁定为印刷等级。"
                 },
                 {

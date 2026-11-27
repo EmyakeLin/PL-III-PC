@@ -3,6 +3,7 @@ from decimal import Decimal
 from enum import Enum, auto
 import random
 
+from entry.authority import HIGHEST, NORMAL
 from models.card import Card
 from models.dice import Dice, DiceLevel, dice_value_range
 from models.opcode import OpCode
@@ -515,9 +516,11 @@ class Character:
         self.hp = min(self.max_hp, old_hp + Decimal(str(amount)))
         recovered = _public_amount(self._hp - old_hp)
         if recovered > 0 and old_hp >= self.max_lightcore_hp:
-            # An actual heal at or above the integrity cap is unconditional death.
-            self.hp = 0
-            self._die()
+            ctx = self._effect_context
+            issuer = ctx.event.get("_authority_owner") or ctx.event.get("source") or self
+            with ctx.binding(authority=HIGHEST, _authority_owner=issuer):
+                ctx.push(self)
+                ctx.execute_op(OpCode.CHECK_DEATH, lethal=True)
             if self.game and self.game.is_over:
                 self.game.context.close_combat_effects()
         if recovered:
@@ -557,20 +560,14 @@ class Character:
         multiplier = ctx.event.get("damage_multiplier", 1)
         # A shield below the incident grade wears down even when it cannot absorb damage.
         if grade == "concept":
-            absorb = ("concept_shield",)
+            absorb = ("concept",)
             erode = ["shield", "reinforced_shield"]
         elif grade == "pierce":
-            absorb = ("reinforced_shield",)
+            absorb = ("reinforced",)
             erode = ["shield"]
         else:
-            absorb = ("reinforced_shield", "shield")
+            absorb = ("reinforced", "normal")
             erode = []
-        for field in absorb:
-            balance = Decimal(str(getattr(self, field)))
-            blocked = min(balance, remaining)
-            setattr(self, field, _public_amount(balance - blocked))
-            remaining -= blocked
-            absorbed[field] = _public_amount(blocked)
         settlement = {
             "target": self,
             "incoming": Decimal(str(incoming)),
@@ -581,6 +578,14 @@ class Character:
             "borrowed_absorbed": [],
             "borrowed_eroded": [],
         }
+        with ctx.binding(_shield_settlement=settlement, _authority_owner=self, authority=NORMAL):
+            for kind in absorb:
+                field = SHIELD_FIELDS[kind]
+                absorbed[field] = 0
+                blocked = min(Decimal(str(getattr(self, field))), settlement["remaining"])
+                if blocked > 0:
+                    ctx.stack.extend((self, kind, blocked, blocked))
+                    ctx.execute_op(OpCode.SHIELD_ABSORB)
         for holder, rule, authority, issuer in ctx.event.get("shield_defenses") or ():
             if holder is not None and not holder.is_alive:
                 continue

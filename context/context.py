@@ -4,12 +4,19 @@ from copy import copy
 import random
 
 from entry.effects import GRADES, damage_part, independent_damage_part, run_effect
-from entry.entry import AUTHORITY, Entry, EntryExecution, TriggerType, character_of, kind_of
+from entry.authority import Action, NORMAL, player_of
+from entry.entry import Entry, EntryExecution, TriggerType, character_of, kind_of
 from entry.scheduling import deliver_scheduled
 from models.opcode import OpCode
 from models.opcodes import DISPATCH_TABLE, OPERANDS, VALUE_RESOLVERS
 from models.values import ValueBounds
 from pipeline.pipeline_errors import PipelineSystemError, StackUnderflowError
+
+
+_DAMAGE_SEGMENTS = frozenset({
+    OpCode.DAMAGE, OpCode.REAL_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.RESOLVE_DAMAGE_BASE,
+    OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.APPLY_DAMAGE,
+})
 
 
 _NON_MUTATING_OPCODES = frozenset({
@@ -84,23 +91,41 @@ class Context:
         if self.op_stack:
             self.op_stack[-1] = value
 
+    def action_authority(self, event=None):
+        event = self.event if event is None else event
+        owner = event.get("_authority_owner", event.get("source"))
+        authority = event.get("authority")
+        return Action(NORMAL if authority is None else authority, player_of(owner), getattr(self.game, "first_player", None))
+
     def cancel_op(self, authority=None, *, frame=-1):
         if not self.op_stack:
             return
         event = self._op_events[frame]
-        required = event.get("authority", 0)
-        if self._protected_op(self.op_stack[frame], event) or (authority is not None and authority < required):
+        opcode = self.op_stack[frame]
+        if self._protected_op(opcode, event):
             return
-        if authority == required == AUTHORITY["highest"]:
-            first = getattr(self.game, "first_player", None)
-            issuer = getattr(character_of(event.get("_authority_owner", event.get("source"))), "player", None)
+        if authority is None and self.executions:
+            authority = self.executions[-1].entry.authority
+        if authority is not None:
             owner = self.executions[-1].entry.owner if self.executions else self.event.get("_authority_owner")
-            protector = getattr(character_of(owner), "player", None)
-            if first is not None and issuer is first and protector is not None and protector is not first:
+            if not self.can_intercept(opcode, event, authority, owner):
                 return
         self.op_stack[frame] = None
 
-    def range_blocks_target(self, target, *, card=None, die=None):
+    def can_intercept(self, opcode, event, authority, owner):
+        if opcode in _DAMAGE_SEGMENTS:
+            return True
+        pending = self.action_authority(event)
+        interrupt = Action(authority, player_of(owner), pending.first_player)
+        if opcode == OpCode.ENTRY and event.get("execution") is not None:
+            target = event["execution"].entry
+            return interrupt.disables(target.authority, player_of(target.owner), protected=target.protection)
+        if opcode == OpCode.SHIELD_ABSORB:
+            # The pending operation is itself the shield being challenged.
+            return interrupt.overcomes(pending.authority, pending.player)
+        return not pending.overcomes(authority, interrupt.player)
+
+    def range_blocks_target(self, target, *, card=None, die=None, ranked=True):
         """Use the actual originating skill; character and status passives remain independent."""
         if die is None and card is None and self.executions:
             entry = self.executions[-1].entry
@@ -113,12 +138,19 @@ class Context:
         if isinstance(target, EntryExecution):
             target = target.entry.owner
         protected = card.range_opponent.character
-        return character_of(target) is protected or target is protected.player
+        if character_of(target) is not protected and target is not protected.player:
+            return False
+        if ranked and self.executions:
+            entry = self.executions[-1].entry
+            action = Action(entry.authority, player_of(entry.owner), getattr(self.game, "first_player", None))
+            if action.overcomes(NORMAL, card.range_opponent.player):
+                return False
+        return True
 
     def _range_blocks_op(self, opcode, fields):
         if opcode == OpCode.DAMAGE and fields.get("damage_die") is not None:
             target = self.event.get("target") if fields["target"] == "target" else fields["target"]
-            if self.range_blocks_target(target, die=fields["damage_die"]):
+            if self.range_blocks_target(target, die=fields["damage_die"], ranked=False):
                 return True
         if not self.executions:
             return False
@@ -137,7 +169,7 @@ class Context:
                 target = fields[key]
                 if target == "target":
                     target = self.event.get("target")
-                return self.range_blocks_target(target)
+                return self.range_blocks_target(target, ranked=opcode not in _DAMAGE_SEGMENTS)
         return False
 
     def side_active_cards(self, side):
@@ -357,6 +389,10 @@ class Context:
                     return None
                 fields["status"] = self.stack[mark + names.index("status")] = name
             fields["ability"] = None
+        if opcode == OpCode.NEGATE_SKILL:
+            mode = fields.setdefault("invalidation", "negate")
+            if mode not in ("negate", "blank") and not (mode == "range" and self.current_op == OpCode.RESOLVE_RANGE_DEFICIT):
+                raise ValueError(f"无效化方式不适用于当前结算 {mode!r}")
         if opcode == OpCode.DESTROY:
             fields.setdefault("keep_position", False)
             if type(fields["keep_position"]) is not bool:
@@ -365,6 +401,8 @@ class Context:
             fields["hit_die"] = None
         if opcode == OpCode.PREPEND_PRINTED_DIE:
             fields.setdefault("extra_entries", ())
+        if opcode in _DAMAGE_SEGMENTS:
+            fields.update(authority=None, _authority_owner=None)
         if opcode == OpCode.DAMAGE:
             fields.setdefault("percentage_damage", False)
             # Nested status and character effects own their damage independently of
@@ -524,8 +562,7 @@ class Context:
 
     def register_entries(self, owner, specs):
         """Instantiate a character's passives, a card's entries or a die's entries."""
-        if (getattr(owner, "type", None) == "blank" and kind_of(owner) == "die"
-                and not getattr(owner, "blanked_by_range", False)):
+        if kind_of(owner) == "die" and getattr(owner, "_type", None) == "blank":
             return []
         registered = []
         for spec in specs or ():
@@ -623,6 +660,11 @@ class Context:
     def _matches(self, entry, *, ordering=False):
         if not self._in_scope(entry):
             return False
+        if ((entry.protection or entry.operation == {"op": "cancel"})
+                and entry.trigger_type == TriggerType.OPCODE and entry.timing == "BEFORE"
+                and self._op_events and not self.can_intercept(entry.trigger, self._op_events[-1],
+                                                              entry.authority, entry.owner)):
+            return False
         if not entry.reentrant and any(frame.entry is entry for frame in self.executions):
             return False
         if entry.turn_limit:
@@ -650,7 +692,7 @@ class Context:
                     OpCode.DAMAGE, OpCode.RESOLVE_DAMAGE, OpCode.FINALIZE_DAMAGE, OpCode.LIGHTCORE_DAMAGE, OpCode.REAL_DAMAGE,
                     OpCode.CHECK_DEATH, OpCode.HEAL, OpCode.STATUS, OpCode.SPEND_STATUS, OpCode.ACTIVATE_STATUS, OpCode.SHIELD,
                     OpCode.ABILITY_EFFECT, OpCode.SPEND_ABILITY_EFFECT,
-                    OpCode.DESTROY, OpCode.SET_STATUS_OVERFLOW, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
+                    OpCode.DESTROY, OpCode.NEGATE_SKILL, OpCode.SET_STATUS_OVERFLOW, OpCode.NEXT_TURN_DUELS, OpCode.TURN_DUELS_ADD, OpCode.LOSE_HP):
                 subject = "target"
             else:
                 subject = "source"
@@ -910,9 +952,8 @@ class Context:
         no_result = False if result_field in ("damage_dealt", "damage_received") else 0
         if target is None or not target.is_alive or (self.executions and self.executions[-1].cancelled):
             return no_result
-        authority = self.executions[-1].entry.authority if self.executions else 0
         with self.binding(source=source, target=target, damage_part=damage_part,
-                          damage_cause=damage_cause, authority=authority):
+                          damage_cause=damage_cause, authority=None, _authority_owner=None):
             self.stack.extend((target, amount, GRADES[penetration], attack_type))
             result = self.execute_op(OpCode.DAMAGE, result_field=result_field, damage_precomputed=modified,
                                      damage_cause=damage_cause, **fields)

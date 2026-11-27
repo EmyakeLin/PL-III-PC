@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from entry.authority import rank, spec_protection
 from models.opcode import OpCode
 
 
@@ -8,10 +9,6 @@ class TriggerType(Enum):
     PIPELINE = auto()
     OPCODE = auto()
     EVENT = auto()
-
-
-AUTHORITY = {"常规": 0, "较高话语权": 1, "最高话语权": 2,
-             "normal": 0, "high": 1, "highest": 2}
 
 
 def character_of(entity):
@@ -44,10 +41,13 @@ class Entry:
 
     @property
     def blanked(self):
-        return getattr(self.owner, "blanked", False)
+        check = getattr(self.owner, "effect_disabled", None)
+        if check is None:
+            return getattr(self.owner, "blanked", False)
+        return check(self.authority, protected=self.protection)
 
     def __init__(self, owner, trigger_type, trigger, operation, timing="AFTER", *,
-                 scope="global", subject="any", target=None, authority=0, when=None,
+                 scope="global", subject="any", target=None, authority=0, protection=False, when=None,
                  period=None, origin=None, turn_limit=None, damage_cause=None, status_name=None,
                  choice_prompt=None, adjustments=None, call_adjustments=None, reentrant=False):
         self.owner = owner
@@ -62,9 +62,8 @@ class Entry:
         self.scope = scope
         self.subject = subject
         self.target = target
-        self.authority = AUTHORITY.get(authority, authority)
-        if self.authority not in (0, 1, 2):
-            raise ValueError(f"未知的话语权 {authority!r}")
+        self.authority = rank(authority)
+        self.protection = protection
         from entry.predicates import compile_when
         self.when = [] if when is None else when
         self.conditions = compile_when(self.when, trigger, timing)
@@ -101,7 +100,7 @@ class Entry:
         subject = spec.get("subject", "owner" if kind != "global" else "any")
         return cls(owner, trigger_type, trigger, spec["operation"], timing,
                    scope=scope, subject=subject, target=spec.get("target"),
-                   authority=spec.get("authority", 0), when=spec.get("when"),
+                   authority=spec.get("authority", 0), protection=spec_protection(spec), when=spec.get("when"),
                    period=spec.get("period"), origin=spec.get("origin", kind), turn_limit=spec.get("turn_limit"),
                    damage_cause=spec.get("damage_cause"), status_name=spec.get("status_name"),
                    choice_prompt=spec.get("choice_prompt", spec.get("description")), adjustments=spec.get("adjustments"),

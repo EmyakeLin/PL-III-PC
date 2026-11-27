@@ -42,6 +42,7 @@
             "$event.die.printed_level.value", "VALUE_CEILING"
           ]
         },
+        "protection": true,
         "description": "本回合自身按印刷骰级使用骰子。"
       }
     ]
@@ -95,6 +96,7 @@
                   "$event.value_ref", "$event.die.printed_level.value", "VALUE_CEILING"
                 ]
               },
+              "protection": true,
               "description": "自身带有涡流时，无视骰子等级增减效果。"
             },
             {

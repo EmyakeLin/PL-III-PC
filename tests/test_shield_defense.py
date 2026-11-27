@@ -216,6 +216,39 @@ class ShieldDefenseChannelTests(unittest.TestCase):
         self.assertEqual(donor_b.reinforced_shield, 2)
         self.assertEqual(lost2, 3)
 
+    def test_default_shield_uses_its_own_rank_even_on_highest_rank_damage_entry(self):
+        for interrupt, lost in ((None, 0), ("low", 0), ("normal", 0), ("high", 2)):
+            with self.subTest(interrupt=interrupt):
+                ctx = TraceContext()
+                defender, attacker = actor_for(ctx, 1), actor_for(ctx, 2)
+                defender.shield = 2
+                if interrupt:
+                    ctx.register_entries(attacker, [dict(trigger="BEFORE SHIELD_ABSORB", subject="any",
+                        authority=interrupt, operation={"op": "cancel"})])
+                ctx.register_entries(attacker, [dict(trigger="fixture", trigger_type="event", subject="any",
+                    authority="highest", operation={"op": "damage", "amount": 2})])
+                ranks = []
+                ctx.register_entries(defender, [dict(trigger="BEFORE DAMAGE", subject="target",
+                    operation=lambda vm: ranks.append(vm.event["authority"]))])
+                hp = defender.hp
+                ctx.publish("fixture", dict(source=attacker, target=defender))
+                self.assertEqual(ranks, [None])
+                self.assertIn(OpCode.SHIELD_ABSORB, ctx.operations)
+                self.assertEqual((hp - defender.hp, defender.shield), (lost, lost))
+
+    def test_absorption_is_the_shield_against_its_cancellation(self):
+        for attack, defense, loss in ((0, 0, 0), (1, 0, 1), (-1, -1, 0)):
+            with self.subTest(attack=attack, defense=defense):
+                ctx = TraceContext()
+                defender, attacker = actor_for(ctx, 1), actor_for(ctx, 2)
+                ctx.game = defender.game
+                ctx.register_entries(defender, [dict(self._pierce_two_to_one_rule(), authority=defense)])
+                ctx.register_entries(attacker, [dict(trigger="BEFORE SHIELD_ABSORB", subject="any",
+                    authority=attack, operation={"op": "cancel"})])
+                defender.shield = 2
+                self.assertEqual(ctx.deal_damage(attacker, defender, 1, penetration="pierce", result_field="hp_lost"), loss)
+                self.assertEqual(defender.shield, 0 if loss == 0 else 2)
+
     def test_highest_authority_shield_rule_keeps_its_issuer_during_damage_settlement(self):
         ctx = TraceContext()
         defender = actor_for(ctx, 1)

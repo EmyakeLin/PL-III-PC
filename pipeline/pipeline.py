@@ -860,7 +860,7 @@ class Pipeline:
                 far, near = near, far
                 far_range, near_range = near_range, far_range
             far.opposing_card, near.opposing_card = near.card, far.card
-            if far_range > near_range + near.card.effective_ignore_range:
+            if far_range > near_range + near.card.range_ignored(near.card.data, far.card):
                 # A card must actually pay before it can blank the opposing
                 # pre-use and fee entries. Its price hooks can still alter or cancel payment.
                 if far in entrants:
@@ -884,7 +884,7 @@ class Pipeline:
                 opp = self._opposing_pipe_in(current, pipe.side)
                 if opp is not None and opp.paid and self._card_live(opp) and self._card_live(pipe):
                     own_r, opp_r = pipe.card.paired_ranges(opp.card)
-                    if opp_r > own_r + pipe.card.effective_ignore_range:
+                    if opp_r > own_r + pipe.card.range_ignored(pipe.card.data, opp.card):
                         self._refresh_skill_range(pipe, opp.card)
             pending = [p for p in entrants if p.paid is None]
             if pending:
@@ -899,7 +899,8 @@ class Pipeline:
 
     def _refresh_skill_range(self, pipe, opponent):
         card = pipe.card
-        signature = (opponent, card.effective_range, opponent.effective_range, card.effective_ignore_range)
+        signature = (opponent, card.effective_range, opponent.effective_range,
+                     card.range_ignored(card.data, opponent), card.paired_ranges(opponent))
         if pipe.range_pairing == signature:
             return
         pipe.range_pairing = signature
@@ -969,7 +970,7 @@ class Pipeline:
             if opponent is not None:
                 card.set_range_opponent(opponent.card, own_range=die.effective_range,
                                         opposing_range=opponent.effective_range,
-                                        ignore_range=die.effective_ignore_range)
+                                        ignore_range=die.ignore_against(opponent.card))
             die.paired_range_deficit = card.range_deficit
             yield
         finally:
@@ -1022,7 +1023,7 @@ class Pipeline:
                 card = pipe.card
                 saved_ranges.append((pipe, card, card.range_opponent, card.range_deficit))
                 card.set_range_opponent(opposing, own_range=pipe.die.effective_range,
-                                        ignore_range=pipe.die.effective_ignore_range,
+                                        ignore_range=pipe.die.ignore_against(opposing),
                                         opposing_range=other.die.effective_range if other else opposing.effective_range)
         try:
             yield from self._pair_dice(ready)
@@ -1233,7 +1234,7 @@ class Pipeline:
             for pipe, other in ((attacker, reply), (reply, attacker)):
                 pipe.card.set_range_opponent(other.card, own_range=pipe.die.effective_range,
                                              opposing_range=other.die.effective_range,
-                                             ignore_range=pipe.die.effective_ignore_range)
+                                             ignore_range=pipe.die.ignore_against(other.card))
                 pipe.die.apply_paired_range(blank_at=3)
             self.game.context.record("skill_intercept" if skill else "reserved_intercept",
                                      target=target.combat_name, card=reply.card.name, position=die.position)
