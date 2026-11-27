@@ -3660,12 +3660,8 @@ export class GameDirector {
 
     // Order bottom-to-top so the primary phase-end/advance action always anchors cleanly at the bottom-right corner!
     if (mode === 'placement') {
+      const claimed = Boolean(this.state.pre_reveal_claimed);
       const stagedCount = (this.state.pre_reveal_plan || []).length;
-      const canClaimPre = Boolean(
-        this.state.pre_reveal_claimed
-        || stagedCount > 0
-        || (this.state.pre_reveal_eligible_cards || []).length > 0
-      );
       buttons.push({
         label: `结束置卡（余${this.state.window_remaining}）`,
         h: 40,
@@ -3676,36 +3672,33 @@ export class GameDirector {
       if (this.state.can_pass) {
         buttons.push({ label: '交权', h: 36, accent: INK.gold, solid: true, fn: () => this._sendAction('pass') });
       }
-      if (canClaimPre) {
-        const claimed = Boolean(this.state.pre_reveal_claimed);
+      buttons.push({
+        label: claimed
+          ? (stagedCount > 0 ? `✓ 已声称开牌前(${stagedCount})` : '✓ 已声称开牌前')
+          : '⚔ 声称开牌前交锋',
+        h: 34,
+        accent: claimed ? 0x1a825e : 0x9b5a1e,
+        solid: false,
+        fn: () => {
+          this.selectedHandCardId = null;
+          if (claimed) this.preRevealStaging = false;
+          this._sendAction('claim_pre_reveal');
+        },
+      });
+      if (claimed && ((this.state.pre_reveal_eligible_cards || []).length > 0 || this.preRevealStaging)) {
         buttons.push({
-          label: claimed
-            ? (stagedCount > 0 ? `✓ 已声称开牌前(${stagedCount})` : '✓ 已声称开牌前')
-            : '⚔ 声称开牌前交锋',
+          label: this.preRevealStaging ? '← 返回常规置卡' : '⚔ 预置开牌前',
           h: 34,
-          accent: claimed ? 0x1a825e : 0x9b5a1e,
-          solid: false,
+          accent: 0xcf4932,
+          solid: Boolean(this.preRevealStaging),
           fn: () => {
+            this.preRevealStaging = !this.preRevealStaging;
             this.selectedHandCardId = null;
-            if (claimed) this.preRevealStaging = false;
-            this._sendAction('claim_pre_reveal');
+            this._rebuildConfrontationWings();
+            this._rebuildDynamicBoard();
+            this._syncSelectedCardIntent();
           },
         });
-        if (claimed && ((this.state.pre_reveal_eligible_cards || []).length > 0 || this.preRevealStaging)) {
-          buttons.push({
-            label: this.preRevealStaging ? '← 返回常规置卡' : '⚔ 预置开牌前',
-            h: 34,
-            accent: 0xcf4932,
-            solid: Boolean(this.preRevealStaging),
-            fn: () => {
-              this.preRevealStaging = !this.preRevealStaging;
-              this.selectedHandCardId = null;
-              this._rebuildConfrontationWings();
-              this._rebuildDynamicBoard();
-              this._syncSelectedCardIntent();
-            },
-          });
-        }
       }
       if (this.selectedHandCardId && !this._isPreRevealStagingMode()) {
         buttons.push({ label: '扣置选中牌', h: 36, accent: 0x1a825e, solid: true, fn: () => this._placeCard(this.selectedHandCardId) });

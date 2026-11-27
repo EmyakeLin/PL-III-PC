@@ -1,7 +1,46 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GameDirector } from '../../battle_ui/static/engine/game_director.js';
-import { RoomSeatTransport } from '../../battle_ui/static/engine/transport.js';
+import { RoomSeatTransport, roomTableState } from '../../battle_ui/static/engine/transport.js';
+import { Container } from './pixi_stub.mjs';
+
+test('the placement dock offers a pre-reveal claim with or without eligible cards', () => {
+  const sent = [];
+  const transport = new RoomSeatTransport('test');
+  transport.requestHttp = async (_path, command) => { sent.push(command.cmd); };
+  const director = Object.assign(Object.create(GameDirector.prototype), {
+    controlsLayer: new Container(),
+    layout: { w: 1440, h: 900, pad: 16 },
+    transport,
+    sequencer: { isRollAnimating: false },
+  });
+  const button = label => director.controlsLayer.children.find(child => child.accessibleTitle === label);
+
+  for (const eligibleCards of [[], ['attack-card']]) {
+    const placement = {
+      started: true,
+      side: 1,
+      revision: 1,
+      frame: { mode: 'placement', viewer_side: 1 },
+      options: [{ kind: 'end' }],
+      pre_reveal_claimed: false,
+      pre_reveal_plan: [],
+      pre_reveal_eligible_cards: eligibleCards,
+    };
+    director.state = transport.state = roomTableState(placement);
+    director._rebuildActionControls();
+    const claim = button('⚔ 声称开牌前交锋');
+    assert.ok(claim);
+    claim.emit('pointertap');
+    assert.equal(sent.at(-1), 'claim_pre_reveal');
+
+    director.state = transport.state = roomTableState({ ...placement, pre_reveal_claimed: true });
+    director._rebuildActionControls();
+    assert.equal(Boolean(button('⚔ 预置开牌前')), eligibleCards.length > 0);
+    button('✓ 已声称开牌前').emit('pointertap');
+  }
+  assert.deepEqual(sent, Array(4).fill('claim_pre_reveal'));
+});
 
 test('rolling replacement sends the selected board instance and waits for acceptance', async () => {
   const sent = [], notices = [];
