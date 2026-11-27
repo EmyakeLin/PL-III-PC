@@ -412,6 +412,23 @@ class EmyakeTests(unittest.TestCase):
                 if name == "折影吞噬":
                     self.assertIn(card, self.left.cardspace.hand.content)
 
+    def test_probe_roll_bonus_survives_first_slash_spending_momentum(self):
+        for stacks, expected_roll in [(1, 1), (2, 4)]:
+            with self.subTest(stacks=stacks):
+                self.setUp()
+                self.status(self.actor, "羽流·势", stacks)
+                with patch.object(self.game.rng, "randint", side_effect=lambda low, high: low):
+                    self.fight("试探交锋")
+
+                attacks = [event["detail"] for kind, event in self.events if kind == "solo_attack"]
+                self.assertEqual([(die["position"], die["rolled_value"]) for die in attacks],
+                                 [(2, expected_roll), (3, expected_roll), (4, expected_roll)])
+                spent = [event["amount"] for kind, event in self.events
+                         if kind == "status_spent" and event["name"] == "羽流·势"]
+                self.assertEqual(spent, [2] if stacks == 2 else [])
+                self.assertEqual(self.actor.statuses.get("羽流·制衡", 0), int(stacks == 2))
+                self.assertEqual(self.actor.statuses.get("羽流·势", 0), 0 if stacks == 2 else stacks)
+
     def test_weave_spends_five_once_for_the_first_slash_verdict(self):
         for score, stance in [(1, "羽流·延攻"), (8, "羽流·制衡"), (100, "羽流·反制")]:
             with self.subTest(score=score):
